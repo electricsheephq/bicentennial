@@ -18,6 +18,11 @@ import director as s6
 
 MODEL = 'deepseek/deepseek-v4.1-flash-1017'
 ADAPT = {'provider': {'only': ['deepseek'], 'allow_fallbacks': False}, 'usage': {'include': True}}
+
+
+def adapt(a):
+    """The declared wire additions for this run's pinned provider (an endpoint slug, e.g. deepinfra/fp8)."""
+    return ADAPT | {'provider': {'only': [a.provider_only], 'allow_fallbacks': False}}
 LIFE = Path(s6.__file__).with_name('micro_life.json')
 
 
@@ -89,16 +94,17 @@ class Director(s6.Director):
     def __init__(self, a):
         super().__init__(a)
         self.spend = Spend(a)
+        self.adapt = adapt(a)
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def upstream(self, body, kind):
         sub = {'kind': kind, 'model': self.a.model, 'marker': s6.marker_state(), 'glm_wait_s': 0,
-                   'load': os.getloadavg(), 'window': peak(), 'declared_keys': sorted(ADAPT),
+                   'load': os.getloadavg(), 'window': peak(), 'declared_keys': sorted(self.adapt),
                    'served_provider': None, 'served_model': None, 't_ms': 0, 'ok': False, 'status': 0}
         if self.stopped:
             return dict(sub, category='budget_or_stop', unsent=True)
         wire = {k: v for k, v in body.items() if k not in s6.TRANSPORT_KEYS}
-        wire.update(model=self.a.model, stream=False, **ADAPT)
+        wire.update(model=self.a.model, stream=False, **self.adapt)
         sub.update(req=self.ledger.blob(wire), wire=wire)
         rid = self.spend.reserve(wire)
         if rid is None:
@@ -139,7 +145,7 @@ class Director(s6.Director):
         usage = resp.get('usage') or {}
         cost, estimated, over = self.spend.settle(rid, usage, refused)
         provider, model = resp.get('provider'), resp.get('model')
-        if 200 <= status < 300 and (str(provider).lower() != 'deepseek'
+        if 200 <= status < 300 and (str(provider).lower() != self.a.served_provider.lower()
                                      or not str(model).startswith('deepseek/deepseek-v4.1-flash')):
             category = 'pin_failure'
         if over and category != 'pin_failure':
@@ -154,7 +160,7 @@ class Director(s6.Director):
 
     def write_turn(self, body, turn, rec):
         # S6a readback receives the exact declared additions in its expected harness body.
-        out = super().write_turn(body | ADAPT, turn, rec)
+        out = super().write_turn(body | self.adapt, turn, rec)
         if rec.get('write_turn_readback') is False:
             self.stopped = True
             self.write_failures += 1
@@ -175,6 +181,8 @@ def parser():
     p.add_argument('--output-usd', type=float, default=1.20)
     p.add_argument('--chars-per-token', type=float, default=4.0)
     p.add_argument('--model', default=MODEL)
+    p.add_argument('--provider-only', default='deepseek', help='the router endpoint slug every request is pinned to')
+    p.add_argument('--served-provider', default='DeepSeek', help='the provider name every response must report')
     p.add_argument('--mode', choices=['stub', 'live'], default='stub')
     return p
 
