@@ -193,22 +193,60 @@ def test_responses_input_of_an_unseen_type_is_unknown(bad):
     assert roles.classify(req, ctx1(signatures=(title,)))[:2] == ("title", "shape")
 
 
+def _batch(wire: str, sibling) -> list:
+    """A scripted turn, then one call batch answering an issued call and a sibling whose id is `sibling`."""
+    if wire == "openai_chat":
+        return [TURN, {"role": "assistant", "tool_calls": [{"id": "issued"}, {"id": sibling}]},
+                {"role": "tool", "tool_call_id": "issued", "content": "r"},
+                {"role": "tool", "tool_call_id": sibling, "content": "r"}]
+    if wire == "openai_responses":
+        return [TURN, {"type": "function_call", "call_id": "issued"}, {"type": "function_call", "call_id": sibling},
+                {"type": "function_call_output", "call_id": "issued"},
+                {"type": "function_call_output", "call_id": sibling}]
+    return [TURN, {"role": "assistant", "content": [{"type": "tool_use", "id": "issued"},
+                                                     {"type": "tool_use", "id": sibling}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "issued"},
+                                         {"type": "tool_result", "tool_use_id": sibling}]}]
+
+
 @pytest.mark.parametrize("wire", sorted(WIRE_PATH))
-def test_non_string_call_ids_are_unknown(wire):
+@pytest.mark.parametrize("sibling", [2, None, ""])
+def test_call_ids_that_are_not_non_empty_strings_are_unknown(wire, sibling):
     c = ctx1()
     c.issued["issued"] = "probe_main"
-    if wire == "openai_chat":
-        items = [TURN, {"role": "assistant", "tool_calls": [{"id": "issued"}, {"id": 2}]},
-                 {"role": "tool", "tool_call_id": "issued", "content": "r"}, {"role": "tool", "tool_call_id": 2}]
-    elif wire == "openai_responses":
-        items = [TURN, {"type": "function_call", "call_id": "issued"}, {"type": "function_call", "call_id": 2},
-                 {"type": "function_call_output", "call_id": "issued"}, {"type": "function_call_output", "call_id": 2}]
-    else:
-        items = [TURN, {"role": "assistant", "content": [{"type": "tool_use", "id": "issued"},
-                                                          {"type": "tool_use", "id": 2}]},
-                 {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "issued"},
-                                              {"type": "tool_result", "tool_use_id": 2}]}]
-    assert roles.classify(_wire_body(wire, items), c)[:2] == ("unknown", "unknown")
+    assert roles.classify(_wire_body(wire, _batch(wire, "sib")), c)[:2] == ("probe_main", "cursor")
+    assert roles.classify(_wire_body(wire, _batch(wire, sibling)), c)[:2] == ("unknown", "unknown")
+
+
+def test_a_result_with_no_id_answers_nothing():
+    c = ctx1()
+    c.issued["issued"] = "probe_main"
+    s = roles.shape(_wire_body("openai_responses", _batch("openai_responses", "sib")))
+    assert roles.classify_shape(s, c)[0] == "probe_main"
+    s |= {"tail_ids": ["issued", ""], "tail_calls": ["issued", ""]}
+    assert roles.classify_shape(s, c)[:2] == ("unknown", "unknown")
+
+
+@pytest.mark.parametrize("wire", sorted(WIRE_PATH))
+def test_non_string_roles_types_and_texts_are_unknown(wire):
+    c = ctx1()
+    kind = "input_text" if wire == "openai_responses" else "text"
+    ok = {"role": "user", "content": [{"type": kind, "text": "scripted turn one"}]}
+    assert roles.classify(_wire_body(wire, [{"role": "user", "content": "other"}, ok]), c)[0] == "replay_main"
+    bad = [[{"role": 7, "content": "other"}, ok], [{"content": "other"}, ok],
+           [{"role": "user", "content": [*ok["content"], {"type": 7, "text": "ignored"}]}],
+           [{"role": "user", "content": [*ok["content"], {"text": "ignored"}]}],
+           [{"role": "user", "content": [*ok["content"], {"type": kind, "text": 5}]}]]
+    bad += [[{"type": 7}, ok]] if wire == "openai_responses" else []
+    for items in bad:
+        assert roles.classify(_wire_body(wire, items), ctx1())[:2] == ("unknown", "unknown"), items
+
+
+@pytest.mark.parametrize("wire", sorted(WIRE_PATH))
+@pytest.mark.parametrize("tools", [[1], ["shell"], [{}, None]])
+def test_tool_lists_must_hold_objects(wire, tools):
+    assert roles.classify(_wire_body(wire, [TURN], tools=[{}]), ctx1())[0] == "replay_main"
+    assert roles.classify(_wire_body(wire, [TURN], tools=tools), ctx1())[:2] == ("unknown", "unknown")
 
 
 def test_malformed_anthropic_parts_are_unknown():

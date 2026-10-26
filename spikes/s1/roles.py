@@ -83,17 +83,21 @@ def wire_of(method: str, path: str) -> str:
 
 
 # ---- shape: a request reduced to features that hold no harness text ----------------------------------------
+TEXT_PARTS = ("text", "input_text", "output_text")
+
+
 def _blocks(content) -> list[str]:
     if isinstance(content, str):
         return [content]
     return [p["text"] for p in content or [] if isinstance(p, dict) and isinstance(p.get("text"), str)
-            and p.get("type") in (None, "text", "input_text", "output_text")]
+            and p.get("type") in (None, *TEXT_PARTS)]
 
 
 def _well_formed(wire: str, body: dict) -> None:
-    """Raises TypeError unless every container the rule reads has its documented type: lists hold only objects,
-    content is a string or a list of objects, and every call id is a string. The extractors would otherwise drop a
-    bad element and classify what is left."""
+    """Raises TypeError unless every field the rule reads has its documented type: lists hold only objects; content
+    is a string or a list of parts, each with a string type and, if it is text, a string text; every message has a
+    string role and every Responses item a string type; every call and result record has a non-empty string id.
+    The extractors would otherwise drop or relabel a bad element and classify what is left."""
     def objs(x, what: str) -> list:
         if x is None:
             return []
@@ -102,29 +106,47 @@ def _well_formed(wire: str, body: dict) -> None:
         return x
 
     def text(x, what: str) -> list:
-        return [] if isinstance(x, str) else objs(x, what)
+        if isinstance(x, str):
+            return []
+        for p in objs(x, what):
+            if not isinstance(p.get("type"), str) or (p["type"] in TEXT_PARTS and not isinstance(p.get("text"), str)):
+                raise TypeError(f"{what} part")
+        return x
 
-    def ids(*vals):
-        if any(v is not None and not isinstance(v, str) for v in vals):
-            raise TypeError("call id")
+    def has(d: dict, key: str, what: str) -> None:
+        if not isinstance(d.get(key), str) or not d[key]:
+            raise TypeError(what)
 
-    if not isinstance(body.get("model"), (str, type(None))) or not isinstance(body.get("tools"), (list, type(None))):
-        raise TypeError("model or tools")
+    if not isinstance(body.get("model"), (str, type(None))):
+        raise TypeError("model")
+    objs(body.get("tools"), "tools")
     if wire == "openai_chat":
         for m in objs(body.get("messages"), "messages"):
+            has(m, "role", "role")
             text(m.get("content"), "content")
-            ids(m.get("tool_call_id"), *(tc.get("id") for tc in objs(m.get("tool_calls"), "tool_calls")))
+            for tc in objs(m.get("tool_calls"), "tool_calls"):
+                has(tc, "id", "call id")
+            if m["role"] == "tool":
+                has(m, "tool_call_id", "result id")
     elif wire == "openai_responses":
         if not isinstance(body.get("instructions"), (str, type(None))):
             raise TypeError("instructions")
-        for it in text(body.get("input"), "input"):
-            ids(it.get("call_id"))
-            if str(it.get("type", "message")) == "message":
+        for it in [] if isinstance(body.get("input"), str) else objs(body.get("input"), "input"):
+            t = it.get("type", "message")
+            if not isinstance(t, str):
+                raise TypeError("type")
+            if t == "message":
+                has(it, "role", "role")
                 text(it.get("content"), "content")
+            elif t.endswith("_output") or (t.endswith("_call") and "call_id" in it):
+                has(it, "call_id", "call id")
     elif wire == "anthropic":
         text(body.get("system"), "system")
         for m in objs(body.get("messages"), "messages"):
-            ids(*(v for p in text(m.get("content"), "content") for v in (p.get("id"), p.get("tool_use_id"))))
+            has(m, "role", "role")
+            for p in [] if isinstance(m.get("content"), str) else text(m.get("content"), "content"):
+                if p["type"] in ("tool_use", "tool_result"):
+                    has(p, "id" if p["type"] == "tool_use" else "tool_use_id", "call id")
 
 
 def _parts(m: dict) -> list:
@@ -271,7 +293,7 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
             # one role. An unissued result then passes only as a sibling the harness added to that same message
             # (Hermes splits one forwarded call into two); anything else fails closed
             stray = [cid for cid in s["tail_ids"] if cid not in s["tail_calls"]]
-            if len(got) != 1 or stray:
+            if len(got) != 1 or stray or "" in s["tail_ids"]:  # a result with no id answers nothing
                 return "unknown", "unknown", {**ev, "reason": "tool result for an unissued call id or mixed roles"}
             return done(got.pop(), "cursor", call_id=next(c for c in s["tail_ids"] if c in ctx.issued))
         if s["last_is"] == "user_text" and s["n_tools"] > 0:
