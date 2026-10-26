@@ -1,0 +1,10 @@
+Bicentennial
+Copyright 2026 The Bicentennial Authors
+
+The code in this repository is licensed under the Apache License, Version 2.0 (see LICENSE).
+The documents and the public generated lives are licensed under CC-BY-4.0 (see LICENSE-DATA).
+
+Prior art. The design draws on the measurement instruments of LCM-X
+(https://github.com/electricsheephq/lcm-x) and on the published benchmarks
+surveyed in docs/DESIGN.md. Bicentennial reimplements what it needs from
+specifications. No source code was copied from LCM-X.

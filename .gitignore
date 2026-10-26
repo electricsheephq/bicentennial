@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+
+# Run output stays out of git; result cards are published deliberately.
+runs/
+scratch/
+*.ledger.zst
+
+# Sealed material never lives in this repository.
+sealed/
+*.seed-secret
