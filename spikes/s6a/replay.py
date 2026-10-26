@@ -86,14 +86,18 @@ def hermes_config(port: int, a) -> dict:
 
 
 class Egress(threading.Thread):
-    """Samples the worker's sockets once a second; records any non-loopback endpoint."""
+    """Samples the worker's sockets and resident memory once a second; records any non-loopback endpoint."""
     def __init__(self):
         super().__init__(daemon=True)
         self.pids, self.seen, self.samples, self.stop = set(), set(), 0, False
+        self.rss: dict[int, list[int]] = {}  # pid -> RSS samples, KiB
 
     def run(self):
         while not self.stop:
             for pid in list(self.pids):
+                rss = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+                if rss.isdigit():
+                    self.rss.setdefault(pid, []).append(int(rss))
                 r = subprocess.run(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)], capture_output=True, text=True)
                 self.samples += 1
                 for line in r.stdout.splitlines()[1:]:
@@ -240,6 +244,8 @@ def main():
                 log(f"{kind} {sess['index']}.{i} ok={r['ok']} {r['t_ms']} ms err={r.get('error')}")
                 if not r["ok"] or not r["final"]:
                     raise RuntimeError(f"turn failed: {kind} {sess['index']}.{i}")
+                if a.write_turns and kind == "life" and control(a.port).get("write_failures"):
+                    raise RuntimeError(f"write turn failed at {sess['index']}.{i}: run invalid, stopping")
                 if sess.get("restart_after_turn") == i:  # restart wake: SIGKILL at a turn boundary
                     w.kill()
                     t_k = time.monotonic()
@@ -267,6 +273,7 @@ def main():
         (out / "summary.json").write_text(json.dumps({
             "run": a.run, "wall_ms": round((time.monotonic() - t_run) * 1000), "director": ctl,
             "egress_non_loopback": sorted(egress.seen), "egress_samples": egress.samples,
+            "worker_rss_kib": [{"peak": max(v), "mean": round(sum(v) / len(v)), "n": len(v)} for v in egress.rss.values()],
             "args": {k: v for k, v in vars(a).items()}}, indent=1))
         log("done")
 

@@ -1,6 +1,6 @@
 """Ledger and secret checks for spike S6a. Prints counts only, never a matched value.
 
-    python3.14 verify.py <run-dir>...          # hash chain, blob integrity, role counts
+    python3.14 verify.py [--budget <budget.json>] <run-dir>...   # hash chain, blobs, roles, attempts
     upstream-env.sh python3.14 verify.py --scan <dir-or-file>...   # credential/endpoint scan
 """
 
@@ -19,7 +19,7 @@ from director import canon
 
 
 def check_ledger(run: Path) -> dict:
-    prev, roles, bad_chain, bad_blob, truncated, n = "0" * 64, collections.Counter(), 0, 0, 0, 0
+    prev, roles, bad_chain, bad_blob, truncated, n, attempts = "0" * 64, collections.Counter(), 0, 0, 0, 0, 0
     lines = (run / "ledger" / "ledger.jsonl").read_text().splitlines()
     for i, line in enumerate(lines):
         try:
@@ -34,13 +34,14 @@ def check_ledger(run: Path) -> dict:
             bad_chain += 1
         prev = h
         roles[f"{rec.get('type')}:{rec.get('role', '-')}"] += 1
+        attempts += sum(1 for u in rec.get("upstream", []) if u.get("category") != "budget_or_stop")
         for ref in [rec.get("req"), rec.get("resp")] + [u.get(k) for u in rec.get("upstream", []) for k in ("req", "resp")]:
             if ref:
                 p = run / "ledger" / "blobs" / ref[:2] / f"{ref}.json.zst"
                 if not p.exists() or hashlib.sha256(zstd.decompress(p.read_bytes())).hexdigest() != ref:
                     bad_blob += 1
     return {"run": run.name, "records": n, "chain_breaks": bad_chain, "truncated_tail": truncated,
-            "bad_blobs": bad_blob, "roles": dict(roles)}
+            "bad_blobs": bad_blob, "upstream_attempts": attempts, "roles": dict(roles)}
 
 
 def scan(paths: list[Path]) -> dict:
@@ -66,5 +67,9 @@ if __name__ == "__main__":
     if sys.argv[1] == "--scan":
         print(json.dumps(scan([Path(p) for p in sys.argv[2:]])))
     else:
-        for r in sys.argv[1:]:
-            print(json.dumps(check_ledger(Path(r))))
+        args, budget = sys.argv[1:], {}
+        if args[0] == "--budget":  # each run's recorded upstream attempts must equal its budgeted count
+            budget, args = json.loads(Path(args[1]).read_text())["by_run"], args[2:]
+        for r in map(Path, args):
+            res = check_ledger(r)
+            print(json.dumps(res | ({"budgeted": budget.get(r.name, 0)} if budget else {})))

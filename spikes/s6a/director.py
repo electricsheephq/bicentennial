@@ -18,6 +18,8 @@ import json
 import math
 import os
 import re
+import select
+import socket
 import subprocess
 import sys
 import threading
@@ -36,7 +38,9 @@ WRITE_SUFFIX = (
     "conversation so far is worth keeping in long-term memory for future sessions. If so, call the memory "
     "tool now. If not, reply with the single word: none. Any text you write here is discarded.")
 REVIEW_PREFIX = "Review the conversation above and"  # Hermes background-review fork (shape signature)
-FORWARD_KEYS = {"messages", "tools", "tool_choice", "temperature", "top_p", "max_tokens", "stop", "response_format"}
+# The declared wire adaptations (alias substitution, non-streaming). Every other harness key, such as
+# reasoning_effort, is forwarded unchanged unless the upstream rejects it by name (omitted, recorded).
+TRANSPORT_KEYS = {"model", "stream", "stream_options"}
 MSG_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
 
 
@@ -62,13 +66,13 @@ class Ledger:
         self.root, self.guard, self.lock = root, guard, threading.Lock()
         (root / "blobs").mkdir(parents=True, exist_ok=True)
         self.path, self.prev, self.seq = root / "ledger.jsonl", "0" * 64, 0
-        if self.path.exists():  # resume the chain after the last complete line
-            for line in self.path.read_text().splitlines():
-                try:
-                    rec = json.loads(line)
-                    self.prev, self.seq = rec["hash"], rec["seq"]
-                except (ValueError, KeyError):
-                    break
+        if self.path.exists():  # resume the chain only from an intact ledger; a torn tail fails closed
+            raw = self.path.read_text()
+            if raw and not raw.endswith("\n"):
+                raise SystemExit(f"{self.path}: last record is torn; refusing to resume this ledger")
+            for line in raw.splitlines():
+                rec = json.loads(line)
+                self.prev, self.seq = rec["hash"], rec["seq"]
 
     def blob(self, obj) -> str:
         data = self.guard.check(canon(obj))
@@ -167,7 +171,8 @@ class Director:
         self.pending: dict[str, dict] = {}  # director-issued write ids -> scripted turn
         self.lock, self.inflight, self.n_ids = threading.Lock(), 0, 0
         self.write_turns, self.measure_overhead = a.write_turns, a.measure_overhead
-        self.quota_streak, self.stopped = 0, False
+        self.quota_streak, self.stopped, self.write_failures = 0, False, 0
+        self.omit, self.rejections = set(), []  # keys the upstream rejected by name: omitted from then on
         self.rewrites = json.loads(Path(a.lane_rewrite).read_text()) if a.lane_rewrite else []
         self.url = os.environ.get("BICENTENNIAL_UPSTREAM_OPENAI_URL", "").rstrip("/") + "/chat/completions"
         self.key = os.environ.get("BICENTENNIAL_UPSTREAM_KEY", "")
@@ -178,6 +183,9 @@ class Director:
         for wait in (5, 15, None):
             up = self.upstream(body, kind)
             rec["upstream"].append(self._strip(up))
+            if up.get("category", "").startswith("param_rejected"):  # repeat once without the key
+                up = self.upstream(body, kind)
+                rec["upstream"].append(self._strip(up))
             if up["ok"] or up["category"] not in ("overload", "concurrency", "rate") or wait is None:
                 return up
             time.sleep(wait)
@@ -193,8 +201,8 @@ class Director:
         sub = {"kind": kind, "model": self.a.model, "marker": m, "glm_wait_s": waited, "load": os.getloadavg()}
         if self.stopped or m.get("glm") or not self.budget.take(self.a.run, kind):
             return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
-        wire = {k: v for k, v in body.items() if k in FORWARD_KEYS}
-        wire["messages"] = [{k: v for k, v in msg.items() if k in MSG_KEYS} for msg in body["messages"]]
+        wire = {k: v for k, v in body.items() if k not in TRANSPORT_KEYS | self.omit}
+        wire["messages"] = [{k: v for k, v in msg.items() if k not in self.omit} for msg in body["messages"]]
         n_rw = 0
         for msg in wire["messages"]:  # disclosed lane-compatibility rewrite (off unless --lane-rewrite)
             for old, new in self.rewrites:
@@ -203,8 +211,8 @@ class Director:
                     msg["content"] = msg["content"].replace(old, new)
         sub["lane_rewrites"] = n_rw
         wire.update(model=self.a.model, stream=False)
-        sub["dropped_keys"] = sorted(set(body) - FORWARD_KEYS - {"model", "stream"})
-        sub["req"] = self.ledger.blob(wire)
+        sub["dropped_keys"] = sorted(self.omit & (set(body) | {k for m in body["messages"] for k in m}))
+        sub["req"], sub["wire"] = self.ledger.blob(wire), wire
         if self.a.mode == "stub":
             return {**sub, **self._stub(wire, kind)}
         req = urllib.request.Request(self.url, data=json.dumps(wire).encode(), method="POST", headers={
@@ -215,7 +223,14 @@ class Director:
                 resp, status = json.loads(r.read()), r.status
         except urllib.error.HTTPError as e:
             text = e.read().decode("utf-8", "replace")
+            e.close()
             cat = refusal_category(e.code, text)
+            named = {k for k in set(wire) | {k for m in wire["messages"] for k in m} if k not in MSG_KEYS | {
+                "messages", "model", "stream", "tools"} and re.search(rf"(?<!\w){k}(?!\w)", text)}
+            if e.code == 400 and named:  # record the exact rejection; the caller repeats without the key
+                self.omit |= named
+                cat = "param_rejected:" + ",".join(sorted(named))
+                self.rejections.append({"keys": sorted(named), "status": e.code, "body_redacted": redact(text)})
             self._streak(cat)
             return {**sub, "status": e.code, "category": cat, "ok": False, "body_redacted": redact(text),
                     "t_ms": round((time.monotonic() - t0) * 1000)}
@@ -305,6 +320,9 @@ class Director:
         kind = {"summariser": "summariser", "probe_main": "probe"}.get(role, "aux")
         up = self.upstream(body, kind)
         rec["upstream"].append(self._strip(up))
+        if up.get("category", "").startswith("param_rejected"):  # repeat once without the key
+            up = self.upstream(body, kind)
+            rec["upstream"].append(self._strip(up))
         if not up["ok"]:
             code = up["status"] if up["status"] > 0 else 503
             return code, {"error": {"message": f"director: upstream refused ({up['category']})"}}, rec
@@ -319,13 +337,17 @@ class Director:
         wt = dict(body)
         wt["messages"] = list(body["messages"]) + [{"role": "user", "content": WRITE_SUFFIX}]
         wt["tools"] = [t for t in body.get("tools") or [] if t.get("function", {}).get("name") in WRITE_TOOLS]
-        rec["write_turn_readback"] = (wt["messages"][:-1] == body["messages"] and all(
-            t in body.get("tools", []) for t in wt["tools"]) and len(wt["tools"]) >= 1)
         if not wt["tools"]:
             return None
         up = self.upstream_retry(wt, "write_turn", rec)
+        # readback on the forwarded body: the harness request plus the suffix and the tool filter, with
+        # only the declared adaptations; an omitted (rejected) key fails it
+        expect = {k: v for k, v in body.items() if k not in TRANSPORT_KEYS}
+        rec["write_turn_readback"] = up.get("wire") == expect | {
+            "messages": wt["messages"], "tools": wt["tools"], "model": self.a.model, "stream": False}
         if not up["ok"]:
             rec["write_turn_failed"] = up["category"]
+            self.write_failures += 1  # the replay driver reads this and stops the run
             return None
         calls = [tc for tc in up["body"]["choices"][0]["message"].get("tool_calls") or []
                  if tc.get("function", {}).get("name") in WRITE_TOOLS]
@@ -344,7 +366,7 @@ class Director:
 
     @staticmethod
     def _strip(up: dict) -> dict:
-        return {k: v for k, v in up.items() if k != "body"}
+        return {k: v for k, v in up.items() if k not in ("body", "wire")}
 
     def _usage(self, body: dict, msg: dict) -> dict:
         pt = math.ceil(len(canon(body.get("messages")) + canon(body.get("tools") or [])) / self.a.chars_per_token)
@@ -413,7 +435,8 @@ def make_handler(d: Director):
             if self.path.startswith("http"):
                 return self.do_CONNECT()
             if self.path.startswith("/_control"):
-                return self._send(200, {"inflight": d.inflight, "cursor": d.cursor, "stopped": d.stopped})
+                return self._send(200, {"inflight": d.inflight, "cursor": d.cursor, "stopped": d.stopped,
+                                        "write_failures": d.write_failures, "param_rejections": d.rejections})
             ok = self.path.rstrip("/").endswith("/models")
             body = {"object": "list", "data": [{"id": m, "object": "model", "context_length": d.a.context_length}
                                                for m in d.a.aliases.split(",")]} if ok else {"error": "not found"}
@@ -436,16 +459,26 @@ def make_handler(d: Director):
             try:
                 body = json.loads(raw)
                 code, out, rec = d.handle(self.path, body)
-                self._send(code, out)
                 rec.update(req=d.ledger.blob(body), resp=d.ledger.blob(out), status=code)
             except Exception as e:
+                code, out = 500, {"error": {"message": "director error"}}
                 rec = {"role": "unknown", "subrole": f"director_error:{type(e).__name__}", "status": 500}
-                self._send(500, {"error": {"message": "director error"}})
+            try:  # the record is appended before any send, so a failed send can never lose it
+                r, _, _ = select.select([self.connection], [], [], 0)  # a client that already hung up reads b""
+                gone = bool(r) and self.connection.recv(1, socket.MSG_PEEK) == b""
+            except OSError:
+                gone = True
+            led = d.ledger.append({"type": "request", "run": d.a.run, "method": "POST", "path": self.path,
+                                   "incoming_auth_dropped": auth, "t": t0, "t_ms": round((time.time() - t0) * 1000),
+                                   "load": os.getloadavg(), "client_disconnected": gone, **rec})
+            try:
+                self._send(code, out)
+            except OSError as e:  # a hang-up after the check: noted, never a second request record
+                self.close_connection = True
+                d.ledger.append({"type": "send_error", "run": d.a.run, "request_seq": led["seq"],
+                                 "client_disconnected": True, "error": type(e).__name__, "t": time.time()})
             finally:
                 d.inflight -= 1
-            d.ledger.append({"type": "request", "run": d.a.run, "method": "POST", "path": self.path,
-                             "incoming_auth_dropped": auth, "t": t0, "t_ms": round((time.time() - t0) * 1000),
-                             "load": os.getloadavg(), **rec})
 
     return H
 
