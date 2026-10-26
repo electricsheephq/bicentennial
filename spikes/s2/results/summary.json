@@ -1,0 +1,976 @@
+{
+ "claude_code": {
+  "native-bun-preload": {
+   "context_files_loaded": 0,
+   "context_files_outside_isolation": 0,
+   "file_mtimes": {
+    "wall": 4
+   },
+   "files_with_run_timestamps": {
+    "config/.claude.json": {
+     "sim1": 3
+    },
+    "config/backups/.claude.json.backup.<ms>": {
+     "sim1": 1
+    },
+    "config/projects/<cwd>/<session>.jsonl": {
+     "sim1": 22,
+     "sim1_day": 3,
+     "sim2": 22,
+     "sim2_day": 3,
+     "wall": 8
+    }
+   },
+   "message_requests": 4,
+   "preload": "bun",
+   "prompt": {
+    "1": {
+     "expected": "2025-03-03",
+     "match": true,
+     "todays_date": [
+      "2025-03-03"
+     ],
+     "wall_day_strings": 2
+    },
+    "2": {
+     "expected": "2025-03-06",
+     "match": true,
+     "todays_date": [
+      "2025-03-06"
+     ],
+     "wall_day_strings": 2
+    }
+   },
+   "requests": 4,
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2025-03-03T09:00:00Z",
+     "wall_seconds": 2.8
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2025-03-06T09:00:00Z",
+     "wall_seconds": 2.3
+    }
+   ],
+   "tool_child_clocks": {
+    "child_node": {
+     "wall": 2
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   },
+   "transcripts_after_both_sessions": 2
+  },
+  "native-node-options": {
+   "context_files_loaded": 0,
+   "context_files_outside_isolation": 0,
+   "file_mtimes": {
+    "wall": 4
+   },
+   "files_with_run_timestamps": {
+    "config/.claude.json": {
+     "wall": 3
+    },
+    "config/backups/.claude.json.backup.<ms>": {
+     "wall": 1
+    },
+    "config/projects/<cwd>/<session>.jsonl": {
+     "sim1": 2,
+     "sim2": 2,
+     "wall": 48,
+     "wall_day": 6
+    }
+   },
+   "message_requests": 4,
+   "preload": "node",
+   "prompt": {
+    "1": {
+     "expected": "2025-03-03",
+     "match": false,
+     "todays_date": [
+      "2026-10-26"
+     ],
+     "wall_day_strings": 3
+    },
+    "2": {
+     "expected": "2025-03-06",
+     "match": false,
+     "todays_date": [
+      "2026-10-26"
+     ],
+     "wall_day_strings": 3
+    }
+   },
+   "requests": 4,
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2025-03-03T09:00:00Z",
+     "wall_seconds": 4.1
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2025-03-06T09:00:00Z",
+     "wall_seconds": 1.3
+    }
+   ],
+   "tool_child_clocks": {
+    "child_node": {
+     "sim": 2
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   },
+   "transcripts_after_both_sessions": 2
+  },
+  "node-control": {
+   "context_files_loaded": 0,
+   "context_files_outside_isolation": 0,
+   "file_mtimes": {
+    "sim1": 4
+   },
+   "files_with_run_timestamps": {
+    "config/.claude.json": {
+     "sim1": 1
+    },
+    "config/backups/.claude.json.backup.<ms>": {
+     "sim1": 1
+    },
+    "config/projects/<cwd>/<session>.jsonl": {
+     "sim1": 22
+    }
+   },
+   "message_requests": 4,
+   "preload": "none",
+   "prompt": {
+    "1": {
+     "expected": "2026-10-26",
+     "match": true,
+     "todays_date": [
+      "2026-10-26"
+     ],
+     "wall_day_strings": 4
+    },
+    "2": {
+     "expected": "2026-10-26",
+     "match": true,
+     "todays_date": [
+      "2026-10-26"
+     ],
+     "wall_day_strings": 4
+    }
+   },
+   "requests": 6,
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "non_loopback_endpoints": 0,
+     "sim_start": "wall",
+     "wall_seconds": 6.9
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "non_loopback_endpoints": 0,
+     "sim_start": "wall",
+     "wall_seconds": 3.8
+    }
+   ],
+   "tool_child_clocks": {
+    "child_node": {
+     "sim": 2
+    },
+    "wall_date": {
+     "sim": 2
+    }
+   },
+   "transcripts_after_both_sessions": 2
+  },
+  "node-future": {
+   "context_files_loaded": 0,
+   "context_files_outside_isolation": 0,
+   "file_mtimes": {
+    "wall": 4
+   },
+   "files_with_run_timestamps": {
+    "config/.claude.json": {
+     "sim1": 1
+    },
+    "config/backups/.claude.json.backup.<ms>": {
+     "sim1": 1
+    },
+    "config/projects/<cwd>/<session>.jsonl": {
+     "sim1": 9,
+     "sim2": 9,
+     "wall": 4
+    }
+   },
+   "message_requests": 4,
+   "preload": "node",
+   "prompt": {
+    "1": {
+     "expected": "2027-03-01",
+     "match": true,
+     "todays_date": [
+      "2027-03-01"
+     ],
+     "wall_day_strings": 1
+    },
+    "2": {
+     "expected": "2027-03-04",
+     "match": true,
+     "todays_date": [
+      "2027-03-04"
+     ],
+     "wall_day_strings": 1
+    }
+   },
+   "requests": 6,
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2027-03-01T09:00:00Z",
+     "wall_seconds": 5.1
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "non_loopback_endpoints": 1,
+     "sim_start": "2027-03-04T09:00:00Z",
+     "wall_seconds": 4.8
+    }
+   ],
+   "tool_child_clocks": {
+    "child_node": {
+     "sim": 2
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   },
+   "transcripts_after_both_sessions": 2
+  },
+  "node-past": {
+   "context_files_loaded": 0,
+   "context_files_outside_isolation": 0,
+   "file_mtimes": {
+    "wall": 4
+   },
+   "files_with_run_timestamps": {
+    "config/.claude.json": {
+     "sim1": 1
+    },
+    "config/backups/.claude.json.backup.<ms>": {
+     "sim1": 1
+    },
+    "config/projects/<cwd>/<session>.jsonl": {
+     "sim1": 9,
+     "sim2": 9,
+     "wall": 4
+    }
+   },
+   "message_requests": 4,
+   "preload": "node",
+   "prompt": {
+    "1": {
+     "expected": "2025-03-03",
+     "match": true,
+     "todays_date": [
+      "2025-03-03"
+     ],
+     "wall_day_strings": 1
+    },
+    "2": {
+     "expected": "2025-03-06",
+     "match": true,
+     "todays_date": [
+      "2025-03-06"
+     ],
+     "wall_day_strings": 1
+    }
+   },
+   "requests": 6,
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2025-03-03T09:00:00Z",
+     "wall_seconds": 6.7
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "non_loopback_endpoints": 0,
+     "sim_start": "2025-03-06T09:00:00Z",
+     "wall_seconds": 6.1
+    }
+   ],
+   "tool_child_clocks": {
+    "child_node": {
+     "sim": 2
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   },
+   "transcripts_after_both_sessions": 2
+  }
+ },
+ "hermes": {
+  "control": {
+   "file_mtimes": {
+    "other": 327,
+    "sim1": 27
+   },
+   "files_with_run_timestamps": {
+    ".skills_prompt_snapshot.json": {
+     "sim1": 68
+    },
+    "cache/local_endpoint_probes.json": {
+     "sim1": 1
+    },
+    "installs/ff7b4549053b002a/bootstrap/default.json": {
+     "sim1": 1
+    },
+    "logs/agent.log": {
+     "sim1": 135
+    },
+    "logs/errors.log": {
+     "sim1": 6
+    },
+    "source-checks/ff7b4549053b002a.json": {
+     "sim1": 2
+    },
+    "spawn-ledger.json": {
+     "sim1": 2
+    }
+   },
+   "guard_probe": {
+    "guards": {
+     "curator_claim": [
+      {
+       "at": "A",
+       "fresh_lock_taken_over": false
+      },
+      {
+       "at": "A+3d",
+       "fresh_lock_taken_over": false
+      }
+     ],
+     "curator_interval": {
+      "interval_hours": 168,
+      "sequence": [
+       {
+        "at": "A",
+        "should_run": false
+       }
+      ]
+     },
+     "metadata_cache_age": {
+      "fresh_file_age_seconds": 0.0
+     },
+     "scratch_prune": [
+      {
+       "at": "A",
+       "fresh_survived": true,
+       "old_pruned": true,
+       "removed": 1
+      },
+      {
+       "at": "A+3d",
+       "fresh_survived": true,
+       "old_pruned": true,
+       "removed": 1
+      }
+     ]
+    },
+    "offset_hours_sim_minus_wall": -0.0,
+    "shimmed": false
+   },
+   "other_dbs": [],
+   "passthrough": false,
+   "prompt": {
+    "1": {
+     "conversation_started": [
+      "Monday, October 26, 2026"
+     ],
+     "expected": "Monday, October 26, 2026",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "system": 3,
+      "tool": 2
+     }
+    },
+    "2": {
+     "conversation_started": [
+      "Monday, October 26, 2026"
+     ],
+     "expected": "Monday, October 26, 2026",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "system": 3,
+      "tool": 5
+     }
+    }
+   },
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "sim_start": "wall",
+     "wall_seconds": 120.5
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "sim_start": "wall",
+     "wall_seconds": 39.4
+    }
+   ],
+   "shim": false,
+   "state_db_columns": {
+    "messages.content": {
+     "sim1": 5
+    },
+    "messages.timestamp": {
+     "sim1": 12
+    },
+    "session_model_usage.first_seen": {
+     "sim1": 4
+    },
+    "session_model_usage.last_seen": {
+     "sim1": 4
+    },
+    "sessions.ended_at": {
+     "sim1": 2
+    },
+    "sessions.started_at": {
+     "sim1": 2
+    },
+    "state_meta.value": {
+     "sim1": 2
+    }
+   },
+   "state_db_now_in_schema": [],
+   "tool_child_clocks": {
+    "child_py": {
+     "sim": 2
+    },
+    "code_py": {
+     "sim": 1
+    },
+    "wall_date": {
+     "sim": 2
+    }
+   }
+  },
+  "future": {
+   "file_mtimes": {
+    "other": 327,
+    "wall": 27
+   },
+   "files_with_run_timestamps": {
+    ".skills_prompt_snapshot.json": {
+     "wall": 68
+    },
+    "cache/local_endpoint_probes.json": {
+     "sim2": 1
+    },
+    "installs/ff7b4549053b002a/bootstrap/default.json": {
+     "sim1": 1
+    },
+    "logs/agent.log": {
+     "sim1": 68,
+     "sim2": 66
+    },
+    "logs/errors.log": {
+     "sim1": 3,
+     "sim2": 2
+    },
+    "source-checks/ff7b4549053b002a.json": {
+     "sim2": 2
+    },
+    "spawn-ledger.json": {
+     "sim2": 1,
+     "wall": 1
+    }
+   },
+   "guard_probe": {
+    "guards": {
+     "curator_claim": [
+      {
+       "at": "A",
+       "fresh_lock_taken_over": true
+      },
+      {
+       "at": "A+3d",
+       "fresh_lock_taken_over": true
+      }
+     ],
+     "curator_interval": {
+      "interval_hours": 168,
+      "sequence": [
+       {
+        "at": "A",
+        "should_run": false
+       },
+       {
+        "at": "A+3d",
+        "should_run": false
+       },
+       {
+        "at": "A+8d",
+        "should_run": true
+       }
+      ]
+     },
+     "metadata_cache_age": {
+      "fresh_file_age_seconds": 11167070.8
+     },
+     "scratch_prune": [
+      {
+       "at": "A",
+       "fresh_survived": false,
+       "old_pruned": true,
+       "removed": 2
+      },
+      {
+       "at": "A+3d",
+       "fresh_survived": false,
+       "old_pruned": true,
+       "removed": 2
+      }
+     ]
+    },
+    "offset_hours_sim_minus_wall": 3029.97,
+    "shimmed": true
+   },
+   "other_dbs": [],
+   "passthrough": true,
+   "prompt": {
+    "1": {
+     "conversation_started": [
+      "Monday, March 01, 2027"
+     ],
+     "expected": "Monday, March 01, 2027",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "tool": 1
+     }
+    },
+    "2": {
+     "conversation_started": [
+      "Thursday, March 04, 2027"
+     ],
+     "expected": "Thursday, March 04, 2027",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "tool": 2
+     }
+    }
+   },
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "sim_start": "2027-03-01T09:00:00Z",
+     "wall_seconds": 71.7
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "sim_start": "2027-03-04T09:00:00Z",
+     "wall_seconds": 28.3
+    }
+   ],
+   "shim": true,
+   "state_db_columns": {
+    "messages.content": {
+     "sim1": 1,
+     "sim2": 2,
+     "wall": 2
+    },
+    "messages.timestamp": {
+     "sim1": 6,
+     "sim2": 6
+    },
+    "session_model_usage.first_seen": {
+     "sim1": 2,
+     "sim2": 2
+    },
+    "session_model_usage.last_seen": {
+     "sim1": 2,
+     "sim2": 2
+    },
+    "sessions.ended_at": {
+     "sim1": 1,
+     "sim2": 1
+    },
+    "sessions.started_at": {
+     "sim1": 1,
+     "sim2": 1
+    },
+    "state_meta.value": {
+     "sim1": 1,
+     "sim2": 1
+    }
+   },
+   "state_db_now_in_schema": [],
+   "tool_child_clocks": {
+    "child_py": {
+     "sim": 2
+    },
+    "code_py": {
+     "sim": 1
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   }
+  },
+  "past": {
+   "file_mtimes": {
+    "other": 327,
+    "wall": 27
+   },
+   "files_with_run_timestamps": {
+    ".skills_prompt_snapshot.json": {
+     "wall": 68
+    },
+    "cache/local_endpoint_probes.json": {
+     "sim2": 1
+    },
+    "installs/ff7b4549053b002a/bootstrap/default.json": {
+     "sim1": 1
+    },
+    "logs/agent.log": {
+     "sim1": 68,
+     "sim2": 66
+    },
+    "logs/errors.log": {
+     "sim1": 3,
+     "sim2": 2
+    },
+    "source-checks/ff7b4549053b002a.json": {
+     "sim2": 2
+    },
+    "spawn-ledger.json": {
+     "sim2": 1,
+     "wall": 1
+    }
+   },
+   "guard_probe": {
+    "guards": {
+     "curator_claim": [
+      {
+       "at": "A",
+       "fresh_lock_taken_over": false
+      },
+      {
+       "at": "A+3d",
+       "fresh_lock_taken_over": false
+      }
+     ],
+     "curator_interval": {
+      "interval_hours": 168,
+      "sequence": [
+       {
+        "at": "A",
+        "should_run": false
+       },
+       {
+        "at": "A+3d",
+        "should_run": false
+       },
+       {
+        "at": "A+8d",
+        "should_run": true
+       }
+      ]
+     },
+     "metadata_cache_age": {
+      "fresh_file_age_seconds": null
+     },
+     "scratch_prune": [
+      {
+       "at": "A",
+       "fresh_survived": true,
+       "old_pruned": true,
+       "removed": 1
+      },
+      {
+       "at": "A+3d",
+       "fresh_survived": true,
+       "old_pruned": true,
+       "removed": 1
+      }
+     ]
+    },
+    "offset_hours_sim_minus_wall": -14442.03,
+    "shimmed": true
+   },
+   "other_dbs": [],
+   "passthrough": true,
+   "prompt": {
+    "1": {
+     "conversation_started": [
+      "Monday, March 03, 2025"
+     ],
+     "expected": "Monday, March 03, 2025",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "tool": 1
+     }
+    },
+    "2": {
+     "conversation_started": [
+      "Thursday, March 06, 2025"
+     ],
+     "expected": "Thursday, March 06, 2025",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "tool": 2
+     }
+    }
+   },
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "sim_start": "2025-03-03T09:00:00Z",
+     "wall_seconds": 33.2
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "sim_start": "2025-03-06T09:00:00Z",
+     "wall_seconds": 27.1
+    }
+   ],
+   "shim": true,
+   "state_db_columns": {
+    "messages.content": {
+     "sim1": 1,
+     "sim2": 2,
+     "wall": 2
+    },
+    "messages.timestamp": {
+     "sim1": 6,
+     "sim2": 6
+    },
+    "session_model_usage.first_seen": {
+     "sim1": 2,
+     "sim2": 2
+    },
+    "session_model_usage.last_seen": {
+     "sim1": 2,
+     "sim2": 2
+    },
+    "sessions.ended_at": {
+     "sim1": 1,
+     "sim2": 1
+    },
+    "sessions.started_at": {
+     "sim1": 1,
+     "sim2": 1
+    },
+    "state_meta.value": {
+     "sim1": 1,
+     "sim2": 1
+    }
+   },
+   "state_db_now_in_schema": [],
+   "tool_child_clocks": {
+    "child_py": {
+     "sim": 2
+    },
+    "code_py": {
+     "sim": 1
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   }
+  },
+  "past-default": {
+   "file_mtimes": {
+    "other": 327,
+    "wall": 27
+   },
+   "files_with_run_timestamps": {
+    ".skills_prompt_snapshot.json": {
+     "wall": 68
+    },
+    "cache/local_endpoint_probes.json": {
+     "sim2": 1
+    },
+    "installs/ff7b4549053b002a/bootstrap/default.json": {
+     "sim1": 1
+    },
+    "logs/agent.log": {
+     "sim1": 68,
+     "sim2": 66
+    },
+    "logs/errors.log": {
+     "sim1": 3,
+     "sim2": 2
+    },
+    "source-checks/ff7b4549053b002a.json": {
+     "sim2": 2
+    },
+    "spawn-ledger.json": {
+     "sim2": 1,
+     "wall": 1
+    }
+   },
+   "other_dbs": [],
+   "passthrough": false,
+   "prompt": {
+    "1": {
+     "conversation_started": [
+      "Monday, March 03, 2025"
+     ],
+     "expected": "Monday, March 03, 2025",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "tool": 1
+     }
+    },
+    "2": {
+     "conversation_started": [
+      "Thursday, March 06, 2025"
+     ],
+     "expected": "Thursday, March 06, 2025",
+     "match": true,
+     "requests": 4,
+     "wall_date_strings_by_role": {
+      "tool": 3
+     }
+    }
+   },
+   "sessions": [
+    {
+     "exit": 0,
+     "index": 1,
+     "sim_start": "2025-03-03T09:00:00Z",
+     "wall_seconds": 22.4
+    },
+    {
+     "exit": 0,
+     "index": 2,
+     "sim_start": "2025-03-06T09:00:00Z",
+     "wall_seconds": 27.7
+    }
+   ],
+   "shim": true,
+   "state_db_columns": {
+    "messages.content": {
+     "sim1": 1,
+     "sim2": 1,
+     "wall": 3
+    },
+    "messages.timestamp": {
+     "sim1": 6,
+     "sim2": 6
+    },
+    "session_model_usage.first_seen": {
+     "sim1": 2,
+     "sim2": 2
+    },
+    "session_model_usage.last_seen": {
+     "sim1": 2,
+     "sim2": 2
+    },
+    "sessions.ended_at": {
+     "sim1": 1,
+     "sim2": 1
+    },
+    "sessions.started_at": {
+     "sim1": 1,
+     "sim2": 1
+    },
+    "state_meta.value": {
+     "sim1": 1,
+     "sim2": 1
+    }
+   },
+   "state_db_now_in_schema": [],
+   "tool_child_clocks": {
+    "child_py": {
+     "sim": 2
+    },
+    "code_py": {
+     "wall": 1
+    },
+    "wall_date": {
+     "wall": 2
+    }
+   }
+  }
+ },
+ "hermes_static_inventory": {
+  "files_scanned": 2528,
+  "mixed_clock_files": 28,
+  "mixed_clock_lines": 31,
+  "mixed_clock_modules": [
+   "agent/curator.py",
+   "agent/model_metadata.py",
+   "agent/models_dev.py",
+   "gateway/browser_control_artifacts.py",
+   "gateway/platforms/base.py",
+   "hermes_cli/_early_recovery.py",
+   "hermes_cli/memory_provider_migration.py",
+   "hermes_cli/plugin_catalog.py",
+   "hermes_cli/runtime_state.py",
+   "hermes_cli/terminal_breadcrumbs.py",
+   "hermes_cli/update_lock.py",
+   "hermes_cli/worktree_gc.py",
+   "hermes_cli/worktree_ops.py",
+   "hermes_constants.py",
+   "optional-skills/creative/meme-generation/scripts/generate_meme.py",
+   "optional-skills/research/osint-investigation/scripts/fetch_icij_offshore.py",
+   "optional-skills/security/unbroker/scripts/autopilot.py",
+   "optional-skills/security/unbroker/scripts/pdd.py",
+   "optional-skills/security/unbroker/scripts/storage.py",
+   "pm/download_state.py",
+   "scripts/code_health/py_rules_sleep.py",
+   "tools/bot_desktop/runtime.py",
+   "tools/bot_relay.py",
+   "tools/browser_use_cli.py",
+   "tools/code_kernel.py",
+   "tools/skills_hub.py",
+   "tools/voice_mode.py",
+   "tui_gateway/server.py"
+  ],
+  "monotonic_lines": 1142,
+  "sql_now": {
+   "hermes_cli/session_recovery.py": [
+    956
+   ]
+  },
+  "wall_read_lines": 1458
+ }
+}
