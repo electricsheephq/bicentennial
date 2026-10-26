@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anthropic_director as ad
 import mcp_fixture
 import run_s4
+import summarise
 
 UP_KEY = "up-key-0123456789-test"
 FOREIGN = "sk-foreign-credential-value-xyz"
@@ -220,6 +221,23 @@ def test_driver_paths_are_absolute_and_never_combine_runs(tmp_path, monkeypatch)
     (tmp_path / "ev" / "director-ledger.jsonl").write_text("{}\n")
     with pytest.raises(SystemExit):
         run_s4.fresh_paths("scratch", "ev")
+
+
+def test_summary_of_a_run_stopped_before_the_injected_429(tmp_path):
+    step = {k: None for k in ("mode", "marker_exit", "exit", "wall_s", "expected_tool", "check", "check_ok",
+                              "expected_tool_ok", "session", "context_window", "compact_boundaries", "mcp_servers",
+                              "num_turns")}
+    step |= {"step": "t1", "valid": False, "non_loopback_endpoints": 0, "tool_calls": [], "system_events": []}
+    (tmp_path / "run.json").write_text(json.dumps({"claude_version": "x", "model": "glm-5.3", "alias": "a",
+                                                   "steps": [step]}))
+    rec = {"run": "t1", "t": 1.0, "upstream": [], "status": 401, "path": "/v1/messages", "credential": "foreign",
+           "dropped_header_names": ["x-api-key"], "query_keys": []}
+    (tmp_path / "director-ledger.jsonl").write_text(json.dumps(rec) + "\n")
+    s = summarise.summary(tmp_path)
+    assert s["injected_429"] is None and s["valid_steps"] == 0 and s["statuses"] == {401: 1}
+    (tmp_path / "director-ledger.jsonl").write_text(json.dumps(dict(rec, injected_429=True, status=429)) + "\n")
+    assert summarise.summary(tmp_path)["injected_429"] == {"step": "t1", "next_request_after_s": None,
+                                                           "next_status": None}
 
 
 def test_metadata_user_id_dropped_unless_kept(up, tmp_path):

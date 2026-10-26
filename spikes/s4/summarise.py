@@ -52,8 +52,8 @@ def summary(ev: Path) -> dict:
                                      | {"upstream_status": [u["status"] for u in r["upstream"]],
                                         "role": "compaction" if s["step"] == "compact" else "main_turn"}
                                      for r in recs]})
-    inj = next(r for r in led if r.get("injected_429"))
-    nxt = next(r for r in led if r["t"] > inj["t"])
+    inj = next((r for r in led if r.get("injected_429")), None)  # a run can stop before the injection
+    nxt = next((r for r in led if r["t"] > inj["t"]), None) if inj else None
     up = [u for r in led for u in r["upstream"]]
     return {"claude_version": run["claude_version"], "upstream_model": run["model"], "harness_alias": run["alias"],
             "steps": steps, "valid_steps": sum(s["valid"] for s in steps), "n_steps": len(steps),
@@ -66,8 +66,8 @@ def summary(ev: Path) -> dict:
             "stripped_fields": sorted({k for r in led for k in r.get("stripped") or []}),
             "served_models": sorted({r.get("served_model") for r in led if r.get("served_model")}),
             "non_loopback_endpoints": sum(s["non_loopback_endpoints"] for s in steps),
-            "injected_429": {"step": inj["run"], "next_request_after_s": round(nxt["t"] - inj["t"], 2),
-                             "next_status": nxt["status"]}}
+            "injected_429": {"step": inj["run"], "next_request_after_s": round(nxt["t"] - inj["t"], 2) if nxt else None,
+                             "next_status": nxt["status"] if nxt else None} if inj else None}
 
 
 def model_b() -> dict:
