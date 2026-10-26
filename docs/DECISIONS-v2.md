@@ -14,7 +14,7 @@ The other documents cite these decisions as DV1-DV47. DV42 was decided on 2026-1
 - the paired confirmatory family (DESIGN §12, PREREG §7), except that DV47 computes each c_l within its life's block and adds a first-half and second-half sensitivity;
 - the sealed board and the developer/measurement split (DESIGN §9-§10);
 - the external scoring veto before PREREG-v1;
-- the 24-hour rule, until DV47 (design v2.2) replaced its contiguous window with the run-time rule at the owner's direction; every life still finishes within a day.
+- the 24-hour rule, until DV47 (design v2.2) replaced its contiguous window with the run-time rule at the owner's direction; every replaying (arm, life) still finishes within 24 h.
 
 Where v2.0 changes how a requirement is met, DESIGN says so and the pre-registration records it.
 
