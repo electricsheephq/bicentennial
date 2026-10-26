@@ -5,8 +5,9 @@
 A full run is a generated *life* of about 200 sessions in one evolving world. The headline comes from what the agent **does** in later sessions, checked against the world's state. Questions with citations stay as diagnostics. A confident false memory costs more than an honest "I don't remember".
 
 > **Status: pre-pilot.**
-> - Design v1.3 is done.
-> - **PREREG-v0 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.md`](prereg/FREEZE-v0.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964).
+> - Design v1.4 is done.
+> - **PREREG-v0.1 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.1.md`](prereg/FREEZE-v0.1.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964).
+> - **The 24-hour rule:** the hardest run, the full board for one system, finishes within a day.
 > - Spikes S1-S7 are under way.
 > - There is no benchmark code and there are no results yet.
 
@@ -41,8 +42,8 @@ Every failure is attributed to the stage that broke: stored, survived, retrieved
 - a seasonal robustness study: fault reruns, the storage-budget curve, a model-swap comparator, and a second agent family.
 
 ## Documents
-- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v1.3).
-- [`prereg/PREREG-v0.md`](prereg/PREREG-v0.md): the pre-registration. It is the only normative source for frozen quantities.
+- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v1.4).
+- [`prereg/PREREG-v0.1.md`](prereg/PREREG-v0.1.md): the pre-registration (the superseded v0 is kept beside it). It is the only normative source for frozen quantities.
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to.
 - [`docs/REVIEW-SUMMARY.md`](docs/REVIEW-SUMMARY.md): the adversarial reviews and what they changed.
 - [`docs/genres/`](docs/genres/): the life generators, G1 software partner and G2 personal assistant.

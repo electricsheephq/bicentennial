@@ -34,6 +34,10 @@ Bicentennial is its own product, with its own repository, releases and site. Its
   - no claim of rank without separation.
 - **Gate:** the leaderboard is published only after the v1.0 board exists. Until then the site carries the method, the developer docs and the roadmap.
 
+## Papers
+- **The Bicentennial paper.** The method, the validity evidence (filters, audits, known-order ablations, dev-predicts-full) and the season-1 board. Planned with v1.0.
+- **Papers about memory systems evaluated on Bicentennial,** LCM-X's among them. They use only published, sealed board runs, and disclose that LCM-X and the benchmark share maintainers. The firewall rules apply unchanged.
+
 ## Standing rules
 - **Firewall:** the benchmark never advises on LCM-X internals. LCM-X runs under the same rules as every system, and its developers never see held-out seeds or keys.
 - **Spend:** reported on every run.

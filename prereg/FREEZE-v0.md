@@ -7,7 +7,7 @@
 | `prereg/PREREG-v0.md` sha256 | `c942ba9d130a2c0c65091a3d2925fca0db7f2d136030ea55d71045ef809cc818` |
 | `docs/DESIGN.md` (design v1.3) sha256 | `8e0cd70c83c28dff80ce5de4b6cd97175612506c51c0c6f26f04ff63b8de929d` |
 | Approved by | the benchmark session, under the owner's grant of 2026-10-26 |
-| Owner co-sign | requested on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964); its link is added here once given |
+| Owner co-sign | none: superseded by PREREG-v0.1 before co-sign (`prereg/FREEZE-v0.1.md`) |
 | Completion record | pending: slots C-1 to C-10, in `prereg/PREREG-v0-completion.md`, committed before any real memory system's first pilot run |
 | External scoring veto | to be recruited before PREREG-v1 |
 

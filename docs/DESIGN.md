@@ -1,14 +1,15 @@
-# Bicentennial: a benchmark of memory for long-lived agents — design v1.3
+# Bicentennial: a benchmark of memory for long-lived agents — design v1.4
 
-Status: design v1.3, 2026-10-26. It was revised after three adversarial review rounds and a closure check. Every finding has a recorded disposition in `docs/REVIEW-SUMMARY.md`:
+Status: design v1.4, 2026-10-26. It was revised after three adversarial review rounds and a closure check. Every finding has a recorded disposition in `docs/REVIEW-SUMMARY.md`:
 - **Round 1:** two independent reviewers, 98 findings.
 - **Round 2:** a targeted readback, 8 findings.
 - **Round 3:** a final readback by Astra and an Opus panel.
 - **v1.3:** a first-principles cost review at the owner's request (`docs/REVIEW-SUMMARY.md`, decisions D-01 to D-21). It split developer tiers from the runs of record, and the core board from a seasonal robustness study.
+- **v1.4:** the **24-hour rule**, at the owner's direction. The hardest run (the full board for one system) finishes within 24 h of wall-clock time. A benchmark that takes days is rarely run, so it cannot drive improvement (PREREG-v0.1 §11).
 
 PREREG-v0 was frozen on 2026-10-26 by the benchmark session, with the owner's co-sign (§16).
 
-**Precedence:** `prereg/PREREG-v0.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
+**Precedence:** `prereg/PREREG-v0.1.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
 
 The numbers marked *(pre-reg)* freeze twice:
 - in `PREREG-v0`, before the first real-system pilot run;
@@ -945,7 +946,7 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 
 | | v1.2 | Now |
 |---|---|---|
-| Per system on the board | about 4,600-6,700 sequential h | about 360-430 sequential h: ≤ 96 h at 4-5 jobs that mostly wait on models |
+| Per system on the board | about 4,600-6,700 sequential h | about 360-430 sequential h: ≤ 24 h at about 16-20 concurrent jobs, with about 5 assistant turns per scripted session so each life's write-turn chain stays near 3 h |
 | First board of a season, 5 real systems plus controls | about 171 machine-days | about 19 machine-days at 8 jobs |
 | A delta board, with the previous version re-run alongside | — | about 3-4 machine-days |
 | An extraction competitor on its vendor's models, per board | about $2-5K | about $0.1-0.3K |
@@ -958,7 +959,7 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 - **Family-B terms** are measured on one life, or taken as family A's costs × the price ratio.
 
 **Ceilings and cuts** are in PREREG §11:
-- the board and the robustness study: ≤ 96 h, ≤ $300, ≤ 3B input and ≤ 100M output per system each;
+- the board and the robustness study: **≤ 24 h wall clock** (the 24-hour rule), ≤ $300, ≤ 3B input and ≤ 100M output per system each;
 - the bar-1 run: ≤ 8 h for all arms;
 - the bar-2 run: ≤ 8 h per real system;
 - the calibration set: ≤ 24 h.
@@ -1007,7 +1008,7 @@ If the projection still does not fit, the design returns to the owner.
 
 | Phase | Content | Done when |
 |---|---|---|
-| 0 (by about 2026-11-09) | survey, taxonomy, threat model, this design, three review rounds (Astra and an independent Opus red-team in round 1; targeted readbacks in rounds 2 and 3), a closure check, and the first-principles cost review | design v1.3 and PREREG-v0 approved; any overrun posted on #1964, with the cuts |
+| 0 (by about 2026-11-09) | survey, taxonomy, threat model, this design, three review rounds (Astra and an independent Opus red-team in round 1; targeted readbacks in rounds 2 and 3), a closure check, and the first-principles cost review | design v1.4 and PREREG-v0.1 approved; any overrun posted on #1964, with the cuts |
 | Spikes | S1 role classification; S2 clocks; S3 clones, including parallel per-worker sandbox roots; S4 Claude Code against the director, which also names model B; S5 surfaces and entrypoints; **S6a one 10-session micro-life**; **S6 one full-scale life**, dense ~2M and the same seed at ~5M, uncapped and at 10%; **S7 write turns**, plus the passive-pacing check | S6a and S6 measurements in hand for bar 5; S7 shows agent-curated memory working in replay, with the write-turn boundary confirmed by readback |
 | Pilot (timebox 3 weeks from approval, posted on #1964) | Developer tiers T0 and T1 first, then T2, T3 and the fault finder. The calibration set, then the bar-1 and bar-2 runs of record. G1 and G2, both evaluations. The roster: both LCM-X releases, Hermes native, ≥ 2 external self-hosted competitors, and every §8 control. Wake, Drift, Tuesday, Rachael and Keep; Flatten as a diagnostic | the bars below |
 | Pre-registration | PREREG-v1 approved and committed | before any full-tier run |
@@ -1038,8 +1039,8 @@ If the projection still does not fit, the design returns to the owner.
 
 **When bars fail:**
 - **Ordinary inclusion vs the failed-pilot fallback.** "A track that is hard for everyone stays in" governs ordinary inclusion. The addendum's exit rule is a separate fallback, which fires when the bar 1 companion or bar 2 fails. Bicentennial then narrows before Phase 1 is built:
-  - **The candidate.** It keeps the tracks where oracle evidence separates from the no-memory floor and at least one pair excluding both LCM-X releases separates. They are written down as PREREG-v0.1, computed without LCM-X.
-  - **Fresh evaluation.** The selecting pilot cannot also prove the narrowed design. PREREG-v0.1 needs a fresh, frozen acceptance run of bars 1-5 on new public seeds that played no part in the selection.
+  - **The candidate.** It keeps the tracks where oracle evidence separates from the no-memory floor and at least one pair excluding both LCM-X releases separates. They are written down as PREREG-v0-narrowed, computed without LCM-X.
+  - **Fresh evaluation.** The selecting pilot cannot also prove the narrowed design. PREREG-v0-narrowed needs a fresh, frozen acceptance run of bars 1-5 on new public seeds that played no part in the selection.
 - **Only bar 1's main test fails** (the companion passes): the instrument is valid, and LCM-X did not separate from no-memory. This is reported on #1964 and escalated to the owner. It never triggers a redesign keyed to LCM-X.
 - **Bar 3, 4 or 5 fails:**
   - the fixes are the redesign path for invalid tracks (§5.3), the gate remedy, and the cost cut order;
