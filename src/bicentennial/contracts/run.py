@@ -11,6 +11,7 @@ from pathlib import Path
 from bicentennial.canon import canon
 
 SCHEMAS = Path(__file__).resolve().parents[3] / "schemas"
+_MASK_PATH = re.compile(r"\$(?:\.\.?[A-Za-z_][A-Za-z0-9_]*|\[\*\])+")
 NAMES = {"script", "ledger-record", "masks", "route-table", "fault-lite",
          "system", "surfaces", "lock"}
 FORBIDDEN = {"event_id", "fact_id", "fact_ids", "gold", "gold_spans",
@@ -120,3 +121,6 @@ def validate(name, obj) -> None:
                 raise ValueError("LCM-X cannot run under the benchmark operator")
     elif name == "masks":
         _unique([entry["name"] for entry in obj], "masks")
+        for entry in obj:
+            if entry["kind"] == "jsonpath" and not _MASK_PATH.fullmatch(entry["target"]):
+                raise ValueError(f"mask {entry['name']}: only $, .name, ..name and [*] segments")

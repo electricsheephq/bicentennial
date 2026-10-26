@@ -285,8 +285,15 @@ def test_masks_cover_required_categories_and_exclude_director_tool_ids():
     for entry in masks:
         if entry["placeholder"] in {"{HERMES_SESSION_ID}", "{HARNESS_TOOL_CALL_ID}",
                                     "{HARNESS_RESPONSE_ID}"}:
-            assert '!match(' in entry["target"] and '"bcw-.*"' in entry["target"]
+            assert entry["except_prefix"] == "bcw-"
         assert entry["target"] != "bcw-"
         assert not entry["placeholder"].startswith("bcw-")
     assert [m["target"] for m in masks if m["kind"] == "literal"] == [
         "{SANDBOX_ROOT}", "{DIRECTOR_PORT}"]
+
+
+@pytest.mark.parametrize("target", ['$[?(@ == $.id)]', '$..[?(@.x)].y', 'session_id', '$.a b'])
+def test_mask_targets_outside_the_path_subset_are_refused(target):
+    masks = [{"name": "m", "kind": "jsonpath", "target": target, "placeholder": "{X}"}]
+    with pytest.raises(ValueError):
+        validate("masks", masks)
