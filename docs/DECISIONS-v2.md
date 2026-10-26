@@ -1,8 +1,8 @@
-# Design v2.0: the decision record
+# Design v2.0 and v2.1: the decision record
 
-**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.2.md`](../prereg/PREREG-v0.2.md)) is the only normative source for frozen quantities. PREREG-v0.2 is frozen. Its hash is in [`prereg/FREEZE-v0.2.md`](../prereg/FREEZE-v0.2.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964) for the owner's co-sign.
+**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.3.md`](../prereg/PREREG-v0.3.md)) is the only normative source for frozen quantities. PREREG-v0.3 is frozen and supersedes PREREG-v0.2. Its hash is in [`prereg/FREEZE-v0.3.md`](../prereg/FREEZE-v0.3.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). Design v2.1 adds DV42, decided by the benchmark session under the owner's grant of 2026-10-26.
 
-The other documents cite these decisions as DV1-DV46. DV42 is reserved. Section references (DESIGN §, PREREG §) are to the v2.0 design and PREREG-v0.2.
+The other documents cite these decisions as DV1-DV46. DV42 was decided on 2026-10-26, after spike S6b, in design v2.1. Section references (DESIGN §, PREREG §) are to design v2.1 and PREREG-v0.3; v2.1 changes only DV42's passages.
 
 **What does not change:**
 - the north star and the firewall (DESIGN §1, §14);
@@ -198,9 +198,9 @@ Spatial memory waits for E1 (DV15).
 - **Our claim to earn:** memory inside a real harness across a life, judged on actions, covering governance, with a fast diagnostic loop.
 - **Never claimed:** firstness, multimodal novelty, or superiority before results.
 
-**DV18. The 24-hour rule is sized by measured concurrency** of the pinned agent family's model lane (C-11, measured by S6a on the GLM lane or by S6b on a Sol lane; DV42 sets which lane is pinned), with the busy-marker `glm` pause for any GLM-plan use.
+**DV18. The 24-hour rule is sized by measured capacity** of the pinned agent family's model lane (C-11, measured by S6a on the GLM lane or by S6b on a Sol lane; DV42 pins the Sol lane, where a per-account request rate binds), with the busy-marker `glm` pause for any GLM-plan use.
 - The token ceilings of PREREG §11 are **report-only**.
-- Bar 5 reads "fits the 24-hour rule at measured concurrency", and also checks the paid-lane spend and wall-time ceilings (DV32).
+- Bar 5 reads "fits the 24-hour rule at the measured sustainable capacity", and also checks the paid-lane spend and wall-time ceilings (DV32).
 - There is no credits slot.
 
 **DV19. PREREG-v0.2 carries five amendments:** long sprints by count (A1); the Wake claim contract (A2); per-item accuracy reported (A3); added turn latency (A4); G1 task completion (A5). A3 reads: the launch measurement "best below about 60%" is taken on per-item action accuracy and disclosed beside the penalised score; it is measured and published whatever its value, never a release condition, and it is not tuned toward (DV31, DV34).
@@ -238,7 +238,7 @@ Spatial memory waits for E1 (DV15).
 - The benchmark runs nothing on LCM-X beyond the scheduled runs every system gets, and never advises on its internals.
 
 **DV24. Process.**
-- PREREG-v0.2 freezes the **rules**, not per-season contents (the census, community templates).
+- PREREG, from v0.2 on, freezes the **rules**, not per-season contents (the census, community templates).
 - DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1.
 - Each changed requirement gets its DESIGN note.
 
@@ -371,7 +371,24 @@ Spatial memory waits for E1 (DV15).
 - **README's freeze status, date and link:** filled by the benchmark maintainers at the v0.2 freeze.
 - **This record:** published after the owner's review on 2026-10-26 (DV33).
 
-**DV42.** Reserved for the pinned agent family's model lane, decided after a measurement spike of its sustained concurrency and latency.
+**DV42. The pinned agent family is OpenAI: gpt-6.1-sol at reasoning effort medium** (decided 2026-10-26 after spike S6b: the selection rule preceded the deciding soak; its capacity interpretation was revised after the soak exposed a request-rate limit, and before the latency comparison and board projection).
+- **Lane:** the Codex Responses wire through the director, on dedicated benchmark accounts. Outside runners use the public Responses API with the same model and effort.
+- **The evidence** (spike S6b):
+  - **End to end:** a 64-turn write run through the director completed every turn, with no auth failure, rate refusal or overload.
+  - **Capacity:** the binding limit is a per-account request rate, not concurrency. Rate refusals came after 200 requests within a fixed 60 s window (an inference from the soak's timing). The sustainable rate R_s is 180 requests per minute per account, a planning value that a paced soak confirms before the pilot.
+  - **The projected 24-hour fit** (PREREG §11): on two accounts, the full core board at n_L = 48 fits uncut at the concurrency two accounts sustain at R_s (about 42), with a margin of about 12 hours; at a concurrency of 20 it would not. On one account it misses uncut by about 0.4 hours, and fits with cuts 1-2 with a margin of about 4 hours. The one-account verdicts are sensitive to the probe cost per turn; the two-account fit holds up to more than three times the measured probe cost. The two-account projection remains conditional on the two-account paced soak. The present estimates rest on four probe turns and one long session's two compaction calls, and the probe turns' own calls are about 37% of projected requests.
+  - **The run of record** is the second micro-life run on the director with the usage fix. An earlier run under-reported prompt size to the agent, which delayed a compaction; it is superseded and disclosed. The GLM lane, at its measured concurrency of 8, fits no tested board even with cuts.
+  - **Latency:** on matched write turns, Sol's median was 3.1 s, against 6.1 s on the GLM lane.
+  - **Quota:** no measurable burn at the account's 1% reporting resolution over about 690 requests. These readings do not establish that a board fits one weekly quota window. The original quota-sufficiency criterion was not demonstrated; the decision accepts that limitation with an 80% weekly stop and spare dedicated accounts.
+- **The §11 24-hour decision:** the plan of record is n_L = 48, uncut, on two benchmark accounts. The fallback, on one account, follows the §11 cut order: cuts 1-2, with cut 3 if the paced soak does not confirm their margin. Under PREREG §11, a cut that leaves a season below the certification rule's powered size (§7) issues no certificate that season.
+- **GLM (Zhipu)** becomes the replication family and the swap model (C-2). The Claude Code harness sub-row runs on GLM through the Anthropic-compatible endpoint, labelled "replication family", and stays outside the headline.
+- **Consequences, carried by PREREG-v0.3:**
+  - the blind panel becomes Anthropic, Zhipu and one paid third family, because the pinned family is never on the panel (C-3: a family other than Anthropic, OpenAI and Zhipu);
+  - C-11 becomes the lane's sustainable capacity per account (its sustained concurrency, or its paced request rate where a request rate binds), with the number of accounts;
+  - the judge rule is unchanged (DESIGN §7: two pinned judges from different families, neither used by any tested agent), and now gives Anthropic plus one family no tested agent uses;
+  - the tuning disclosure becomes generic: the card states the family that LCM-X's public release notes say its thresholds were tuned on, and whether it is the pinned family.
+- **Required before the pilot:** the director paces each account at R_s; a paced soak of at least 10 minutes with no rate refusal on the account count the plan uses (two for the uncut plan), also measuring probe cost at scale before the projection is confirmed; the quota monitor; and the director never forwards upstream error text to the agent, so a harness cannot sideline its own credential.
+- **The firewall holds:** every input is a spike measurement of cost, timing or capacity. No slot is filled from any real system's score.
 
 **DV43. Failure attribution follows cause, not reporter.**
 - A failure the contestant causes stays **SYSTEM_FAILURE** even when the director, runner or sandbox reports it: a crash, a timeout inside the declared limits, an out-of-contract request, a resource-limit violation or a refusal.
@@ -386,4 +403,4 @@ Spatial memory waits for E1 (DV15).
 
 ## Owner decisions
 - **Approved on 2026-10-26:** design v2.0, and the vision budget of about $50 a season (DV9).
-- **Still open:** the 24-hour decision of PREREG §11. It comes once S6a's and S6b's measurements are in and DV42 sets the pinned lane.
+- **Decided by the benchmark session on 2026-10-26, under the owner's grant:** the 24-hour decision of PREREG §11, through DV42. The plan of record is n_L = 48, uncut, on two benchmark accounts, with the §11 cut order on one account as the fallback.
