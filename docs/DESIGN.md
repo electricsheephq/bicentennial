@@ -1134,7 +1134,7 @@ v1.4's frontier tier is gone. Its parts move to three places:
 - reinspecting an original at question time is allowed only if the stack retained it, and it is charged;
 - native-routing *system* rows are reported separately from *memory-layer* rows.
 
-**The vision slot.** It goes in the route table (§6.2c) and completion slot C-1. A pinned vision reader serves the memory-layer view. Its spend is listed with the paid rows (§13): about $50 a season, the owner's call at the PREREG-v0.2 co-sign.
+**The vision slot.** It goes in the route table (§6.2c) and completion slot C-1. A pinned vision reader serves the memory-layer view. Its spend is listed with the paid rows (§13): about $50 a season, approved by the owner on 2026-10-26.
 
 **Baselines:**
 - the no-memory floor;
@@ -1372,7 +1372,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 **Lanes.**
 - Readers, summarisers and renderers run on subscription lanes first.
 - Paid rows are labelled and capped: the third blind-panel family, extraction competitors' vendor models, the replication family, and the pinned vision reader (§11.1).
-- **The vision slot's cost** is about $50 a season, the owner's call at the PREREG-v0.2 co-sign.
+- **The vision slot's cost** is about $50 a season, approved by the owner on 2026-10-26.
 - Every run reports its spend, and its tokens by role.
 
 ## 14. Firewall and credibility
@@ -1487,7 +1487,7 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 - external partners: the external reviewer, vendor configuration windows and the human grader pool;
 - sealing infrastructure (§10);
 - spend above the standing limits (§13 paid rows);
-- the vision budget, about $50 a season, at the PREREG-v0.2 co-sign (§11.1).
+- the vision budget: about $50 a season, approved on 2026-10-26 (§11.1).
 
 ## 17. Open questions (for the spikes and the pilot)
 1. **Hermes entrypoint:** can its documented production entrypoint be driven deterministically by the director, or does the pilot fall back to the CLI, with disclosure? (Spike S5.)

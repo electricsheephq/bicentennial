@@ -14,7 +14,7 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 
    Each image carries an **exposure manifest**: every value that is legible and unoccluded in the image, with its bounding box. Gold questions may use only manifest values. Presentation (font, theme, layout, colour) is randomised from its own seed, independently of the gold values.
    - **Fidelity checks** (joining the design's render checks): a manifest verifier, which checks each manifest value is drawn as recorded, and a human-key sample covering legibility. The design's thresholds are manifest-verifier recall ≥ 0.99 against a 200-item human-key sample, and human legibility ≥ 95%; the spike reports against them.
-2. **Delivery into a life.** A 6-session micro-life in the G1 genre, scripted as in S6a. Three images arrive in session 2: one as a user attachment, one as a tool observation (the env server's `screen` tool), one as a workspace file. Questions come in session 6. Each question asks about a detail that the session-2 conversation never mentions.
+2. **Delivery into a life.** Ten seeded 6-session micro-lives in the G1 genre, scripted as in S6a, so each mode gets at least 30 base questions plus their twins. Three images arrive in session 2: one as a user attachment, one as a tool observation (the env server's `screen` tool), one as a workspace file. Questions come in session 6. Each question asks about a detail that the session-2 conversation never mentions.
    - **Typed answer envelopes:** every question has an exact or structured answer type first (a number, a string from the manifest, a list), so no judge is needed for the spike's items.
 3. **Routing through Hermes v0.22.2** (the pinned clone), in both of `agent/image_routing.py`'s modes:
    - **text mode:** the main model stays text-only (GLM), and Hermes' `vision_analyze` describes the image through the auxiliary vision provider. The director pins and records that provider. This is the **memory-layer view**;
@@ -46,13 +46,20 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 - Direct-evidence accuracy per mode, which measures perception, and the N/A_READER count.
 - Delayed accuracy after 4 sessions per mode, against the no-memory floor, naive RAG, stylistically matched twins and shuffled history.
 - Detail retention in text-mode descriptions: the share of asked values present in the description.
-- Cost and latency per vision call, cache hit rate, reinspections and their charge, and projected vision spend per season under the design (about $50 a season, which is the owner's call at the PREREG-v0.2 co-sign). These fill the design's cost term for the Image profile's two views.
+- Cost and latency per vision call, cache hit rate, reinspections and their charge, and projected vision spend per season under the design (about $50 a season, approved by the owner on 2026-10-26). These fill the design's cost term for the Image profile's two views.
 - Each row's stack identity: memory, harness, model, the vision provider and spend.
 - Whether presentation alone predicts any answer: the twin, shuffled-history and held-out-style results.
 - The fidelity checks: manifest verifier results and the human-key legibility sample.
 
 ## Done when
-`spikes/s8/REPORT.md` gives each measurement with its sample size, and every mode × channel pair (user attachment, `screen` tool observation, workspace file) routes its image through the director with the ledger showing every request classified and none unknown. The Image profile is admitted to Ring 0 when every mode × channel pair routes, direct evidence clears the no-memory floor, and shuffled history does not.
+`spikes/s8/REPORT.md` gives each measurement with its sample size, and every mode × channel pair (user attachment, `screen` tool observation, workspace file) routes its image through the director with the ledger showing every request classified and none unknown. **Admission to Ring 0.** This is a feasibility gate for the developer packs only, never a board rule. A mode is admitted when all of these hold:
+1. **Fidelity first.** The manifest verifier's recall is ≥ 0.99 against the 200-item human-key sample, and human legibility is ≥ 95%. Otherwise the renderer is fixed and re-run, and no mode is admitted.
+2. **Sample size.** At least 30 base questions in the mode, from at least 10 lives; twins are counted separately.
+3. **The reader can perceive.** At most 20% of the mode's items are N/A_READER. N/A_READER items leave the delayed comparison, and their count is reported. A mode above 20% is not admitted, because it would measure perception, not memory.
+4. **Direct evidence clears the floor.** The one-sided 95% lower bound of (direct-evidence accuracy − no-memory accuracy) is at least 30 percentage points.
+5. **Shuffled history does not clear it.** The one-sided 95% upper bound of (shuffled-history accuracy − no-memory accuracy) is at most 10 points. Otherwise a shortcut exists, and the twins or presentation are redesigned.
+
+Bounds come from a cluster bootstrap over lives (10,000 draws), because items within a life are correlated. The Image profile is admitted to Ring 0 when every mode × channel pair routes and both modes are admitted. A mode that fails is reported with its numbers, and the profile stays "pending".
 
 ## Does not prove
 - Anything about any memory system's quality.

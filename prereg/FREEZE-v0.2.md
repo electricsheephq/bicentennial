@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | Version | PREREG-v0.2, the pilot pre-registration (text) for design v2.0. It supersedes PREREG-v0.1, which was never co-signed. |
-| Frozen at | 2026-10-26T06:57:32Z |
+| Frozen at | 2026-10-26T07:05:40Z |
 | `prereg/PREREG-v0.2.md` sha256 | `b2940d58bace1e1a4f5314e48cd49ec98eb430e7efc2a4f706af61c90ef886ba` |
-| `docs/DESIGN.md` (design v2.0) sha256 | `a3353d94023f77edb4f2be05b39117015964ea79a4695d602edeb154cc622195` |
+| `docs/DESIGN.md` (design v2.0) sha256 | `af005de755dbb84d52a88dccf34399b6521b08ebc8976d1082d016c83b92f9de` |
 | What changed from v0.1 | design v2.0's capability map; certification on Act only; developer rings; the Image profile; per-item action accuracy; failure attribution by cause; the five amendments; the 24-hour rule sized on the pinned family's lane (see `prereg/CHANGELOG.md`) |
 | Decision record | `docs/DECISIONS-v2.md`, DV1-DV46 (DV42 reserved: the pinned family's model lane, set after spike S6b) |
 | Tag | `prereg-v0.2`, on the commit that adds this record's final text; the commit SHA is posted on lcm-x #1964 |

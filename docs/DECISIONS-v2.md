@@ -125,7 +125,7 @@ Spatial memory waits for E1 (DV15).
   - caches reuse identical authorised calls only and never grant new evidence;
   - reinspecting an original at question time is allowed only if the stack retained it, and it is charged;
   - native-routing *system* rows are reported separately from *memory-layer* rows.
-- **The vision slot.** It goes in the route table and C-1. A pinned vision reader serves the memory-layer view; spend is listed with the paid rows (DESIGN §13). The vision provider is pinned separately, so a model swap does not move it (DV33). Cost is about $50 a season, the owner's call at the v0.2 co-sign.
+- **The vision slot.** It goes in the route table and C-1. A pinned vision reader serves the memory-layer view; spend is listed with the paid rows (DESIGN §13). The vision provider is pinned separately, so a model swap does not move it (DV33). Cost is about $50 a season, approved by the owner on 2026-10-26.
 - **Baselines:** the no-memory floor; the oracle ceiling (the direct-evidence control: the original image handed over at question time); and naive RAG over the stack's own descriptions. Answers use typed envelopes (exact or structured first).
 - **Shortcut checks:**
   - presentation randomised independently of gold;
