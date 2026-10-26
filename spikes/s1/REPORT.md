@@ -23,7 +23,7 @@
 | `claude_task_notification` | Claude Code | last user message, 55 chars | continuation of the current turn |
 | `codex_compact` | Codex | last user message, 50 chars | compaction |
 
-- **Labels.** Each director ledger already records its own role and subrole, and those labels are the expected roles. The fresh Claude Code and Codex captures have no director, so their 5 non-main requests were labelled by hand from the capture (the evidence script lists them by sequence number). Each labelling was then checked against the harness's own compaction markers.
+- **Labels.** Each director ledger already records its own role and subrole, and those labels are the expected roles. The fresh Claude Code and Codex captures have no director, so their 6 non-main requests were labelled by hand from the capture (the evidence script lists them by sequence number). Each labelling was then checked against the harness's own compaction markers.
 - **Recorded evidence, offline.**
   - S6a `r6-write` (Hermes on the chat-completions wire) and S6b `r7c-write` (Hermes on the Responses wire): every request.
   - S6b `a2`-`a5` live smokes. The `a2`-`a4` ledgers hold only their 6 metadata probes each, because the S6b director's credential guard stopped those runs before any turn was recorded.
