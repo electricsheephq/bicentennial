@@ -1,0 +1,392 @@
+{
+ "genre": "G1 software partner",
+ "seed": 6101,
+ "project": "tidewater",
+ "synthetic": true,
+ "facts": [
+  {
+   "id": "F1",
+   "session": 1,
+   "kind": "fact",
+   "text": "staging Postgres listens on port 6432"
+  },
+  {
+   "id": "F2",
+   "session": 1,
+   "kind": "fact",
+   "text": "deploys go out from the release/ember branch"
+  },
+  {
+   "id": "F3",
+   "session": 2,
+   "kind": "fact",
+   "text": "CI runs on Python 3.12 only"
+  },
+  {
+   "id": "F4",
+   "session": 2,
+   "kind": "fact",
+   "text": "every log line must be JSON lines (one object per line)"
+  },
+  {
+   "id": "F5",
+   "session": 2,
+   "kind": "fact",
+   "text": "the quiet_retry feature flag defaults to off"
+  },
+  {
+   "id": "F6",
+   "session": 3,
+   "kind": "fact",
+   "text": "commit subjects stay under 50 characters, imperative mood"
+  },
+  {
+   "id": "C1",
+   "session": 3,
+   "kind": "commitment",
+   "due_session": 7,
+   "text": "the assistant will bring the cache-key rotation checklist once the release freeze ends"
+  },
+  {
+   "id": "F1b",
+   "session": 5,
+   "kind": "correction",
+   "supersedes": "F1",
+   "text": "staging Postgres moved to port 6543"
+  }
+ ],
+ "events": {
+  "restart_wake": {
+   "session": 5,
+   "after_turn": 2,
+   "how": "the harness process is SIGKILLed at a turn boundary and cold-restarted"
+  },
+  "long_gap": {
+   "before_session": 8,
+   "how": "told in the text (three weeks away); S6a runs on wall time"
+  },
+  "long_session": {
+   "session": 6,
+   "how": "pasted logs push the prompt past the lowered compaction trigger"
+  }
+ },
+ "sessions": [
+  {
+   "index": 1,
+   "turns": [
+    {
+     "user": "Morning. I'm starting the tidewater shipper rewrite today and want you as my pair for the next few weeks.",
+     "assistant": "Happy to pair on it. Tell me how the pieces fit and I'll keep track as we go."
+    },
+    {
+     "user": "Quick environment notes first: staging Postgres listens on port 6432, not the default.",
+     "assistant": "Noted: staging Postgres is on 6432. I'll use that whenever we touch the staging database."
+    },
+    {
+     "user": "And deploys only ever go out from the release/ember branch. Never from main.",
+     "assistant": "Understood. Deploys come from release/ember only, never from main."
+    },
+    {
+     "user": "First task: sketch the module layout for the new shipper.",
+     "assistant": "Proposed layout: cli/, spool/, transport/, and config/, with spool owning the on-disk queue."
+    },
+    {
+     "user": "Good enough for day one. Let's stop here.",
+     "assistant": "Sounds good. Next time we can start on the spool."
+    }
+   ]
+  },
+  {
+   "index": 2,
+   "turns": [
+    {
+     "user": "Back on the spool. One constraint I forgot: CI runs on Python 3.12 only, so no 3.13 syntax.",
+     "assistant": "Got it: CI is Python 3.12 only. I'll keep the code to 3.12 features."
+    },
+    {
+     "user": "Also, every log line we emit must be JSON lines, one object per line. Ops parses them.",
+     "assistant": "Understood: all logging is JSON lines, one object per line."
+    },
+    {
+     "user": "The quiet_retry feature flag should default to off until ops signs it off.",
+     "assistant": "Noted: quiet_retry defaults to off."
+    },
+    {
+     "user": "Write me the spool's append path in outline.",
+     "assistant": "Outline: open the segment, append a length-prefixed record, fsync on the batch boundary, rotate at 64 MB."
+    },
+    {
+     "user": "Fine. That's it for today.",
+     "assistant": "Talk soon. Next up is the transport retry loop."
+    }
+   ]
+  },
+  {
+   "index": 3,
+   "turns": [
+    {
+     "user": "Style rule before we commit anything: commit subjects stay under 50 characters, imperative mood.",
+     "assistant": "Noted: commit subjects under 50 characters, imperative mood."
+    },
+    {
+     "user": "We're entering a release freeze. After it ends I need to rotate the cache signing key, and I'll forget.",
+     "assistant": "I'll bring the cache-key rotation checklist when we meet after the freeze ends."
+    },
+    {
+     "user": "Draft a commit subject for the spool work.",
+     "assistant": "Suggested subject: \"Add length-prefixed spool append\"."
+    },
+    {
+     "user": "Now the transport retry loop: exponential backoff, capped.",
+     "assistant": "Backoff starts at 200 ms, doubles to a 30 s cap, with full jitter and a retry budget per batch."
+    },
+    {
+     "user": "Good. Done for today.",
+     "assistant": "Done. The retry loop is ready for review next time."
+    }
+   ]
+  },
+  {
+   "index": 4,
+   "turns": [
+    {
+     "user": "Reviewing the retry loop. Does it respect the quiet_retry flag?",
+     "assistant": "Yes: with quiet_retry off, every retry logs a warn line; with it on, only the final failure logs."
+    },
+    {
+     "user": "Make the warn lines match our logging rule.",
+     "assistant": "They are emitted as single JSON objects, one per line."
+    },
+    {
+     "user": "What should the integration test target?",
+     "assistant": "The staging database on port 6432 and a stub collector."
+    },
+    {
+     "user": "Add a test for the backoff cap.",
+     "assistant": "Added: a test asserting no sleep exceeds 30 s across 12 retries."
+    },
+    {
+     "user": "Wrap up.",
+     "assistant": "Wrapped. Tests are green locally."
+    }
+   ]
+  },
+  {
+   "index": 5,
+   "turns": [
+    {
+     "user": "Heads-up: ops moved staging Postgres to port 6543 this morning. The old 6432 port is gone.",
+     "assistant": "Thanks. Staging Postgres is now on 6543; I'll stop using 6432."
+    },
+    {
+     "user": "Update the integration test config accordingly.",
+     "assistant": "Updated: the integration test now targets port 6543."
+    },
+    {
+     "user": "Sorry, my machine crashed and I had to restart everything. Where were we?",
+     "assistant": "We had just moved the integration tests to staging port 6543 after ops changed it."
+    },
+    {
+     "user": "Right. Next: config loading from a TOML file.",
+     "assistant": "Config loads from tidewater.toml, with env vars overriding keys."
+    },
+    {
+     "user": "Enough for today.",
+     "assistant": "Okay. Next session we can harden the transport."
+    }
+   ],
+   "restart_after_turn": 2
+  },
+  {
+   "index": 6,
+   "turns": [
+    {
+     "user": "Long debugging sprint, chunk 1. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00000s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":2452,\"segment\":\"seg-295\",\"retry\":4}\n{\"ts\":\"T+00012s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":7883,\"segment\":\"seg-563\",\"retry\":3}\n{\"ts\":\"T+00015s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":3866,\"segment\":\"seg-988\",\"retry\":3}\n{\"ts\":\"T+00023s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":3966,\"segment\":\"seg-580\",\"retry\":1}\n{\"ts\":\"T+00034s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":5238,\"segment\":\"seg-289\",\"retry\":1}\n{\"ts\":\"T+00037s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":4171,\"segment\":\"seg-593\",\"retry\":1}\n{\"ts\":\"T+00048s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":3240,\"segment\":\"seg-444\",\"retry\":0}\n{\"ts\":\"T+00052s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":1972,\"segment\":\"seg-815\",\"retry\":4}\n{\"ts\":\"T+00057s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":5863,\"segment\":\"seg-580\",\"retry\":4}\n{\"ts\":\"T+00063s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":2112,\"segment\":\"seg-216\",\"retry\":0}\n{\"ts\":\"T+00071s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":6180,\"segment\":\"seg-853\",\"retry\":0}\n{\"ts\":\"T+00080s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":1257,\"segment\":\"seg-427\",\"retry\":2}\n{\"ts\":\"T+00084s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":7203,\"segment\":\"seg-698\",\"retry\":1}\n{\"ts\":\"T+00094s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":5125,\"segment\":\"seg-131\",\"retry\":1}\n{\"ts\":\"T+00098s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":6693,\"segment\":\"seg-992\",\"retry\":3}\n{\"ts\":\"T+00107s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":3122,\"segment\":\"seg-592\",\"retry\":0}\n{\"ts\":\"T+00118s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":5286,\"segment\":\"seg-335\",\"retry\":0}\n{\"ts\":\"T+00124s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":2417,\"segment\":\"seg-770\",\"retry\":3}\n{\"ts\":\"T+00130s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":3918,\"segment\":\"seg-473\",\"retry\":2}\n{\"ts\":\"T+00139s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":4545,\"segment\":\"seg-682\",\"retry\":4}\nWhat stands out?",
+     "assistant": "In chunk 1 the spool errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 2. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00005s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":9357,\"segment\":\"seg-611\",\"retry\":4}\n{\"ts\":\"T+00009s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":9787,\"segment\":\"seg-914\",\"retry\":3}\n{\"ts\":\"T+00019s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":4451,\"segment\":\"seg-671\",\"retry\":0}\n{\"ts\":\"T+00021s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":8589,\"segment\":\"seg-528\",\"retry\":3}\n{\"ts\":\"T+00030s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":3303,\"segment\":\"seg-873\",\"retry\":3}\n{\"ts\":\"T+00040s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":2068,\"segment\":\"seg-161\",\"retry\":1}\n{\"ts\":\"T+00043s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":5590,\"segment\":\"seg-141\",\"retry\":2}\n{\"ts\":\"T+00052s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":1869,\"segment\":\"seg-975\",\"retry\":1}\n{\"ts\":\"T+00059s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":9605,\"segment\":\"seg-864\",\"retry\":1}\n{\"ts\":\"T+00064s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":6756,\"segment\":\"seg-440\",\"retry\":2}\n{\"ts\":\"T+00073s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":2237,\"segment\":\"seg-784\",\"retry\":4}\n{\"ts\":\"T+00079s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":4140,\"segment\":\"seg-101\",\"retry\":2}\n{\"ts\":\"T+00089s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":5261,\"segment\":\"seg-681\",\"retry\":4}\n{\"ts\":\"T+00097s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":1288,\"segment\":\"seg-304\",\"retry\":3}\n{\"ts\":\"T+00101s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":7214,\"segment\":\"seg-529\",\"retry\":4}\n{\"ts\":\"T+00106s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":9791,\"segment\":\"seg-602\",\"retry\":2}\n{\"ts\":\"T+00118s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":2801,\"segment\":\"seg-190\",\"retry\":3}\n{\"ts\":\"T+00124s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":2220,\"segment\":\"seg-854\",\"retry\":1}\n{\"ts\":\"T+00131s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":3973,\"segment\":\"seg-785\",\"retry\":2}\n{\"ts\":\"T+00139s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":2424,\"segment\":\"seg-616\",\"retry\":2}\nWhat stands out?",
+     "assistant": "In chunk 2 the collector errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 3. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00003s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":4552,\"segment\":\"seg-623\",\"retry\":0}\n{\"ts\":\"T+00011s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":2415,\"segment\":\"seg-632\",\"retry\":2}\n{\"ts\":\"T+00020s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":3670,\"segment\":\"seg-786\",\"retry\":4}\n{\"ts\":\"T+00027s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":6096,\"segment\":\"seg-744\",\"retry\":2}\n{\"ts\":\"T+00031s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":7558,\"segment\":\"seg-788\",\"retry\":2}\n{\"ts\":\"T+00039s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":5319,\"segment\":\"seg-995\",\"retry\":1}\n{\"ts\":\"T+00048s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":3059,\"segment\":\"seg-751\",\"retry\":0}\n{\"ts\":\"T+00050s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":3277,\"segment\":\"seg-663\",\"retry\":4}\n{\"ts\":\"T+00057s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":8559,\"segment\":\"seg-637\",\"retry\":3}\n{\"ts\":\"T+00065s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":8763,\"segment\":\"seg-782\",\"retry\":3}\n{\"ts\":\"T+00074s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":4137,\"segment\":\"seg-814\",\"retry\":3}\n{\"ts\":\"T+00079s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":2032,\"segment\":\"seg-945\",\"retry\":4}\n{\"ts\":\"T+00084s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":4924,\"segment\":\"seg-283\",\"retry\":2}\n{\"ts\":\"T+00092s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":8738,\"segment\":\"seg-361\",\"retry\":1}\n{\"ts\":\"T+00102s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":9535,\"segment\":\"seg-207\",\"retry\":4}\n{\"ts\":\"T+00111s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":6636,\"segment\":\"seg-194\",\"retry\":0}\n{\"ts\":\"T+00116s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":4036,\"segment\":\"seg-328\",\"retry\":1}\n{\"ts\":\"T+00120s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":1138,\"segment\":\"seg-141\",\"retry\":1}\n{\"ts\":\"T+00127s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":9974,\"segment\":\"seg-812\",\"retry\":0}\n{\"ts\":\"T+00138s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":1711,\"segment\":\"seg-451\",\"retry\":1}\nWhat stands out?",
+     "assistant": "In chunk 3 the collector errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 4. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00001s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":1186,\"segment\":\"seg-941\",\"retry\":0}\n{\"ts\":\"T+00011s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":7379,\"segment\":\"seg-179\",\"retry\":1}\n{\"ts\":\"T+00020s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":3429,\"segment\":\"seg-697\",\"retry\":2}\n{\"ts\":\"T+00026s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":3253,\"segment\":\"seg-506\",\"retry\":2}\n{\"ts\":\"T+00028s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":7413,\"segment\":\"seg-771\",\"retry\":3}\n{\"ts\":\"T+00038s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":7990,\"segment\":\"seg-748\",\"retry\":3}\n{\"ts\":\"T+00044s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":3192,\"segment\":\"seg-980\",\"retry\":4}\n{\"ts\":\"T+00052s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":4159,\"segment\":\"seg-959\",\"retry\":1}\n{\"ts\":\"T+00060s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":2070,\"segment\":\"seg-285\",\"retry\":1}\n{\"ts\":\"T+00069s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":2921,\"segment\":\"seg-323\",\"retry\":1}\n{\"ts\":\"T+00076s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":9101,\"segment\":\"seg-225\",\"retry\":4}\n{\"ts\":\"T+00080s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":5454,\"segment\":\"seg-405\",\"retry\":3}\n{\"ts\":\"T+00089s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":3944,\"segment\":\"seg-769\",\"retry\":4}\n{\"ts\":\"T+00093s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":9804,\"segment\":\"seg-373\",\"retry\":0}\n{\"ts\":\"T+00100s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":4991,\"segment\":\"seg-761\",\"retry\":2}\n{\"ts\":\"T+00109s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":1927,\"segment\":\"seg-858\",\"retry\":3}\n{\"ts\":\"T+00116s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":8914,\"segment\":\"seg-271\",\"retry\":1}\n{\"ts\":\"T+00122s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":9498,\"segment\":\"seg-249\",\"retry\":1}\n{\"ts\":\"T+00132s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":8353,\"segment\":\"seg-654\",\"retry\":0}\n{\"ts\":\"T+00137s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":9675,\"segment\":\"seg-562\",\"retry\":2}\nWhat stands out?",
+     "assistant": "In chunk 4 the collector errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 5. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00000s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":5705,\"segment\":\"seg-793\",\"retry\":0}\n{\"ts\":\"T+00011s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":3127,\"segment\":\"seg-453\",\"retry\":4}\n{\"ts\":\"T+00016s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":5157,\"segment\":\"seg-805\",\"retry\":1}\n{\"ts\":\"T+00027s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":4410,\"segment\":\"seg-428\",\"retry\":1}\n{\"ts\":\"T+00032s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":4226,\"segment\":\"seg-285\",\"retry\":2}\n{\"ts\":\"T+00037s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":7746,\"segment\":\"seg-314\",\"retry\":1}\n{\"ts\":\"T+00045s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":9505,\"segment\":\"seg-240\",\"retry\":0}\n{\"ts\":\"T+00054s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":8797,\"segment\":\"seg-740\",\"retry\":2}\n{\"ts\":\"T+00057s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":1887,\"segment\":\"seg-138\",\"retry\":4}\n{\"ts\":\"T+00067s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":8847,\"segment\":\"seg-157\",\"retry\":1}\n{\"ts\":\"T+00071s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":2460,\"segment\":\"seg-733\",\"retry\":0}\n{\"ts\":\"T+00081s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":8919,\"segment\":\"seg-898\",\"retry\":2}\n{\"ts\":\"T+00085s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":1319,\"segment\":\"seg-517\",\"retry\":4}\n{\"ts\":\"T+00094s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":1166,\"segment\":\"seg-456\",\"retry\":4}\n{\"ts\":\"T+00098s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":3229,\"segment\":\"seg-296\",\"retry\":3}\n{\"ts\":\"T+00109s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":6291,\"segment\":\"seg-795\",\"retry\":0}\n{\"ts\":\"T+00113s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":2838,\"segment\":\"seg-927\",\"retry\":0}\n{\"ts\":\"T+00120s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":8417,\"segment\":\"seg-365\",\"retry\":3}\n{\"ts\":\"T+00127s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":4664,\"segment\":\"seg-470\",\"retry\":2}\n{\"ts\":\"T+00135s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":2400,\"segment\":\"seg-523\",\"retry\":1}\nWhat stands out?",
+     "assistant": "In chunk 5 the transport errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 6. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00006s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":4439,\"segment\":\"seg-324\",\"retry\":2}\n{\"ts\":\"T+00008s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":1053,\"segment\":\"seg-876\",\"retry\":0}\n{\"ts\":\"T+00015s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":2877,\"segment\":\"seg-800\",\"retry\":3}\n{\"ts\":\"T+00021s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":3826,\"segment\":\"seg-334\",\"retry\":4}\n{\"ts\":\"T+00029s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":2232,\"segment\":\"seg-249\",\"retry\":2}\n{\"ts\":\"T+00041s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":7941,\"segment\":\"seg-569\",\"retry\":4}\n{\"ts\":\"T+00048s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":9961,\"segment\":\"seg-417\",\"retry\":4}\n{\"ts\":\"T+00049s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":5505,\"segment\":\"seg-390\",\"retry\":2}\n{\"ts\":\"T+00058s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":1443,\"segment\":\"seg-946\",\"retry\":3}\n{\"ts\":\"T+00064s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":5775,\"segment\":\"seg-667\",\"retry\":3}\n{\"ts\":\"T+00074s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":5021,\"segment\":\"seg-113\",\"retry\":3}\n{\"ts\":\"T+00077s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":6523,\"segment\":\"seg-195\",\"retry\":3}\n{\"ts\":\"T+00084s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":6304,\"segment\":\"seg-271\",\"retry\":1}\n{\"ts\":\"T+00097s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":4420,\"segment\":\"seg-778\",\"retry\":0}\n{\"ts\":\"T+00102s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":5753,\"segment\":\"seg-184\",\"retry\":1}\n{\"ts\":\"T+00110s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":5953,\"segment\":\"seg-836\",\"retry\":4}\n{\"ts\":\"T+00118s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":7297,\"segment\":\"seg-186\",\"retry\":3}\n{\"ts\":\"T+00124s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":3180,\"segment\":\"seg-844\",\"retry\":4}\n{\"ts\":\"T+00129s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":5541,\"segment\":\"seg-236\",\"retry\":0}\n{\"ts\":\"T+00133s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":4018,\"segment\":\"seg-939\",\"retry\":4}\nWhat stands out?",
+     "assistant": "In chunk 6 the transport errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 7. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00000s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":5460,\"segment\":\"seg-994\",\"retry\":0}\n{\"ts\":\"T+00008s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":9952,\"segment\":\"seg-736\",\"retry\":3}\n{\"ts\":\"T+00019s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":4657,\"segment\":\"seg-187\",\"retry\":1}\n{\"ts\":\"T+00027s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":2934,\"segment\":\"seg-390\",\"retry\":3}\n{\"ts\":\"T+00030s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":3899,\"segment\":\"seg-348\",\"retry\":0}\n{\"ts\":\"T+00036s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":8356,\"segment\":\"seg-100\",\"retry\":4}\n{\"ts\":\"T+00044s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":5865,\"segment\":\"seg-585\",\"retry\":2}\n{\"ts\":\"T+00050s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":6130,\"segment\":\"seg-696\",\"retry\":2}\n{\"ts\":\"T+00057s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":7940,\"segment\":\"seg-416\",\"retry\":0}\n{\"ts\":\"T+00066s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":4890,\"segment\":\"seg-327\",\"retry\":0}\n{\"ts\":\"T+00075s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":7948,\"segment\":\"seg-789\",\"retry\":4}\n{\"ts\":\"T+00078s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":6269,\"segment\":\"seg-856\",\"retry\":4}\n{\"ts\":\"T+00085s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":4103,\"segment\":\"seg-968\",\"retry\":1}\n{\"ts\":\"T+00094s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":9436,\"segment\":\"seg-509\",\"retry\":2}\n{\"ts\":\"T+00103s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":7363,\"segment\":\"seg-962\",\"retry\":3}\n{\"ts\":\"T+00108s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":8924,\"segment\":\"seg-185\",\"retry\":1}\n{\"ts\":\"T+00115s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":9677,\"segment\":\"seg-828\",\"retry\":0}\n{\"ts\":\"T+00124s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":9634,\"segment\":\"seg-144\",\"retry\":4}\n{\"ts\":\"T+00129s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":1800,\"segment\":\"seg-648\",\"retry\":4}\n{\"ts\":\"T+00138s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":8405,\"segment\":\"seg-807\",\"retry\":2}\nWhat stands out?",
+     "assistant": "In chunk 7 the transport errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 8. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00005s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":2991,\"segment\":\"seg-696\",\"retry\":4}\n{\"ts\":\"T+00013s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":1606,\"segment\":\"seg-425\",\"retry\":2}\n{\"ts\":\"T+00017s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":5879,\"segment\":\"seg-477\",\"retry\":0}\n{\"ts\":\"T+00025s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":5895,\"segment\":\"seg-255\",\"retry\":4}\n{\"ts\":\"T+00031s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":3061,\"segment\":\"seg-376\",\"retry\":0}\n{\"ts\":\"T+00041s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":2066,\"segment\":\"seg-229\",\"retry\":3}\n{\"ts\":\"T+00044s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":8572,\"segment\":\"seg-929\",\"retry\":2}\n{\"ts\":\"T+00054s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":8014,\"segment\":\"seg-318\",\"retry\":4}\n{\"ts\":\"T+00062s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":3908,\"segment\":\"seg-501\",\"retry\":2}\n{\"ts\":\"T+00066s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":9792,\"segment\":\"seg-501\",\"retry\":4}\n{\"ts\":\"T+00075s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":4590,\"segment\":\"seg-378\",\"retry\":0}\n{\"ts\":\"T+00081s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":1044,\"segment\":\"seg-101\",\"retry\":3}\n{\"ts\":\"T+00090s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":8103,\"segment\":\"seg-165\",\"retry\":4}\n{\"ts\":\"T+00094s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":6220,\"segment\":\"seg-350\",\"retry\":4}\n{\"ts\":\"T+00101s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":9224,\"segment\":\"seg-111\",\"retry\":3}\n{\"ts\":\"T+00108s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":1447,\"segment\":\"seg-513\",\"retry\":0}\n{\"ts\":\"T+00117s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":1695,\"segment\":\"seg-615\",\"retry\":4}\n{\"ts\":\"T+00125s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":7642,\"segment\":\"seg-124\",\"retry\":2}\n{\"ts\":\"T+00131s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":9721,\"segment\":\"seg-639\",\"retry\":1}\n{\"ts\":\"T+00133s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":8672,\"segment\":\"seg-244\",\"retry\":0}\nWhat stands out?",
+     "assistant": "In chunk 8 the collector errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 9. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00006s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":9311,\"segment\":\"seg-712\",\"retry\":2}\n{\"ts\":\"T+00010s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":5224,\"segment\":\"seg-930\",\"retry\":3}\n{\"ts\":\"T+00016s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":9805,\"segment\":\"seg-967\",\"retry\":3}\n{\"ts\":\"T+00022s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":6409,\"segment\":\"seg-401\",\"retry\":1}\n{\"ts\":\"T+00033s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":3807,\"segment\":\"seg-809\",\"retry\":0}\n{\"ts\":\"T+00035s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":2234,\"segment\":\"seg-701\",\"retry\":4}\n{\"ts\":\"T+00043s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":5682,\"segment\":\"seg-619\",\"retry\":2}\n{\"ts\":\"T+00053s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":4448,\"segment\":\"seg-779\",\"retry\":3}\n{\"ts\":\"T+00056s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":6374,\"segment\":\"seg-958\",\"retry\":4}\n{\"ts\":\"T+00067s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":7709,\"segment\":\"seg-288\",\"retry\":0}\n{\"ts\":\"T+00073s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":8952,\"segment\":\"seg-286\",\"retry\":3}\n{\"ts\":\"T+00082s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":3921,\"segment\":\"seg-819\",\"retry\":3}\n{\"ts\":\"T+00085s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":9432,\"segment\":\"seg-288\",\"retry\":4}\n{\"ts\":\"T+00096s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":8760,\"segment\":\"seg-238\",\"retry\":3}\n{\"ts\":\"T+00099s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":6208,\"segment\":\"seg-791\",\"retry\":2}\n{\"ts\":\"T+00110s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":7833,\"segment\":\"seg-476\",\"retry\":3}\n{\"ts\":\"T+00115s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":7482,\"segment\":\"seg-585\",\"retry\":0}\n{\"ts\":\"T+00124s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":9370,\"segment\":\"seg-483\",\"retry\":4}\n{\"ts\":\"T+00129s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":4728,\"segment\":\"seg-223\",\"retry\":0}\n{\"ts\":\"T+00135s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":8039,\"segment\":\"seg-967\",\"retry\":4}\nWhat stands out?",
+     "assistant": "In chunk 9 the spool errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 10. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00004s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":6565,\"segment\":\"seg-264\",\"retry\":2}\n{\"ts\":\"T+00013s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":9859,\"segment\":\"seg-453\",\"retry\":1}\n{\"ts\":\"T+00015s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":9258,\"segment\":\"seg-567\",\"retry\":4}\n{\"ts\":\"T+00027s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":5222,\"segment\":\"seg-347\",\"retry\":4}\n{\"ts\":\"T+00034s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":5829,\"segment\":\"seg-226\",\"retry\":4}\n{\"ts\":\"T+00036s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":9532,\"segment\":\"seg-680\",\"retry\":1}\n{\"ts\":\"T+00044s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":4112,\"segment\":\"seg-867\",\"retry\":0}\n{\"ts\":\"T+00053s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":1153,\"segment\":\"seg-658\",\"retry\":2}\n{\"ts\":\"T+00058s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":4828,\"segment\":\"seg-705\",\"retry\":1}\n{\"ts\":\"T+00066s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":6882,\"segment\":\"seg-617\",\"retry\":1}\n{\"ts\":\"T+00071s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":9599,\"segment\":\"seg-593\",\"retry\":1}\n{\"ts\":\"T+00081s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":6967,\"segment\":\"seg-533\",\"retry\":4}\n{\"ts\":\"T+00087s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":5791,\"segment\":\"seg-779\",\"retry\":2}\n{\"ts\":\"T+00094s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":9898,\"segment\":\"seg-142\",\"retry\":2}\n{\"ts\":\"T+00101s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":8482,\"segment\":\"seg-521\",\"retry\":0}\n{\"ts\":\"T+00109s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":1473,\"segment\":\"seg-324\",\"retry\":4}\n{\"ts\":\"T+00118s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":9593,\"segment\":\"seg-217\",\"retry\":0}\n{\"ts\":\"T+00124s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":1927,\"segment\":\"seg-407\",\"retry\":1}\n{\"ts\":\"T+00128s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":8197,\"segment\":\"seg-868\",\"retry\":1}\n{\"ts\":\"T+00138s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":8417,\"segment\":\"seg-901\",\"retry\":1}\nWhat stands out?",
+     "assistant": "In chunk 10 the collector errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 11. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00004s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":8299,\"segment\":\"seg-625\",\"retry\":4}\n{\"ts\":\"T+00013s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":8317,\"segment\":\"seg-914\",\"retry\":1}\n{\"ts\":\"T+00016s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":5202,\"segment\":\"seg-543\",\"retry\":2}\n{\"ts\":\"T+00023s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":1317,\"segment\":\"seg-549\",\"retry\":1}\n{\"ts\":\"T+00034s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":4201,\"segment\":\"seg-584\",\"retry\":3}\n{\"ts\":\"T+00037s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":4076,\"segment\":\"seg-435\",\"retry\":2}\n{\"ts\":\"T+00048s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":9530,\"segment\":\"seg-601\",\"retry\":0}\n{\"ts\":\"T+00055s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":2782,\"segment\":\"seg-542\",\"retry\":4}\n{\"ts\":\"T+00062s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":7471,\"segment\":\"seg-295\",\"retry\":2}\n{\"ts\":\"T+00068s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":4545,\"segment\":\"seg-628\",\"retry\":4}\n{\"ts\":\"T+00074s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":4595,\"segment\":\"seg-979\",\"retry\":4}\n{\"ts\":\"T+00077s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":4177,\"segment\":\"seg-736\",\"retry\":0}\n{\"ts\":\"T+00086s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":3051,\"segment\":\"seg-105\",\"retry\":3}\n{\"ts\":\"T+00095s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":7949,\"segment\":\"seg-769\",\"retry\":3}\n{\"ts\":\"T+00103s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":4440,\"segment\":\"seg-591\",\"retry\":0}\n{\"ts\":\"T+00107s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":5546,\"segment\":\"seg-943\",\"retry\":4}\n{\"ts\":\"T+00114s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":8905,\"segment\":\"seg-284\",\"retry\":1}\n{\"ts\":\"T+00124s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"checksum mismatch on segment\",\"batch\":3650,\"segment\":\"seg-334\",\"retry\":0}\n{\"ts\":\"T+00131s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":4016,\"segment\":\"seg-130\",\"retry\":3}\n{\"ts\":\"T+00137s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":8927,\"segment\":\"seg-669\",\"retry\":2}\nWhat stands out?",
+     "assistant": "In chunk 11 the spool errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 12. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00002s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":7725,\"segment\":\"seg-578\",\"retry\":1}\n{\"ts\":\"T+00013s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":2830,\"segment\":\"seg-386\",\"retry\":3}\n{\"ts\":\"T+00014s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":1986,\"segment\":\"seg-747\",\"retry\":0}\n{\"ts\":\"T+00026s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":7729,\"segment\":\"seg-703\",\"retry\":0}\n{\"ts\":\"T+00032s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":8853,\"segment\":\"seg-860\",\"retry\":2}\n{\"ts\":\"T+00040s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":6577,\"segment\":\"seg-927\",\"retry\":3}\n{\"ts\":\"T+00047s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":7576,\"segment\":\"seg-431\",\"retry\":2}\n{\"ts\":\"T+00051s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":8463,\"segment\":\"seg-570\",\"retry\":1}\n{\"ts\":\"T+00056s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":2301,\"segment\":\"seg-924\",\"retry\":0}\n{\"ts\":\"T+00066s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"backpressure engaged\",\"batch\":4050,\"segment\":\"seg-986\",\"retry\":3}\n{\"ts\":\"T+00072s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"batch flush timeout\",\"batch\":3117,\"segment\":\"seg-184\",\"retry\":1}\n{\"ts\":\"T+00079s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":6321,\"segment\":\"seg-616\",\"retry\":0}\n{\"ts\":\"T+00085s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":1212,\"segment\":\"seg-756\",\"retry\":2}\n{\"ts\":\"T+00092s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":1331,\"segment\":\"seg-947\",\"retry\":1}\n{\"ts\":\"T+00099s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":6223,\"segment\":\"seg-621\",\"retry\":1}\n{\"ts\":\"T+00109s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":9638,\"segment\":\"seg-517\",\"retry\":0}\n{\"ts\":\"T+00117s\",\"level\":\"info\",\"svc\":\"spool\",\"msg\":\"spool file rotated\",\"batch\":5188,\"segment\":\"seg-718\",\"retry\":2}\n{\"ts\":\"T+00120s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"upstream closed connection\",\"batch\":4445,\"segment\":\"seg-758\",\"retry\":1}\n{\"ts\":\"T+00128s\",\"level\":\"warn\",\"svc\":\"spool\",\"msg\":\"retry scheduled\",\"batch\":3531,\"segment\":\"seg-431\",\"retry\":1}\n{\"ts\":\"T+00135s\",\"level\":\"error\",\"svc\":\"spool\",\"msg\":\"ack window exceeded\",\"batch\":1539,\"segment\":\"seg-501\",\"retry\":2}\nWhat stands out?",
+     "assistant": "In chunk 12 the spool errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 13. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00000s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":2899,\"segment\":\"seg-854\",\"retry\":2}\n{\"ts\":\"T+00012s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":8387,\"segment\":\"seg-244\",\"retry\":1}\n{\"ts\":\"T+00019s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":5454,\"segment\":\"seg-237\",\"retry\":2}\n{\"ts\":\"T+00026s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":6318,\"segment\":\"seg-802\",\"retry\":1}\n{\"ts\":\"T+00033s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":6416,\"segment\":\"seg-277\",\"retry\":2}\n{\"ts\":\"T+00039s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":8513,\"segment\":\"seg-462\",\"retry\":1}\n{\"ts\":\"T+00046s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":8552,\"segment\":\"seg-235\",\"retry\":4}\n{\"ts\":\"T+00054s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"retry scheduled\",\"batch\":9302,\"segment\":\"seg-589\",\"retry\":4}\n{\"ts\":\"T+00059s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"upstream closed connection\",\"batch\":8833,\"segment\":\"seg-628\",\"retry\":0}\n{\"ts\":\"T+00068s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":7170,\"segment\":\"seg-308\",\"retry\":3}\n{\"ts\":\"T+00076s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"backpressure engaged\",\"batch\":5855,\"segment\":\"seg-835\",\"retry\":0}\n{\"ts\":\"T+00082s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":3967,\"segment\":\"seg-229\",\"retry\":3}\n{\"ts\":\"T+00089s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"spool file rotated\",\"batch\":3928,\"segment\":\"seg-747\",\"retry\":2}\n{\"ts\":\"T+00091s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":1017,\"segment\":\"seg-201\",\"retry\":2}\n{\"ts\":\"T+00102s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"batch flush timeout\",\"batch\":9815,\"segment\":\"seg-676\",\"retry\":3}\n{\"ts\":\"T+00111s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":3247,\"segment\":\"seg-705\",\"retry\":4}\n{\"ts\":\"T+00112s\",\"level\":\"error\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":1139,\"segment\":\"seg-103\",\"retry\":4}\n{\"ts\":\"T+00123s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"ack window exceeded\",\"batch\":4505,\"segment\":\"seg-351\",\"retry\":3}\n{\"ts\":\"T+00128s\",\"level\":\"warn\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":1791,\"segment\":\"seg-113\",\"retry\":4}\n{\"ts\":\"T+00137s\",\"level\":\"info\",\"svc\":\"collector\",\"msg\":\"checksum mismatch on segment\",\"batch\":3526,\"segment\":\"seg-712\",\"retry\":3}\nWhat stands out?",
+     "assistant": "In chunk 13 the collector errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Long debugging sprint, chunk 14. Here is the next log excerpt from the soak run:\n{\"ts\":\"T+00005s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":6181,\"segment\":\"seg-846\",\"retry\":2}\n{\"ts\":\"T+00011s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":4144,\"segment\":\"seg-720\",\"retry\":3}\n{\"ts\":\"T+00015s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":5368,\"segment\":\"seg-633\",\"retry\":4}\n{\"ts\":\"T+00023s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":3994,\"segment\":\"seg-340\",\"retry\":2}\n{\"ts\":\"T+00030s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":3242,\"segment\":\"seg-851\",\"retry\":0}\n{\"ts\":\"T+00036s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":7634,\"segment\":\"seg-438\",\"retry\":4}\n{\"ts\":\"T+00043s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":6509,\"segment\":\"seg-662\",\"retry\":1}\n{\"ts\":\"T+00052s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":9608,\"segment\":\"seg-923\",\"retry\":0}\n{\"ts\":\"T+00057s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":4571,\"segment\":\"seg-279\",\"retry\":4}\n{\"ts\":\"T+00064s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":9796,\"segment\":\"seg-110\",\"retry\":4}\n{\"ts\":\"T+00073s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":8501,\"segment\":\"seg-740\",\"retry\":0}\n{\"ts\":\"T+00081s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":9221,\"segment\":\"seg-151\",\"retry\":4}\n{\"ts\":\"T+00088s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"spool file rotated\",\"batch\":1394,\"segment\":\"seg-389\",\"retry\":1}\n{\"ts\":\"T+00094s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"upstream closed connection\",\"batch\":3887,\"segment\":\"seg-133\",\"retry\":1}\n{\"ts\":\"T+00104s\",\"level\":\"warn\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":6585,\"segment\":\"seg-895\",\"retry\":0}\n{\"ts\":\"T+00106s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"checksum mismatch on segment\",\"batch\":1729,\"segment\":\"seg-582\",\"retry\":4}\n{\"ts\":\"T+00116s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"backpressure engaged\",\"batch\":2624,\"segment\":\"seg-715\",\"retry\":2}\n{\"ts\":\"T+00119s\",\"level\":\"error\",\"svc\":\"transport\",\"msg\":\"retry scheduled\",\"batch\":7647,\"segment\":\"seg-924\",\"retry\":2}\n{\"ts\":\"T+00131s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"ack window exceeded\",\"batch\":5284,\"segment\":\"seg-514\",\"retry\":3}\n{\"ts\":\"T+00137s\",\"level\":\"info\",\"svc\":\"transport\",\"msg\":\"batch flush timeout\",\"batch\":6197,\"segment\":\"seg-107\",\"retry\":1}\nWhat stands out?",
+     "assistant": "In chunk 14 the transport errors cluster around batch flush timeouts after backpressure engages; the retry counts climb to 4, which means the per-batch budget is exhausted before the collector acks."
+    },
+    {
+     "user": "Let's stop the sprint here.",
+     "assistant": "Agreed. The fix is to raise the ack window and cap concurrent flushes."
+    }
+   ],
+   "long_session": true
+  },
+  {
+   "index": 7,
+   "turns": [
+    {
+     "user": "The release freeze is over as of today.",
+     "assistant": "Then here is the cache-key rotation checklist I promised: generate the new key, dual-sign for a day, switch readers, retire the old key."
+    },
+    {
+     "user": "Let's do the rotation tomorrow. Draft the commit subject.",
+     "assistant": "Suggested subject: \"Rotate cache signing key\"."
+    },
+    {
+     "user": "Does the deploy for this go from main?",
+     "assistant": "No. Deploys go out from release/ember only."
+    },
+    {
+     "user": "Good catch. Any CI concerns?",
+     "assistant": "None, as long as the rotation script stays on Python 3.12 features."
+    },
+    {
+     "user": "Done for now.",
+     "assistant": "Done. Rotation is planned for tomorrow."
+    }
+   ]
+  },
+  {
+   "index": 8,
+   "turns": [
+    {
+     "user": "I'm back after three weeks away. Remind me what the shipper's logging rule is?",
+     "assistant": "Every log line is JSON lines, one object per line."
+    },
+    {
+     "user": "And which branch do we deploy from?",
+     "assistant": "release/ember."
+    },
+    {
+     "user": "Let's add a metrics endpoint.",
+     "assistant": "Proposed: a /metrics endpoint exposing spool depth and retry counts."
+    },
+    {
+     "user": "Ship it behind a flag.",
+     "assistant": "Added behind a new flag, metrics_endpoint, defaulting to off."
+    },
+    {
+     "user": "Wrap up.",
+     "assistant": "Wrapped."
+    }
+   ],
+   "gap_before": true
+  },
+  {
+   "index": 9,
+   "turns": [
+    {
+     "user": "Let's tidy the transport module.",
+     "assistant": "I suggest splitting the retry policy into its own file."
+    },
+    {
+     "user": "Do it.",
+     "assistant": "Split done: transport/retry_policy.py now owns the backoff."
+    },
+    {
+     "user": "Commit subject?",
+     "assistant": "Suggested subject: \"Split retry policy from transport\"."
+    },
+    {
+     "user": "Run the staging tests.",
+     "assistant": "Running against staging Postgres on port 6543 now."
+    },
+    {
+     "user": "Okay, stop.",
+     "assistant": "Stopped."
+    }
+   ]
+  },
+  {
+   "index": 10,
+   "turns": [
+    {
+     "user": "Last session before the beta. What's left?",
+     "assistant": "Only the metrics endpoint review and the release notes."
+    },
+    {
+     "user": "Draft the release notes headline.",
+     "assistant": "Headline: \"Tidewater shipper beta: durable spool and capped retries\"."
+    },
+    {
+     "user": "Anything about quiet_retry in the notes?",
+     "assistant": "Yes: it ships off by default, pending the ops sign-off."
+    },
+    {
+     "user": "Good. Final check on logging.",
+     "assistant": "All emitters write JSON lines."
+    },
+    {
+     "user": "That's the beta. Thanks.",
+     "assistant": "Congratulations on the beta."
+    }
+   ]
+  }
+ ],
+ "probes": [
+  {
+   "index": "P1",
+   "turns": [
+    {
+     "user": "Quick check before I touch staging: which port does staging Postgres use?"
+    },
+    {
+     "user": "What format do our log lines have to be in?"
+    }
+   ]
+  },
+  {
+   "index": "P2",
+   "turns": [
+    {
+     "user": "Which Python version does CI run, and which branch do we deploy from?"
+    },
+    {
+     "user": "Did you deliver what you promised for after the release freeze?"
+    }
+   ]
+  }
+ ]
+}

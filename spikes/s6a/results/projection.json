@@ -1,0 +1,4644 @@
+{
+ "inputs_s": {
+  "turn_ex_comp_s": 10.004,
+  "upstream_turn_s": 6.635,
+  "summariser_s": 99.121,
+  "session_fixed_s": 28.927,
+  "comp_per_sprint": 2.0,
+  "probe_turn_s": 31.506,
+  "probe_upstream_s": 23.54,
+  "probe_fixed_s": 26.314,
+  "aux_per_session_s": 5.107,
+  "plain_turn_s": 2.256
+ },
+ "C_measured": 8,
+ "sensitivity": [
+  {
+   "latency_x": 0.5,
+   "C": 8,
+   "R_h": 4.565761111111111,
+   "P_h": 3.8375,
+   "R_lane_h": 2.1647333333333334,
+   "P_lane_h": 1.1936250000000002,
+   "critical_path_h": 4.578552777777777,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 871.4185000000001,
+    "work_over_C_h": 108.92731250000001,
+    "wall_h": 108.92731250000001,
+    "fits_24h": false,
+    "C_needed": 37,
+    "lane_work_h": 338.061,
+    "lane_work_over_C_h": 42.257625,
+    "lane_wall_h": 42.257625,
+    "lane_fits_24h": false,
+    "lane_C_needed": 15,
+    "J_for_C": 21
+   },
+   "robustness": {
+    "work_h": 554.1669733333333,
+    "work_over_C_h": 69.27087166666666,
+    "wall_h": 69.27087166666666,
+    "fits_24h": false,
+    "C_needed": 24,
+    "lane_work_h": 224.19274,
+    "lane_work_over_C_h": 28.0240925,
+    "lane_wall_h": 28.0240925,
+    "lane_fits_24h": false,
+    "lane_C_needed": 10,
+    "J_for_C": 20
+   }
+  },
+  {
+   "latency_x": 0.5,
+   "C": 16,
+   "R_h": 4.565761111111111,
+   "P_h": 3.8375,
+   "R_lane_h": 2.1647333333333334,
+   "P_lane_h": 1.1936250000000002,
+   "critical_path_h": 4.578552777777777,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 871.4185000000001,
+    "work_over_C_h": 54.46365625000001,
+    "wall_h": 54.46365625000001,
+    "fits_24h": false,
+    "C_needed": 37,
+    "lane_work_h": 338.061,
+    "lane_work_over_C_h": 21.1288125,
+    "lane_wall_h": 21.1288125,
+    "lane_fits_24h": true,
+    "lane_C_needed": 15,
+    "J_for_C": 42
+   },
+   "robustness": {
+    "work_h": 554.1669733333333,
+    "work_over_C_h": 34.63543583333333,
+    "wall_h": 34.63543583333333,
+    "fits_24h": false,
+    "C_needed": 24,
+    "lane_work_h": 224.19274,
+    "lane_work_over_C_h": 14.01204625,
+    "lane_wall_h": 14.01204625,
+    "lane_fits_24h": true,
+    "lane_C_needed": 10,
+    "J_for_C": 40
+   }
+  },
+  {
+   "latency_x": 0.5,
+   "C": 24,
+   "R_h": 4.565761111111111,
+   "P_h": 3.8375,
+   "R_lane_h": 2.1647333333333334,
+   "P_lane_h": 1.1936250000000002,
+   "critical_path_h": 4.578552777777777,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 871.4185000000001,
+    "work_over_C_h": 36.30910416666667,
+    "wall_h": 36.30910416666667,
+    "fits_24h": false,
+    "C_needed": 37,
+    "lane_work_h": 338.061,
+    "lane_work_over_C_h": 14.085874999999998,
+    "lane_wall_h": 14.085874999999998,
+    "lane_fits_24h": true,
+    "lane_C_needed": 15,
+    "J_for_C": 62
+   },
+   "robustness": {
+    "work_h": 554.1669733333333,
+    "work_over_C_h": 23.09029055555555,
+    "wall_h": 23.09029055555555,
+    "fits_24h": true,
+    "C_needed": 24,
+    "lane_work_h": 224.19274,
+    "lane_work_over_C_h": 9.341364166666667,
+    "lane_wall_h": 9.341364166666667,
+    "lane_fits_24h": true,
+    "lane_C_needed": 10,
+    "J_for_C": 60
+   }
+  },
+  {
+   "latency_x": 0.5,
+   "C": 32,
+   "R_h": 4.565761111111111,
+   "P_h": 3.8375,
+   "R_lane_h": 2.1647333333333334,
+   "P_lane_h": 1.1936250000000002,
+   "critical_path_h": 4.578552777777777,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 871.4185000000001,
+    "work_over_C_h": 27.231828125000003,
+    "wall_h": 27.231828125000003,
+    "fits_24h": false,
+    "C_needed": 37,
+    "lane_work_h": 338.061,
+    "lane_work_over_C_h": 10.56440625,
+    "lane_wall_h": 10.56440625,
+    "lane_fits_24h": true,
+    "lane_C_needed": 15,
+    "J_for_C": 83
+   },
+   "robustness": {
+    "work_h": 554.1669733333333,
+    "work_over_C_h": 17.317717916666666,
+    "wall_h": 17.317717916666666,
+    "fits_24h": true,
+    "C_needed": 24,
+    "lane_work_h": 224.19274,
+    "lane_work_over_C_h": 7.006023125,
+    "lane_wall_h": 7.006023125,
+    "lane_fits_24h": true,
+    "lane_C_needed": 10,
+    "J_for_C": 80
+   }
+  },
+  {
+   "latency_x": 1.0,
+   "C": 8,
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1171.1769999999997,
+    "work_over_C_h": 146.39712499999996,
+    "wall_h": 146.39712499999996,
+    "fits_24h": false,
+    "C_needed": 49,
+    "lane_work_h": 676.122,
+    "lane_work_over_C_h": 84.51525,
+    "lane_wall_h": 84.51525,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 755.3782133333332,
+    "work_over_C_h": 94.42227666666665,
+    "wall_h": 94.42227666666665,
+    "fits_24h": false,
+    "C_needed": 32,
+    "lane_work_h": 448.38548,
+    "lane_work_over_C_h": 56.048185,
+    "lane_wall_h": 56.048185,
+    "lane_fits_24h": false,
+    "lane_C_needed": 19,
+    "J_for_C": 14
+   }
+  },
+  {
+   "latency_x": 1.0,
+   "C": 16,
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1171.1769999999997,
+    "work_over_C_h": 73.19856249999998,
+    "wall_h": 73.19856249999998,
+    "fits_24h": false,
+    "C_needed": 49,
+    "lane_work_h": 676.122,
+    "lane_work_over_C_h": 42.257625,
+    "lane_wall_h": 42.257625,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 28
+   },
+   "robustness": {
+    "work_h": 755.3782133333332,
+    "work_over_C_h": 47.211138333333324,
+    "wall_h": 47.211138333333324,
+    "fits_24h": false,
+    "C_needed": 32,
+    "lane_work_h": 448.38548,
+    "lane_work_over_C_h": 28.0240925,
+    "lane_wall_h": 28.0240925,
+    "lane_fits_24h": false,
+    "lane_C_needed": 19,
+    "J_for_C": 27
+   }
+  },
+  {
+   "latency_x": 1.0,
+   "C": 24,
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1171.1769999999997,
+    "work_over_C_h": 48.79904166666665,
+    "wall_h": 48.79904166666665,
+    "fits_24h": false,
+    "C_needed": 49,
+    "lane_work_h": 676.122,
+    "lane_work_over_C_h": 28.171749999999996,
+    "lane_wall_h": 28.171749999999996,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 42
+   },
+   "robustness": {
+    "work_h": 755.3782133333332,
+    "work_over_C_h": 31.474092222222215,
+    "wall_h": 31.474092222222215,
+    "fits_24h": false,
+    "C_needed": 32,
+    "lane_work_h": 448.38548,
+    "lane_work_over_C_h": 18.682728333333333,
+    "lane_wall_h": 18.682728333333333,
+    "lane_fits_24h": true,
+    "lane_C_needed": 19,
+    "J_for_C": 41
+   }
+  },
+  {
+   "latency_x": 1.0,
+   "C": 32,
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1171.1769999999997,
+    "work_over_C_h": 36.59928124999999,
+    "wall_h": 36.59928124999999,
+    "fits_24h": false,
+    "C_needed": 49,
+    "lane_work_h": 676.122,
+    "lane_work_over_C_h": 21.1288125,
+    "lane_wall_h": 21.1288125,
+    "lane_fits_24h": true,
+    "lane_C_needed": 29,
+    "J_for_C": 56
+   },
+   "robustness": {
+    "work_h": 755.3782133333332,
+    "work_over_C_h": 23.605569166666662,
+    "wall_h": 23.605569166666662,
+    "fits_24h": true,
+    "C_needed": 32,
+    "lane_work_h": 448.38548,
+    "lane_work_over_C_h": 14.01204625,
+    "lane_wall_h": 14.01204625,
+    "lane_fits_24h": true,
+    "lane_C_needed": 19,
+    "J_for_C": 54
+   }
+  },
+  {
+   "latency_x": 1.5,
+   "C": 8,
+   "R_h": 8.611505555555556,
+   "P_h": 5.799166666666666,
+   "R_lane_h": 6.494199999999999,
+   "P_lane_h": 3.580875,
+   "critical_path_h": 8.630836111111112,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1470.9355000000003,
+    "work_over_C_h": 183.86693750000003,
+    "wall_h": 183.86693750000003,
+    "fits_24h": false,
+    "C_needed": 62,
+    "lane_work_h": 1014.183,
+    "lane_work_over_C_h": 126.772875,
+    "lane_wall_h": 126.772875,
+    "lane_fits_24h": false,
+    "lane_C_needed": 43,
+    "J_for_C": 12
+   },
+   "robustness": {
+    "work_h": 956.5894533333335,
+    "work_over_C_h": 119.57368166666669,
+    "wall_h": 119.57368166666669,
+    "fits_24h": false,
+    "C_needed": 40,
+    "lane_work_h": 672.5782200000001,
+    "lane_work_over_C_h": 84.07227750000001,
+    "lane_wall_h": 84.07227750000001,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 12
+   }
+  },
+  {
+   "latency_x": 1.5,
+   "C": 16,
+   "R_h": 8.611505555555556,
+   "P_h": 5.799166666666666,
+   "R_lane_h": 6.494199999999999,
+   "P_lane_h": 3.580875,
+   "critical_path_h": 8.630836111111112,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1470.9355000000003,
+    "work_over_C_h": 91.93346875000002,
+    "wall_h": 91.93346875000002,
+    "fits_24h": false,
+    "C_needed": 62,
+    "lane_work_h": 1014.183,
+    "lane_work_over_C_h": 63.3864375,
+    "lane_wall_h": 63.3864375,
+    "lane_fits_24h": false,
+    "lane_C_needed": 43,
+    "J_for_C": 24
+   },
+   "robustness": {
+    "work_h": 956.5894533333335,
+    "work_over_C_h": 59.78684083333334,
+    "wall_h": 59.78684083333334,
+    "fits_24h": false,
+    "C_needed": 40,
+    "lane_work_h": 672.5782200000001,
+    "lane_work_over_C_h": 42.036138750000006,
+    "lane_wall_h": 42.036138750000006,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 23
+   }
+  },
+  {
+   "latency_x": 1.5,
+   "C": 24,
+   "R_h": 8.611505555555556,
+   "P_h": 5.799166666666666,
+   "R_lane_h": 6.494199999999999,
+   "P_lane_h": 3.580875,
+   "critical_path_h": 8.630836111111112,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1470.9355000000003,
+    "work_over_C_h": 61.28897916666668,
+    "wall_h": 61.28897916666668,
+    "fits_24h": false,
+    "C_needed": 62,
+    "lane_work_h": 1014.183,
+    "lane_work_over_C_h": 42.257625,
+    "lane_wall_h": 42.257625,
+    "lane_fits_24h": false,
+    "lane_C_needed": 43,
+    "J_for_C": 35
+   },
+   "robustness": {
+    "work_h": 956.5894533333335,
+    "work_over_C_h": 39.857893888888896,
+    "wall_h": 39.857893888888896,
+    "fits_24h": false,
+    "C_needed": 40,
+    "lane_work_h": 672.5782200000001,
+    "lane_work_over_C_h": 28.024092500000002,
+    "lane_wall_h": 28.024092500000002,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 35
+   }
+  },
+  {
+   "latency_x": 1.5,
+   "C": 32,
+   "R_h": 8.611505555555556,
+   "P_h": 5.799166666666666,
+   "R_lane_h": 6.494199999999999,
+   "P_lane_h": 3.580875,
+   "critical_path_h": 8.630836111111112,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1470.9355000000003,
+    "work_over_C_h": 45.96673437500001,
+    "wall_h": 45.96673437500001,
+    "fits_24h": false,
+    "C_needed": 62,
+    "lane_work_h": 1014.183,
+    "lane_work_over_C_h": 31.69321875,
+    "lane_wall_h": 31.69321875,
+    "lane_fits_24h": false,
+    "lane_C_needed": 43,
+    "J_for_C": 47
+   },
+   "robustness": {
+    "work_h": 956.5894533333335,
+    "work_over_C_h": 29.89342041666667,
+    "wall_h": 29.89342041666667,
+    "fits_24h": false,
+    "C_needed": 40,
+    "lane_work_h": 672.5782200000001,
+    "lane_work_over_C_h": 21.018069375000003,
+    "lane_wall_h": 21.018069375000003,
+    "lane_fits_24h": true,
+    "lane_C_needed": 29,
+    "J_for_C": 46
+   }
+  }
+ ],
+ "cuts_at_C_measured": [
+  {
+   "cut": "none",
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1171.1769999999997,
+    "work_over_C_h": 146.39712499999996,
+    "wall_h": 146.39712499999996,
+    "fits_24h": false,
+    "C_needed": 49,
+    "lane_work_h": 676.122,
+    "lane_work_over_C_h": 84.51525,
+    "lane_wall_h": 84.51525,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 755.3782133333332,
+    "work_over_C_h": 94.42227666666665,
+    "wall_h": 94.42227666666665,
+    "fits_24h": false,
+    "C_needed": 32,
+    "lane_work_h": 448.38548,
+    "lane_work_over_C_h": 56.048185,
+    "lane_wall_h": 56.048185,
+    "lane_fits_24h": false,
+    "lane_C_needed": 19,
+    "J_for_C": 14
+   }
+  },
+  {
+   "cut": "1: b=100",
+   "R_h": 6.588633333333333,
+   "P_h": 3.212222222222222,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 1.5915,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 978.4436666666666,
+    "work_over_C_h": 122.30545833333332,
+    "wall_h": 122.30545833333332,
+    "fits_24h": false,
+    "C_needed": 41,
+    "lane_work_h": 580.632,
+    "lane_work_over_C_h": 72.579,
+    "lane_wall_h": 72.579,
+    "lane_fits_24h": false,
+    "lane_C_needed": 25,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 656.4417688888889,
+    "work_over_C_h": 82.05522111111111,
+    "wall_h": 82.05522111111111,
+    "fits_24h": false,
+    "C_needed": 28,
+    "lane_work_h": 399.36728000000005,
+    "lane_work_over_C_h": 49.920910000000006,
+    "lane_wall_h": 49.920910000000006,
+    "lane_fits_24h": false,
+    "lane_C_needed": 17,
+    "J_for_C": 14
+   }
+  },
+  {
+   "cut": "2: + L_rob=4",
+   "R_h": 6.588633333333333,
+   "P_h": 3.212222222222222,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 1.5915,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 978.4436666666666,
+    "work_over_C_h": 122.30545833333332,
+    "wall_h": 122.30545833333332,
+    "fits_24h": false,
+    "C_needed": 41,
+    "lane_work_h": 580.632,
+    "lane_work_over_C_h": 72.579,
+    "lane_wall_h": 72.579,
+    "lane_fits_24h": false,
+    "lane_C_needed": 25,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 328.22088444444444,
+    "work_over_C_h": 41.027610555555555,
+    "wall_h": 41.027610555555555,
+    "fits_24h": false,
+    "C_needed": 14,
+    "lane_work_h": 199.68364000000003,
+    "lane_work_over_C_h": 24.960455000000003,
+    "lane_wall_h": 24.960455000000003,
+    "lane_fits_24h": false,
+    "lane_C_needed": 9,
+    "J_for_C": 14
+   }
+  },
+  {
+   "cut": "3: + L=24",
+   "R_h": 6.588633333333333,
+   "P_h": 3.212222222222222,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 1.5915,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 489.2218333333333,
+    "work_over_C_h": 61.15272916666666,
+    "wall_h": 61.15272916666666,
+    "fits_24h": false,
+    "C_needed": 21,
+    "lane_work_h": 290.316,
+    "lane_work_over_C_h": 36.2895,
+    "lane_wall_h": 36.2895,
+    "lane_fits_24h": false,
+    "lane_C_needed": 13,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 328.22088444444444,
+    "work_over_C_h": 41.027610555555555,
+    "wall_h": 41.027610555555555,
+    "fits_24h": false,
+    "C_needed": 14,
+    "lane_work_h": 199.68364000000003,
+    "lane_work_over_C_h": 24.960455000000003,
+    "lane_wall_h": 24.960455000000003,
+    "lane_fits_24h": false,
+    "lane_C_needed": 9,
+    "J_for_C": 14
+   }
+  }
+ ],
+ "assumption_variants_at_C_measured": [
+  {
+   "variant": "one compaction per sprint",
+   "R_h": 5.487288888888888,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 3.2281222222222223,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 5.503349999999999,
+   "compactions_per_life": 40.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1072.0560000000003,
+    "work_over_C_h": 134.00700000000003,
+    "wall_h": 134.00700000000003,
+    "fits_24h": false,
+    "C_needed": 45,
+    "lane_work_h": 577.001,
+    "lane_work_over_C_h": 72.125125,
+    "lane_wall_h": 72.125125,
+    "lane_fits_24h": false,
+    "lane_C_needed": 25,
+    "J_for_C": 15
+   },
+   "robustness": {
+    "work_h": 678.72464,
+    "work_over_C_h": 84.84058,
+    "wall_h": 84.84058,
+    "fits_24h": false,
+    "C_needed": 29,
+    "lane_work_h": 371.7319066666667,
+    "lane_work_over_C_h": 46.46648833333334,
+    "lane_wall_h": 46.46648833333334,
+    "lane_fits_24h": false,
+    "lane_C_needed": 16,
+    "J_for_C": 15
+   }
+  },
+  {
+   "variant": "no resume-only controls",
+   "R_h": 6.588633333333333,
+   "P_h": 2.4091666666666667,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 1.1936250000000002,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 882.0769999999999,
+    "work_over_C_h": 110.25962499999999,
+    "wall_h": 110.25962499999999,
+    "fits_24h": false,
+    "C_needed": 37,
+    "lane_work_h": 532.8870000000001,
+    "lane_work_over_C_h": 66.61087500000001,
+    "lane_wall_h": 66.61087500000001,
+    "lane_fits_24h": false,
+    "lane_C_needed": 23,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 606.9735466666667,
+    "work_over_C_h": 75.87169333333334,
+    "wall_h": 75.87169333333334,
+    "fits_24h": false,
+    "C_needed": 26,
+    "lane_work_h": 374.85818,
+    "lane_work_over_C_h": 46.8572725,
+    "lane_wall_h": 46.8572725,
+    "lane_fits_24h": false,
+    "lane_C_needed": 16,
+    "J_for_C": 13
+   }
+  },
+  {
+   "variant": "f = 1",
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1368.8360000000002,
+    "work_over_C_h": 171.10450000000003,
+    "wall_h": 171.10450000000003,
+    "fits_24h": false,
+    "C_needed": 58,
+    "lane_work_h": 806.0060000000002,
+    "lane_work_over_C_h": 100.75075000000002,
+    "lane_wall_h": 100.75075000000002,
+    "lane_fits_24h": false,
+    "lane_C_needed": 34,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 860.7963466666666,
+    "work_over_C_h": 107.59954333333333,
+    "wall_h": 107.59954333333333,
+    "fits_24h": false,
+    "C_needed": 36,
+    "lane_work_h": 517.6569466666667,
+    "lane_work_over_C_h": 64.70711833333334,
+    "lane_wall_h": 64.70711833333334,
+    "lane_fits_24h": false,
+    "lane_C_needed": 22,
+    "J_for_C": 14
+   }
+  },
+  {
+   "variant": "delta_W = 0",
+   "R_h": 6.588633333333333,
+   "P_h": 4.818333333333333,
+   "R_lane_h": 4.329466666666667,
+   "P_lane_h": 2.3872500000000003,
+   "critical_path_h": 6.604694444444444,
+   "compactions_per_life": 80.0,
+   "write_turns_per_life": 1000,
+   "board": {
+    "work_h": 1171.1769999999997,
+    "work_over_C_h": 146.39712499999996,
+    "wall_h": 146.39712499999996,
+    "fits_24h": false,
+    "C_needed": 49,
+    "lane_work_h": 676.122,
+    "lane_work_over_C_h": 84.51525,
+    "lane_wall_h": 84.51525,
+    "lane_fits_24h": false,
+    "lane_C_needed": 29,
+    "J_for_C": 14
+   },
+   "robustness": {
+    "work_h": 668.60528,
+    "work_over_C_h": 83.57566,
+    "wall_h": 83.57566,
+    "fits_24h": false,
+    "C_needed": 28,
+    "lane_work_h": 392.61227999999994,
+    "lane_work_over_C_h": 49.07653499999999,
+    "lane_wall_h": 49.07653499999999,
+    "lane_fits_24h": false,
+    "lane_C_needed": 17,
+    "J_for_C": 14
+   }
+  }
+ ],
+ "rss_gib": 0.172,
+ "grid": [
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 54.5,
+    "job_fits": false,
+    "lane_h": 21.1,
+    "lane_fits": true,
+    "J": 21,
+    "J_gib": 3.6
+   },
+   "robustness": {
+    "job_h": 65.1,
+    "job_fits": false,
+    "lane_h": 26.2,
+    "lane_fits": false,
+    "J": 20,
+    "J_gib": 3.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 51.7,
+    "job_fits": false,
+    "lane_h": 19.1,
+    "lane_fits": true,
+    "J": 22,
+    "J_gib": 3.8
+   },
+   "robustness": {
+    "job_h": 61.2,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 22,
+    "J_gib": 3.8
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 49.5,
+    "job_fits": false,
+    "lane_h": 17.4,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 58.0,
+    "job_fits": false,
+    "lane_h": 20.9,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 73.2,
+    "job_fits": false,
+    "lane_h": 42.3,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   },
+   "robustness": {
+    "job_h": 88.5,
+    "job_fits": false,
+    "lane_h": 52.3,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 68.4,
+    "job_fits": false,
+    "lane_h": 38.1,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 81.7,
+    "job_fits": false,
+    "lane_h": 46.5,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 64.5,
+    "job_fits": false,
+    "lane_h": 34.8,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 76.2,
+    "job_fits": false,
+    "lane_h": 41.8,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 91.9,
+    "job_fits": false,
+    "lane_h": 63.4,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 112.0,
+    "job_fits": false,
+    "lane_h": 78.5,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 85.0,
+    "job_fits": false,
+    "lane_h": 57.2,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 102.2,
+    "job_fits": false,
+    "lane_h": 69.7,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 79.5,
+    "job_fits": false,
+    "lane_h": 52.2,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   },
+   "robustness": {
+    "job_h": 94.4,
+    "job_fits": false,
+    "lane_h": 62.7,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 27.2,
+    "job_fits": false,
+    "lane_h": 10.6,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 32.5,
+    "job_fits": false,
+    "lane_h": 13.1,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 25.8,
+    "job_fits": false,
+    "lane_h": 9.5,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 30.6,
+    "job_fits": false,
+    "lane_h": 11.6,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 24.7,
+    "job_fits": false,
+    "lane_h": 8.7,
+    "lane_fits": true,
+    "J": 46,
+    "J_gib": 7.9
+   },
+   "robustness": {
+    "job_h": 29.0,
+    "job_fits": false,
+    "lane_h": 10.4,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 36.6,
+    "job_fits": false,
+    "lane_h": 21.1,
+    "lane_fits": true,
+    "J": 28,
+    "J_gib": 4.8
+   },
+   "robustness": {
+    "job_h": 44.3,
+    "job_fits": false,
+    "lane_h": 26.2,
+    "lane_fits": false,
+    "J": 28,
+    "J_gib": 4.8
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 34.2,
+    "job_fits": false,
+    "lane_h": 19.1,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   },
+   "robustness": {
+    "job_h": 40.8,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 32.2,
+    "job_fits": false,
+    "lane_h": 17.4,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   },
+   "robustness": {
+    "job_h": 38.1,
+    "job_fits": false,
+    "lane_h": 20.9,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 46.0,
+    "job_fits": false,
+    "lane_h": 31.7,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 56.0,
+    "job_fits": false,
+    "lane_h": 39.2,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 42.5,
+    "job_fits": false,
+    "lane_h": 28.6,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 51.1,
+    "job_fits": false,
+    "lane_h": 34.8,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 39.7,
+    "job_fits": false,
+    "lane_h": 26.1,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   },
+   "robustness": {
+    "job_h": 47.2,
+    "job_fits": false,
+    "lane_h": 31.3,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 18.2,
+    "job_fits": true,
+    "lane_h": 7.0,
+    "lane_fits": true,
+    "J": 62,
+    "J_gib": 10.6
+   },
+   "robustness": {
+    "job_h": 21.7,
+    "job_fits": true,
+    "lane_h": 8.7,
+    "lane_fits": true,
+    "J": 60,
+    "J_gib": 10.3
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 17.2,
+    "job_fits": true,
+    "lane_h": 6.4,
+    "lane_fits": true,
+    "J": 66,
+    "J_gib": 11.3
+   },
+   "robustness": {
+    "job_h": 20.4,
+    "job_fits": true,
+    "lane_h": 7.7,
+    "lane_fits": true,
+    "J": 64,
+    "J_gib": 11.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 16.5,
+    "job_fits": true,
+    "lane_h": 5.8,
+    "lane_fits": true,
+    "J": 69,
+    "J_gib": 11.8
+   },
+   "robustness": {
+    "job_h": 19.3,
+    "job_fits": true,
+    "lane_h": 7.0,
+    "lane_fits": true,
+    "J": 67,
+    "J_gib": 11.5
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 24.4,
+    "job_fits": false,
+    "lane_h": 14.1,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 29.5,
+    "job_fits": false,
+    "lane_h": 17.4,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 22.8,
+    "job_fits": true,
+    "lane_h": 12.7,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 27.2,
+    "job_fits": false,
+    "lane_h": 15.5,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 21.5,
+    "job_fits": true,
+    "lane_h": 11.6,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   },
+   "robustness": {
+    "job_h": 25.4,
+    "job_fits": false,
+    "lane_h": 13.9,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 30.6,
+    "job_fits": false,
+    "lane_h": 21.1,
+    "lane_fits": true,
+    "J": 35,
+    "J_gib": 6.0
+   },
+   "robustness": {
+    "job_h": 37.3,
+    "job_fits": false,
+    "lane_h": 26.2,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 28.3,
+    "job_fits": false,
+    "lane_h": 19.1,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   },
+   "robustness": {
+    "job_h": 34.1,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 26.5,
+    "job_fits": false,
+    "lane_h": 17.4,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   },
+   "robustness": {
+    "job_h": 31.5,
+    "job_fits": false,
+    "lane_h": 20.9,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 44.9,
+    "job_fits": false,
+    "lane_h": 18.1,
+    "lane_fits": true,
+    "J": 20,
+    "J_gib": 3.4
+   },
+   "robustness": {
+    "job_h": 29.7,
+    "job_fits": false,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 20,
+    "J_gib": 3.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 42.1,
+    "job_fits": false,
+    "lane_h": 16.1,
+    "lane_fits": true,
+    "J": 21,
+    "J_gib": 3.6
+   },
+   "robustness": {
+    "job_h": 27.6,
+    "job_fits": false,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 21,
+    "J_gib": 3.6
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 39.9,
+    "job_fits": false,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 25.9,
+    "job_fits": false,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 22,
+    "J_gib": 3.8
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 61.2,
+    "job_fits": false,
+    "lane_h": 36.3,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   },
+   "robustness": {
+    "job_h": 41.0,
+    "job_fits": false,
+    "lane_h": 25.0,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 56.3,
+    "job_fits": false,
+    "lane_h": 32.1,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 37.3,
+    "job_fits": false,
+    "lane_h": 21.8,
+    "lane_fits": true,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 52.4,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 34.3,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 77.4,
+    "job_fits": false,
+    "lane_h": 54.4,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 52.3,
+    "job_fits": false,
+    "lane_h": 37.4,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 70.5,
+    "job_fits": false,
+    "lane_h": 48.2,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 47.0,
+    "job_fits": false,
+    "lane_h": 32.6,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 65.0,
+    "job_fits": false,
+    "lane_h": 43.2,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   },
+   "robustness": {
+    "job_h": 42.7,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 22.4,
+    "job_fits": true,
+    "lane_h": 9.1,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   },
+   "robustness": {
+    "job_h": 14.9,
+    "job_fits": true,
+    "lane_h": 6.2,
+    "lane_fits": true,
+    "J": 39,
+    "J_gib": 6.7
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 21.1,
+    "job_fits": true,
+    "lane_h": 8.0,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 13.8,
+    "job_fits": true,
+    "lane_h": 5.4,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 19.9,
+    "job_fits": true,
+    "lane_h": 7.2,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   },
+   "robustness": {
+    "job_h": 12.9,
+    "job_fits": true,
+    "lane_h": 4.8,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 30.6,
+    "job_fits": false,
+    "lane_h": 18.1,
+    "lane_fits": true,
+    "J": 27,
+    "J_gib": 4.6
+   },
+   "robustness": {
+    "job_h": 20.5,
+    "job_fits": true,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 27,
+    "J_gib": 4.6
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 28.2,
+    "job_fits": false,
+    "lane_h": 16.1,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   },
+   "robustness": {
+    "job_h": 18.6,
+    "job_fits": true,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 28,
+    "J_gib": 4.8
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 26.2,
+    "job_fits": false,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   },
+   "robustness": {
+    "job_h": 17.1,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 38.7,
+    "job_fits": false,
+    "lane_h": 27.2,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 26.2,
+    "job_fits": false,
+    "lane_h": 18.7,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 35.3,
+    "job_fits": false,
+    "lane_h": 24.1,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 23.5,
+    "job_fits": true,
+    "lane_h": 16.3,
+    "lane_fits": true,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 32.5,
+    "job_fits": false,
+    "lane_h": 21.6,
+    "lane_fits": true,
+    "J": 25,
+    "J_gib": 4.3
+   },
+   "robustness": {
+    "job_h": 21.4,
+    "job_fits": true,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 15.0,
+    "job_fits": true,
+    "lane_h": 6.0,
+    "lane_fits": true,
+    "J": 60,
+    "J_gib": 10.3
+   },
+   "robustness": {
+    "job_h": 9.9,
+    "job_fits": true,
+    "lane_h": 4.6,
+    "lane_fits": true,
+    "J": 58,
+    "J_gib": 10.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 14.0,
+    "job_fits": true,
+    "lane_h": 5.4,
+    "lane_fits": true,
+    "J": 63,
+    "J_gib": 10.8
+   },
+   "robustness": {
+    "job_h": 9.2,
+    "job_fits": true,
+    "lane_h": 4.1,
+    "lane_fits": true,
+    "J": 61,
+    "J_gib": 10.5
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 13.3,
+    "job_fits": true,
+    "lane_h": 4.8,
+    "lane_fits": true,
+    "J": 67,
+    "J_gib": 11.5
+   },
+   "robustness": {
+    "job_h": 8.6,
+    "job_fits": true,
+    "lane_h": 3.7,
+    "lane_fits": true,
+    "J": 65,
+    "J_gib": 11.2
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 20.4,
+    "job_fits": true,
+    "lane_h": 12.1,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   },
+   "robustness": {
+    "job_h": 13.7,
+    "job_fits": true,
+    "lane_h": 8.3,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 18.8,
+    "job_fits": true,
+    "lane_h": 10.7,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   },
+   "robustness": {
+    "job_h": 12.4,
+    "job_fits": true,
+    "lane_h": 7.3,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 17.5,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 11.4,
+    "job_fits": true,
+    "lane_h": 6.4,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 25.8,
+    "job_fits": false,
+    "lane_h": 18.1,
+    "lane_fits": true,
+    "J": 35,
+    "J_gib": 6.0
+   },
+   "robustness": {
+    "job_h": 17.4,
+    "job_fits": true,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 34,
+    "J_gib": 5.8
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 23.5,
+    "job_fits": true,
+    "lane_h": 16.1,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   },
+   "robustness": {
+    "job_h": 15.7,
+    "job_fits": true,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 35,
+    "J_gib": 6.0
+   }
+  },
+  {
+   "L": 24,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 21.7,
+    "job_fits": true,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   },
+   "robustness": {
+    "job_h": 14.2,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 72.6,
+    "job_fits": false,
+    "lane_h": 28.2,
+    "lane_fits": false,
+    "J": 21,
+    "J_gib": 3.6
+   },
+   "robustness": {
+    "job_h": 69.3,
+    "job_fits": false,
+    "lane_h": 28.0,
+    "lane_fits": false,
+    "J": 20,
+    "J_gib": 3.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 68.9,
+    "job_fits": false,
+    "lane_h": 25.4,
+    "lane_fits": false,
+    "J": 22,
+    "J_gib": 3.8
+   },
+   "robustness": {
+    "job_h": 65.0,
+    "job_fits": false,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 21,
+    "J_gib": 3.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 66.0,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 61.6,
+    "job_fits": false,
+    "lane_h": 22.3,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 97.6,
+    "job_fits": false,
+    "lane_h": 56.3,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   },
+   "robustness": {
+    "job_h": 94.4,
+    "job_fits": false,
+    "lane_h": 56.0,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 91.1,
+    "job_fits": false,
+    "lane_h": 50.8,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 86.9,
+    "job_fits": false,
+    "lane_h": 49.6,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 86.0,
+    "job_fits": false,
+    "lane_h": 46.4,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 80.9,
+    "job_fits": false,
+    "lane_h": 44.5,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 122.6,
+    "job_fits": false,
+    "lane_h": 84.5,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 119.6,
+    "job_fits": false,
+    "lane_h": 84.1,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 113.4,
+    "job_fits": false,
+    "lane_h": 76.2,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 108.9,
+    "job_fits": false,
+    "lane_h": 74.5,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 106.0,
+    "job_fits": false,
+    "lane_h": 69.6,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   },
+   "robustness": {
+    "job_h": 100.3,
+    "job_fits": false,
+    "lane_h": 66.8,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 36.3,
+    "job_fits": false,
+    "lane_h": 14.1,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 34.6,
+    "job_fits": false,
+    "lane_h": 14.0,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 34.5,
+    "job_fits": false,
+    "lane_h": 12.7,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 32.5,
+    "job_fits": false,
+    "lane_h": 12.4,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 33.0,
+    "job_fits": false,
+    "lane_h": 11.6,
+    "lane_fits": true,
+    "J": 46,
+    "J_gib": 7.9
+   },
+   "robustness": {
+    "job_h": 30.8,
+    "job_fits": false,
+    "lane_h": 11.1,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 48.8,
+    "job_fits": false,
+    "lane_h": 28.2,
+    "lane_fits": false,
+    "J": 28,
+    "J_gib": 4.8
+   },
+   "robustness": {
+    "job_h": 47.2,
+    "job_fits": false,
+    "lane_h": 28.0,
+    "lane_fits": false,
+    "J": 27,
+    "J_gib": 4.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 45.6,
+    "job_fits": false,
+    "lane_h": 25.4,
+    "lane_fits": false,
+    "J": 29,
+    "J_gib": 5.0
+   },
+   "robustness": {
+    "job_h": 43.5,
+    "job_fits": false,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 29,
+    "J_gib": 5.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 43.0,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   },
+   "robustness": {
+    "job_h": 40.5,
+    "job_fits": false,
+    "lane_h": 22.3,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 61.3,
+    "job_fits": false,
+    "lane_h": 42.3,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 59.8,
+    "job_fits": false,
+    "lane_h": 42.0,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 56.7,
+    "job_fits": false,
+    "lane_h": 38.1,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 54.4,
+    "job_fits": false,
+    "lane_h": 37.2,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 53.0,
+    "job_fits": false,
+    "lane_h": 34.8,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   },
+   "robustness": {
+    "job_h": 50.2,
+    "job_fits": false,
+    "lane_h": 33.4,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 24.2,
+    "job_fits": false,
+    "lane_h": 9.4,
+    "lane_fits": true,
+    "J": 62,
+    "J_gib": 10.6
+   },
+   "robustness": {
+    "job_h": 23.1,
+    "job_fits": true,
+    "lane_h": 9.3,
+    "lane_fits": true,
+    "J": 60,
+    "J_gib": 10.3
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 23.0,
+    "job_fits": true,
+    "lane_h": 8.5,
+    "lane_fits": true,
+    "J": 66,
+    "J_gib": 11.3
+   },
+   "robustness": {
+    "job_h": 21.7,
+    "job_fits": true,
+    "lane_h": 8.3,
+    "lane_fits": true,
+    "J": 63,
+    "J_gib": 10.8
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 22.0,
+    "job_fits": true,
+    "lane_h": 7.7,
+    "lane_fits": true,
+    "J": 69,
+    "J_gib": 11.8
+   },
+   "robustness": {
+    "job_h": 20.5,
+    "job_fits": true,
+    "lane_h": 7.4,
+    "lane_fits": true,
+    "J": 67,
+    "J_gib": 11.5
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 32.5,
+    "job_fits": false,
+    "lane_h": 18.8,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 31.5,
+    "job_fits": false,
+    "lane_h": 18.7,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 30.4,
+    "job_fits": false,
+    "lane_h": 16.9,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 29.0,
+    "job_fits": false,
+    "lane_h": 16.5,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 28.7,
+    "job_fits": false,
+    "lane_h": 15.5,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   },
+   "robustness": {
+    "job_h": 27.0,
+    "job_fits": false,
+    "lane_h": 14.8,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 40.9,
+    "job_fits": false,
+    "lane_h": 28.2,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   },
+   "robustness": {
+    "job_h": 39.9,
+    "job_fits": false,
+    "lane_h": 28.0,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 37.8,
+    "job_fits": false,
+    "lane_h": 25.4,
+    "lane_fits": false,
+    "J": 36,
+    "J_gib": 6.2
+   },
+   "robustness": {
+    "job_h": 36.3,
+    "job_fits": false,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 36,
+    "J_gib": 6.2
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 35.3,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   },
+   "robustness": {
+    "job_h": 33.4,
+    "job_fits": false,
+    "lane_h": 22.3,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 59.8,
+    "job_fits": false,
+    "lane_h": 24.2,
+    "lane_fits": false,
+    "J": 20,
+    "J_gib": 3.4
+   },
+   "robustness": {
+    "job_h": 29.7,
+    "job_fits": false,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 20,
+    "J_gib": 3.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 56.1,
+    "job_fits": false,
+    "lane_h": 21.4,
+    "lane_fits": true,
+    "J": 21,
+    "J_gib": 3.6
+   },
+   "robustness": {
+    "job_h": 27.6,
+    "job_fits": false,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 21,
+    "J_gib": 3.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 53.2,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 25.9,
+    "job_fits": false,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 22,
+    "J_gib": 3.8
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 81.5,
+    "job_fits": false,
+    "lane_h": 48.4,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   },
+   "robustness": {
+    "job_h": 41.0,
+    "job_fits": false,
+    "lane_h": 25.0,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 75.1,
+    "job_fits": false,
+    "lane_h": 42.9,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 37.3,
+    "job_fits": false,
+    "lane_h": 21.8,
+    "lane_fits": true,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 69.9,
+    "job_fits": false,
+    "lane_h": 38.4,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 34.3,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 103.2,
+    "job_fits": false,
+    "lane_h": 72.6,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 52.3,
+    "job_fits": false,
+    "lane_h": 37.4,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 94.0,
+    "job_fits": false,
+    "lane_h": 64.3,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 47.0,
+    "job_fits": false,
+    "lane_h": 32.6,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 86.6,
+    "job_fits": false,
+    "lane_h": 57.7,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   },
+   "robustness": {
+    "job_h": 42.7,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 29.9,
+    "job_fits": false,
+    "lane_h": 12.1,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   },
+   "robustness": {
+    "job_h": 14.9,
+    "job_fits": true,
+    "lane_h": 6.2,
+    "lane_fits": true,
+    "J": 39,
+    "J_gib": 6.7
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 28.1,
+    "job_fits": false,
+    "lane_h": 10.7,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 13.8,
+    "job_fits": true,
+    "lane_h": 5.4,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 26.6,
+    "job_fits": false,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   },
+   "robustness": {
+    "job_h": 12.9,
+    "job_fits": true,
+    "lane_h": 4.8,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 40.8,
+    "job_fits": false,
+    "lane_h": 24.2,
+    "lane_fits": false,
+    "J": 27,
+    "J_gib": 4.6
+   },
+   "robustness": {
+    "job_h": 20.5,
+    "job_fits": true,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 27,
+    "J_gib": 4.6
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 37.5,
+    "job_fits": false,
+    "lane_h": 21.4,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   },
+   "robustness": {
+    "job_h": 18.6,
+    "job_fits": true,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 28,
+    "J_gib": 4.8
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 35.0,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   },
+   "robustness": {
+    "job_h": 17.1,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 51.6,
+    "job_fits": false,
+    "lane_h": 36.3,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 26.2,
+    "job_fits": false,
+    "lane_h": 18.7,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 47.0,
+    "job_fits": false,
+    "lane_h": 32.1,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 23.5,
+    "job_fits": true,
+    "lane_h": 16.3,
+    "lane_fits": true,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 43.3,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   },
+   "robustness": {
+    "job_h": 21.4,
+    "job_fits": true,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 19.9,
+    "job_fits": true,
+    "lane_h": 8.1,
+    "lane_fits": true,
+    "J": 60,
+    "J_gib": 10.3
+   },
+   "robustness": {
+    "job_h": 9.9,
+    "job_fits": true,
+    "lane_h": 4.6,
+    "lane_fits": true,
+    "J": 58,
+    "J_gib": 10.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 18.7,
+    "job_fits": true,
+    "lane_h": 7.1,
+    "lane_fits": true,
+    "J": 63,
+    "J_gib": 10.8
+   },
+   "robustness": {
+    "job_h": 9.2,
+    "job_fits": true,
+    "lane_h": 4.1,
+    "lane_fits": true,
+    "J": 61,
+    "J_gib": 10.5
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 17.7,
+    "job_fits": true,
+    "lane_h": 6.4,
+    "lane_fits": true,
+    "J": 67,
+    "J_gib": 11.5
+   },
+   "robustness": {
+    "job_h": 8.6,
+    "job_fits": true,
+    "lane_h": 3.7,
+    "lane_fits": true,
+    "J": 65,
+    "J_gib": 11.2
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 27.2,
+    "job_fits": false,
+    "lane_h": 16.1,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   },
+   "robustness": {
+    "job_h": 13.7,
+    "job_fits": true,
+    "lane_h": 8.3,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 25.0,
+    "job_fits": false,
+    "lane_h": 14.3,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   },
+   "robustness": {
+    "job_h": 12.4,
+    "job_fits": true,
+    "lane_h": 7.3,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 23.3,
+    "job_fits": true,
+    "lane_h": 12.8,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 11.4,
+    "job_fits": true,
+    "lane_h": 6.4,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 34.4,
+    "job_fits": false,
+    "lane_h": 24.2,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   },
+   "robustness": {
+    "job_h": 17.4,
+    "job_fits": true,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 34,
+    "J_gib": 5.8
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 31.3,
+    "job_fits": false,
+    "lane_h": 21.4,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   },
+   "robustness": {
+    "job_h": 15.7,
+    "job_fits": true,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 35,
+    "J_gib": 6.0
+   }
+  },
+  {
+   "L": 32,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 28.9,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   },
+   "robustness": {
+    "job_h": 14.2,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 108.9,
+    "job_fits": false,
+    "lane_h": 42.3,
+    "lane_fits": false,
+    "J": 21,
+    "J_gib": 3.6
+   },
+   "robustness": {
+    "job_h": 69.3,
+    "job_fits": false,
+    "lane_h": 28.0,
+    "lane_fits": false,
+    "J": 20,
+    "J_gib": 3.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 103.4,
+    "job_fits": false,
+    "lane_h": 38.1,
+    "lane_fits": false,
+    "J": 22,
+    "J_gib": 3.8
+   },
+   "robustness": {
+    "job_h": 65.0,
+    "job_fits": false,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 21,
+    "J_gib": 3.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 99.0,
+    "job_fits": false,
+    "lane_h": 34.8,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 61.6,
+    "job_fits": false,
+    "lane_h": 22.3,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 146.4,
+    "job_fits": false,
+    "lane_h": 84.5,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   },
+   "robustness": {
+    "job_h": 94.4,
+    "job_fits": false,
+    "lane_h": 56.0,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 136.7,
+    "job_fits": false,
+    "lane_h": 76.2,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 86.9,
+    "job_fits": false,
+    "lane_h": 49.6,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 129.0,
+    "job_fits": false,
+    "lane_h": 69.6,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 80.9,
+    "job_fits": false,
+    "lane_h": 44.5,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 183.9,
+    "job_fits": false,
+    "lane_h": 126.8,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 119.6,
+    "job_fits": false,
+    "lane_h": 84.1,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 170.0,
+    "job_fits": false,
+    "lane_h": 114.3,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 108.9,
+    "job_fits": false,
+    "lane_h": 74.5,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 159.0,
+    "job_fits": false,
+    "lane_h": 104.4,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   },
+   "robustness": {
+    "job_h": 100.3,
+    "job_fits": false,
+    "lane_h": 66.8,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 54.5,
+    "job_fits": false,
+    "lane_h": 21.1,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 34.6,
+    "job_fits": false,
+    "lane_h": 14.0,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 51.7,
+    "job_fits": false,
+    "lane_h": 19.1,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 32.5,
+    "job_fits": false,
+    "lane_h": 12.4,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 49.5,
+    "job_fits": false,
+    "lane_h": 17.4,
+    "lane_fits": true,
+    "J": 46,
+    "J_gib": 7.9
+   },
+   "robustness": {
+    "job_h": 30.8,
+    "job_fits": false,
+    "lane_h": 11.1,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 73.2,
+    "job_fits": false,
+    "lane_h": 42.3,
+    "lane_fits": false,
+    "J": 28,
+    "J_gib": 4.8
+   },
+   "robustness": {
+    "job_h": 47.2,
+    "job_fits": false,
+    "lane_h": 28.0,
+    "lane_fits": false,
+    "J": 27,
+    "J_gib": 4.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 68.4,
+    "job_fits": false,
+    "lane_h": 38.1,
+    "lane_fits": false,
+    "J": 29,
+    "J_gib": 5.0
+   },
+   "robustness": {
+    "job_h": 43.5,
+    "job_fits": false,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 29,
+    "J_gib": 5.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 64.5,
+    "job_fits": false,
+    "lane_h": 34.8,
+    "lane_fits": false,
+    "J": 30,
+    "J_gib": 5.1
+   },
+   "robustness": {
+    "job_h": 40.5,
+    "job_fits": false,
+    "lane_h": 22.3,
+    "lane_fits": true,
+    "J": 30,
+    "J_gib": 5.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 91.9,
+    "job_fits": false,
+    "lane_h": 63.4,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 59.8,
+    "job_fits": false,
+    "lane_h": 42.0,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 85.0,
+    "job_fits": false,
+    "lane_h": 57.2,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 54.4,
+    "job_fits": false,
+    "lane_h": 37.2,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 79.5,
+    "job_fits": false,
+    "lane_h": 52.2,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   },
+   "robustness": {
+    "job_h": 50.2,
+    "job_fits": false,
+    "lane_h": 33.4,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 36.3,
+    "job_fits": false,
+    "lane_h": 14.1,
+    "lane_fits": true,
+    "J": 62,
+    "J_gib": 10.6
+   },
+   "robustness": {
+    "job_h": 23.1,
+    "job_fits": true,
+    "lane_h": 9.3,
+    "lane_fits": true,
+    "J": 60,
+    "J_gib": 10.3
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 34.5,
+    "job_fits": false,
+    "lane_h": 12.7,
+    "lane_fits": true,
+    "J": 66,
+    "J_gib": 11.3
+   },
+   "robustness": {
+    "job_h": 21.7,
+    "job_fits": true,
+    "lane_h": 8.3,
+    "lane_fits": true,
+    "J": 63,
+    "J_gib": 10.8
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 33.0,
+    "job_fits": false,
+    "lane_h": 11.6,
+    "lane_fits": true,
+    "J": 69,
+    "J_gib": 11.8
+   },
+   "robustness": {
+    "job_h": 20.5,
+    "job_fits": true,
+    "lane_h": 7.4,
+    "lane_fits": true,
+    "J": 67,
+    "J_gib": 11.5
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 48.8,
+    "job_fits": false,
+    "lane_h": 28.2,
+    "lane_fits": false,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 31.5,
+    "job_fits": false,
+    "lane_h": 18.7,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 45.6,
+    "job_fits": false,
+    "lane_h": 25.4,
+    "lane_fits": false,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 29.0,
+    "job_fits": false,
+    "lane_h": 16.5,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 43.0,
+    "job_fits": false,
+    "lane_h": 23.2,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   },
+   "robustness": {
+    "job_h": 27.0,
+    "job_fits": false,
+    "lane_h": 14.8,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 61.3,
+    "job_fits": false,
+    "lane_h": 42.3,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   },
+   "robustness": {
+    "job_h": 39.9,
+    "job_fits": false,
+    "lane_h": 28.0,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 56.7,
+    "job_fits": false,
+    "lane_h": 38.1,
+    "lane_fits": false,
+    "J": 36,
+    "J_gib": 6.2
+   },
+   "robustness": {
+    "job_h": 36.3,
+    "job_fits": false,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 36,
+    "J_gib": 6.2
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "none",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 53.0,
+    "job_fits": false,
+    "lane_h": 34.8,
+    "lane_fits": false,
+    "J": 37,
+    "J_gib": 6.3
+   },
+   "robustness": {
+    "job_h": 33.4,
+    "job_fits": false,
+    "lane_h": 22.3,
+    "lane_fits": true,
+    "J": 37,
+    "J_gib": 6.3
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 89.7,
+    "job_fits": false,
+    "lane_h": 36.3,
+    "lane_fits": false,
+    "J": 20,
+    "J_gib": 3.4
+   },
+   "robustness": {
+    "job_h": 29.7,
+    "job_fits": false,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 20,
+    "J_gib": 3.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 84.2,
+    "job_fits": false,
+    "lane_h": 32.1,
+    "lane_fits": false,
+    "J": 21,
+    "J_gib": 3.6
+   },
+   "robustness": {
+    "job_h": 27.6,
+    "job_fits": false,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 21,
+    "J_gib": 3.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 79.8,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 25.9,
+    "job_fits": false,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 22,
+    "J_gib": 3.8
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 122.3,
+    "job_fits": false,
+    "lane_h": 72.6,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   },
+   "robustness": {
+    "job_h": 41.0,
+    "job_fits": false,
+    "lane_h": 25.0,
+    "lane_fits": false,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 112.6,
+    "job_fits": false,
+    "lane_h": 64.3,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 37.3,
+    "job_fits": false,
+    "lane_h": 21.8,
+    "lane_fits": true,
+    "J": 14,
+    "J_gib": 2.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 104.9,
+    "job_fits": false,
+    "lane_h": 57.7,
+    "lane_fits": false,
+    "J": 15,
+    "J_gib": 2.6
+   },
+   "robustness": {
+    "job_h": 34.3,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 15,
+    "J_gib": 2.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 154.9,
+    "job_fits": false,
+    "lane_h": 108.9,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 52.3,
+    "job_fits": false,
+    "lane_h": 37.4,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 141.0,
+    "job_fits": false,
+    "lane_h": 96.4,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   },
+   "robustness": {
+    "job_h": 47.0,
+    "job_fits": false,
+    "lane_h": 32.6,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 8,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 130.0,
+    "job_fits": false,
+    "lane_h": 86.5,
+    "lane_fits": false,
+    "J": 13,
+    "J_gib": 2.2
+   },
+   "robustness": {
+    "job_h": 42.7,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 12,
+    "J_gib": 2.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 44.9,
+    "job_fits": false,
+    "lane_h": 18.1,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   },
+   "robustness": {
+    "job_h": 14.9,
+    "job_fits": true,
+    "lane_h": 6.2,
+    "lane_fits": true,
+    "J": 39,
+    "J_gib": 6.7
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 42.1,
+    "job_fits": false,
+    "lane_h": 16.1,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   },
+   "robustness": {
+    "job_h": 13.8,
+    "job_fits": true,
+    "lane_h": 5.4,
+    "lane_fits": true,
+    "J": 41,
+    "J_gib": 7.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 39.9,
+    "job_fits": false,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 7.7
+   },
+   "robustness": {
+    "job_h": 12.9,
+    "job_fits": true,
+    "lane_h": 4.8,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 61.2,
+    "job_fits": false,
+    "lane_h": 36.3,
+    "lane_fits": false,
+    "J": 27,
+    "J_gib": 4.6
+   },
+   "robustness": {
+    "job_h": 20.5,
+    "job_fits": true,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 27,
+    "J_gib": 4.6
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 56.3,
+    "job_fits": false,
+    "lane_h": 32.1,
+    "lane_fits": false,
+    "J": 29,
+    "J_gib": 5.0
+   },
+   "robustness": {
+    "job_h": 18.6,
+    "job_fits": true,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 28,
+    "J_gib": 4.8
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 52.4,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 30,
+    "J_gib": 5.1
+   },
+   "robustness": {
+    "job_h": 17.1,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 29,
+    "J_gib": 5.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 77.4,
+    "job_fits": false,
+    "lane_h": 54.4,
+    "lane_fits": false,
+    "J": 23,
+    "J_gib": 3.9
+   },
+   "robustness": {
+    "job_h": 26.2,
+    "job_fits": false,
+    "lane_h": 18.7,
+    "lane_fits": true,
+    "J": 23,
+    "J_gib": 3.9
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 70.5,
+    "job_fits": false,
+    "lane_h": 48.2,
+    "lane_fits": false,
+    "J": 24,
+    "J_gib": 4.1
+   },
+   "robustness": {
+    "job_h": 23.5,
+    "job_fits": true,
+    "lane_h": 16.3,
+    "lane_fits": true,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 16,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 65.0,
+    "job_fits": false,
+    "lane_h": 43.2,
+    "lane_fits": false,
+    "J": 25,
+    "J_gib": 4.3
+   },
+   "robustness": {
+    "job_h": 21.4,
+    "job_fits": true,
+    "lane_h": 14.4,
+    "lane_fits": true,
+    "J": 24,
+    "J_gib": 4.1
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every turn",
+   "cp_h": 4.58,
+   "board": {
+    "job_h": 29.9,
+    "job_fits": false,
+    "lane_h": 12.1,
+    "lane_fits": true,
+    "J": 60,
+    "J_gib": 10.3
+   },
+   "robustness": {
+    "job_h": 9.9,
+    "job_fits": true,
+    "lane_h": 4.6,
+    "lane_fits": true,
+    "J": 58,
+    "J_gib": 10.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 4.09,
+   "board": {
+    "job_h": 28.1,
+    "job_fits": false,
+    "lane_h": 10.7,
+    "lane_fits": true,
+    "J": 63,
+    "J_gib": 10.8
+   },
+   "robustness": {
+    "job_h": 9.2,
+    "job_fits": true,
+    "lane_h": 4.1,
+    "lane_fits": true,
+    "J": 61,
+    "J_gib": 10.5
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 0.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 3.69,
+   "board": {
+    "job_h": 26.6,
+    "job_fits": false,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 67,
+    "J_gib": 11.5
+   },
+   "robustness": {
+    "job_h": 8.6,
+    "job_fits": true,
+    "lane_h": 3.7,
+    "lane_fits": true,
+    "J": 65,
+    "J_gib": 11.2
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every turn",
+   "cp_h": 6.6,
+   "board": {
+    "job_h": 40.8,
+    "job_fits": false,
+    "lane_h": 24.2,
+    "lane_fits": false,
+    "J": 41,
+    "J_gib": 7.0
+   },
+   "robustness": {
+    "job_h": 13.7,
+    "job_fits": true,
+    "lane_h": 8.3,
+    "lane_fits": true,
+    "J": 40,
+    "J_gib": 6.9
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "every 2nd turn",
+   "cp_h": 5.74,
+   "board": {
+    "job_h": 37.5,
+    "job_fits": false,
+    "lane_h": 21.4,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   },
+   "robustness": {
+    "job_h": 12.4,
+    "job_fits": true,
+    "lane_h": 7.3,
+    "lane_fits": true,
+    "J": 42,
+    "J_gib": 7.2
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.0,
+   "cadence": "once per session + before compaction",
+   "cp_h": 5.06,
+   "board": {
+    "job_h": 35.0,
+    "job_fits": false,
+    "lane_h": 19.2,
+    "lane_fits": true,
+    "J": 44,
+    "J_gib": 7.5
+   },
+   "robustness": {
+    "job_h": 11.4,
+    "job_fits": true,
+    "lane_h": 6.4,
+    "lane_fits": true,
+    "J": 43,
+    "J_gib": 7.4
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every turn",
+   "cp_h": 8.63,
+   "board": {
+    "job_h": 51.6,
+    "job_fits": false,
+    "lane_h": 36.3,
+    "lane_fits": false,
+    "J": 35,
+    "J_gib": 6.0
+   },
+   "robustness": {
+    "job_h": 17.4,
+    "job_fits": true,
+    "lane_h": 12.5,
+    "lane_fits": true,
+    "J": 34,
+    "J_gib": 5.8
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "every 2nd turn",
+   "cp_h": 7.4,
+   "board": {
+    "job_h": 47.0,
+    "job_fits": false,
+    "lane_h": 32.1,
+    "lane_fits": false,
+    "J": 36,
+    "J_gib": 6.2
+   },
+   "robustness": {
+    "job_h": 15.7,
+    "job_fits": true,
+    "lane_h": 10.9,
+    "lane_fits": true,
+    "J": 35,
+    "J_gib": 6.0
+   }
+  },
+  {
+   "L": 48,
+   "cuts": "cuts 1-2",
+   "C": 24,
+   "latency_x": 1.5,
+   "cadence": "once per session + before compaction",
+   "cp_h": 6.42,
+   "board": {
+    "job_h": 43.3,
+    "job_fits": false,
+    "lane_h": 28.8,
+    "lane_fits": false,
+    "J": 37,
+    "J_gib": 6.3
+   },
+   "robustness": {
+    "job_h": 14.2,
+    "job_fits": true,
+    "lane_h": 9.6,
+    "lane_fits": true,
+    "J": 36,
+    "J_gib": 6.2
+   }
+  }
+ ]
+}
