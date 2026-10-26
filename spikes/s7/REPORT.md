@@ -62,7 +62,8 @@ are separate from applications. A result staged for approval is its own class,
 neither applied nor refused. A result that is not a JSON object is unclassified,
 and an unclassified result is a gap. A remove must
 be absent, and patch operations propagate the earlier span through later
-successful calls in the same target.
+successful calls in the same target, including a later patch whose old span
+encompasses the earlier content, which then becomes that patch's new text.
 
 r6's three differences between original and final content are accounted for:
 `bcw00002` (record 8) is patched by `bcw00010` (record 46);
@@ -75,7 +76,9 @@ uses `patch`, including `new_text` and atomic `operations` forms; these are
 reported as such, rather than relabelled as unobserved replace calls. Neither
 recorded run exercises remove or refusal.
 
-A5 checks scripted response contents and scans every string of every later
+A5 checks scripted response contents, checks that a response serving write calls
+to the harness carries no assistant text (0 in both runs), and scans every
+string of every later
 request for write-response substrings (exact, case-sensitive, no minimum length),
 labelled by channel: conversation text, tool-call arguments and tool outputs
 outside it, and every other field. Every write draft in both runs is the literal
@@ -114,7 +117,7 @@ already inherited priority again; the effective priority was verified as 10.
 
 | Validation | Observed result |
 |---|---|
-| `python3.14 -m unittest` in S7 | 16 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, discard in conversation, tool channels and other fields, and integrity |
+| `python3.14 -m unittest` in S7 | 18 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text served beside write calls, discard in conversation, tool channels and other fields, and integrity |
 | `python3.14 -m unittest` in S6a | 9 tests, OK |
 | `python3.14 -m unittest` in S6b | 76 tests, OK; one existing HTTPError resource warning |
 | `python3.14 -m pytest spikes/s1 -q` with installed pytest on `PYTHONPATH`, plugin autoload disabled, scratch basetemp | 97 passed |

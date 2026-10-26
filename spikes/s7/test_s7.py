@@ -245,6 +245,32 @@ class Readback(unittest.TestCase):
                     a3 = self.audit(data, wire)["A3"]
                     self.assertEqual((a3["non_write_attempts"], a3["non_write_blocked"], a3["failures"]), (1, 1, []))
 
+    def test_text_served_beside_write_calls(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, _ = data
+                self.assertEqual(self.audit(data, wire)["A5"]["served_write_text"], [])
+                served = blobs[rows[0]["resp"]]
+                if wire == "chat":
+                    served["choices"][0]["message"]["content"] = "discarded draft"
+                else:
+                    served["sse"] = served["sse"].replace('"text": ""', '"text": "discarded draft"')
+                self.assertEqual(self.audit(data, wire)["A5"]["served_write_text"], [1])
+
+    def test_effect_encompassing_patch(self):
+        def call(rec, args):
+            return {"record": rec, "session": 1, "id": f"bcw{rec:05d}", "arguments": json.dumps(args),
+                    "result": '{"success":true}'}
+        calls = [call(1, {"target": "memory", "action": "add", "content": "alpha note"}),
+                 call(2, {"target": "memory", "action": "add", "content": "beta note"}),
+                 call(3, {"target": "memory", "action": "patch", "old_text": "alpha note\nbeta note",
+                          "new_text": "combined note"})]
+        reqs = [({"seq": 4, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "combined note"})]
+        result = rb.effects(calls, reqs, {"memory": "combined note"}, "responses")
+        self.assertEqual(result["gaps"], [])
+        self.assertEqual([r["operations"][0]["superseded_by"] for r in result["calls"][:2]], [["bcw00003:1"]] * 2)
+
     def test_staged_and_unparseable_results(self):
         def call(result):
             return [{"record": 1, "session": 1, "id": "bcw00001", "result": result,

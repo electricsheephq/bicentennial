@@ -190,6 +190,10 @@ def effects(calls, requests, stores, wire):
                     value = "" if later["action"] == "remove" else value.replace(
                         old, norm(later.get("content", later.get("new_text", ""))))
                     changed.append(later["id"])
+                elif old and value and value in old and later.get("action") in {"patch", "replace", "remove"}:
+                    # a later span that encompasses this content replaces all of it with the new text
+                    value = "" if later["action"] == "remove" else norm(later.get("content", later.get("new_text", "")))
+                    changed.append(later["id"])
             return value, changed
         final, changed = state(float("inf"))
         store = norm(stores.get(op["target"], ""))
@@ -240,7 +244,7 @@ def audit(rows, blobs, life, stores, wire):
     a1 = {"write_records": 0, "forwarded": 0, "matches": 0, "mismatches": [], "flag_disagreements": []}
     a2 = {"hits": [], "introduced": []}
     a3 = {"offered": 0, "executed": 0, "non_write_attempts": 0, "non_write_blocked": 0, "non_write_calls": [], "failures": []}
-    a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "tool_channel_hits": [], "non_content_collisions": []}
+    a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "tool_channel_hits": [], "non_content_collisions": [], "served_write_text": []}
     calls, drafts, issued = [], [], 0
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
@@ -250,7 +254,9 @@ def audit(rows, blobs, life, stores, wire):
             idx = next(i for i, (s, t, _) in enumerate(turns) if cursor == {"session": s, "turn": t})
             want = expected(body, wire)
             verdicts = []
-            served, _ = output(blobs[r["resp"]], wire)
+            served, served_texts = output(blobs[r["resp"]], wire)
+            if r.get("served") == "write_tool_calls" and any(served_texts):  # the harness gets the calls, no text
+                a5["served_write_text"].append(seq)
             following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
                               rr.get("cursor") == cursor and results(bb, wire)), None)
             if following is None:
