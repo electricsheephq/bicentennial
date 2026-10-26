@@ -8,6 +8,7 @@
     "summariser/compression": 2
    },
    "unknown": 0,
+   "complete": true,
    "egress_records": 0,
    "egress_non_loopback_sockets": [],
    "egress_samples": 778,
@@ -217,6 +218,7 @@
     "probe_main/tool_results": 4
    },
    "unknown": 0,
+   "complete": true,
    "egress_records": 0,
    "egress_non_loopback_sockets": [],
    "egress_samples": 731,
@@ -454,6 +456,7 @@
     "aux/title_generation": 3
    },
    "unknown": 0,
+   "complete": true,
    "egress_records": 0,
    "egress_non_loopback_sockets": [],
    "egress_samples": 31,
@@ -643,6 +646,7 @@
     "unknown/": 1
    },
    "unknown": 1,
+   "complete": true,
    "egress_records": 0,
    "egress_non_loopback_sockets": [],
    "egress_samples": 1460,
@@ -882,6 +886,7 @@
     "summariser/compression": 2
    },
    "unknown": 0,
+   "complete": true,
    "egress_records": 0,
    "egress_non_loopback_sockets": [],
    "egress_samples": 409,
@@ -1084,6 +1089,7 @@
     "summariser/compression": 2
    },
    "unknown": 0,
+   "complete": true,
    "egress_records": 0,
    "egress_non_loopback_sockets": [],
    "egress_samples": 421,

@@ -499,7 +499,7 @@ def main():
     p.add_argument("--context-length", type=int, default=131072)
     p.add_argument("--aliases", default="bicentennial-main,bicentennial-summariser,bicentennial-aux")
     p.add_argument("--timeout", type=float, default=300)
-    p.add_argument("--lane-rewrite", default="", help="JSON [[from, to], ...] applied to forwarded text")
+    p.add_argument("--lane-rewrite", default="", help="path to a JSON file [[from, to], ...] applied to forwarded text")
     a = p.parse_args()
     if a.mode == "live" and not os.environ.get("BICENTENNIAL_UPSTREAM_KEY"):
         sys.exit("live mode needs the upstream environment (run under the helper)")

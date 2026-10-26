@@ -1,9 +1,8 @@
 """Concurrency ramp on the agent's model lane (spike S6a, SPEC item 6).
 
 Level n sends 2n tiny requests (max_tokens <= 32) through n concurrent workers. Levels 1, 2, 4,
-8, 16, then 24 only if 16 is clean. Stops at the first level with >= 25% refusals or not fully
-funded, and at once on 3 consecutive quota refusals. Records status codes and a refusal category
-per call, never raw bodies. Run under the upstream helper:
+8, 16, then 24 only if 16 is clean. Stops at the first level with >= 25% refusals or not fully funded, and
+at once on 3 consecutive quota refusals. Records status codes and a refusal category per call, never raw bodies:
 
     upstream-env.sh python3.14 ramp.py --out <dir> --budget-file <file>
 """
