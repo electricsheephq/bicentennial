@@ -535,9 +535,10 @@ class Ramp(Base):
         self.assertEqual((lv["sent"], lv["n429"], lv["sustained"], len(Upstream.seen)), (8, 1, False, 8))
         self.assertEqual(lv["quota_headers_last"]["x-codex-primary-used-percent"], "42")
         Upstream.script = [(429, quota)] * 8
-        lv = ramp_sol.level(d, 4, state)  # 3 quota refusals in a row stop the calls not yet started
-        self.assertTrue(state["quota_stop"] and d.stopped and 3 <= lv["sent"] < 8)
-        self.assertEqual(len(self.records("ramp")), 8 + lv["sent"])
+        lv = ramp_sol.level(d, 4, state)  # 3 quota refusals in a row stop the calls not yet started (the ramp's
+        # own stop: the director's breaker guards the Hermes path, upstream_retry, which the ramp does not use)
+        self.assertTrue(state["quota_stop"] and 3 <= lv["sent"] < 8)
+        self.assertEqual((len(Upstream.seen), len(self.records("ramp"))), (8 + lv["sent"], 8 + lv["sent"]))
         self.assertNotIn(ACCT, (self.tmp / "ledger" / "ledger.jsonl").read_text())
 
 
