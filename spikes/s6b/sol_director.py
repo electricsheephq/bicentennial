@@ -550,10 +550,20 @@ class Director:
                         raise TypeError
                 except (OSError, ValueError, TypeError):
                     raise Stop("pin_file_unreadable") from None
-                pins[a.run] = {"lease_id": lease_id(self.login.path), "pin": self.login.pin, "t": utc()}
-                durable_write(path, json.dumps(pins) + "\n")
+                entry, mine = pins.get(a.run), {"lease_id": lease_id(self.login.path), "pin": self.login.pin}
+                if entry is not None:  # a run name stays bound to its first account and lease; never rebound
+                    if not isinstance(entry, dict) or not {"lease_id", "pin"} <= entry.keys():
+                        raise Stop("pin_file_unreadable")
+                    if {k: entry[k] for k in mine} != mine:
+                        raise Stop("run_pin_conflict")
+                else:
+                    pins[a.run] = mine | {"t": utc()}
+                    try:
+                        durable_write(path, json.dumps(pins) + "\n")
+                    except OSError as e:  # the class only: a path-bearing traceback never reaches a log
+                        raise Stop(f"home_unusable:{type(e).__name__}") from None
         except Stop as e:
-            if str(e) == "pin_file_unreadable":
+            if str(e) in ("pin_file_unreadable", "run_pin_conflict"):
                 raise
             self.stop(str(e))
             if str(e).startswith("home_unusable:"):  # a startup refusal, like home_busy: the entry points exit

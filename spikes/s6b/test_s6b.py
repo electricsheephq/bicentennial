@@ -2081,6 +2081,57 @@ class FixRound1(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertFalse(self.p.with_name("auth.json.stopped").exists())
 
+    def test_cx1_restart_keeps_a_run_binding_and_refuses_a_rebind(self):
+        path = self.tmp / "director-pin.json"
+        sd.Director(self.args())
+        self._close_holders()
+        first = path.read_text()
+        sd.Director(self.args())  # same run, account and lease: kept as it was
+        self._close_holders()
+        self.assertEqual(path.read_text(), first)
+        (self.tmp / "lease.json").write_text(json.dumps({"lease_id": "fake-lease-changed"}))
+        with self.assertRaisesRegex(sd.Stop, "^run_pin_conflict$"):
+            sd.Director(self.args())  # same run on another lease: refused, never rebound
+        self._close_holders()
+        self.assertEqual(path.read_text(), first)
+        a = self.args()
+        a.run = "fake-run-2"
+        sd.Director(a)  # a new run name binds the new lease beside the old entry
+        self._close_holders()
+        pins = json.loads(path.read_text())
+        self.assertEqual(pins["fake-run"], json.loads(first)["fake-run"])
+        self.assertEqual(pins["fake-run-2"]["lease_id"], "fake-lease-changed")
+        self.assertEqual(self.calls, [])
+
+    def test_cx1_restart_on_another_account_refuses_the_run(self):
+        path = self.tmp / "director-pin.json"
+        sd.Director(self.args())
+        self._close_holders()
+        first = path.read_text()
+        entry = json.loads(first)["fake-run"]
+        path.write_text(json.dumps({"fake-run": entry | {"pin": "fake-other-account-pin"}}))
+        with self.assertRaisesRegex(sd.Stop, "^run_pin_conflict$"):
+            sd.Director(self.args())
+        self._close_holders()
+        self.assertEqual(json.loads(path.read_text())["fake-run"]["pin"], "fake-other-account-pin")
+        self.assertEqual(self.calls, [])
+
+    def test_cx2_pin_write_error_is_class_only(self):
+        real = sd.tempfile.mkstemp
+
+        def deny(*a, **kw):
+            if str(kw.get("prefix", "")).startswith(".director-pin"):
+                raise PermissionError(f"fake denial: {self.tmp}")
+            return real(*a, **kw)
+
+        with mock.patch.object(sd.tempfile, "mkstemp", side_effect=deny), \
+                self.assertRaisesRegex(sd.Stop, "^home_unusable:PermissionError$") as caught:
+            sd.Director(self.args())
+        self._close_holders()
+        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertFalse((self.tmp / "director-pin.json").exists())
+        self.assertEqual(self.calls, [])
+
     def test_e4_corrupt_pin_file_refuses_start_without_overwrite(self):
         self.bad_pin_start("{broken-json")
 
