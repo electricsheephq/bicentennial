@@ -2,6 +2,12 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## PREREG-v0.4, FREEZE_DATE: frozen (supersedes v0.3)
+- **DV47, the run-time rule,** at the owner's direction: locked, resumable segments replace the contiguous 24-hour window. Every life finishes within 24 h, and each system's work, times 1.25 for pauses, fits 96 h on every lane (§11).
+- **Validity controls** for segments: the run lock, keyed randomness, the served-identity check, the drift canary (new slot C-16), pause rules with a store-hash proof, attempts, and life-major interleaving of the arms after the controls (§6, §11). The card discloses the segments (§10).
+- **DV42's fit corrected:** the swap model's lane is counted, and C-2 pins the swap model's effort.
+- **The paid-lane ceiling** is $100 per board run and per study run, down from $300 (§11).
+
 ## PREREG-v0.3, 2026-10-26: frozen (supersedes v0.2)
 - **DV42 decided after spike S6b:** the pinned agent family is OpenAI (gpt-6.1-sol at medium effort, on dedicated benchmark accounts); GLM is the replication family and the swap model.
 - **The blind panel** becomes Anthropic, Zhipu and one paid third family (§4, C-3).
