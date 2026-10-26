@@ -226,6 +226,8 @@ An earlier run, r7-write, ran on the director before its review fixes. A machine
 
 ## S6c pacing
 
+**Paced soak 1, one account (2026-10-26, commit 28c1833; [`results/soak1-paced.json`](results/soak1-paced.json)).** 24 in flight for 600 s at 180 per minute with a burst of 10, on the r7c-write payloads, every call at the pinned medium effort. 1,811 requests were sent and 1,808 served, with **0 HTTP 429s**. The busiest sliding 60 s window held 189 requests, under the 190 bound, and the median rate was 180 per minute, so the pacer bound. The 3 failures were in-stream overloads (1.7 per 1,000), not rate refusals, and no stop fired. The ledger reconciles (1,811 upstream attempts, no chain breaks). The weekly and session quota readings went from 100% to 99% free; the spend was $0. Busy marker 10 with `glm` false throughout. This confirms R_s = 180 per minute on one account for PREREG §11's paced-soak requirement. It does not show that a second account doubles capacity (soak 2, after #12), nor other times of day, a rate sustained beyond 10 minutes, or probe cost at scale.
+
 Each account's director shares one locked token bucket across HTTP, soak and retry calls:
 180 requests/minute, burst 10, acquired immediately before each upstream POST after budget/stop checks.
 Per director process, any half-open 60 s window contains at most burst + rate sends: 190 by default, below 200.
