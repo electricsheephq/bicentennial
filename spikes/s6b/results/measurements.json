@@ -370,6 +370,23 @@
      "pinned": 0,
      "no_reasoning": 16
     }
+   },
+   "session_fixed_detail": {
+    "per_session_s": {
+     "1": 15.6,
+     "2": 11.69,
+     "3": 12.04,
+     "4": 12.43,
+     "5": 20.97,
+     "6": 17.97,
+     "7": 222.38,
+     "8": 22.18,
+     "9": 19.05,
+     "10": 12.36
+    },
+    "median_s": 16.79,
+    "outlier_session": "7",
+    "mean_without_outlier_s": 16.03
    }
   }
  },
@@ -818,7 +835,10 @@
   "source": "r7-write-aborted"
  },
  "soak_level": {
-  "C_effective": 21.8,
+  "C_effective": 20.58,
+  "C_window_s": 167.76,
+  "inflight_sampled_mean": 20.9,
+  "ok_service_s_unclipped": 3660.8,
   "ok_per_min_send_window": 205.3,
   "mean_ok_call_s": 6.12,
   "inflight_target": 24,
@@ -892,6 +912,22 @@
     "p90": 41.395,
     "min": 8.801,
     "max": 41.395
+   },
+   "conditions": {
+    "marker_exits": [
+     "0"
+    ],
+    "glm_flags": [
+     "False"
+    ],
+    "load1": {
+     "n": 125,
+     "mean": 15.291,
+     "p50": 12.604,
+     "p90": 27.935,
+     "min": 3.974,
+     "max": 39.485
+    }
    },
    "turn_s": {
     "n": 60,
@@ -995,6 +1031,23 @@
     "min": 5.601,
     "max": 54.024
    },
+   "conditions": {
+    "marker_exits": [
+     "0",
+     "10"
+    ],
+    "glm_flags": [
+     "False"
+    ],
+    "load1": {
+     "n": 125,
+     "mean": 12.953,
+     "p50": 10.66,
+     "p90": 21.484,
+     "min": 7.188,
+     "max": 25.704
+    }
+   },
    "turn_s": {
     "n": 60,
     "mean": 13.308,
@@ -1097,6 +1150,23 @@
     "min": 5.331,
     "max": 39.209
    },
+   "conditions": {
+    "marker_exits": [
+     "0",
+     "10"
+    ],
+    "glm_flags": [
+     "False"
+    ],
+    "load1": {
+     "n": 125,
+     "mean": 12.3,
+     "p50": 11.726,
+     "p90": 20.593,
+     "min": 3.749,
+     "max": 30.895
+    }
+   },
    "turn_s": {
     "n": 60,
     "mean": 24.0,
@@ -1181,18 +1251,22 @@
    }
   },
   "resolution_pts": 1,
-  "r7b_calls": 90,
-  "soak_calls": 700,
-  "weekly_pts_per_call_upper_bound": 0.0014285714285714286,
+  "served_in_unmoved_span": 694,
+  "soak_sent": 700,
+  "pts_per_request_upper_bound": 0.001440922190201729,
+  "pts_per_request_upper_bound_rounded_up": 0.00145,
   "board_calls": {
    "L=48 none": 282600,
    "L=48 2: + L_rob=4": 227600
   },
   "board_weekly_pts_upper_bound": {
-   "L=48 none": 403.7,
-   "L=48 2: + L_rob=4": 325.1
+   "L=48 none": 408,
+   "L=48 2: + L_rob=4": 328
   },
-  "note": "extrapolation from one account at one time of day; an upper bound from an unmoved whole-percent reading",
+  "board_requests_per_5h": 58875,
+  "board_5h_pts_upper_bound": 84.9,
+  "secondary_window_in_headers": false,
+  "assumptions": "burn linear per served request; one account at one time of day; whole-percent readings; the response headers carry only the weekly primary window (secondary window 0 minutes)",
   "board_requests_per_min_over_24h": {
    "L=48 none": 196.2,
    "L=48 2: + L_rob=4": 158.1

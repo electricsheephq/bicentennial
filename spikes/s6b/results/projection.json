@@ -13,6 +13,31 @@
   "1 account (planning, 90% of the ~200/min burst threshold)": 180,
   "2 accounts (hypothetical)": 360
  },
+ "request_sensitivity": {
+  "board_L48": {
+   "probe_turns_n": 4,
+   "probe_requests_per_turn": 3.25,
+   "probe_share_of_N_req": 0.414,
+   "flip_probe_requests_per_turn": 2.6,
+   "rate_h_at_probe_x": {
+    "1.0": 26.2,
+    "1.5": 31.6,
+    "2.0": 37.0
+   }
+  },
+  "study_L48_none": {
+   "N_req": 175644,
+   "rate_h": 16.3,
+   "n_rob": 8,
+   "C_learn_plus_C_erase_breakeven_requests_per_study_life": 10444
+  },
+  "study_L48_cuts 1-2": {
+   "N_req": 73705,
+   "rate_h": 6.8,
+   "n_rob": 4,
+   "C_learn_plus_C_erase_breakeven_requests_per_study_life": 46373
+  }
+ },
  "C_eff_at_rate": {
   "1 account (planning, 90% of the ~200/min burst threshold)": {
    "r7b_mean_call_s": 16.0,
@@ -36,8 +61,8 @@
   "aux_per_session_s": 7.17,
   "plain_turn_s": 2.256
  },
- "C_measured": 21,
- "C_label": "soak, effective (Little's law; 100 429s at 24 in flight)",
+ "C_measured": 20,
+ "C_label": "soak, effective (Little's law, ok service clipped to the send window; 100 429s at 24 in flight)",
  "C_burst": 48,
  "C_measured_is_ramp_ceiling": false,
  "quota": {
@@ -86,18 +111,22 @@
    }
   },
   "resolution_pts": 1,
-  "r7b_calls": 90,
-  "soak_calls": 700,
-  "weekly_pts_per_call_upper_bound": 0.0014285714285714286,
+  "served_in_unmoved_span": 694,
+  "soak_sent": 700,
+  "pts_per_request_upper_bound": 0.001440922190201729,
+  "pts_per_request_upper_bound_rounded_up": 0.00145,
   "board_calls": {
    "L=48 none": 282600,
    "L=48 2: + L_rob=4": 227600
   },
   "board_weekly_pts_upper_bound": {
-   "L=48 none": 403.7,
-   "L=48 2: + L_rob=4": 325.1
+   "L=48 none": 408,
+   "L=48 2: + L_rob=4": 328
   },
-  "note": "extrapolation from one account at one time of day; an upper bound from an unmoved whole-percent reading",
+  "board_requests_per_5h": 58875,
+  "board_5h_pts_upper_bound": 84.9,
+  "secondary_window_in_headers": false,
+  "assumptions": "burn linear per served request; one account at one time of day; whole-percent readings; the response headers carry only the weekly primary window (secondary window 0 minutes)",
   "board_requests_per_min_over_24h": {
    "L=48 none": 196.2,
    "L=48 2: + L_rob=4": 158.1
@@ -181,7 +210,7 @@
   },
   {
    "latency_x": 0.5,
-   "C": 21,
+   "C": 20,
    "R_h": 3.545066666666666,
    "P_h": 1.5887499999999997,
    "R_lane_h": 1.1852888888888888,
@@ -191,29 +220,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 509.7059999999999,
-    "work_over_C_h": 24.271714285714282,
-    "wall_h": 24.271714285714282,
+    "work_over_C_h": 25.485299999999995,
+    "wall_h": 25.485299999999995,
     "fits_24h": false,
     "C_needed": 22,
     "lane_work_h": 226.95599999999996,
-    "lane_work_over_C_h": 10.80742857142857,
-    "lane_wall_h": 10.80742857142857,
+    "lane_work_over_C_h": 11.347799999999998,
+    "lane_wall_h": 11.347799999999998,
     "lane_fits_24h": true,
     "lane_C_needed": 10,
-    "J_for_C": 48
+    "J_for_C": 45
    },
    "robustness": {
     "work_h": 344.6036399999999,
-    "work_over_C_h": 16.40969714285714,
-    "wall_h": 16.40969714285714,
+    "work_over_C_h": 17.230182,
+    "wall_h": 17.230182,
     "fits_24h": true,
     "C_needed": 15,
     "lane_work_h": 144.23983999999996,
-    "lane_work_over_C_h": 6.868563809523808,
-    "lane_wall_h": 6.868563809523808,
+    "lane_work_over_C_h": 7.211991999999998,
+    "lane_wall_h": 7.211991999999998,
     "lane_fits_24h": true,
     "lane_C_needed": 7,
-    "J_for_C": 51
+    "J_for_C": 48
    }
   },
   {
@@ -366,7 +395,7 @@
   },
   {
    "latency_x": 1.0,
-   "C": 21,
+   "C": 20,
    "R_h": 4.531188888888889,
    "P_h": 2.292333333333333,
    "R_lane_h": 2.3705777777777777,
@@ -376,29 +405,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 682.8870000000001,
-    "work_over_C_h": 32.51842857142857,
-    "wall_h": 32.51842857142857,
+    "work_over_C_h": 34.14435,
+    "wall_h": 34.14435,
     "fits_24h": false,
     "C_needed": 29,
     "lane_work_h": 453.9119999999999,
-    "lane_work_over_C_h": 21.61485714285714,
-    "lane_wall_h": 21.61485714285714,
+    "lane_work_over_C_h": 22.695599999999995,
+    "lane_wall_h": 22.695599999999995,
     "lane_fits_24h": true,
     "lane_C_needed": 19,
-    "J_for_C": 32
+    "J_for_C": 31
    },
    "robustness": {
     "work_h": 456.57847999999996,
-    "work_over_C_h": 21.74183238095238,
-    "wall_h": 21.74183238095238,
+    "work_over_C_h": 22.828923999999997,
+    "wall_h": 22.828923999999997,
     "fits_24h": true,
     "C_needed": 20,
     "lane_work_h": 288.4796799999999,
-    "lane_work_over_C_h": 13.737127619047616,
-    "lane_wall_h": 13.737127619047616,
+    "lane_work_over_C_h": 14.423983999999995,
+    "lane_wall_h": 14.423983999999995,
     "lane_fits_24h": true,
     "lane_C_needed": 13,
-    "J_for_C": 34
+    "J_for_C": 32
    }
   },
   {
@@ -551,7 +580,7 @@
   },
   {
    "latency_x": 1.5,
-   "C": 21,
+   "C": 20,
    "R_h": 5.51731111111111,
    "P_h": 2.9959166666666666,
    "R_lane_h": 3.5558666666666663,
@@ -561,29 +590,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 856.068,
-    "work_over_C_h": 40.765142857142855,
-    "wall_h": 40.765142857142855,
+    "work_over_C_h": 42.803399999999996,
+    "wall_h": 42.803399999999996,
     "fits_24h": false,
     "C_needed": 36,
     "lane_work_h": 680.868,
-    "lane_work_over_C_h": 32.42228571428572,
-    "lane_wall_h": 32.42228571428572,
+    "lane_work_over_C_h": 34.043400000000005,
+    "lane_wall_h": 34.043400000000005,
     "lane_fits_24h": false,
     "lane_C_needed": 29,
-    "J_for_C": 27
+    "J_for_C": 26
    },
    "robustness": {
     "work_h": 568.55332,
-    "work_over_C_h": 27.07396761904762,
-    "wall_h": 27.07396761904762,
+    "work_over_C_h": 28.427666000000002,
+    "wall_h": 28.427666000000002,
     "fits_24h": false,
     "C_needed": 24,
     "lane_work_h": 432.71952,
-    "lane_work_over_C_h": 20.60569142857143,
-    "lane_wall_h": 20.60569142857143,
+    "lane_work_over_C_h": 21.635975999999996,
+    "lane_wall_h": 21.635975999999996,
     "lane_fits_24h": true,
     "lane_C_needed": 19,
-    "J_for_C": 28
+    "J_for_C": 27
    }
   },
   {
@@ -673,29 +702,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 682.8870000000001,
-    "work_over_C_h": 32.51842857142857,
-    "wall_h": 32.51842857142857,
+    "work_over_C_h": 34.14435,
+    "wall_h": 34.14435,
     "fits_24h": false,
     "C_needed": 29,
     "lane_work_h": 453.9119999999999,
-    "lane_work_over_C_h": 21.61485714285714,
-    "lane_wall_h": 21.61485714285714,
+    "lane_work_over_C_h": 22.695599999999995,
+    "lane_wall_h": 22.695599999999995,
     "lane_fits_24h": true,
     "lane_C_needed": 19,
-    "J_for_C": 32
+    "J_for_C": 31
    },
    "robustness": {
     "work_h": 456.57847999999996,
-    "work_over_C_h": 21.74183238095238,
-    "wall_h": 21.74183238095238,
+    "work_over_C_h": 22.828923999999997,
+    "wall_h": 22.828923999999997,
     "fits_24h": true,
     "C_needed": 20,
     "lane_work_h": 288.4796799999999,
-    "lane_work_over_C_h": 13.737127619047616,
-    "lane_wall_h": 13.737127619047616,
+    "lane_work_over_C_h": 14.423983999999995,
+    "lane_wall_h": 14.423983999999995,
     "lane_fits_24h": true,
     "lane_C_needed": 13,
-    "J_for_C": 34
+    "J_for_C": 32
    }
   },
   {
@@ -709,29 +738,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 591.1936666666666,
-    "work_over_C_h": 28.152079365079363,
-    "wall_h": 28.152079365079363,
+    "work_over_C_h": 29.55968333333333,
+    "wall_h": 29.55968333333333,
     "fits_24h": false,
     "C_needed": 25,
     "lane_work_h": 373.7253333333333,
-    "lane_work_over_C_h": 17.796444444444443,
-    "lane_wall_h": 17.796444444444443,
+    "lane_work_over_C_h": 18.686266666666665,
+    "lane_wall_h": 18.686266666666665,
     "lane_fits_24h": true,
     "lane_C_needed": 16,
-    "J_for_C": 34
+    "J_for_C": 32
    },
    "robustness": {
     "work_h": 409.5092355555555,
-    "work_over_C_h": 19.500439788359788,
-    "wall_h": 19.500439788359788,
+    "work_over_C_h": 20.475461777777777,
+    "wall_h": 20.475461777777777,
     "fits_24h": true,
     "C_needed": 18,
     "lane_work_h": 247.3171911111111,
-    "lane_work_over_C_h": 11.7770091005291,
-    "lane_wall_h": 11.7770091005291,
+    "lane_work_over_C_h": 12.365859555555554,
+    "lane_wall_h": 12.365859555555554,
     "lane_fits_24h": true,
     "lane_C_needed": 11,
-    "J_for_C": 35
+    "J_for_C": 34
    }
   },
   {
@@ -745,29 +774,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 591.1936666666666,
-    "work_over_C_h": 28.152079365079363,
-    "wall_h": 28.152079365079363,
+    "work_over_C_h": 29.55968333333333,
+    "wall_h": 29.55968333333333,
     "fits_24h": false,
     "C_needed": 25,
     "lane_work_h": 373.7253333333333,
-    "lane_work_over_C_h": 17.796444444444443,
-    "lane_wall_h": 17.796444444444443,
+    "lane_work_over_C_h": 18.686266666666665,
+    "lane_wall_h": 18.686266666666665,
     "lane_fits_24h": true,
     "lane_C_needed": 16,
-    "J_for_C": 34
+    "J_for_C": 32
    },
    "robustness": {
     "work_h": 204.75461777777775,
-    "work_over_C_h": 9.750219894179894,
-    "wall_h": 9.750219894179894,
+    "work_over_C_h": 10.237730888888889,
+    "wall_h": 10.237730888888889,
     "fits_24h": true,
     "C_needed": 9,
     "lane_work_h": 123.65859555555555,
-    "lane_work_over_C_h": 5.88850455026455,
-    "lane_wall_h": 5.88850455026455,
+    "lane_work_over_C_h": 6.182929777777777,
+    "lane_wall_h": 6.182929777777777,
     "lane_fits_24h": true,
     "lane_C_needed": 6,
-    "J_for_C": 35
+    "J_for_C": 34
    }
   },
   {
@@ -781,29 +810,29 @@
    "write_turns_per_life": 1000,
    "board": {
     "work_h": 295.5968333333333,
-    "work_over_C_h": 14.076039682539681,
-    "wall_h": 14.076039682539681,
+    "work_over_C_h": 14.779841666666664,
+    "wall_h": 14.779841666666664,
     "fits_24h": true,
     "C_needed": 13,
     "lane_work_h": 186.86266666666666,
-    "lane_work_over_C_h": 8.898222222222222,
-    "lane_wall_h": 8.898222222222222,
+    "lane_work_over_C_h": 9.343133333333332,
+    "lane_wall_h": 9.343133333333332,
     "lane_fits_24h": true,
     "lane_C_needed": 8,
-    "J_for_C": 34
+    "J_for_C": 32
    },
    "robustness": {
     "work_h": 204.75461777777775,
-    "work_over_C_h": 9.750219894179894,
-    "wall_h": 9.750219894179894,
+    "work_over_C_h": 10.237730888888889,
+    "wall_h": 10.237730888888889,
     "fits_24h": true,
     "C_needed": 9,
     "lane_work_h": 123.65859555555555,
-    "lane_work_over_C_h": 5.88850455026455,
-    "lane_wall_h": 5.88850455026455,
+    "lane_work_over_C_h": 6.182929777777777,
+    "lane_wall_h": 6.182929777777777,
     "lane_fits_24h": true,
     "lane_C_needed": 6,
-    "J_for_C": 35
+    "J_for_C": 34
    }
   }
  ],
@@ -1641,17 +1670,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every turn",
    "cp_h": 3.55,
    "board": {
-    "job_h": 12.1,
+    "job_h": 12.7,
     "job_fits": true,
-    "lane_h": 5.4,
+    "lane_h": 5.7,
     "lane_fits": true,
-    "J": 48,
-    "J_gib": 9.0,
+    "J": 45,
+    "J_gib": 8.5,
     "N_req": 141300,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1665,12 +1694,12 @@
     }
    },
    "robustness": {
-    "job_h": 15.3,
+    "job_h": 16.0,
     "job_fits": true,
-    "lane_h": 6.5,
+    "lane_h": 6.8,
     "lane_fits": true,
-    "J": 50,
-    "J_gib": 9.4,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 165604,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1687,17 +1716,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every 2nd turn",
    "cp_h": 3.36,
    "board": {
-    "job_h": 11.7,
+    "job_h": 12.3,
     "job_fits": true,
-    "lane_h": 4.9,
+    "lane_h": 5.1,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 123300,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1711,12 +1740,12 @@
     }
    },
    "robustness": {
-    "job_h": 14.7,
+    "job_h": 15.4,
     "job_fits": true,
-    "lane_h": 5.7,
+    "lane_h": 6.0,
     "lane_fits": true,
-    "J": 54,
-    "J_gib": 10.2,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 140164,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1733,17 +1762,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "once per session + before compaction",
    "cp_h": 3.18,
    "board": {
-    "job_h": 11.3,
+    "job_h": 11.9,
     "job_fits": true,
-    "lane_h": 4.4,
+    "lane_h": 4.7,
     "lane_fits": true,
-    "J": 54,
-    "J_gib": 10.2,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 107100,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1757,12 +1786,12 @@
     }
    },
    "robustness": {
-    "job_h": 14.2,
+    "job_h": 14.9,
     "job_fits": true,
-    "lane_h": 5.1,
+    "lane_h": 5.3,
     "lane_fits": true,
-    "J": 59,
-    "J_gib": 11.1,
+    "J": 56,
+    "J_gib": 10.5,
     "N_req": 117268,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1779,17 +1808,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every turn",
    "cp_h": 4.54,
    "board": {
-    "job_h": 16.3,
+    "job_h": 17.1,
     "job_fits": true,
-    "lane_h": 10.8,
+    "lane_h": 11.3,
     "lane_fits": true,
-    "J": 32,
-    "J_gib": 6.0,
+    "J": 31,
+    "J_gib": 5.8,
     "N_req": 141300,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1803,12 +1832,12 @@
     }
    },
    "robustness": {
-    "job_h": 20.3,
+    "job_h": 21.3,
     "job_fits": true,
-    "lane_h": 12.9,
+    "lane_h": 13.6,
     "lane_fits": true,
-    "J": 33,
-    "J_gib": 6.2,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 165604,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1825,17 +1854,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every 2nd turn",
    "cp_h": 4.11,
    "board": {
-    "job_h": 15.3,
+    "job_h": 16.1,
     "job_fits": true,
-    "lane_h": 9.8,
+    "lane_h": 10.3,
     "lane_fits": true,
-    "J": 33,
-    "J_gib": 6.2,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 123300,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1849,12 +1878,12 @@
     }
    },
    "robustness": {
-    "job_h": 19.0,
+    "job_h": 19.9,
     "job_fits": true,
-    "lane_h": 11.5,
+    "lane_h": 12.0,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 140164,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1871,17 +1900,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "once per session + before compaction",
    "cp_h": 3.72,
    "board": {
-    "job_h": 14.5,
+    "job_h": 15.2,
     "job_fits": true,
-    "lane_h": 8.9,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 33,
+    "J_gib": 6.2,
     "N_req": 107100,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1895,12 +1924,12 @@
     }
    },
    "robustness": {
-    "job_h": 17.8,
+    "job_h": 18.7,
     "job_fits": true,
-    "lane_h": 10.2,
+    "lane_h": 10.7,
     "lane_fits": true,
-    "J": 37,
-    "J_gib": 7.0,
+    "J": 35,
+    "J_gib": 6.6,
     "N_req": 117268,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1917,17 +1946,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every turn",
    "cp_h": 5.53,
    "board": {
-    "job_h": 20.4,
+    "job_h": 21.4,
     "job_fits": true,
-    "lane_h": 16.2,
+    "lane_h": 17.0,
     "lane_fits": true,
-    "J": 27,
-    "J_gib": 5.1,
+    "J": 26,
+    "J_gib": 4.9,
     "N_req": 141300,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1941,12 +1970,12 @@
     }
    },
    "robustness": {
-    "job_h": 25.3,
+    "job_h": 26.5,
     "job_fits": false,
-    "lane_h": 19.4,
+    "lane_h": 20.3,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 165604,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1963,17 +1992,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every 2nd turn",
    "cp_h": 4.86,
    "board": {
-    "job_h": 18.9,
+    "job_h": 19.9,
     "job_fits": true,
-    "lane_h": 14.7,
+    "lane_h": 15.4,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 26,
+    "J_gib": 4.9,
     "N_req": 123300,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -1987,12 +2016,12 @@
     }
    },
    "robustness": {
-    "job_h": 23.2,
-    "job_fits": true,
-    "lane_h": 17.2,
+    "job_h": 24.4,
+    "job_fits": false,
+    "lane_h": 18.1,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 140164,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -2009,17 +2038,17 @@
   {
    "L": 24,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "once per session + before compaction",
    "cp_h": 4.25,
    "board": {
-    "job_h": 17.7,
+    "job_h": 18.5,
     "job_fits": true,
-    "lane_h": 13.3,
+    "lane_h": 14.0,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 107100,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -2033,12 +2062,12 @@
     }
    },
    "robustness": {
-    "job_h": 21.4,
+    "job_h": 22.5,
     "job_fits": true,
-    "lane_h": 15.3,
+    "lane_h": 16.0,
     "lane_fits": true,
-    "J": 30,
-    "J_gib": 5.6,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 117268,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3711,17 +3740,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every turn",
    "cp_h": 3.55,
    "board": {
-    "job_h": 10.6,
+    "job_h": 11.2,
     "job_fits": true,
-    "lane_h": 4.4,
+    "lane_h": 4.7,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 113800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3735,12 +3764,12 @@
     }
    },
    "robustness": {
-    "job_h": 7.4,
+    "job_h": 7.8,
     "job_fits": true,
     "lane_h": 3.6,
     "lane_fits": true,
-    "J": 53,
-    "J_gib": 10.0,
+    "J": 51,
+    "J_gib": 9.6,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3757,17 +3786,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every 2nd turn",
    "cp_h": 3.36,
    "board": {
-    "job_h": 10.2,
+    "job_h": 10.7,
     "job_fits": true,
-    "lane_h": 3.9,
+    "lane_h": 4.1,
     "lane_fits": true,
-    "J": 55,
-    "J_gib": 10.3,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 95800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3781,12 +3810,12 @@
     }
    },
    "robustness": {
-    "job_h": 7.1,
+    "job_h": 7.5,
     "job_fits": true,
     "lane_h": 3.4,
     "lane_fits": true,
-    "J": 59,
-    "J_gib": 11.1,
+    "J": 56,
+    "J_gib": 10.5,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3803,17 +3832,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "once per session + before compaction",
    "cp_h": 3.18,
    "board": {
-    "job_h": 9.8,
+    "job_h": 10.3,
     "job_fits": true,
-    "lane_h": 3.5,
+    "lane_h": 3.7,
     "lane_fits": true,
-    "J": 60,
-    "J_gib": 11.3,
+    "J": 57,
+    "J_gib": 10.7,
     "N_req": 79600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3827,12 +3856,12 @@
     }
    },
    "robustness": {
-    "job_h": 6.8,
+    "job_h": 7.2,
     "job_fits": true,
     "lane_h": 3.2,
     "lane_fits": true,
-    "J": 66,
-    "J_gib": 12.4,
+    "J": 63,
+    "J_gib": 11.9,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3849,17 +3878,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every turn",
    "cp_h": 4.54,
    "board": {
-    "job_h": 14.1,
+    "job_h": 14.8,
     "job_fits": true,
-    "lane_h": 8.9,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 34,
-    "J_gib": 6.4,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 113800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3873,12 +3902,12 @@
     }
    },
    "robustness": {
-    "job_h": 9.8,
+    "job_h": 10.2,
     "job_fits": true,
-    "lane_h": 5.9,
+    "lane_h": 6.2,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3895,17 +3924,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every 2nd turn",
    "cp_h": 4.11,
    "board": {
-    "job_h": 13.1,
+    "job_h": 13.8,
     "job_fits": true,
-    "lane_h": 7.9,
+    "lane_h": 8.3,
     "lane_fits": true,
-    "J": 36,
-    "J_gib": 6.8,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 95800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3919,12 +3948,12 @@
     }
    },
    "robustness": {
-    "job_h": 9.0,
+    "job_h": 9.5,
     "job_fits": true,
-    "lane_h": 5.1,
+    "lane_h": 5.4,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3941,17 +3970,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "once per session + before compaction",
    "cp_h": 3.72,
    "board": {
-    "job_h": 12.3,
+    "job_h": 12.9,
     "job_fits": true,
-    "lane_h": 7.0,
+    "lane_h": 7.3,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 79600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3965,12 +3994,12 @@
     }
    },
    "robustness": {
-    "job_h": 8.4,
+    "job_h": 8.8,
     "job_fits": true,
-    "lane_h": 4.4,
+    "lane_h": 4.6,
     "lane_fits": true,
-    "J": 41,
-    "J_gib": 7.7,
+    "J": 39,
+    "J_gib": 7.3,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -3987,17 +4016,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every turn",
    "cp_h": 5.53,
    "board": {
-    "job_h": 17.5,
+    "job_h": 18.4,
     "job_fits": true,
-    "lane_h": 13.3,
+    "lane_h": 14.0,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 113800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -4011,12 +4040,12 @@
     }
    },
    "robustness": {
-    "job_h": 12.1,
+    "job_h": 12.7,
     "job_fits": true,
-    "lane_h": 8.8,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -4033,17 +4062,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every 2nd turn",
    "cp_h": 4.86,
    "board": {
-    "job_h": 16.1,
+    "job_h": 16.9,
     "job_fits": true,
-    "lane_h": 11.8,
+    "lane_h": 12.4,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 95800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -4057,12 +4086,12 @@
     }
    },
    "robustness": {
-    "job_h": 11.0,
+    "job_h": 11.5,
     "job_fits": true,
-    "lane_h": 7.7,
+    "lane_h": 8.0,
     "lane_fits": true,
-    "J": 31,
-    "J_gib": 5.8,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -4079,17 +4108,17 @@
   {
    "L": 24,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "once per session + before compaction",
    "cp_h": 4.25,
    "board": {
-    "job_h": 14.8,
+    "job_h": 15.5,
     "job_fits": true,
-    "lane_h": 10.4,
+    "lane_h": 11.0,
     "lane_fits": true,
-    "J": 30,
-    "J_gib": 5.6,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 79600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -4103,12 +4132,12 @@
     }
    },
    "robustness": {
-    "job_h": 10.0,
+    "job_h": 10.5,
     "job_fits": true,
-    "lane_h": 6.6,
+    "lane_h": 6.9,
     "lane_fits": true,
-    "J": 32,
-    "J_gib": 6.0,
+    "J": 31,
+    "J_gib": 5.8,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5781,36 +5810,36 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every turn",
    "cp_h": 3.55,
    "board": {
-    "job_h": 16.2,
+    "job_h": 17.0,
+    "job_fits": true,
+    "lane_h": 7.6,
+    "lane_fits": true,
+    "J": 45,
+    "J_gib": 8.5,
+    "N_req": 188400,
+    "rate": {
+     "1 account (planning, 90% of the ~200/min burst threshold)": {
+      "rate_h": 17.4,
+      "fits": true
+     },
+     "2 accounts (hypothetical)": {
+      "rate_h": 8.7,
+      "fits": true
+     }
+    }
+   },
+   "robustness": {
+    "job_h": 17.2,
     "job_fits": true,
     "lane_h": 7.2,
     "lane_fits": true,
     "J": 48,
     "J_gib": 9.0,
-    "N_req": 188400,
-    "rate": {
-     "1 account (planning, 90% of the ~200/min burst threshold)": {
-      "rate_h": 17.4,
-      "fits": true
-     },
-     "2 accounts (hypothetical)": {
-      "rate_h": 8.7,
-      "fits": true
-     }
-    }
-   },
-   "robustness": {
-    "job_h": 16.4,
-    "job_fits": true,
-    "lane_h": 6.9,
-    "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
     "N_req": 175644,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5827,17 +5856,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every 2nd turn",
    "cp_h": 3.36,
    "board": {
-    "job_h": 15.6,
+    "job_h": 16.4,
     "job_fits": true,
-    "lane_h": 6.5,
+    "lane_h": 6.9,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 164400,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5851,12 +5880,12 @@
     }
    },
    "robustness": {
-    "job_h": 15.8,
+    "job_h": 16.6,
     "job_fits": true,
-    "lane_h": 6.1,
+    "lane_h": 6.4,
     "lane_fits": true,
-    "J": 55,
-    "J_gib": 10.3,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 147804,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5873,17 +5902,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "once per session + before compaction",
    "cp_h": 3.18,
    "board": {
-    "job_h": 15.1,
+    "job_h": 15.9,
     "job_fits": true,
-    "lane_h": 5.9,
+    "lane_h": 6.2,
     "lane_fits": true,
-    "J": 54,
-    "J_gib": 10.2,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 142800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5897,12 +5926,12 @@
     }
    },
    "robustness": {
-    "job_h": 15.2,
+    "job_h": 15.9,
     "job_fits": true,
-    "lane_h": 5.4,
+    "lane_h": 5.6,
     "lane_fits": true,
-    "J": 60,
-    "J_gib": 11.3,
+    "J": 57,
+    "J_gib": 10.7,
     "N_req": 122748,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5919,36 +5948,36 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every turn",
    "cp_h": 4.54,
    "board": {
-    "job_h": 21.7,
+    "job_h": 22.8,
+    "job_fits": true,
+    "lane_h": 15.1,
+    "lane_fits": true,
+    "J": 31,
+    "J_gib": 5.8,
+    "N_req": 188400,
+    "rate": {
+     "1 account (planning, 90% of the ~200/min burst threshold)": {
+      "rate_h": 17.4,
+      "fits": true
+     },
+     "2 accounts (hypothetical)": {
+      "rate_h": 8.7,
+      "fits": true
+     }
+    }
+   },
+   "robustness": {
+    "job_h": 22.8,
     "job_fits": true,
     "lane_h": 14.4,
     "lane_fits": true,
     "J": 32,
     "J_gib": 6.0,
-    "N_req": 188400,
-    "rate": {
-     "1 account (planning, 90% of the ~200/min burst threshold)": {
-      "rate_h": 17.4,
-      "fits": true
-     },
-     "2 accounts (hypothetical)": {
-      "rate_h": 8.7,
-      "fits": true
-     }
-    }
-   },
-   "robustness": {
-    "job_h": 21.7,
-    "job_fits": true,
-    "lane_h": 13.7,
-    "lane_fits": true,
-    "J": 34,
-    "J_gib": 6.4,
     "N_req": 175644,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5965,17 +5994,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every 2nd turn",
    "cp_h": 4.11,
    "board": {
-    "job_h": 20.4,
+    "job_h": 21.5,
     "job_fits": true,
-    "lane_h": 13.1,
+    "lane_h": 13.7,
     "lane_fits": true,
-    "J": 33,
-    "J_gib": 6.2,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 164400,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -5989,12 +6018,12 @@
     }
    },
    "robustness": {
-    "job_h": 20.3,
+    "job_h": 21.3,
     "job_fits": true,
-    "lane_h": 12.2,
+    "lane_h": 12.8,
     "lane_fits": true,
-    "J": 36,
-    "J_gib": 6.8,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 147804,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6011,17 +6040,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "once per session + before compaction",
    "cp_h": 3.72,
    "board": {
-    "job_h": 19.3,
+    "job_h": 20.3,
     "job_fits": true,
-    "lane_h": 11.8,
+    "lane_h": 12.4,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 33,
+    "J_gib": 6.2,
     "N_req": 142800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6035,12 +6064,12 @@
     }
    },
    "robustness": {
-    "job_h": 19.0,
+    "job_h": 20.0,
     "job_fits": true,
-    "lane_h": 10.7,
+    "lane_h": 11.3,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 122748,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6057,17 +6086,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every turn",
    "cp_h": 5.53,
    "board": {
-    "job_h": 27.2,
+    "job_h": 28.5,
     "job_fits": false,
-    "lane_h": 21.6,
+    "lane_h": 22.7,
     "lane_fits": true,
-    "J": 27,
-    "J_gib": 5.1,
+    "J": 26,
+    "J_gib": 4.9,
     "N_req": 188400,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6081,12 +6110,12 @@
     }
    },
    "robustness": {
-    "job_h": 27.1,
+    "job_h": 28.4,
     "job_fits": false,
-    "lane_h": 20.6,
+    "lane_h": 21.6,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 175644,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6103,17 +6132,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every 2nd turn",
    "cp_h": 4.86,
    "board": {
-    "job_h": 25.3,
+    "job_h": 26.5,
     "job_fits": false,
-    "lane_h": 19.6,
+    "lane_h": 20.6,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 26,
+    "J_gib": 4.9,
     "N_req": 164400,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6127,12 +6156,12 @@
     }
    },
    "robustness": {
-    "job_h": 24.9,
+    "job_h": 26.1,
     "job_fits": false,
-    "lane_h": 18.2,
+    "lane_h": 19.2,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 147804,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6149,17 +6178,17 @@
   {
    "L": 32,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "once per session + before compaction",
    "cp_h": 4.25,
    "board": {
-    "job_h": 23.5,
-    "job_fits": true,
-    "lane_h": 17.8,
+    "job_h": 24.7,
+    "job_fits": false,
+    "lane_h": 18.6,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 142800,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -6173,12 +6202,12 @@
     }
    },
    "robustness": {
-    "job_h": 22.9,
+    "job_h": 24.0,
     "job_fits": true,
-    "lane_h": 16.1,
+    "lane_h": 16.9,
     "lane_fits": true,
-    "J": 30,
-    "J_gib": 5.6,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 122748,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7851,17 +7880,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every turn",
    "cp_h": 3.55,
    "board": {
-    "job_h": 14.2,
+    "job_h": 14.9,
     "job_fits": true,
-    "lane_h": 5.9,
+    "lane_h": 6.2,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 151733,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7875,12 +7904,12 @@
     }
    },
    "robustness": {
-    "job_h": 7.4,
+    "job_h": 7.8,
     "job_fits": true,
     "lane_h": 3.6,
     "lane_fits": true,
-    "J": 53,
-    "J_gib": 10.0,
+    "J": 51,
+    "J_gib": 9.6,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7897,17 +7926,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every 2nd turn",
    "cp_h": 3.36,
    "board": {
-    "job_h": 13.6,
+    "job_h": 14.3,
     "job_fits": true,
-    "lane_h": 5.3,
+    "lane_h": 5.5,
     "lane_fits": true,
-    "J": 55,
-    "J_gib": 10.3,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 127733,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7921,12 +7950,12 @@
     }
    },
    "robustness": {
-    "job_h": 7.1,
+    "job_h": 7.5,
     "job_fits": true,
     "lane_h": 3.4,
     "lane_fits": true,
-    "J": 59,
-    "J_gib": 11.1,
+    "J": 56,
+    "J_gib": 10.5,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7943,17 +7972,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "once per session + before compaction",
    "cp_h": 3.18,
    "board": {
-    "job_h": 13.1,
+    "job_h": 13.8,
     "job_fits": true,
-    "lane_h": 4.6,
+    "lane_h": 4.9,
     "lane_fits": true,
-    "J": 60,
-    "J_gib": 11.3,
+    "J": 57,
+    "J_gib": 10.7,
     "N_req": 106133,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7967,12 +7996,12 @@
     }
    },
    "robustness": {
-    "job_h": 6.8,
+    "job_h": 7.2,
     "job_fits": true,
     "lane_h": 3.2,
     "lane_fits": true,
-    "J": 66,
-    "J_gib": 12.4,
+    "J": 63,
+    "J_gib": 11.9,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -7989,17 +8018,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every turn",
    "cp_h": 4.54,
    "board": {
-    "job_h": 18.8,
+    "job_h": 19.7,
     "job_fits": true,
-    "lane_h": 11.9,
+    "lane_h": 12.5,
     "lane_fits": true,
-    "J": 34,
-    "J_gib": 6.4,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 151733,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8013,12 +8042,12 @@
     }
    },
    "robustness": {
-    "job_h": 9.8,
+    "job_h": 10.2,
     "job_fits": true,
-    "lane_h": 5.9,
+    "lane_h": 6.2,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8035,17 +8064,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every 2nd turn",
    "cp_h": 4.11,
    "board": {
-    "job_h": 17.5,
+    "job_h": 18.4,
     "job_fits": true,
-    "lane_h": 10.5,
+    "lane_h": 11.0,
     "lane_fits": true,
-    "J": 36,
-    "J_gib": 6.8,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 127733,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8059,12 +8088,12 @@
     }
    },
    "robustness": {
-    "job_h": 9.0,
+    "job_h": 9.5,
     "job_fits": true,
-    "lane_h": 5.1,
+    "lane_h": 5.4,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8081,17 +8110,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "once per session + before compaction",
    "cp_h": 3.72,
    "board": {
-    "job_h": 16.4,
+    "job_h": 17.2,
     "job_fits": true,
-    "lane_h": 9.3,
+    "lane_h": 9.8,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 106133,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8105,12 +8134,12 @@
     }
    },
    "robustness": {
-    "job_h": 8.4,
+    "job_h": 8.8,
     "job_fits": true,
-    "lane_h": 4.4,
+    "lane_h": 4.6,
     "lane_fits": true,
-    "J": 41,
-    "J_gib": 7.7,
+    "J": 39,
+    "J_gib": 7.3,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8127,17 +8156,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every turn",
    "cp_h": 5.53,
    "board": {
-    "job_h": 23.4,
-    "job_fits": true,
-    "lane_h": 17.8,
+    "job_h": 24.5,
+    "job_fits": false,
+    "lane_h": 18.7,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 151733,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8151,12 +8180,12 @@
     }
    },
    "robustness": {
-    "job_h": 12.1,
+    "job_h": 12.7,
     "job_fits": true,
-    "lane_h": 8.8,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8173,17 +8202,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every 2nd turn",
    "cp_h": 4.86,
    "board": {
-    "job_h": 21.5,
+    "job_h": 22.5,
     "job_fits": true,
-    "lane_h": 15.8,
+    "lane_h": 16.6,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 127733,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8197,12 +8226,12 @@
     }
    },
    "robustness": {
-    "job_h": 11.0,
+    "job_h": 11.5,
     "job_fits": true,
-    "lane_h": 7.7,
+    "lane_h": 8.0,
     "lane_fits": true,
-    "J": 31,
-    "J_gib": 5.8,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8219,17 +8248,17 @@
   {
    "L": 32,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "once per session + before compaction",
    "cp_h": 4.25,
    "board": {
-    "job_h": 19.7,
+    "job_h": 20.7,
     "job_fits": true,
-    "lane_h": 13.9,
+    "lane_h": 14.6,
     "lane_fits": true,
-    "J": 30,
-    "J_gib": 5.6,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 106133,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -8243,12 +8272,12 @@
     }
    },
    "robustness": {
-    "job_h": 10.0,
+    "job_h": 10.5,
     "job_fits": true,
-    "lane_h": 6.6,
+    "lane_h": 6.9,
     "lane_fits": true,
-    "J": 32,
-    "J_gib": 6.0,
+    "J": 31,
+    "J_gib": 5.8,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -9921,17 +9950,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every turn",
    "cp_h": 3.55,
    "board": {
-    "job_h": 24.3,
+    "job_h": 25.5,
     "job_fits": false,
-    "lane_h": 10.8,
+    "lane_h": 11.3,
     "lane_fits": true,
-    "J": 48,
-    "J_gib": 9.0,
+    "J": 45,
+    "J_gib": 8.5,
     "N_req": 282600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -9945,12 +9974,12 @@
     }
    },
    "robustness": {
-    "job_h": 16.4,
+    "job_h": 17.2,
     "job_fits": true,
-    "lane_h": 6.9,
+    "lane_h": 7.2,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 175644,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -9967,17 +9996,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every 2nd turn",
    "cp_h": 3.36,
    "board": {
-    "job_h": 23.4,
-    "job_fits": true,
-    "lane_h": 9.8,
+    "job_h": 24.6,
+    "job_fits": false,
+    "lane_h": 10.3,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 246600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -9991,12 +10020,12 @@
     }
    },
    "robustness": {
-    "job_h": 15.8,
+    "job_h": 16.6,
     "job_fits": true,
-    "lane_h": 6.1,
+    "lane_h": 6.4,
     "lane_fits": true,
-    "J": 55,
-    "J_gib": 10.3,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 147804,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10013,17 +10042,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "once per session + before compaction",
    "cp_h": 3.18,
    "board": {
-    "job_h": 22.7,
+    "job_h": 23.8,
     "job_fits": true,
-    "lane_h": 8.9,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 54,
-    "J_gib": 10.2,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 214200,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10037,12 +10066,12 @@
     }
    },
    "robustness": {
-    "job_h": 15.2,
+    "job_h": 15.9,
     "job_fits": true,
-    "lane_h": 5.4,
+    "lane_h": 5.6,
     "lane_fits": true,
-    "J": 60,
-    "J_gib": 11.3,
+    "J": 57,
+    "J_gib": 10.7,
     "N_req": 122748,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10059,17 +10088,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every turn",
    "cp_h": 4.54,
    "board": {
-    "job_h": 32.5,
+    "job_h": 34.1,
     "job_fits": false,
-    "lane_h": 21.6,
+    "lane_h": 22.7,
     "lane_fits": true,
-    "J": 32,
-    "J_gib": 6.0,
+    "J": 31,
+    "J_gib": 5.8,
     "N_req": 282600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10083,12 +10112,12 @@
     }
    },
    "robustness": {
-    "job_h": 21.7,
+    "job_h": 22.8,
     "job_fits": true,
-    "lane_h": 13.7,
+    "lane_h": 14.4,
     "lane_fits": true,
-    "J": 34,
-    "J_gib": 6.4,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 175644,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10105,17 +10134,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every 2nd turn",
    "cp_h": 4.11,
    "board": {
-    "job_h": 30.7,
+    "job_h": 32.2,
     "job_fits": false,
-    "lane_h": 19.6,
+    "lane_h": 20.6,
     "lane_fits": true,
-    "J": 33,
-    "J_gib": 6.2,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 246600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10129,12 +10158,12 @@
     }
    },
    "robustness": {
-    "job_h": 20.3,
+    "job_h": 21.3,
     "job_fits": true,
-    "lane_h": 12.2,
+    "lane_h": 12.8,
     "lane_fits": true,
-    "J": 36,
-    "J_gib": 6.8,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 147804,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10151,17 +10180,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "once per session + before compaction",
    "cp_h": 3.72,
    "board": {
-    "job_h": 29.0,
+    "job_h": 30.4,
     "job_fits": false,
-    "lane_h": 17.8,
+    "lane_h": 18.6,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 33,
+    "J_gib": 6.2,
     "N_req": 214200,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10175,12 +10204,12 @@
     }
    },
    "robustness": {
-    "job_h": 19.0,
+    "job_h": 20.0,
     "job_fits": true,
-    "lane_h": 10.7,
+    "lane_h": 11.3,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 122748,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10197,17 +10226,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every turn",
    "cp_h": 5.53,
    "board": {
-    "job_h": 40.8,
+    "job_h": 42.8,
     "job_fits": false,
-    "lane_h": 32.4,
+    "lane_h": 34.0,
     "lane_fits": false,
-    "J": 27,
-    "J_gib": 5.1,
+    "J": 26,
+    "J_gib": 4.9,
     "N_req": 282600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10221,12 +10250,12 @@
     }
    },
    "robustness": {
-    "job_h": 27.1,
+    "job_h": 28.4,
     "job_fits": false,
-    "lane_h": 20.6,
+    "lane_h": 21.6,
     "lane_fits": true,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 175644,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10243,17 +10272,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every 2nd turn",
    "cp_h": 4.86,
    "board": {
-    "job_h": 37.9,
+    "job_h": 39.8,
     "job_fits": false,
-    "lane_h": 29.4,
+    "lane_h": 30.8,
     "lane_fits": false,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 26,
+    "J_gib": 4.9,
     "N_req": 246600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10267,12 +10296,12 @@
     }
    },
    "robustness": {
-    "job_h": 24.9,
+    "job_h": 26.1,
     "job_fits": false,
-    "lane_h": 18.2,
+    "lane_h": 19.2,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 147804,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10289,17 +10318,17 @@
   {
    "L": 48,
    "cuts": "none",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "once per session + before compaction",
    "cp_h": 4.25,
    "board": {
-    "job_h": 35.3,
+    "job_h": 37.1,
     "job_fits": false,
-    "lane_h": 26.6,
+    "lane_h": 28.0,
     "lane_fits": false,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 214200,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -10313,12 +10342,12 @@
     }
    },
    "robustness": {
-    "job_h": 22.9,
+    "job_h": 24.0,
     "job_fits": true,
-    "lane_h": 16.1,
+    "lane_h": 16.9,
     "lane_fits": true,
-    "J": 30,
-    "J_gib": 5.6,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 122748,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -11991,17 +12020,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every turn",
    "cp_h": 3.55,
    "board": {
-    "job_h": 21.2,
+    "job_h": 22.3,
     "job_fits": true,
-    "lane_h": 8.9,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 51,
-    "J_gib": 9.6,
+    "J": 48,
+    "J_gib": 9.0,
     "N_req": 227600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12015,12 +12044,12 @@
     }
    },
    "robustness": {
-    "job_h": 7.4,
+    "job_h": 7.8,
     "job_fits": true,
     "lane_h": 3.6,
     "lane_fits": true,
-    "J": 53,
-    "J_gib": 10.0,
+    "J": 51,
+    "J_gib": 9.6,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12037,17 +12066,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "every 2nd turn",
    "cp_h": 3.36,
    "board": {
-    "job_h": 20.4,
+    "job_h": 21.4,
     "job_fits": true,
-    "lane_h": 7.9,
+    "lane_h": 8.3,
     "lane_fits": true,
-    "J": 55,
-    "J_gib": 10.3,
+    "J": 52,
+    "J_gib": 9.8,
     "N_req": 191600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12061,12 +12090,12 @@
     }
    },
    "robustness": {
-    "job_h": 7.1,
+    "job_h": 7.5,
     "job_fits": true,
     "lane_h": 3.4,
     "lane_fits": true,
-    "J": 59,
-    "J_gib": 11.1,
+    "J": 56,
+    "J_gib": 10.5,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12083,17 +12112,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 0.5,
    "cadence": "once per session + before compaction",
    "cp_h": 3.18,
    "board": {
-    "job_h": 19.7,
+    "job_h": 20.6,
     "job_fits": true,
-    "lane_h": 7.0,
+    "lane_h": 7.3,
     "lane_fits": true,
-    "J": 60,
-    "J_gib": 11.3,
+    "J": 57,
+    "J_gib": 10.7,
     "N_req": 159200,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12107,12 +12136,12 @@
     }
    },
    "robustness": {
-    "job_h": 6.8,
+    "job_h": 7.2,
     "job_fits": true,
     "lane_h": 3.2,
     "lane_fits": true,
-    "J": 66,
-    "J_gib": 12.4,
+    "J": 63,
+    "J_gib": 11.9,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12129,17 +12158,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every turn",
    "cp_h": 4.54,
    "board": {
-    "job_h": 28.2,
+    "job_h": 29.6,
     "job_fits": false,
-    "lane_h": 17.8,
+    "lane_h": 18.7,
     "lane_fits": true,
-    "J": 34,
-    "J_gib": 6.4,
+    "J": 32,
+    "J_gib": 6.0,
     "N_req": 227600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12153,12 +12182,12 @@
     }
    },
    "robustness": {
-    "job_h": 9.8,
+    "job_h": 10.2,
     "job_fits": true,
-    "lane_h": 5.9,
+    "lane_h": 6.2,
     "lane_fits": true,
-    "J": 35,
-    "J_gib": 6.6,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12175,17 +12204,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "every 2nd turn",
    "cp_h": 4.11,
    "board": {
-    "job_h": 26.3,
+    "job_h": 27.6,
     "job_fits": false,
-    "lane_h": 15.8,
+    "lane_h": 16.6,
     "lane_fits": true,
-    "J": 36,
-    "J_gib": 6.8,
+    "J": 34,
+    "J_gib": 6.4,
     "N_req": 191600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12199,12 +12228,12 @@
     }
    },
    "robustness": {
-    "job_h": 9.0,
+    "job_h": 9.5,
     "job_fits": true,
-    "lane_h": 5.1,
+    "lane_h": 5.4,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12221,17 +12250,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.0,
    "cadence": "once per session + before compaction",
    "cp_h": 3.72,
    "board": {
-    "job_h": 24.6,
+    "job_h": 25.9,
     "job_fits": false,
-    "lane_h": 13.9,
+    "lane_h": 14.6,
     "lane_fits": true,
-    "J": 38,
-    "J_gib": 7.2,
+    "J": 36,
+    "J_gib": 6.8,
     "N_req": 159200,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12245,12 +12274,12 @@
     }
    },
    "robustness": {
-    "job_h": 8.4,
+    "job_h": 8.8,
     "job_fits": true,
-    "lane_h": 4.4,
+    "lane_h": 4.6,
     "lane_fits": true,
-    "J": 41,
-    "J_gib": 7.7,
+    "J": 39,
+    "J_gib": 7.3,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12267,17 +12296,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every turn",
    "cp_h": 5.53,
    "board": {
-    "job_h": 35.1,
+    "job_h": 36.8,
     "job_fits": false,
-    "lane_h": 26.7,
+    "lane_h": 28.0,
     "lane_fits": false,
-    "J": 28,
-    "J_gib": 5.3,
+    "J": 27,
+    "J_gib": 5.1,
     "N_req": 227600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12291,12 +12320,12 @@
     }
    },
    "robustness": {
-    "job_h": 12.1,
+    "job_h": 12.7,
     "job_fits": true,
-    "lane_h": 8.8,
+    "lane_h": 9.3,
     "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 73705,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12313,36 +12342,36 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "every 2nd turn",
    "cp_h": 4.86,
    "board": {
-    "job_h": 32.2,
+    "job_h": 33.8,
     "job_fits": false,
-    "lane_h": 23.6,
-    "lane_fits": true,
-    "J": 29,
-    "J_gib": 5.5,
+    "lane_h": 24.8,
+    "lane_fits": false,
+    "J": 28,
+    "J_gib": 5.3,
     "N_req": 191600,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
       "rate_h": 17.7,
-      "fits": true
+      "fits": false
      },
      "2 accounts (hypothetical)": {
       "rate_h": 8.9,
-      "fits": true
+      "fits": false
      }
     }
    },
    "robustness": {
-    "job_h": 11.0,
+    "job_h": 11.5,
     "job_fits": true,
-    "lane_h": 7.7,
+    "lane_h": 8.0,
     "lane_fits": true,
-    "J": 31,
-    "J_gib": 5.8,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 59785,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12359,17 +12388,17 @@
   {
    "L": 48,
    "cuts": "cuts 1-2",
-   "C": 21,
+   "C": 20,
    "latency_x": 1.5,
    "cadence": "once per session + before compaction",
    "cp_h": 4.25,
    "board": {
-    "job_h": 29.6,
+    "job_h": 31.1,
     "job_fits": false,
-    "lane_h": 20.9,
+    "lane_h": 21.9,
     "lane_fits": true,
-    "J": 30,
-    "J_gib": 5.6,
+    "J": 29,
+    "J_gib": 5.5,
     "N_req": 159200,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {
@@ -12383,12 +12412,12 @@
     }
    },
    "robustness": {
-    "job_h": 10.0,
+    "job_h": 10.5,
     "job_fits": true,
-    "lane_h": 6.6,
+    "lane_h": 6.9,
     "lane_fits": true,
-    "J": 32,
-    "J_gib": 6.0,
+    "J": 31,
+    "J_gib": 5.8,
     "N_req": 47257,
     "rate": {
      "1 account (planning, 90% of the ~200/min burst threshold)": {

@@ -127,19 +127,57 @@ def rate_grid(rows: list[dict], ri: dict) -> list[dict]:
     return rows
 
 
+def req_sensitivity(ri: dict, q_req: dict, rs: int = 180) -> dict:
+    """The one-account full-board verdict's dependence on the probe input (r7b: q_req's probe turns), and the
+    request budget per study life left for PREREG-v0.2 §11's C_learn + C_erase (unmeasured; 0 in the grid)."""
+    cap = 24 * rs * 60
+
+    def n(run, pp=None, **kw):
+        r = ri if pp is None else dict(ri, probe_upstream_s=pp)
+        return projection(r, lat=1.0, C=1, **kw)[run]["lane_work_h"] * 3600
+
+    pp0, out = q_req["probe_per_probe_turn"], {}
+    base, zero = n("board"), n("board", 0.0)
+    lo, hi = 0.0, pp0
+    for _ in range(60):  # the probe requests per probe turn at which N_req / R_s reaches 24 h
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if n("board", mid) <= cap else (lo, mid)
+    out["board_L48"] = {"probe_turns_n": q_req["probe_turns"], "probe_requests_per_turn": pp0,
+                        "probe_share_of_N_req": round((base - zero) / base, 3), "flip_probe_requests_per_turn": round(lo, 2),
+                        "rate_h_at_probe_x": {x: round(n("board", pp0 * x) / rs / 60, 1) for x in (1.0, 1.5, 2.0)}}
+    for label, kw, n_rob in (("none", {}, 8), ("cuts 1-2", {"b": 100, "L_rob": 4}, 4)):
+        nr = n("robustness", **kw)
+        out[f"study_L48_{label}"] = {"N_req": round(nr), "rate_h": round(nr / rs / 60, 1), "n_rob": n_rob,
+                                     "C_learn_plus_C_erase_breakeven_requests_per_study_life": int((cap - nr) / n_rob)}
+    return out
+
+
 def soak_level(soak: dict) -> dict:
+    """C_effective is the ok calls' service time clipped to the send window, over that window (Little's law on one
+    declared window): service that runs on into the drain is not counted against a window that excludes the drain."""
     ok = [c for c in soak["calls"] if c["ok"]]
     busy = sum(c["t_ms"] for c in ok) / 1000
     window = soak["last_send_s"] or soak["wall_s"]
+    clipped = sum(max(0.0, min(c["t_start_s"] + c["t_ms"] / 1000, window) - c["t_start_s"]) for c in ok)
     in_window = sum(c["t_done_s"] <= window for c in ok)
-    return {"C_effective": round(busy / window, 1), "ok_per_min_send_window": round(in_window / window * 60, 1),
+    return {"C_effective": round(clipped / window, 2), "C_window_s": window, "inflight_sampled_mean": soak["inflight_mean"],
+            "ok_service_s_unclipped": round(busy, 1), "ok_per_min_send_window": round(in_window / window * 60, 1),
             "mean_ok_call_s": round(busy / max(1, len(ok)), 2), "inflight_target": soak["inflight_target"],
             "sustained_at_target": soak["sustained"], "n429": soak["n429"], "server_overloaded": soak["server_overloaded"],
             "sent": soak["sent"], "utc": [soak["utc_start"], soak["utc_end"]], "ended_by": soak["ended_by"]}
 
 
-def quota(path: Path, r7_calls: int, soak: dict | None, board_calls: dict) -> dict:
-    """Readings are whole percentages: an unmoved reading bounds the burn by one step (an upper bound only)."""
+def ceil_sig(x: float, sig: int = 3) -> float:
+    """Round up at sig significant figures: an upper bound stays an upper bound."""
+    if x <= 0:
+        return 0.0
+    e = math.floor(math.log10(x)) - sig + 1
+    return round(math.ceil(x / 10**e) * 10**e, max(0, -e))
+
+
+def quota(path: Path, served: int, soak: dict | None, board_calls: dict, board_per_min: float) -> dict:
+    """Readings are whole percentages: an unmoved reading over a span bounds the burn by one step over the requests
+    the upstream served in that span (refused calls are not counted). Burn is assumed linear per served request."""
     rd = []
     for line in path.read_text().splitlines() if path.exists() else []:
         m = re.match(r"(\S+) (\S+) (\S+) weekly_free (\S+) session_free (\S+)", line)
@@ -152,14 +190,17 @@ def quota(path: Path, r7_calls: int, soak: dict | None, board_calls: dict) -> di
                                                     "session_pts": float(a["session_free"]) - float(b["session_free"])}
         except ValueError:
             continue
-    soak_calls = soak["sent"] if soak else 0
-    per_call_ub = 1.0 / soak_calls if soak_calls and pairs.get("before-soak->after-soak", {}).get("weekly_pts") == 0 else None
-    return {"readings": rd, "burn_points": pairs, "resolution_pts": 1, "r7b_calls": r7_calls, "soak_calls": soak_calls,
-            "weekly_pts_per_call_upper_bound": per_call_ub,
-            "board_calls": board_calls,
-            "board_weekly_pts_upper_bound": {k: round(v * per_call_ub, 1) for k, v in board_calls.items()} if per_call_ub
-            else None,
-            "note": "extrapolation from one account at one time of day; an upper bound from an unmoved whole-percent reading"}
+    unmoved = bool(pairs) and all(v["weekly_pts"] == 0 and v["session_pts"] == 0 for v in pairs.values())
+    ub = 1.0 / served if served and unmoved else None
+    n5 = board_per_min * 300  # the board's mean request rate over one 5-hour window
+    return {"readings": rd, "burn_points": pairs, "resolution_pts": 1, "served_in_unmoved_span": served,
+            "soak_sent": soak["sent"] if soak else 0, "pts_per_request_upper_bound": ub,
+            "pts_per_request_upper_bound_rounded_up": ceil_sig(ub) if ub else None, "board_calls": board_calls,
+            "board_weekly_pts_upper_bound": {k: ceil_sig(v * ub) for k, v in board_calls.items()} if ub else None,
+            "board_requests_per_5h": round(n5), "board_5h_pts_upper_bound": ceil_sig(n5 * ub) if ub else None,
+            "secondary_window_in_headers": False,
+            "assumptions": "burn linear per served request; one account at one time of day; whole-percent readings; "
+                           "the response headers carry only the weekly primary window (secondary window 0 minutes)"}
 
 
 def compare(r7: dict) -> list[dict]:
@@ -171,7 +212,8 @@ def compare(r7: dict) -> list[dict]:
                     "completion_tokens": w["completion_tokens"], "memory_calls": w["memory_tool_calls"],
                     "readback_ok": w["readback_ok"], "summariser_s": m["summariser"]["latency_s"],
                     "summariser_completion_tokens": m["summariser"]["completion_tokens"],
-                    "aux_s": m["aux"]["latency_s"], "probe_turn_s": m["probe"]["turn_s"]} | {k: m[k] for k in SAME})
+                    "aux_s": m["aux"]["latency_s"], "probe_turn_s": m["probe"]["turn_s"],
+                    "conditions": {k: m.get(k) for k in ("marker_exits", "glm_flags", "load1")}} | {k: m[k] for k in SAME})
     return out
 
 
@@ -182,6 +224,7 @@ def main():
     p.add_argument("--ramp", default="ramp/ramp.json")
     p.add_argument("--soak", default="", help="the soak's soak.json, relative to --evidence")
     p.add_argument("--quota", default="quota/readings.txt")
+    p.add_argument("--also-served", nargs="*", default=[], help="other runs inside the quota span (served requests)")
     p.add_argument("--out", default="results")
     a = p.parse_args()
     evid, out = Path(a.evidence), Path(a.out)
@@ -203,18 +246,32 @@ def main():
     soak = json.loads((evid / a.soak).read_text()) if a.soak else None
     lvl = soak_level(soak) if soak else None
     C = math.floor(lvl["C_effective"]) if lvl else ramp["sustained_concurrency"]
-    C_label = (f"soak, effective (Little's law; {soak['n429']} 429s at {soak['inflight_target']} in flight)" if lvl
+    C_label = (f"soak, effective (Little's law, ok service clipped to the send window; {soak['n429']} 429s at "
+               f"{soak['inflight_target']} in flight)" if lvl
                else "burst, not sustained (ramp)")
     Cs = sorted({8, 16, 24, 32, C})
     sens = [{"latency_x": lat, "C": c, **projection(inputs, lat=lat, C=c)} for lat in (0.5, 1.0, 1.5) for c in Cs]
     cuts = [("none", {}), ("1: b=100", {"b": 100}), ("2: + L_rob=4", {"b": 100, "L_rob": 4}),
             ("3: + L=24", {"b": 100, "L_rob": 4, "L": 24})]
     rows, led, _ = load(evid, a.write)
+    fixed = {}
+    for r in rows:  # per-session fixed time: session total minus its turns (S6a's measure)
+        if r["phase"] == "life":
+            t = int(r["t_ms"]) * (1 if r["what"] == "session_total" else -1 if r["what"] == "turn" else 0)
+            fixed[r["session"]] = fixed.get(r["session"], 0) + t / 1000
+    worst = max(fixed, key=fixed.get)
+    w["session_fixed_detail"] = {"per_session_s": {k: round(v, 2) for k, v in fixed.items()},
+                                 "median_s": round(statistics.median(fixed.values()), 2), "outlier_session": worst,
+                                 "mean_without_outlier_s": round(statistics.mean(
+                                     v for k, v in fixed.items() if k != worst), 2)}
     call_s = statistics.mean(u["t_ms"] / 1000 for r in led if r.get("type") == "request"
                              for u in r.get("upstream", []) if u.get("ok"))
     q_req, ri = requests(rows, led, inputs)
     board_calls = {f"L=48 {n}": round(projection(ri, C=1, **kw)["board"]["lane_work_h"] * 3600) for n, kw in cuts[:3:2]}
-    q = quota(evid / a.quota, w["upstream_attempts"], soak, board_calls)
+    served = (soak["ok"] if soak else 0) + sum(  # every request served inside the unmoved quota span
+        1 for run in [a.write, *a.also_served] for r in load(evid, run)[1] if r.get("type") == "request"
+        for u in r.get("upstream", []) if u.get("ok"))
+    q = quota(evid / a.quota, served, soak, board_calls, board_calls["L=48 none"] / 1440)
     rate = lvl["ok_per_min_send_window"] if lvl else None
     q["board_requests_per_min_over_24h"] = {k: round(v / 1440, 1) for k, v in board_calls.items()}
     q["soak_ok_per_min"] = rate
@@ -224,6 +281,7 @@ def main():
     c_eff = {label: {"r7b_mean_call_s": round(rs / 60 * call_s, 1), **({"soak_mean_call_s": round(
         rs / 60 * lvl["mean_ok_call_s"], 1)} if lvl else {})} for label, rs in RATES.items()}
     (out / "projection.json").write_text(json.dumps({"requests_per_unit": q_req, "request_rates_per_min": RATES,
+                                                     "request_sensitivity": req_sensitivity(ri, q_req),
                                                      "C_eff_at_rate": c_eff, "mean_request_s": round(call_s, 2),
         "inputs_s": inputs, "C_measured": C, "C_label": C_label, "C_burst": ramp["sustained_concurrency"],
         "C_measured_is_ramp_ceiling": not lvl and ramp["binding_limit"].startswith("none"), "quota": q,
