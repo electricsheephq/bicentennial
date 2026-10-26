@@ -14,10 +14,25 @@ from bicentennial.contracts.surfaces import tree_hash, tree_listing
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "run"
 CANARY = "c168e5f8-3948-4553-8554-7aa162054723"
+# Each unit keeps a contracts.json registry beside its own fixtures, so a later
+# schema needs no edit here; every contract name must appear in exactly one.
+REGISTRIES = sorted([*ROOT.glob("tests/fixtures/*/contracts.json"),
+                     *ROOT.glob("schemas/fixtures/*/contracts.json")])
 
 
 def fixture(name):
-    return json.loads((FIXTURES / "contracts.json").read_bytes())["contracts"][name]
+    found = [registry["contracts"][name] for registry in
+             (json.loads(path.read_bytes()) for path in REGISTRIES)
+             if name in registry["contracts"]]
+    assert len(found) == 1, f"{name}: {len(found)} fixture registry entries, expected 1"
+    return found[0]
+
+
+def test_every_registry_carries_the_canary_and_known_names():
+    for path in REGISTRIES:
+        registry = json.loads(path.read_bytes())
+        assert registry["canary"] == CANARY, path.parent.name
+        assert set(registry["contracts"]) <= NAMES, path.parent.name
 
 
 def compile_micro_life(life):
