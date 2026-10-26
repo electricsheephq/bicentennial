@@ -46,7 +46,8 @@ Hermes's title generator disables reasoning for its request, and Hermes ranks th
 
 Each account's director shares one locked token bucket across HTTP, soak and retry calls:
 180 requests/minute, burst 10, acquired immediately before each upstream POST after budget/stop checks.
-Any half-open 60 s window contains at most burst + rate sends: 190 by default, below 200.
+Per director process, any half-open 60 s window contains at most burst + rate sends: 190 by default, below 200.
+Start a paced process only after 60 s with no traffic on that account, and never within 60 s of the unpaced ramp.
 `--rate-per-min 0` disables pacing (recorded in the ledger); stub mode bypasses it.
 `--burst` defaults to 10; burst + rate >= 200 requires `--allow-over-window`.
 The ramp deliberately uses rate 0 to retain its refusal-threshold burst measurement; the soak passes

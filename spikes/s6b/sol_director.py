@@ -219,8 +219,13 @@ class Login:
         if self.on_refresh and not self.on_refresh():
             raise Stop("refresh_budget")
         self.posted = True
-        status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
-                                                  "client_id": self.client_id})
+        try:
+            status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
+                                                      "client_id": self.client_id})
+        except Exception as e:  # class only: the charged POST may have consumed the refresh token
+            self.log.append({"type": "refresh", "status": -1, "error": type(e).__name__})
+            raise
+        body = body if isinstance(body, dict) else {}
         c = jwt_claims(body.get("access_token"))
         self.log.append({"type": "refresh", "status": status, "t": time.time(), "lifetime_s": c.get("exp", 0) - c.get(
             "iat", 0), "rotated": bool(body.get("refresh_token")) and body.get("refresh_token") != old})
@@ -432,6 +437,7 @@ class Director:
             self.login and self.login.token()
         except Stop as e:
             self.stop(str(e))
+        self._drain()
         self.ledger.append({"type": "pacing", "run": a.run, "rate_per_min": self.pacer.rate * 60,
                             "burst": self.pacer.burst, "enabled": bool(self.pacer.rate) and a.mode != "stub"})
         life = json.loads(Path(a.life).read_text())
@@ -461,13 +467,17 @@ class Director:
                    "in_stream_overloads": sum(c == "overload" and s == 200 for c, s, _, _ in self.tries),
                    "http_overloads": {str(s): sum(u[1] == s for u in self.tries) for s in (502, 503, 529)},
                    "http_429s": sum(u[1] == 429 for u in self.tries),
-                   "breaker_stops": int(self.stop_reason.endswith("_3_in_a_row")),
+                   "breaker_stops": int(self.stop_reason == "upstream_failures_3_in_a_row"),
+                   "stop_reason": self.stop_reason,
                    "requests_per_min": request_rate(u[2] for u in self.tries),
                    "pace_wait_ms": self.pace_wait_ms}
             path = Path(self.a.ledger_dir) / "summary.json"
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(out, indent=2) + "\n")
-            os.replace(tmp, path)
+            try:
+                tmp.write_text(json.dumps(out, indent=2) + "\n")
+                os.replace(tmp, path)
+            except OSError as e:
+                print(f"summary_write_error:{type(e).__name__}", file=sys.stderr)
             return out
 
     # ---- upstream ------------------------------------------------------------------------------
@@ -495,7 +505,10 @@ class Director:
                     self.summary()
                 return up
             retried.append(up["category"])
-            time.sleep(wait)
+            for _ in range(wait):
+                if self.stopped:
+                    break
+                time.sleep(1)
 
     def upstream(self, body: dict, kind: str, fwd: dict) -> dict:
         up = self._upstream(body, kind, fwd)
@@ -505,12 +518,21 @@ class Director:
             with self.metrics_lock:
                 self.tries.append((up["category"] or "ok", up["status"], up["t_sent"], up["pace_wait_ms"]))
             with self.streak_lock:
-                self.unparsed_streak = self.unparsed_streak + 1 if up["ok"] and up.get("n_unparsed") else 0
+                if up["ok"] and up.get("n_unparsed"):
+                    self.unparsed_streak += 1
+                elif up["forward"]:
+                    self.unparsed_streak = 0
                 if self.unparsed_streak >= 3:
                     self.stop("upstream_unparsed_3_in_a_row")
         if self.stopped:
             self.summary()
         return up
+
+    def _drain(self):
+        if self.login:
+            with self.login.lock:  # token() has released this lock; _refresh appends while holding it
+                while self.login.log:
+                    self.ledger.append({"run": self.a.run, **self.login.log.pop(0)})
 
     def _upstream(self, body: dict, kind: str, fwd: dict) -> dict:
         """One counted upstream call; the whole SSE stream is buffered. Never raises; never logs a header."""
@@ -526,10 +548,7 @@ class Director:
             token = self.login.token() if self.login and not self.stopped else ""
         except Stop as e:
             self.stop(str(e))
-        if self.login:
-            with self.login.lock:  # token() has released this lock; _refresh appends while holding it
-                while self.login.log:
-                    self.ledger.append({"run": self.a.run, **self.login.log.pop(0)})
+        self._drain()
         if self.stopped or not self.budget.take(self.a.run, kind):
             return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
         t0 = time.monotonic()
@@ -861,7 +880,7 @@ def main():
     try:
         srv.serve_forever()
     finally:
-        d.summary()
+        d.stop("director_exit")
 
 
 if __name__ == "__main__":

@@ -7,9 +7,11 @@ import json
 import os
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
+import textwrap
 import time
 import unittest
 import urllib.error
@@ -167,7 +169,9 @@ class Pacing(unittest.TestCase):
     def test_window_bound_with_injected_clock(self):
         bucket, clock, _ = self.bucket()
         times = []
-        for _ in range(400):
+        for n in range(400):
+            if n == 200:
+                clock.now += 120
             bucket.acquire()
             times.append(clock.local.last)
         self.assert_windows(times, 190)
@@ -301,9 +305,21 @@ class S6c(Base):
                 self.assertNotIn(b"PRIVATE-OVERSIZE", zstd.decompress(blob.read_bytes()))
 
     def test_refresh_log_is_drained_once_by_two_threads(self):
-        d, start, results, errors = self.make(), threading.Barrier(2), [], []
-        d.login.log.append({"type": "refresh", "status": 200})
-        d.login.token = lambda: (start.wait(timeout=2), "fake")[1]
+        class RacyLog(list):
+            gate = threading.Barrier(2)
+
+            def __bool__(self):
+                n = len(self)
+                if n:
+                    try:
+                        self.gate.wait(timeout=0.5)
+                    except threading.BrokenBarrierError:
+                        pass
+                return n > 0
+
+        d, results, errors = self.make(), [], []
+        d.login.log = RacyLog([{"type": "refresh", "status": 200}])
+        d.login.token = lambda: "fake"
         d.urlopen = lambda *a, **kw: Resp(sse(MSG))
 
         def worker():
@@ -366,6 +382,191 @@ class S6c(Base):
             res = an.sol_load(self.tmp, "old")
         self.assertEqual((res["pace_wait_ms"], res["paced_request_rate"], res["invalid_evidence"]),
                          (0, {"p50": 0, "max": 0}, False))
+
+
+class Fix1(Base):
+    def test_flat_soak_and_ramp_ledgers_reconcile(self):
+        import verify
+        d = self.make(budget_cap=100)
+        d.budget.take("t", "refresh")
+        d.ledger.append({"type": "refresh", "status": 200})
+        for kind in ("soak", "ramp"):
+            for _ in range(20):
+                d.budget.take("t", kind)
+                d.ledger.append({"type": kind, "ok": True})
+        self.assertEqual(verify.check_ledger(self.tmp)["upstream_attempts"], 41)
+        self.assertEqual(json.loads(d.budget.path.read_text())["by_run"]["t"], 41)
+
+    def test_paced_plan_reserves_waiters_and_fits_ten_minutes(self):
+        import soak_sol
+        pays = [{"t_ms": 6240}]
+        pl = soak_sol.plan(pays, 24, 600, 1900, rate=180, burst=10)
+        self.assertEqual((pl["est_calls"], pl["fits"], pl["max_fitting_duration_s"]), (1834, True, 622))
+        self.assertFalse(soak_sol.plan(pays, 24, 600, 1833, rate=180, burst=10)["fits"])
+        self.assertEqual(soak_sol.plan(pays, 24, 600, 1900)["est_calls"], 2308)
+        args = ["soak_sol.py", "--source", "fake", "--out", str(self.tmp), "--budget-file", str(self.tmp / "b"),
+                "--duration", "600", "--max-calls", "1900", "--budget-cap", "2000", "--rate-per-min", "180",
+                "--burst", "10", "--plan-only"]
+        with mock.patch.object(sys, "argv", args), mock.patch.object(soak_sol, "payloads", return_value=pays), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output, self.assertRaises(SystemExit) as ex:
+            soak_sol.main()
+        self.assertEqual(ex.exception.code, 0)
+        self.assertEqual(json.loads(output.getvalue())["est_calls"], 1834)
+
+    def test_soak_service_intervals_exclude_pace_waits_and_keep_old_files(self):
+        import analyse_sol as an
+        soak = {"calls": [{"ok": True, "t_start_s": 7, "t_ms": 5000, "t_done_s": 15}],
+                "last_send_s": 10, "wall_s": 15, "inflight_mean": 2, "inflight_target": 2, "sustained": True,
+                "n429": 0, "server_overloaded": 0, "sent": 1, "utc_start": 0, "utc_end": 15, "ended_by": "duration"}
+        self.assertEqual(an.soak_level(soak)["C_effective"], 0.3)
+        soak["calls"][0]["pace_wait_ms"] = 2000
+        result = an.soak_level(soak)
+        self.assertEqual(result["C_effective"], 0.1)
+        self.assertEqual(result["inflight_sampled_mean_label"], "workers including pace waits")
+
+    def test_backoff_checks_stop_each_second_and_keeps_sleep_seam(self):
+        d = self.make()
+        d.urlopen = mock.Mock(side_effect=urllib.error.HTTPError("http://fake.invalid", 429, "bad", {}, io.BytesIO(b"{}")))
+        with mock.patch.object(sd.time, "sleep", side_effect=lambda _: d.stop("test_stop")) as sleep:
+            d.handle(AUX, {})
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [1])
+        self.assertEqual(d.urlopen.call_count, 1)
+
+    def test_summary_io_failure_never_escapes_upstream(self):
+        d = self.make()
+        (self.tmp / "ledger" / "summary.tmp").mkdir()
+        d.urlopen = mock.Mock(side_effect=urllib.error.HTTPError("http://fake.invalid", 400, "bad", {}, io.BytesIO(b"{}")))
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            up = d.upstream(AUX, "aux", {})
+        self.assertEqual((up["status"], d.stop_reason), (400, "upstream_invalid_request_400"))
+        self.assertIn("summary_write_error:IsADirectoryError", err.getvalue())
+        (self.tmp / "ledger" / "summary.tmp").rmdir()
+        with mock.patch.object(sd.os, "replace", side_effect=OSError("private failure text")), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(d.summary()["upstream_tries"], {"other": 1})
+        self.assertNotIn("private failure text", err.getvalue())
+
+    def test_unparsed_streak_survives_failed_tries_and_resets_on_forward(self):
+        d = self.make()
+        unparsed = b"data: {broken}\n\n" + sse(MSG)
+        script = iter([unparsed, unparsed, sse(MSG), unparsed, 429, unparsed, 503, unparsed])
+
+        def send(*a, **kw):
+            raw = next(script)
+            if isinstance(raw, int):
+                raise urllib.error.HTTPError("http://fake.invalid", raw, "bad", {}, io.BytesIO(b"{}"))
+            return Resp(raw)
+        d.urlopen = mock.Mock(side_effect=send)
+        with mock.patch.object(sd.time, "sleep"):
+            for streak in (1, 2, 0, 1, 2, 3):
+                d.handle(AUX, {})
+                self.assertEqual(d.unparsed_streak, streak)
+        self.assertEqual((d.urlopen.call_count, d.stop_reason), (8, "upstream_unparsed_3_in_a_row"))
+
+    def refresh_shape(self, response, *, startup_only=False):
+        import verify
+        seed = self.make()
+        login = sd.Login(store(self.tmp, exp_in=60), "http://127.0.0.1:9/never", "client-fake",
+                         on_refresh=lambda: seed.budget.take("t", "refresh"))
+        with mock.patch.object(sd.urllib.request, "urlopen", side_effect=response):
+            d = sd.Director(seed.a, login=login)
+        if not startup_only:
+            _, _, rec = d.handle(AUX, {})
+            d.ledger.append({"type": "request", **rec})
+        self.assertTrue(d.stopped)
+        self.assertEqual((verify.check_ledger(self.tmp)["upstream_attempts"],
+                          json.loads(d.budget.path.read_text())["by_run"]["t"]), (1, 1))
+        self.assertEqual(d.login.log, [])
+        return self.records("refresh")[-1]
+
+    def test_refresh_network_failure_reconciles(self):
+        row = self.refresh_shape(urllib.error.URLError("private host"))
+        self.assertEqual((row["status"], row["error"]), (-1, "Stop"))
+        self.assertNotIn("private host", json.dumps(row))
+
+    def test_refresh_non_json_response_reconciles(self):
+        self.refresh_shape([Resp(b"<html>not json</html>")])
+
+    def test_refresh_list_response_reconciles(self):
+        self.refresh_shape([Resp(b"[]")])
+
+    def test_startup_refresh_failure_drains_without_any_upstream_call(self):
+        self.refresh_shape(urllib.error.URLError("private host"), startup_only=True)
+
+    def test_summary_separates_stop_labels_from_failure_breaker(self):
+        d = self.make()
+        for reason, count in (("upstream_unparsed_3_in_a_row", 0), ("upstream_failures_3_in_a_row", 1),
+                              ("upstream_invalid_request_400", 0), ("director_exit", 0)):
+            d.stop_reason = ""
+            d.stop(reason)
+            result = json.loads((self.tmp / "ledger" / "summary.json").read_text())
+            self.assertEqual(result["breaker_stops"], count)
+            self.assertEqual(result["stop_reason"], reason)
+
+    def test_sigterm_during_pace_wait_releases_budget_reservation(self):
+        import verify
+        # Reuse the verdict's two real HTTP calls and SIGTERM, exercising main() itself.
+        script = textwrap.dedent('''
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, sys.argv[2])
+            import sol_director as sd
+            import test_s6b as t
+            root = Path(sys.argv[1])
+            real_director, real_server = sd.Director, sd.ThreadingHTTPServer
+            def director(a):
+                login = sd.Login(t.store(root), "http://127.0.0.1:9/never", "client-fake")
+                d = real_director(a, login=login, urlopen=lambda *a, **kw: t.Resp(t.sse(t.MSG)))
+                def sleep(delay):
+                    (root / "waiting").write_text("ready")
+                    d.stop_event.wait(delay)
+                d.pacer.sleep = sleep
+                return d
+            def server(*a):
+                srv = real_server(*a)
+                (root / "port").write_text(str(srv.server_address[1]))
+                return srv
+            sd.Director, sd.ThreadingHTTPServer = director, server
+            sys.argv = ["sol_director.py", "--port", "0", "--life", str(t.LIFE), "--ledger-dir", str(root / "ledger"),
+                        "--budget-file", str(root / "b.json"), "--run", "t", "--rate-per-min", "1", "--burst", "1"]
+            sd.os.environ["BICENTENNIAL_SOL_AUTH"] = str(root / "auth.json")
+            sd.os.environ["BICENTENNIAL_SOL_BASE_URL"] = "http://127.0.0.1:9/never"
+            sd.main()
+        ''')
+        proc = subprocess.Popen([sys.executable, "-B", "-c", script, str(self.tmp), str(Path(__file__).resolve().parent)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def await_file(name):
+            deadline = time.monotonic() + 5
+            while not (self.tmp / name).exists() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue((self.tmp / name).exists(), name)
+
+        def post():
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{sd.MOUNT}/responses", data=json.dumps(AUX).encode(),
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    response.read()
+            except OSError:
+                pass  # the waiting client's connection may close during process exit
+        try:
+            await_file("port")
+            port = int((self.tmp / "port").read_text())
+            post()
+            waiter = threading.Thread(target=post, daemon=True)
+            waiter.start()
+            await_file("waiting")
+            proc.terminate()
+            _, err = proc.communicate(timeout=5)
+            waiter.join(timeout=2)
+            self.assertEqual(proc.returncode, 0, err)
+            self.assertEqual((json.loads((self.tmp / "b.json").read_text())["by_run"]["t"],
+                              verify.check_ledger(self.tmp)["upstream_attempts"]), (1, 1))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate(timeout=5)
 
 
 class Login(Base):

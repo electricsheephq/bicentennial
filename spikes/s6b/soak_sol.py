@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -50,12 +51,16 @@ def payloads(source: Path, kinds=KINDS) -> list[dict]:
     return out
 
 
-def plan(pays: list[dict], inflight: int, duration: float, ceiling: int) -> dict:
+def plan(pays: list[dict], inflight: int, duration: float, ceiling: int, rate=0, burst=0) -> dict:
     """Calls the window needs at the source run's mean latency (the mix weights it), against the ceiling."""
     mean_s = max(0.1, statistics.mean(p["t_ms"] for p in pays) / 1000)
     est = round(inflight * duration / mean_s)
+    max_duration = int(ceiling * mean_s / inflight)
+    if rate > 0:  # gate() reserves a call before its worker waits for a pacing token
+        est = min(est, burst + math.ceil(rate * duration / 60) + inflight)
+        max_duration = max(max_duration, max(0, int((ceiling - burst - inflight) * 60 / rate)))
     return {"mean_latency_s": round(mean_s, 2), "est_calls": est, "ceiling": ceiling, "fits": est <= ceiling,
-            "max_fitting_duration_s": int(ceiling * mean_s / inflight)}
+            "max_fitting_duration_s": max_duration}
 
 
 def ceiling_for(budget_file: Path, cap: int, max_calls: int, reserve: int) -> int:
@@ -204,7 +209,8 @@ def main():
     a = p.parse_args()
     out = Path(a.out)
     pays = payloads(Path(a.source))
-    pl = plan(pays, a.inflight, a.duration, ceiling_for(Path(a.budget_file), a.budget_cap, a.max_calls, a.reserve))
+    pl = plan(pays, a.inflight, a.duration, ceiling_for(Path(a.budget_file), a.budget_cap, a.max_calls, a.reserve),
+              a.rate_per_min, a.burst)
     print(json.dumps(pl), flush=True)
     if a.plan_only or not pl["fits"]:
         sys.exit(0 if a.plan_only else f"the planned window needs ~{pl['est_calls']} calls over a ceiling of "

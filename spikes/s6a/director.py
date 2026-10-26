@@ -151,6 +151,7 @@ def refusal_category(status: int, text: str) -> str:
 
 
 def redact(text: str) -> str:
+    text = text[:4096]
     text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "<email>", text)
     text = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", text, flags=re.I)
     return re.sub(r"\d{6,}", "<n>", text)[:600]

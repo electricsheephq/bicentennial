@@ -264,9 +264,12 @@ def soak_level(soak: dict) -> dict:
     ok = [c for c in soak["calls"] if c["ok"]]
     busy = sum(c["t_ms"] for c in ok) / 1000
     window = soak["last_send_s"] or soak["wall_s"]
-    clipped = sum(max(0.0, min(c["t_start_s"] + c["t_ms"] / 1000, window) - c["t_start_s"]) for c in ok)
+    def send(c):
+        return c["t_start_s"] + c.get("pace_wait_ms", 0) / 1000
+    clipped = sum(max(0.0, min(send(c) + c["t_ms"] / 1000, window) - send(c)) for c in ok)
     in_window = sum(c["t_done_s"] <= window for c in ok)
     return {"C_effective": round(clipped / window, 2), "C_window_s": window, "inflight_sampled_mean": soak["inflight_mean"],
+            "inflight_sampled_mean_label": "workers including pace waits",
             "ok_service_s_unclipped": round(busy, 1), "ok_per_min_send_window": round(in_window / window * 60, 1),
             "mean_ok_call_s": round(busy / max(1, len(ok)), 2), "inflight_target": soak["inflight_target"],
             "sustained_at_target": soak["sustained"], "n429": soak["n429"], "server_overloaded": soak["server_overloaded"],
