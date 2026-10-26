@@ -324,5 +324,21 @@ class Serving(Base):
         self.assertEqual((code, d2.stop_reason, len(rec["upstream"])), (503, "upstream_401", 1))
 
 
+class Ramp(Base):
+    def test_ramp_never_retries_and_stops_on_quota(self):
+        import ramp_sol
+        quota = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached"}}).encode()
+        d, state = self.make(), {"quota_streak": 0, "quota_stop": False}
+        Upstream.script = [(429, b'{"error": {"code": "rate_limit_exceeded", "message": "Rate limit reached"}}')]
+        lv = ramp_sol.level(d, 4, state)  # one 429 among 8: complete but not sustained, and never retried
+        self.assertEqual((lv["sent"], lv["n429"], lv["sustained"], len(Upstream.seen)), (8, 1, False, 8))
+        self.assertEqual(lv["quota_headers_last"]["x-codex-primary-used-percent"], "42")
+        Upstream.script = [(429, quota)] * 8
+        lv = ramp_sol.level(d, 4, state)  # 3 quota refusals in a row stop the calls not yet started
+        self.assertTrue(state["quota_stop"] and d.stopped and 3 <= lv["sent"] < 8)
+        self.assertEqual(len(self.records("ramp")), 8 + lv["sent"])
+        self.assertNotIn(ACCT, (self.tmp / "ledger" / "ledger.jsonl").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
