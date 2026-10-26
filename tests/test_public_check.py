@@ -81,3 +81,21 @@ def test_only_tracked_selected_paths_checked(repo):
 def test_script_itself_is_skipped(repo):
     track(repo, "scripts/public_check.py", SCRIPT.read_text())
     assert check(repo).returncode == 0
+
+
+def test_own_file_is_exempt_from_the_path_rule_only(repo, tmp_path_factory):
+    deny = tmp_path_factory.mktemp("deny") / "names.txt"
+    deny.write_text("Jane Doe\n", encoding="utf-8")
+    track(repo, "scripts/public_check.py", SCRIPT.read_text() + "# /" + "Users/example/notes\n")
+    assert check(repo, deny_list=deny).returncode == 0
+    track(repo, "scripts/public_check.py", SCRIPT.read_text() + "# reviewed by jane doe\n")
+    result = check(repo, deny_list=deny)
+    assert result.returncode == 1 and "scripts/public_check.py" in result.stdout
+
+
+def test_deny_list_with_a_byte_order_mark(repo, tmp_path_factory):
+    deny = tmp_path_factory.mktemp("deny") / "names.txt"
+    deny.write_bytes(b"\xef\xbb\xbfJane Doe\n")
+    track(repo, "d.txt", "jane doe was here\n")
+    result = check(repo, deny_list=deny)
+    assert result.returncode == 1 and "d.txt" in result.stdout

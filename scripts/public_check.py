@@ -27,7 +27,7 @@ def main() -> int:
     else:
         names = [
             line.strip().casefold()
-            for line in Path(deny_file).read_text(encoding="utf-8").splitlines()
+            for line in Path(deny_file).read_text(encoding="utf-8-sig").splitlines()
             if line.strip()
         ]
     canary = None
@@ -42,11 +42,10 @@ def main() -> int:
         canary = match.group()
     failed = False
     for path in paths:
-        if path == "scripts/public_check.py":
-            continue
+        own = path == "scripts/public_check.py"  # its own patterns are exempt from the path rule only
         text = Path(path).read_bytes().decode("utf-8", errors="replace")
         for number, line in enumerate(text.splitlines(), 1):
-            if PATHS.search(line):
+            if not own and PATHS.search(line):
                 print(f"{path}:{number}: local filesystem path")
                 failed = True
             if any(name in line.casefold() for name in names):
