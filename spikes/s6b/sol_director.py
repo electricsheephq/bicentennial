@@ -336,6 +336,7 @@ class Director:
             os.environ["BICENTENNIAL_SOL_AUTH"], os.environ["BICENTENNIAL_SOL_TOKEN_URL"],
             os.environ["BICENTENNIAL_SOL_CLIENT_ID"], on_refresh=lambda: self.budget.take(a.run, "refresh"))
         self.quota_streak, self.stopped, self.stop_reason, self.write_failures = 0, False, "", 0
+        self.streak_lock = threading.Lock()
         self.guard = Guard(self.login)
         try:  # learn the needles before any ledger write (this refreshes only if the token is expiring)
             self.login and self.login.token()
@@ -363,8 +364,10 @@ class Director:
         Hermes never sees a 429."""
         for wait in (5, 15, 45, None):
             up = self.upstream(body, kind, fwd)
-            rec["upstream"].append({k: v for k, v in up.items() if k not in ("raw", "events", "wire")})
-            if up["ok"] or up["category"] not in RETRYABLE or wait is None:
+            retry = not (up["ok"] or up["category"] not in RETRYABLE or wait is None)
+            rec["upstream"].append({k: v for k, v in up.items() if k not in ("raw", "events", "wire")}
+                                   | {"t_end": time.time(), "retry_wait_s": wait if retry else 0})
+            if not retry:
                 return up
             time.sleep(wait)
 
@@ -419,7 +422,8 @@ class Director:
             "response.completed", "response.failed", "response.incomplete", "error")), {})
         resp = done.get("response") or {}
         ok = done.get("type") == "response.completed"
-        cat = None if ok else sol_category(0, json.dumps(done)[:2000])  # an in-stream failure in an HTTP 200
+        err = done.get("error") or resp.get("error") or done  # the error object: the event echoes the whole request
+        cat = None if ok else sol_category(0, json.dumps(err)[:2000])  # an in-stream failure in an HTTP 200
         if sse_auth_error(events):  # never replayed: Hermes would rotate its credential on the auth text
             ok, cat = False, "auth_sse"
             self.stop("upstream_sse_auth")
@@ -442,9 +446,10 @@ class Director:
         return data
 
     def _streak(self, cat: str):
-        self.quota_streak = self.quota_streak + 1 if cat == "quota" else 0
-        if self.quota_streak >= 3:
-            self.stop("quota_3_in_a_row")
+        with self.streak_lock:  # concurrent upstream calls (ramp, soak, two Hermes processes)
+            self.quota_streak = self.quota_streak + 1 if cat == "quota" else 0
+            if self.quota_streak >= 3:
+                self.stop("quota_3_in_a_row")
 
     def _stub(self, wire: dict, kind: str) -> bytes:  # development only: no network; never a measurement
         names = [t.get("name") for t in wire.get("tools") or []]

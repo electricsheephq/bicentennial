@@ -383,6 +383,7 @@ class Serving(Base):
             Upstream.script = [(429, rate), (429, rate), (200, sse(MSG))]  # absorbed with backoff
             code, out, rec = d.handle(aux, {})
             self.assertEqual((code, [u["category"] for u in rec["upstream"]]), (200, ["rate", "rate", None]))
+            self.assertEqual([u["retry_wait_s"] for u in rec["upstream"]], [5, 15, 0])  # each wait is recorded
             Upstream.script = [(429, rate)] * 4  # still refused after the backoff: a neutral 503, never a 429
             code, out, rec = d.handle(aux, {})
             self.assertEqual((code, len(rec["upstream"]), rec["served"]), (503, 4, "neutral_503"))
@@ -397,6 +398,17 @@ class Serving(Base):
         Upstream.script = [(401, b'{"error": {"message": "expired"}}')]
         code, out, rec = d2.handle(aux, {})
         self.assertEqual((code, d2.stop_reason, len(rec["upstream"])), (503, "upstream_401", 1))
+
+
+class Ramp(Base):
+    def test_in_stream_overload_is_retryable_behind_a_long_echo(self):
+        d = self.make(write_turns=False)
+        failed = {"type": "response.failed", "response": {"id": "r1", "status": "failed", "tools": [MEM] * 40,
+                  "instructions": "x" * 3000, "error": {"type": "service_unavailable_error", "code": "server_is_overloaded"}}}
+        Upstream.script = [(200, f"event: response.failed\ndata: {json.dumps(failed)}\n\n".encode())]
+        up = d.upstream(AUX, "aux", {})
+        self.assertEqual((up["ok"], up["category"]), (False, "overload"))
+        self.assertIn(up["category"], sd.RETRYABLE)
 
 
 if __name__ == "__main__":
