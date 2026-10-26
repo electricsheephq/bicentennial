@@ -2175,6 +2175,34 @@ class FixRound1(unittest.TestCase):
         (self.tmp / "director-pin.json").mkdir()  # present but unreadable
         self.scan_main("pin_file_invalid")
 
+    def test_cx8_scan_reads_under_a_shared_auth_lock(self):
+        import fcntl
+        HolderProtocol.pin_entry(self)
+        (self.tmp / "scan").write_text("synthetic body " + ACCT)
+        lf = open(self.p.with_name(self.p.name + ".lock"), "a+")
+        self.addCleanup(lf.close)
+        fcntl.flock(lf, fcntl.LOCK_EX)  # a refresher holds the auth lock: scan refuses after its bounded wait
+        with mock.patch.object(sd, "SCAN_LOCK_WAIT_S", 0.3, create=True):  # create: the test also runs on the base
+            self.scan_main("auth_lock_busy")
+        real, reads, released = Path.read_text, [], []
+
+        def read_text(path, *a, **kw):
+            if path == self.p:
+                reads.append(bool(released))
+            return real(path, *a, **kw)
+
+        def release():
+            time.sleep(0.3)
+            released.append(1)
+            fcntl.flock(lf, fcntl.LOCK_UN)
+        t = threading.Thread(target=release)
+        t.start()
+        with mock.patch.object(Path, "read_text", read_text):
+            result = self.scan_main()
+        t.join()
+        self.assertEqual(reads, [True])  # the store was read only after the exclusive holder let go
+        self.assertEqual(result["hits"].get("tokens.account_id"), 1)
+
     def test_cx2_pin_write_error_is_class_only(self):
         real = sd.tempfile.mkstemp
 

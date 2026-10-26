@@ -59,6 +59,7 @@ PASS_HEADERS = ("session_id", "x-client-request-id")  # forwarded verbatim; ever
 IDENTITY = {"originator": "hermes-agent", "User-Agent": "HermesAgent/0.22.2"}  # Hermes' own at the official host
 REFRESH_SKEW_S = 300
 READ_GRACE_S = 1.0  # a post-wait token read longer than this blocked on a refresh, so the request is admitted again
+SCAN_LOCK_WAIT_S = 30.0  # scan waits this long for a shared auth lock behind a refresher, then refuses
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
@@ -395,7 +396,16 @@ def _where(data: bytes, s: str):
 
 def scan(login: Login, paths: list[str], run=None) -> dict:
     """Counts of credential, account and email needles in files (zstd blobs decompressed); never a value."""
-    with login._auth_lock():  # one snapshot of store and lease: the pin is checked on the store the needles come from
+    with login._auth_lock() as lf:  # one snapshot of store and lease: the pin is checked on the store the needles come from
+        deadline = time.monotonic() + SCAN_LOCK_WAIT_S
+        while True:  # shared: a writer or refresher holds it exclusively; bounded, so scan never hangs behind one
+            try:
+                fcntl.flock(lf, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise Stop("auth_lock_busy") from None
+                time.sleep(0.1)
         store, lid = json.loads(login.path.read_text()), lease_id(login.path)
     if run is not None:
         try:
