@@ -39,6 +39,10 @@ def write(path, obj):
 
 
 def replay(a, extra, rest):
+    # S6a's driver writes its evidence under S6A_EVIDENCE only, so --out must name that root.
+    evid = os.environ.setdefault('S6A_EVIDENCE', a.out)
+    if Path(evid).resolve() != Path(a.out).resolve():
+        sys.exit('replay --out must equal S6A_EVIDENCE')
     # Replace only the child director command. Hermes workers and all r6 session mechanics stay S6a's.
     real = s6replay.subprocess
     class Processes:

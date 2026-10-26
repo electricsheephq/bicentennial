@@ -215,16 +215,28 @@ class TestS4b(unittest.TestCase):
 
     def test_replay_launch_replaces_director_without_helper(self):
         os.environ['S6A_SCRATCH'] = str(self.root)
+        os.environ.pop('S6A_EVIDENCE', None)
+        a = self.make().a
+        a.out = str(self.root / 'evidence')
         target = str(run.s6replay.HERE / 'director.py')
         with patch.object(run.s6replay, 'subprocess', wraps=subprocess), patch.object(subprocess, 'Popen') as popen:
             with patch.object(run.s6replay, 'main', side_effect=lambda: run.s6replay.subprocess.Popen(
                     ['s4b-direct-launch', 'nice', target, '--ledger-dir', str(self.root / 'link')])), \
                     patch.object(sys, 'argv', ['test']):
-                run.replay(self.make().a, ['--spend-file', 'shared'], [])
+                run.replay(a, ['--spend-file', 'shared'], [])
             cmd = popen.call_args.args[0]
             self.assertNotIn('s4b-direct-launch', cmd)
             self.assertIn(str(Path(lane.__file__)), cmd)
             self.assertEqual(cmd[-2:], ['--spend-file', 'shared'])
+        self.assertEqual(os.environ['S6A_EVIDENCE'], a.out)  # S6a's driver writes where --out says
+
+    def test_replay_refuses_out_that_differs_from_evidence_root(self):
+        os.environ['S6A_EVIDENCE'] = str(self.root / 'old-evidence')
+        a = self.make().a
+        a.out = str(self.root / 'new-evidence')
+        with patch.object(run.s6replay, 'main') as driver, self.assertRaises(SystemExit):
+            run.replay(a, [], [])
+        driver.assert_not_called()
 
     def test_peak_boundaries(self):
         for day, hour, expected in [(26, 1, 'peak'), (26, 4, 'off_peak'), (26, 6, 'peak'),
