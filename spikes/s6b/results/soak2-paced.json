@@ -110,7 +110,7 @@
    "ok": 3633,
    "http_429": 0
   },
-  "window_method": "send time = t_start_s + pace_wait_ms; half-open 60 s windows; the median over windows on a 0.1 s grid inside the send window; the maximum over windows anchored at every send (soak 1 method)"
+  "window_method": "send time = t_start_s + pace_wait_ms / 1000 (soak_sol.py:152); half-open 60 s windows; the median over windows on a 0.1 s grid inside the send window; the maximum over windows anchored at every send (soak 1 method)"
  },
  "pass_bar": {
   "no_429_each_account": true,
