@@ -1,7 +1,8 @@
 """Aggregate S6b measurements and project PREREG-v0.1 §11 at the Sol lane's measured concurrency.
 
-    python3.14 analyse_sol.py --evidence <dir> --write r7b-write --ramp ramp/ramp.json --soak soak/soak.json \
-        --quota quota/readings.txt --out results/
+    python3.14 analyse_sol.py --evidence <dir> --write r7c-write --ramp ramp/ramp.json --soak soak/soak.json \
+        --quota quota/readings.txt --quota-span-runs r7b-write-stopped-disk r7b-write \
+        --compare-run <s6a r6-write dir> --out results/
 
 S6a's measures, formulas and grid (spikes/s6a/analyse.py), unchanged. The Responses wire reports input and
 output tokens, which are mapped onto S6a's prompt and completion fields. A turn with no write turn makes no
@@ -132,7 +133,7 @@ def rate_grid(rows: list[dict], ri: dict) -> list[dict]:
 
 
 def req_sensitivity(ri: dict, q_req: dict, rs: int = 180) -> dict:
-    """The one-account full-board verdict's dependence on the probe input (r7b: q_req's probe turns), and the
+    """The one-account full-board verdict's dependence on the probe input (q_req's probe turns), and the
     request budget per study life left for PREREG-v0.2 §11's C_learn + C_erase (unmeasured; 0 in the grid)."""
     cap = 24 * rs * 60
 
@@ -153,6 +154,74 @@ def req_sensitivity(ri: dict, q_req: dict, rs: int = 180) -> dict:
         nr = n("robustness", **kw)
         out[f"study_L48_{label}"] = {"N_req": round(nr), "rate_h": round(nr / rs / 60, 1), "n_rob": n_rob,
                                      "C_learn_plus_C_erase_breakeven_requests_per_study_life": int((cap - nr) / n_rob)}
+    return out
+
+
+MACHINE_GIB, PROC_MIB = 16, 215  # the machine cap on Hermes processes: J x 215 MiB <= 16 GiB
+
+
+def sign_test(a: dict, b: dict) -> dict:
+    """Two-sided sign test on matched keys: how often a is faster than b (ties dropped)."""
+    keys = [k for k in a if k in b and a[k] != b[k]]
+    w, n = sum(a[k] < b[k] for k in keys), len(keys)
+    p = min(1.0, 2 * sum(math.comb(n, i) for i in range(max(w, n - w), n + 1)) / 2**n) if n else None
+    return {"faster": w, "n": n, "p_two_sided": p}
+
+
+def turn_times(rows: list[dict]) -> dict:
+    return {(int(r["session"]), int(r["turn"])): int(r["t_ms"]) for r in rows if r["what"] == "turn" and r["phase"] == "life"}
+
+
+def cell(inputs: dict, ri: dict, C: float, rate: float, **kw) -> dict:
+    """One fit cell at x1: max(lane time at C, N_req / rate) <= 24 h (the critical path inside lane time)."""
+    pr = projection(inputs, lat=1.0, C=C, **kw)["board"]
+    n = projection(ri, lat=1.0, C=1, **kw)["board"]["lane_work_h"] * 3600
+    return {"C": C, "rate_per_min": rate, "lane_h": round(pr["lane_wall_h"], 2), "rate_h": round(n / rate / 60, 2),
+            "N_req": round(n), "J": pr["J_for_C"], "fits": pr["lane_fits_24h"] and n / rate / 60 <= 24}
+
+
+def flip(fn, lo: float, hi: float) -> float | None:
+    """The value in [lo, hi] at which fn (a fit verdict) changes, by bisection; None when it does not change."""
+    a, b = fn(lo), fn(hi)
+    if a == b:
+        return None
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if fn(mid) == a else (lo, mid)
+    return round((lo + hi) / 2, 3)
+
+
+def accounts(inputs: dict, ri: dict, call_s: float, rs: int = 180) -> dict:
+    """Achievable concurrency on k accounts is about k x C_eff at R_s (Little's law: C_eff = R_s x mean request
+    latency), capped by the machine (J x 215 MiB <= 16 GiB). Each row is evaluated there and at C = 20."""
+    j_max = MACHINE_GIB * 1024 // PROC_MIB
+    c_machine = max(c for c in range(1, 200) if projection(inputs, C=c)["board"]["J_for_C"] <= j_max)
+    out = {"J_max": j_max, "C_machine": c_machine}
+    for k in (1, 2):
+        c_ach = min(math.floor(k * rs / 60 * call_s), c_machine)
+        out[f"{k}_account"] = {"C_eff": round(k * rs / 60 * call_s, 1), "C_achievable": c_ach,
+                               "hypothetical": k > 1, **{f"{label} at C={c}": cell(inputs, ri, c, k * rs, **kw)
+                                                         for label, kw in (("L48 uncut", {}),
+                                                                           ("L48 cuts 1-2", {"b": 100, "L_rob": 4}))
+                                                         for c in sorted({20, c_ach})}}
+    return out
+
+
+def flips(inputs: dict, ri: dict, q_req: dict, call_s: float, rs: int = 180) -> dict:
+    """Flip points of each headline verdict in the probe and compaction inputs (both readings move together)."""
+    c_ach2 = min(math.floor(2 * rs / 60 * call_s), accounts(inputs, ri, call_s, rs)["C_machine"])
+    cells = {"1 account, L48 uncut, C=20": (20, rs, {}), "1 account, L48 cuts 1-2, C=20": (20, rs, {"b": 100, "L_rob": 4}),
+             "2 accounts, L48 uncut, C=20": (20, 2 * rs, {}),
+             f"2 accounts, L48 uncut, C={c_ach2}": (c_ach2, 2 * rs, {})}
+    out = {}
+    for name, (c, rate, kw) in cells.items():
+        def fit(inp=inputs, r=ri, c=c, rate=rate, kw=kw):
+            return cell(inp, r, c, rate, **kw)["fits"]
+        out[name] = {"fits": fit(),
+                     "probe_requests_per_turn": flip(lambda x: fit(r=dict(ri, probe_upstream_s=x)), 0.0, 10.0),
+                     "compactions_per_sprint": flip(lambda x: fit(inp=dict(inputs, comp_per_sprint=x),
+                                                                  r=dict(ri, comp_per_sprint=x)), 0.0, 10.0),
+                     "compaction_call_s": flip(lambda x: fit(inp=dict(inputs, summariser_s=x)), 0.0, 600.0)}
     return out
 
 
@@ -207,10 +276,10 @@ def quota(path: Path, served: int, soak: dict | None, board_calls: dict, board_p
                            "the response headers carry only the weekly primary window (secondary window 0 minutes)"}
 
 
-def compare(r7: dict) -> list[dict]:
+def compare(r7: dict, label: str = "Sol") -> list[dict]:
     """r7 (Sol) against S6a's r6 (GLM, parameters forwarded) and r3 (GLM, parameters stripped)."""
     out = []
-    for name, m in (("r7b Sol", r7), ("r6 GLM forwarded", S6A["runs"]["write"]), ("r3 GLM stripped", S6A["runs"]["compare"])):
+    for name, m in ((label, r7), ("r6 GLM forwarded", S6A["runs"]["write"]), ("r3 GLM stripped", S6A["runs"]["compare"])):
         w = m["write_turn"]
         out.append({"run": name, "write_turn_latency_s": w["latency_s"], "prompt_tokens": w["prompt_tokens"],
                     "completion_tokens": w["completion_tokens"], "memory_calls": w["memory_tool_calls"],
@@ -228,7 +297,8 @@ def main():
     p.add_argument("--ramp", default="ramp/ramp.json")
     p.add_argument("--soak", default="", help="the soak's soak.json, relative to --evidence")
     p.add_argument("--quota", default="quota/readings.txt")
-    p.add_argument("--also-served", nargs="*", default=[], help="other runs inside the quota span (served requests)")
+    p.add_argument("--quota-span-runs", nargs="*", default=[], help="the runs inside the unmoved quota span, beside the soak")
+    p.add_argument("--compare-run", default="", help="S6a's r6 run directory, for the matched-turn sign test")
     p.add_argument("--out", default="results")
     a = p.parse_args()
     evid, out = Path(a.evidence), Path(a.out)
@@ -258,6 +328,9 @@ def main():
     cuts = [("none", {}), ("1: b=100", {"b": 100}), ("2: + L_rob=4", {"b": 100, "L_rob": 4}),
             ("3: + L=24", {"b": 100, "L_rob": 4, "L": 24})]
     rows, led, _ = load(evid, a.write)
+    if a.compare_run:
+        r6 = Path(a.compare_run)
+        w["sign_test_vs_r6"] = {"turn_time": sign_test(turn_times(rows), turn_times(load(r6.parent, r6.name)[0]))}
     fixed = {}
     for r in rows:  # per-session fixed time: session total minus its turns (S6a's measure)
         if r["phase"] == "life":
@@ -273,7 +346,7 @@ def main():
     q_req, ri = requests(rows, led, inputs)
     board_calls = {f"L=48 {n}": round(projection(ri, C=1, **kw)["board"]["lane_work_h"] * 3600) for n, kw in cuts[:3:2]}
     served = (soak["ok"] if soak else 0) + sum(  # every request served inside the unmoved quota span
-        1 for run in [a.write, *a.also_served] for r in load(evid, run)[1] if r.get("type") == "request"
+        1 for run in a.quota_span_runs for r in load(evid, run)[1] if r.get("type") == "request"
         for u in r.get("upstream", []) if u.get("ok"))
     q = quota(evid / a.quota, served, soak, board_calls, board_calls["L=48 none"] / 1440)
     rate = lvl["ok_per_min_send_window"] if lvl else None
@@ -281,10 +354,12 @@ def main():
     q["soak_ok_per_min"] = rate
     soak_s = {k: v for k, v in soak.items() if k != "calls"} if soak else None
     (out / "measurements.json").write_text(json.dumps({"runs": {"write": w}, "ramp": ramp_s, "soak": soak_s,
-                                                       "soak_level": lvl, "compare": compare(w), "quota": q}, indent=1))
-    c_eff = {label: {"r7b_mean_call_s": round(rs / 60 * call_s, 1), **({"soak_mean_call_s": round(
+                                                       "soak_level": lvl, "compare": compare(w, a.write.split("-")[0] + " Sol"), "quota": q}, indent=1))
+    c_eff = {label: {"life_mean_call_s": round(rs / 60 * call_s, 1), **({"soak_mean_call_s": round(
         rs / 60 * lvl["mean_ok_call_s"], 1)} if lvl else {})} for label, rs in RATES.items()}
     (out / "projection.json").write_text(json.dumps({"requests_per_unit": q_req, "request_rates_per_min": RATES,
+                                                     "accounts": accounts(inputs, ri, call_s),
+                                                     "flip_points": flips(inputs, ri, q_req, call_s),
                                                      "request_sensitivity": req_sensitivity(ri, q_req),
                                                      "C_eff_at_rate": c_eff, "mean_request_s": round(call_s, 2),
         "inputs_s": inputs, "C_measured": C, "C_label": C_label, "C_burst": ramp["sustained_concurrency"],
