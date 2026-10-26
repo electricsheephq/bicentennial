@@ -164,6 +164,53 @@ def test_malformed_chat_bodies_are_unknown(body):
     assert roles.classify(req, ctx1(aliases={"fast": roles.alias("aux")}))[:2] == ("unknown", "unknown")
 
 
+TURN = {"role": "user", "content": "scripted turn one"}
+RTOOLS = [{"type": "function", "name": "shell"}]
+WIRE_PATH = {"openai_chat": "/v1/chat/completions", "openai_responses": "/v1/responses", "anthropic": "/v1/messages"}
+
+
+def _wire_body(wire: str, items: list, **kw) -> dict:
+    key = "input" if wire == "openai_responses" else "messages"
+    return {"method": "POST", "path": WIRE_PATH[wire], "body": {"model": "m", key: items, "tools": RTOOLS, **kw}}
+
+
+@pytest.mark.parametrize("wire", sorted(WIRE_PATH))
+def test_non_object_elements_and_content_parts_are_unknown(wire):
+    c = ctx1()
+    assert roles.classify(_wire_body(wire, [TURN]), c)[0] == "replay_main"
+    assert roles.classify(_wire_body(wire, [TURN, 1]), c)[:2] == ("unknown", "unknown")
+    part = {"type": "input_text" if wire == "openai_responses" else "text", "text": "scripted turn one"}
+    assert roles.classify(_wire_body(wire, [{"role": "user", "content": [part]}]), c)[0] == "replay_main"
+    assert roles.classify(_wire_body(wire, [{"role": "user", "content": [part, 1]}]), c)[:2] == ("unknown", "unknown")
+
+
+@pytest.mark.parametrize("bad", [{"role": "user", "content": "x"}, False, 7])
+def test_responses_input_of_an_unseen_type_is_unknown(bad):
+    title = roles.Signature("t", "title", "system", 6, roles.h16("Title:"))
+    req = {"method": "POST", "path": "/v1/responses", "body": {"model": "m", "input": bad, "instructions": "Title: x"}}
+    assert roles.classify(req, ctx1(signatures=(title,)))[:2] == ("unknown", "unknown")
+    req["body"]["input"] = "x"
+    assert roles.classify(req, ctx1(signatures=(title,)))[:2] == ("title", "shape")
+
+
+@pytest.mark.parametrize("wire", sorted(WIRE_PATH))
+def test_non_string_call_ids_are_unknown(wire):
+    c = ctx1()
+    c.issued["issued"] = "probe_main"
+    if wire == "openai_chat":
+        items = [TURN, {"role": "assistant", "tool_calls": [{"id": "issued"}, {"id": 2}]},
+                 {"role": "tool", "tool_call_id": "issued", "content": "r"}, {"role": "tool", "tool_call_id": 2}]
+    elif wire == "openai_responses":
+        items = [TURN, {"type": "function_call", "call_id": "issued"}, {"type": "function_call", "call_id": 2},
+                 {"type": "function_call_output", "call_id": "issued"}, {"type": "function_call_output", "call_id": 2}]
+    else:
+        items = [TURN, {"role": "assistant", "content": [{"type": "tool_use", "id": "issued"},
+                                                          {"type": "tool_use", "id": 2}]},
+                 {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "issued"},
+                                              {"type": "tool_result", "tool_use_id": 2}]}]
+    assert roles.classify(_wire_body(wire, items), c)[:2] == ("unknown", "unknown")
+
+
 def test_malformed_anthropic_parts_are_unknown():
     body = {"model": "m", "messages": [{"role": "user", "content": "x"},
                                        {"role": "assistant", "content": ["bare", {"type": "tool_use", "id": "a"}]},

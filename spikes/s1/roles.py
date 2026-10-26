@@ -90,6 +90,43 @@ def _blocks(content) -> list[str]:
             and p.get("type") in (None, "text", "input_text", "output_text")]
 
 
+def _well_formed(wire: str, body: dict) -> None:
+    """Raises TypeError unless every container the rule reads has its documented type: lists hold only objects,
+    content is a string or a list of objects, and every call id is a string. The extractors would otherwise drop a
+    bad element and classify what is left."""
+    def objs(x, what: str) -> list:
+        if x is None:
+            return []
+        if not isinstance(x, list) or not all(isinstance(e, dict) for e in x):
+            raise TypeError(what)
+        return x
+
+    def text(x, what: str) -> list:
+        return [] if isinstance(x, str) else objs(x, what)
+
+    def ids(*vals):
+        if any(v is not None and not isinstance(v, str) for v in vals):
+            raise TypeError("call id")
+
+    if not isinstance(body.get("model"), (str, type(None))) or not isinstance(body.get("tools"), (list, type(None))):
+        raise TypeError("model or tools")
+    if wire == "openai_chat":
+        for m in objs(body.get("messages"), "messages"):
+            text(m.get("content"), "content")
+            ids(m.get("tool_call_id"), *(tc.get("id") for tc in objs(m.get("tool_calls"), "tool_calls")))
+    elif wire == "openai_responses":
+        if not isinstance(body.get("instructions"), (str, type(None))):
+            raise TypeError("instructions")
+        for it in text(body.get("input"), "input"):
+            ids(it.get("call_id"))
+            if str(it.get("type", "message")) == "message":
+                text(it.get("content"), "content")
+    elif wire == "anthropic":
+        text(body.get("system"), "system")
+        for m in objs(body.get("messages"), "messages"):
+            ids(*(v for p in text(m.get("content"), "content") for v in (p.get("id"), p.get("tool_use_id"))))
+
+
 def _parts(m: dict) -> list:
     return m["content"] if isinstance(m.get("content"), list) else []
 
@@ -168,8 +205,7 @@ def shape(req: dict, signatures=SIGNATURES) -> dict:
     method, path = req.get("method", "POST"), (req.get("path") or "").split("?")[0]
     wire = req.get("wire") or wire_of(method, path)
     body = req.get("body") if isinstance(req.get("body"), dict) else {}
-    if not isinstance(body.get("model"), (str, type(None))) or not isinstance(body.get("tools"), (list, type(None))):
-        raise TypeError("model or tools of an unseen type")  # classify turns this into unknown
+    _well_formed(wire, body)  # classify turns its TypeError into unknown
     toks, tail, users, system = _items(wire, body)
     last = users[-1] if users else []
     whole = "\n".join(last).strip()
