@@ -1,15 +1,41 @@
 # Bicentennial
 
-**A benchmark of memory for long-lived agents.** Does an agent wake up as itself and act on the right memories? The test runs across restarts, compaction, model swaps and weeks of silence, inside the harness the agent really runs in, and nobody asks it what it remembers.
+**A benchmark of memory for long-lived agents.** Does an agent wake up as itself and act on the right memories? The test runs across restarts, compaction, model swaps and weeks of silence, inside the harness the agent really runs in, and nobody asks it what it remembers. ("Wakes up as itself" describes the headline only while the Wake track is included; without it, the headline is labelled a memory-action score.)
 
 A full run is a generated *life* of about 200 sessions in one evolving world. The headline comes from what the agent **does** in later sessions, checked against the world's state. Questions with citations stay as diagnostics. A confident false memory costs more than an honest "I don't remember".
 
+**The claim Bicentennial has to earn with results:** memory measured inside a real agent harness across a life, judged on actions, covering governance (forgetting, consent, standing rules), with a fast diagnostic loop for developers. It claims no firstness, no multimodal novelty, and no superiority for any system before the results exist.
+
 > **Status: pre-pilot.**
-> - Design v1.4 is done.
-> - **PREREG-v0.1 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.1.md`](prereg/FREEZE-v0.1.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964).
-> - **The 24-hour rule:** the hardest run, the full board for one system, finishes within a day.
-> - Spikes S1-S7 are under way.
+> - Design v2.0 is drafted. ⟦Placeholder, filled by the benchmark maintainers at the v0.2 freeze: "Design v2.0 is done."⟧
+> - PREREG-v0.1 was frozen on 2026-10-26. **PREREG-v0.2** is frozen only after the owner co-signs its hash on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). ⟦Placeholder, filled by the benchmark maintainers at the v0.2 freeze: the freeze date and a link to `prereg/FREEZE-v0.2.md`.⟧
+> - **The 24-hour rule:** the hardest run, the full board for one system, finishes within a day, sized by the measured concurrency of the model lane. The Image board, when it runs, is a separate run per system under the same rule.
+> - Spikes S1-S7 are under way, and S8 (images) is specified.
 > - There is no benchmark code and there are no results yet.
+
+## The capability map
+
+A result is a map: **track rows × evaluation profiles**, with a verdict in each cell. A cell reads **CLEAR**, **UNRESOLVED** or **FAIL** against its gate, which sits halfway between the no-memory floor and the oracle-evidence ceiling, measured on the board's own control arms before any real system runs. Gates and cell admission are computed on the raw penalised scale (−100 to +100); the 0-100 scale is for display only.
+
+The map has three stages. They are reported separately; none gates another, and there is no cumulative "level reached".
+
+| Stage | What it shows | Role |
+|---|---|---|
+| **Remember** | direct questions with citations, across restarts and gaps | diagnostic |
+| **Survive** | the same evidence under stress: corrections, look-alikes, compaction, crashes, model swaps and harness switches | diagnostic |
+| **Act** | unprompted use of memory, judged on the world's state | headline and certification |
+
+**Evaluation profiles** qualify a result:
+- **Text** is the core profile.
+- **Image** is the Perceive profile. It reads "pending" until spike S8 admits it. In season 1 it has its own board only if S8 and the pilot's validity checks pass, and at its planning size that board publishes cell verdicts and diagnostics and issues no certificate.
+- **World** profiles, from E1 onward, come after v1.
+
+**The badge rule.** Before submissions, each profile publishes its required Act cells (pre-registered from the cell inventory by the track design, and pooled with equal weights), its baselines (the no-memory floor, the oracle-evidence ceiling, the full-history oracle ceiling where it fits, and naive RAG) and its operating metrics. Certification is issued on Act, within a declared profile, and only on a sealed board at the pre-registered size: a season board, or a delta board when powered. A season cut below the powered size issues no certificate, and its results are still published. Every card prints its certification stability.
+
+**Labels, never opt-outs.**
+- "Unsupported" is a cause label on a scored result. The cell is still scored by its outcomes.
+- A cell where no surveyed system documents full support is labelled "undocumented frontier". That states a documentation gap. The label is display only, and it never changes whether a cell is scored, required or included.
+- Non-results are labelled: N/A (outside the declared profile), N/A_READER (Image only: the stack cannot use the evidence even when handed it) and BLOCKED (benchmark infrastructure failed, never charged to the system). In a required cell, a coverage shortfall caused by infrastructure reads BLOCKED and defers certification; a shortfall the system causes blocks it.
 
 ## Tracks
 
@@ -20,12 +46,16 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 | **Tuesday** | Acting on earlier commitments unprompted and on time, without falling for lures |
 | **Drift** | The newest correction wins, history stays answerable, and nothing stale resurfaces |
 | **Keep** | What is retained under a storage budget, and real forgetting on request |
-| **Flatten** | Staying itself under pressure (a diagnostic until it can be measured against each agent's own behaviour) |
-| **Hands** | Embodied and spatial memory (frontier tier, simulation first) |
+| **Flatten** | Staying itself under pressure (not yet built; its row is shown on the map) |
+| **Hands** | Embodied and spatial memory (World profiles E1 onward, after v1) |
+
+**Learn** is a supporting diagnostic in v1, outside the headline: bounded chains of attempt, observed consequence and delayed retest, beside the tracks. It covers procedural supersession, the effect of consolidation on later decisions, shared memory with mid-life revocation (in G2, a household or office with two agents), and poisoning by an ordinary user.
 
 ## Two ladders
 
-**For developers** of memory systems and agent harnesses. These tiers carry no pass/fail bar, and none is presented as predicting the full tier until that has been measured.
+**For developers** of memory systems and agent harnesses. Developer results are signals, never certifications, and none is presented as predicting the full tier until that has been measured.
+
+**Ring 0** is the fixed public packs, per cell and rung:
 
 | Tier | Time | What you get |
 |---|---|---|
@@ -34,17 +64,25 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 | T2 live smoke, T3 dev | about an hour | a paired diff against your own previous version, with its uncertainty |
 | Fault finder | about 15 + 15 minutes | a failure shrunk to a minimal public life, with a one-command repro |
 
-Every failure is attributed to the stage that broke: stored, survived, retrieved or used.
+Loop time is measured and published per tier.
+- **Rungs.** Each cell's pack offers 3-5 lever values, calibrated only on system-agnostic controls, so that those controls span about 20-80% across the ladder. Results are per-rung paired deltas with an A/A′ band and the smallest detectable effect, plus a curve shift pooled across rungs.
+- **Ring 1:** a scheduled fresh-seed run of the public templates, at each benchmark release and at least monthly. A change accepted during development is confirmed here before it is claimed.
+- **Ring 2:** a held-out template family with fresh seeds every month. Each organisation gets one bit a month on a bounded transfer check: "transfer gap detected" or "no gap detected". Neither is called CLEAR or FAIL, and "no gap detected" does not show that transfer is good. It reveals no seeds, templates or keys.
+- **Repro bundles** declare their class: snapshot-probe, replay-from-schedule or live.
+- **Guarded autonomous loops:** the pack is installed read-only, the pinned scorer, harness and controls are hash-checked, and an edit to any pinned artifact voids the run.
+
+Every failure is attributed to the stage that broke: perceived (for media), stored, retained, retrieved or used. A span search can show a text span was stored; finding nothing is inconclusive for other representations, and a stage that cannot be observed reads unknown.
 
 **For measurement:**
 - runs of record for the pilot bars;
-- a sealed full core board once per season;
-- a seasonal robustness study: fault reruns, the storage-budget curve, a model-swap comparator, and a second agent family.
+- a sealed full core board once per season, plus delta boards on a new GA; only these sealed boards certify, a delta board only when powered;
+- a seasonal robustness study: fault reruns, the storage-budget curve, a model-swap comparator, and a second agent family (the replication family), with the Learn chains and erasure probes as terminal forks.
 
 ## Documents
-- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v1.4).
-- [`prereg/PREREG-v0.1.md`](prereg/PREREG-v0.1.md): the pre-registration (the superseded v0 is kept beside it). It is the only normative source for frozen quantities.
-- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to.
+- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.0).
+- [`prereg/PREREG-v0.2.md`](prereg/PREREG-v0.2.md): the pre-registration (the superseded v0 and v0.1 are kept beside it). It is the only normative source for frozen quantities.
+- [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0, which the other documents cite as DV1-DV46 (DV42 reserved).
+- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to, with how v2.0 meets each changed one.
 - [`docs/REVIEW-SUMMARY.md`](docs/REVIEW-SUMMARY.md): the adversarial reviews and what they changed.
 - [`docs/genres/`](docs/genres/): the life generators, G1 software partner and G2 personal assistant.
 - [`ROADMAP.md`](ROADMAP.md): releases, the site and the leaderboard.
@@ -53,12 +91,14 @@ Every failure is attributed to the stage that broke: stored, survived, retrieved
 ## Credibility rules
 - The pre-registration is frozen before any real memory system's first pilot run. Every later change is versioned and disclosed.
 - Full-tier seeds and answer keys are held out and sealed.
+- No target is set on any system's scores. Difficulty is frozen from controls only, and valid zeros are published, all-zero rows included.
 - The benchmark is maintained alongside [LCM-X](https://github.com/electricsheephq/lcm-x), a memory system that will be one of the systems tested. Firewall rules apply:
   - the benchmark never tunes, patches or advises on LCM-X;
+  - LCM-X improves only through outputs every registered system gets on equal terms: the public packs, Ring 1 results, Ring 2 bits and published cards;
   - LCM-X's developers never see held-out seeds or keys;
   - LCM-X at its last release before the public generator runs on every board, to detect tuning to the public lives;
   - LCM-X gets the same configuration budget as every other system.
-- An external reviewer with a veto over scoring is recruited before the full-tier pre-registration.
+- An external reviewer with a veto over scoring is recruited before the full-tier pre-registration. The map, the verdicts and the gates go to that reviewer before PREREG-v1.
 
 ## Licence
 - **Code:** Apache-2.0 ([`LICENSE`](LICENSE)).
