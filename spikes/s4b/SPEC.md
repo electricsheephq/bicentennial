@@ -7,7 +7,7 @@ Every upstream request adds `provider.only=[<pinned endpoint>]` (`--provider-onl
 the run of record pins `deepinfra/fp8`, see REPORT), `provider.allow_fallbacks=false` and
 `usage.include=true`; record these adaptations, served identities, UTC peak window and usage.
 Successful responses outside the pinned provider (`--served-provider`) or `deepseek/deepseek-v4.1-flash*` stop with `pin_failure`.
-Reserve estimated prompt tokens plus max_tokens (default 32768) at peak input/output prices
+Reserve estimated prompt tokens plus max_tokens (unset: the endpoint's documented maximum, 131072, `--max-output-tokens`) at peak input/output prices; only a provably unsent call settles at 0
 before sending. Share the locked spend file across director and ramp; default cap $4, maximum $5.
 Settle router cost, else peak-price token cost; uncertain responses keep the full reserved charge.
 No GLM pause; retain per-session marker gating, nice 19 and taskpolicy background priority.

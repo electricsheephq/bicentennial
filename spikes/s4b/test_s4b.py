@@ -148,6 +148,35 @@ class TestS4b(unittest.TestCase):
         u = d.upstream({'messages': []}, 'aux')
         self.assertEqual((u['cost_usd'], u['zero_cost_refusal']), (0, True))
 
+    def test_uncapped_reservation_and_dropped_connection(self):
+        d = self.make()
+        rid = d.spend.reserve({'messages': []})
+        prompt = -(-len(lane.s6.canon({'messages': []})) // 4)
+        with d.spend.locked() as b:
+            self.assertAlmostEqual(b['open'][rid], (prompt * 0.30 + 131072 * 1.20) / 1e6)
+        d.spend.settle(rid, {}, refused=True)
+        class Drop(BaseHTTPRequestHandler):  # reads the whole request, then closes without a response
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.close_connection = True
+                self.connection.shutdown(2)
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), Drop)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        os.environ['BICENTENNIAL_UPSTREAM_OPENAI_URL'] = f'http://127.0.0.1:{srv.server_port}'
+        d = self.make('--mode', 'live')
+        u = d.upstream({'messages': [], 'max_tokens': 16}, 'aux')
+        self.assertFalse(u['ok'] or u['zero_cost_refusal'])
+        self.assertGreater(u['cost_usd'], 0)  # the whole reservation is kept
+        port = srv.server_port
+        srv.shutdown(); srv.server_close()
+        os.environ['BICENTENNIAL_UPSTREAM_OPENAI_URL'] = f'http://127.0.0.1:{port}'
+        u = self.make('--mode', 'live').upstream({'messages': [], 'max_tokens': 16}, 'aux')
+        self.assertEqual((u['zero_cost_refusal'], u['cost_usd']), (True, 0))  # refused before sending
+
     def test_two_processes_share_reservation_cap(self):
         ctx = mp.get_context('spawn')
         ready, results, go = ctx.Queue(), ctx.Queue(), ctx.Event()

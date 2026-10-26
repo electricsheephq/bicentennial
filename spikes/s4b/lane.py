@@ -5,6 +5,7 @@ import fcntl
 import json
 import math
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -50,10 +51,11 @@ class Spend:
             os.fsync(f.fileno())
 
     def reserve(self, wire):
-        if not isinstance(wire.get('max_tokens', 32768), int) or wire.get('max_tokens', 32768) <= 0:
+        out = wire.get('max_tokens', self.a.max_output_tokens)  # uncapped: the endpoint's documented maximum
+        if not isinstance(out, int) or out <= 0:
             raise ValueError('positive integer max_tokens required')
         prompt = math.ceil(len(s6.canon(wire)) / self.a.chars_per_token)
-        cost = (prompt * self.a.input_usd + wire.get('max_tokens', 32768) * self.a.output_usd) / 1e6
+        cost = (prompt * self.a.input_usd + out * self.a.output_usd) / 1e6
         with self.locked() as b:
             if b['settled'] + sum(b['open'].values()) + cost > self.a.spend_cap_usd:
                 b['refused_calls'] += 1
@@ -139,7 +141,9 @@ class Director(s6.Director):
                 elif not resp.get('choices'):
                     category = 'invalid_response'
         except (urllib.error.URLError, ConnectionError) as e:
-            category, refused = f'error:{type(e).__name__}', not response_started
+            # free only when the request provably never reached the server; a dropped connection may be billed
+            unsent = isinstance(getattr(e, 'reason', e), (ConnectionRefusedError, socket.gaierror))
+            category, refused = f'error:{type(e).__name__}', unsent and not response_started
         except Exception as e:  # noqa: BLE001 - retain full charge for an ambiguous billed response
             category = f'error:{type(e).__name__}'
         usage = resp.get('usage') or {}
@@ -202,6 +206,8 @@ def parser():
     p.add_argument('--output-usd', type=float, default=1.20)
     p.add_argument('--chars-per-token', type=float, default=4.0)
     p.add_argument('--model', default=MODEL)
+    p.add_argument('--max-output-tokens', type=int, default=131072,
+                   help="reserved for a request with no max_tokens: the pinned endpoint's documented maximum output")
     p.add_argument('--provider-only', default='deepseek', help='the router endpoint slug every request is pinned to')
     p.add_argument('--hold-schedule', type=hold_schedule, default=[5, 15],
                    help='seconds to hold before each retry of a refused director-originated call (S6a: 5,15)')
