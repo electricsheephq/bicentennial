@@ -422,7 +422,8 @@ class Director:
             "response.completed", "response.failed", "response.incomplete", "error")), {})
         resp = done.get("response") or {}
         ok = done.get("type") == "response.completed"
-        cat = None if ok else sol_category(0, json.dumps(done)[:2000])  # an in-stream failure in an HTTP 200
+        err = done.get("error") or resp.get("error") or done  # the error object: the event echoes the whole request
+        cat = None if ok else sol_category(0, json.dumps(err)[:2000])  # an in-stream failure in an HTTP 200
         if sse_auth_error(events):  # never replayed: Hermes would rotate its credential on the auth text
             ok, cat = False, "auth_sse"
             self.stop("upstream_sse_auth")

@@ -400,6 +400,15 @@ class Serving(Base):
 
 
 class Ramp(Base):
+    def test_in_stream_overload_is_retryable_behind_a_long_echo(self):
+        d = self.make(write_turns=False)
+        failed = {"type": "response.failed", "response": {"id": "r1", "status": "failed", "tools": [MEM] * 40,
+                  "instructions": "x" * 3000, "error": {"type": "service_unavailable_error", "code": "server_is_overloaded"}}}
+        Upstream.script = [(200, f"event: response.failed\ndata: {json.dumps(failed)}\n\n".encode())]
+        up = d.upstream(AUX, "aux", {})
+        self.assertEqual((up["ok"], up["category"]), (False, "overload"))
+        self.assertIn(up["category"], sd.RETRYABLE)
+
     def test_ramp_never_retries_and_stops_on_quota(self):
         import ramp_sol
         quota = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached"}}).encode()
