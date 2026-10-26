@@ -40,3 +40,34 @@ Hermes v0.22.2 replays the micro-life (r7c) with write turns end to end on Sol t
 
 ## Declared limitation
 Hermes's title generator disables reasoning for its request, and Hermes ranks that above the configured auxiliary effort pin. `gpt-6.1-sol` has no "none" effort to pin instead, so title-generation requests carry no `reasoning` field and the upstream default applies to them. Compaction and every other auxiliary task carry the pin.
+
+
+## S6c pacing
+
+Each account's director shares one locked token bucket across HTTP, soak and retry calls:
+180 requests/minute, burst 10, acquired immediately before each upstream POST after budget/stop checks.
+Per director process, any half-open 60 s window contains at most burst + rate sends: 190 by default, below 200.
+Start a paced process only after 60 s with no traffic on that account, and never within 60 s of the unpaced ramp.
+`--rate-per-min 0` disables pacing (recorded in the ledger); stub mode bypasses it.
+`--burst` defaults to 10; burst + rate >= 200 requires `--allow-over-window`.
+The ramp deliberately uses rate 0 to retain its refusal-threshold burst measurement; the soak passes
+`--rate-per-min` and `--burst` through to the director. Every attempt records `pace_wait_ms`.
+`summary.json` beside the ledger reports counts, recovery outcomes, overload/429/breaker counts,
+trailing half-open 60 s request windows ending at each send (p50/max, including start-up), and total pace wait;
+service latency excludes pacing. Summaries contain no bodies or headers; older ledgers remain readable.
+After a pace wait the director reads the login token again, so a token that expired while it waited is
+refreshed before the send. A read that blocks for more than 1 s (on a refresh) admits the request again, so
+each send leaves within 1 s of its admission and a 60 s window holds at most burst + 61/60 × rate sends (193). A paced soak's send window (`last_send_s`, and the projection's C_effective window)
+ends at the last send after pacing; files without pace waits keep their recorded window.
+`summary.json` also records `stop_reason`, a fixed-vocabulary label, and `breaker_stops` counts only
+`upstream_failures_3_in_a_row`.
+Invalid HTTP 4xx except 401/403/429 stop with `upstream_invalid_request_<code>` and invalidate evidence.
+Three served-but-unparsed calls with no forwarded call between them stop with `upstream_unparsed_3_in_a_row`
+(failed tries in between neither extend nor reset the count), holding the failure breaker streak and never
+forwarding the stream. Neither stop writes the credential sentinel.
+Upstream success and HTTP-error bodies are bounded to 8 MiB + 1 byte; oversize yields only `error:oversize`
+without decoding, parsing, replaying or persisting the body. Refresh-log draining is atomic, soak slots release
+on exceptions, and ledger attempt reconciliation includes refresh, soak and ramp records. On exit the director stops, then
+waits up to 2 s for woken pace waiters to release their reservations, so the budget equals the ledger.
+The >=10 minute paced soak with no 429 is **pending**, to be run by the orchestrator before the pilot;
+this offline implementation does not confirm the sustainable rate.

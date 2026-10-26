@@ -65,6 +65,15 @@ class Director(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
 
+    def test_refresh_and_response_attempts_reconcile_with_budget(self):
+        d = make(self.tmp)
+        d.budget.take("t", "refresh")
+        d.ledger.append({"type": "refresh", "status": 200})
+        d.budget.take("t", "aux")
+        d.ledger.append({"type": "request", "upstream": [{"category": None}]})
+        self.assertEqual(verify.check_ledger(self.tmp)["upstream_attempts"], 2)
+        self.assertEqual(json.loads((self.tmp / "b.json").read_text())["total"], 2)
+
     def post_aux(self, d, handler):  # an aux request whose client hangs up during the (slowed) upstream call
         port, real = serve(self, handler), d.upstream
         d.upstream = lambda body, kind: (time.sleep(0.4), real(body, kind))[1]
@@ -132,6 +141,16 @@ class Director(unittest.TestCase):
             f.write('{"seq": 3, "prev_')
         with self.assertRaisesRegex(SystemExit, "torn"):
             director.Ledger(root, director.Guard())
+
+
+class Redact(unittest.TestCase):
+    def test_a_token_split_at_the_input_cut_is_dropped(self):  # S6c review 2, R2-F3
+        email = director.redact("1" * 4090 + " someone@example.com tail")
+        self.assertNotIn("someo", email)
+        uuid = director.redact("1" * 4090 + " 0123abcd-1234-1234-1234-123456789abc")
+        self.assertNotIn("1234-1", uuid)
+        self.assertEqual(len(director.redact("P" * (8 << 20))), 600)  # a long body with no separators keeps its 600
+        self.assertEqual(director.redact("a@b.co and 1234567"), "<email> and <n>")
 
 
 class Ramp(unittest.TestCase):

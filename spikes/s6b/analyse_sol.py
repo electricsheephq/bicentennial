@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "s6a"))
 from analyse import grid, load, projection, run_measures, stats
+from sol_director import request_rate
 
 S6A = json.loads((HERE.parent / "s6a" / "results" / "measurements.json").read_text())
 SAME = ("turn_s", "turn_ex_compaction_s_mean", "session_total_s", "session_fixed_s", "restart_s", "rss_kib")
@@ -52,6 +53,10 @@ def sol_load(evid: Path, run: str):
     m["effort_is_pin"] = sum(bool(u.get("effort_is_pin")) for r in led for u in r.get("upstream", []))
     m["served_models"] = sorted({str(u.get("served_model")) for u in ups})
     m["retries"] = retries(led)
+    attempts = [u for r in led for u in r.get("upstream", []) if u.get("category") != "budget_or_stop"]
+    m["pace_wait_ms"] = sum(u.get("pace_wait_ms", 0) for u in attempts)
+    m["paced_request_rate"] = request_rate(u["t_sent"] for u in attempts if "t_sent" in u)
+    m["invalid_evidence"] = any(400 <= u.get("status", 0) < 500 and u["status"] not in (401, 403, 429) for u in attempts)
     m["aux_effort"] = {sub: {"n": len(us), "pinned": sum(bool(u.get("effort_is_pin")) for u in us),
                              "no_reasoning": sum(u.get("reasoning") is None for u in us)}
                        for sub in sorted({r.get("subrole") for r in led if r.get("role") in ("aux", "summariser")})
@@ -255,13 +260,18 @@ def measured_C(lvl: dict | None, ramp: dict) -> int:
 
 def soak_level(soak: dict) -> dict:
     """C_effective is the ok calls' service time clipped to the send window, over that window (Little's law on one
-    declared window): service that runs on into the drain is not counted against a window that excludes the drain."""
+    declared window): service that runs on into the drain is not counted against a window that excludes the drain.
+    The window ends at the last send after pacing, the same send times the service intervals start from."""
     ok = [c for c in soak["calls"] if c["ok"]]
     busy = sum(c["t_ms"] for c in ok) / 1000
-    window = soak["last_send_s"] or soak["wall_s"]
-    clipped = sum(max(0.0, min(c["t_start_s"] + c["t_ms"] / 1000, window) - c["t_start_s"]) for c in ok)
+    def send(c):
+        return c["t_start_s"] + c.get("pace_wait_ms", 0) / 1000
+    paced = any("pace_wait_ms" in c for c in soak["calls"])  # older files record no pace waits: keep their window
+    window = (max(map(send, soak["calls"]), default=0) if paced else soak["last_send_s"]) or soak["wall_s"]
+    clipped = sum(max(0.0, min(send(c) + c["t_ms"] / 1000, window) - send(c)) for c in ok)
     in_window = sum(c["t_done_s"] <= window for c in ok)
     return {"C_effective": round(clipped / window, 2), "C_window_s": window, "inflight_sampled_mean": soak["inflight_mean"],
+            "inflight_sampled_mean_label": "workers including pace waits",
             "ok_service_s_unclipped": round(busy, 1), "ok_per_min_send_window": round(in_window / window * 60, 1),
             "mean_ok_call_s": round(busy / max(1, len(ok)), 2), "inflight_target": soak["inflight_target"],
             "sustained_at_target": soak["sustained"], "n429": soak["n429"], "server_overloaded": soak["server_overloaded"],
@@ -332,7 +342,7 @@ def main():
     evid, out = Path(a.evidence), Path(a.out)
     out.mkdir(exist_ok=True)
     w = sol_load(evid, a.write)
-    if not w["complete"] or w["unknown"]:
+    if not w["complete"] or w["unknown"] or w["invalid_evidence"]:
         sys.exit("the run has an unfinished session, a failed write turn or an unknown request; not projecting")
     ramp = json.loads((evid / a.ramp).read_text())
     ramp_s = {k: v for k, v in ramp.items() if k != "levels"} | {

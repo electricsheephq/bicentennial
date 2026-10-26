@@ -14,6 +14,7 @@ Environment, from the local helper and never the repo: BICENTENNIAL_SOL_BASE_URL
 "/responses" is appended), BICENTENNIAL_SOL_TOKEN_URL, BICENTENNIAL_SOL_CLIENT_ID and BICENTENNIAL_SOL_AUTH
 (the login store). Declared adaptations: the model alias, store-and-forward SSE, typed text parts, and the
 rebuilt identity headers. Every other request key (reasoning, include, store, tools...) is forwarded unchanged.
+Stops upstream_invalid_request_<code>, upstream_unparsed_3_in_a_row and director_exit never write a login sentinel.
 """
 
 from __future__ import annotations
@@ -27,13 +28,16 @@ import math
 import os
 import re
 import select
+import signal
 import socket
+import statistics
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from compression import zstd
 from pathlib import Path
@@ -52,6 +56,7 @@ SUFFIX_ITEM = {"type": "message", "role": "user", "content": [{"type": "input_te
 PASS_HEADERS = ("session_id", "x-client-request-id")  # forwarded verbatim; everything else is rebuilt
 IDENTITY = {"originator": "hermes-agent", "User-Agent": "HermesAgent/0.22.2"}  # Hermes' own at the official host
 REFRESH_SKEW_S = 300
+READ_GRACE_S = 1.0  # a post-wait token read longer than this blocked on a refresh, so the request is admitted again
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
@@ -62,7 +67,41 @@ SSE_AUTH = re.compile(r"invalid[ _]api[ _]key|invalid[ _]token|token[ _](expired
                       r"authentication|permission_denied|forbidden|account_deactivated|access[ _]denied|"
                       r"gateway_auth_failed|failed to extract accountid from token", re.IGNORECASE)
 ERROR_FIELDS = ("code", "type", "status", "status_code", "message", "detail")  # provider-authored; never output
+MAX_BODY = 8 * 1024 * 1024
 TERMINAL = ("response.completed", "response.failed", "response.incomplete", "error")
+
+
+class Pacer:
+    """One locked account bucket; half-open 60 s windows contain at most burst + rate sends."""
+    def __init__(self, rate, burst, stop, clock=time.monotonic, sleep=None, allow=False):
+        if not math.isfinite(rate) or rate < 0 or burst < 1 or (burst + rate >= 200 and not allow):
+            raise ValueError("pacing needs rate >= 0, burst >= 1 and burst + rate < 200 (or --allow-over-window)")
+        self.rate, self.burst, self.stop, self.clock = rate / 60, burst, stop, clock
+        self.sleep, self.lock, self.tokens, self.last = sleep or stop.wait, threading.Lock(), burst, clock()
+
+    def acquire(self):
+        start = self.clock()
+        while not self.stop.is_set():
+            with self.lock:
+                now = self.clock()
+                self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)
+                self.last = now
+                if not self.rate or self.tokens >= 1:
+                    self.tokens -= bool(self.rate)
+                    return (now - start) * 1000
+                delay = max(0.001, (1 - self.tokens) / self.rate)
+            self.sleep(delay)  # Event.wait wakes immediately on stop; injected sleeps advance the fake clock
+        return None
+
+
+def request_rate(times):
+    """Trailing half-open 60 s windows ending at each send, including start-up; p50 and max counts."""
+    times, counts, left = sorted(times), [], 0
+    for right, t in enumerate(times):
+        while times[left] <= t - 60:
+            left += 1
+        counts.append(right - left + 1)
+    return {"p50": statistics.median(counts) if counts else 0, "max": max(counts, default=0)}
 
 
 class Stop(Exception):
@@ -181,8 +220,14 @@ class Login:
         if self.on_refresh and not self.on_refresh():
             raise Stop("refresh_budget")
         self.posted = True
-        status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
-                                                  "client_id": self.client_id})
+        try:
+            status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
+                                                      "client_id": self.client_id})
+        except Exception as e:  # class only: the charged POST may have consumed the refresh token
+            self.log.append({"type": "refresh", "status": -1, "t": time.time(),
+                             "error": str(e) if isinstance(e, Stop) else type(e).__name__})
+            raise
+        body = body if isinstance(body, dict) else {}
         c = jwt_claims(body.get("access_token"))
         self.log.append({"type": "refresh", "status": status, "t": time.time(), "lifetime_s": c.get("exp", 0) - c.get(
             "iat", 0), "rotated": bool(body.get("refresh_token")) and body.get("refresh_token") != old})
@@ -376,7 +421,12 @@ def shape(obj, key=""):
 
 
 class Director:
-    def __init__(self, a, login: Login | None = None, urlopen=urllib.request.urlopen):
+    def __init__(self, a, login: Login | None = None, urlopen=urllib.request.urlopen, clock=time.monotonic, sleep=None):
+        self.stop_event, self.metrics_lock, self.tries, self.retry_counts = threading.Event(), threading.Lock(), [], Counter()
+        self.unparsed_streak, self.pace_wait_ms = 0, 0
+        self.pacing_cv, self.pacing_now = threading.Condition(), 0
+        self.pacer = Pacer(getattr(a, "rate_per_min", 180), getattr(a, "burst", 10), self.stop_event, clock, sleep,
+                           getattr(a, "allow_over_window", False))
         self.a, self.urlopen = a, urlopen
         self.budget = Budget(Path(a.budget_file), a.budget_cap)
         self.login = login if login is not None or a.mode == "stub" else Login(
@@ -385,11 +435,14 @@ class Director:
         self.failure_streak, self.stopped, self.stop_reason, self.write_failures = 0, False, "", 0
         self.streak_lock = threading.Lock()
         self.guard = Guard(self.login)
+        self.ledger = Ledger(Path(a.ledger_dir), self.guard)
         try:  # learn the needles before any ledger write (this refreshes only if the token is expiring)
             self.login and self.login.token()
         except Stop as e:
             self.stop(str(e))
-        self.ledger = Ledger(Path(a.ledger_dir), self.guard)
+        self._drain()
+        self.ledger.append({"type": "pacing", "run": a.run, "rate_per_min": self.pacer.rate * 60,
+                            "burst": self.pacer.burst, "enabled": bool(self.pacer.rate) and a.mode != "stub"})
         life = json.loads(Path(a.life).read_text())
         self.expected = [{"kind": "replay", "session": s["index"], "turn": i, **t}
                          for s in life["sessions"] for i, t in enumerate(s["turns"], 1)]
@@ -404,20 +457,46 @@ class Director:
 
     def stop(self, reason: str, login: bool = False):
         self.stopped, self.stop_reason = True, self.stop_reason or reason
+        self.stop_event.set()
         if login and self.login:  # the credential was refused: a re-login is an owner step, so no later run uses it
             self.login.latch(reason)
+        self.summary()
+
+    def summary(self):
+        with self.metrics_lock:
+            out = {"upstream_tries": dict(Counter(u[0] for u in self.tries)),
+                   "retries": {k: {v: self.retry_counts[k, v] for v in ("recovered", "unrecovered")}
+                               for k in sorted({k for k, _ in self.retry_counts})},
+                   "in_stream_overloads": sum(c == "overload" and s == 200 for c, s, _, _ in self.tries),
+                   "http_overloads": {str(s): sum(u[1] == s for u in self.tries) for s in (502, 503, 529)},
+                   "http_429s": sum(u[1] == 429 for u in self.tries),
+                   "breaker_stops": int(self.stop_reason == "upstream_failures_3_in_a_row"),
+                   "stop_reason": self.stop_reason,
+                   "requests_per_min": request_rate(u[2] for u in self.tries),
+                   "pace_wait_ms": self.pace_wait_ms}
+            path = Path(self.a.ledger_dir) / "summary.json"
+            tmp = path.with_suffix(".tmp")
+            try:
+                tmp.write_text(json.dumps(out, indent=2) + "\n")
+                os.replace(tmp, path)
+            except OSError as e:
+                print(f"summary_write_error:{type(e).__name__}", file=sys.stderr)
+            return out
 
     # ---- upstream ------------------------------------------------------------------------------
     def upstream_retry(self, body: dict, kind: str, rec: dict, fwd: dict) -> dict:
         """Upstream 429s and overloads are absorbed here with backoff (5, 15, 45 s); each try is counted.
         Hermes never sees a 429. Three results in a row that still fail after their retries (any class) stop
         the director; a retry that recovers never counts, and a call never sent is not a result."""
+        retried = []
         for wait in (5, 15, 45, None):
             up = self.upstream(body, kind, fwd)
-            retry = not (up["forward"] or up["category"] not in RETRYABLE or wait is None)
+            retry = not (self.stopped or up["forward"] or up["category"] not in RETRYABLE or wait is None)
             rec["upstream"].append({k: v for k, v in up.items() if k not in ("raw", "events", "wire")}
                                    | {"t_end": time.time(), "retry_wait_s": wait if retry else 0})
             if not retry:
+                with self.metrics_lock:
+                    self.retry_counts.update((c, "recovered" if up["forward"] else "unrecovered") for c in retried)
                 with self.streak_lock:  # concurrent upstream calls (two Hermes processes)
                     if up["forward"]:
                         self.failure_streak = 0
@@ -425,16 +504,46 @@ class Director:
                         self.failure_streak += 1
                     if self.failure_streak >= 3:
                         self.stop("upstream_failures_3_in_a_row")
+                if self.stopped:
+                    self.summary()
                 return up
-            time.sleep(wait)
+            retried.append(up["category"])
+            for _ in range(wait):
+                if self.stopped:
+                    break
+                time.sleep(1)
 
     def upstream(self, body: dict, kind: str, fwd: dict) -> dict:
+        up = self._upstream(body, kind, fwd)
+        with self.metrics_lock:
+            self.pace_wait_ms += up["pace_wait_ms"]
+        if up["category"] != "budget_or_stop":
+            with self.metrics_lock:
+                self.tries.append((up["category"] or "ok", up["status"], up["t_sent"], up["pace_wait_ms"]))
+            with self.streak_lock:
+                if up["ok"] and up.get("n_unparsed"):
+                    self.unparsed_streak += 1
+                elif up["forward"]:
+                    self.unparsed_streak = 0
+                if self.unparsed_streak >= 3:
+                    self.stop("upstream_unparsed_3_in_a_row")
+        if self.stopped:
+            self.summary()
+        return up
+
+    def _drain(self):
+        if self.login:
+            with self.login.lock:  # token() has released this lock; _refresh appends while holding it
+                while self.login.log:
+                    self.ledger.append({"run": self.a.run, **self.login.log.pop(0)})
+
+    def _upstream(self, body: dict, kind: str, fwd: dict) -> dict:
         """One counted upstream call; the whole SSE stream is buffered. Never raises; never logs a header."""
         wire = dict(body, model=self.a.model, stream=True, input=typed(body.get("input")))
         data = json.dumps(wire).encode()
         sub = {"kind": kind, "model": self.a.model, "reasoning": body.get("reasoning"), "effort_is_pin": (body.get(
             "reasoning") or {}).get("effort") == EFFORT, "marker": marker_state(),
-               "load": os.getloadavg(), "typed_parts": sum(isinstance(it, dict) and isinstance(it.get("content"), str)
+               "pace_wait_ms": 0, "load": os.getloadavg(), "typed_parts": sum(isinstance(it, dict) and isinstance(it.get("content"), str)
                                                           for it in body.get("input") or [])}
         sub["req"], sub["wire"], sub["forward"] = self.ledger.blob(json.loads(data)), json.loads(data), False
         token = ""
@@ -442,25 +551,64 @@ class Director:
             token = self.login.token() if self.login and not self.stopped else ""
         except Stop as e:
             self.stop(str(e))
-        while self.login and self.login.log:
-            self.ledger.append({"run": self.a.run, **self.login.log.pop(0)})
+        self._drain()
         if self.stopped or not self.budget.take(self.a.run, kind):
             return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
         t0 = time.monotonic()
         if self.a.mode == "stub":
+            sub["t_sent"] = self.pacer.clock()
             raw, status, hdrs = self._stub(wire, kind), 200, {}
         else:
+            pace_start = self.pacer.clock()
+            with self.pacing_cv:
+                self.pacing_now += 1
+            try:
+                wait, readmitted = self.pacer.acquire(), False
+                while wait and self.login and not self.stopped:  # the token can expire during a long pace wait
+                    read = self.pacer.clock()
+                    try:
+                        token = self.login.token()
+                    except Stop as e:
+                        self.stop(str(e))
+                    self._drain()  # a refresh it made is charged, so its row goes to the ledger now
+                    if self.stopped or self.pacer.clock() - read <= READ_GRACE_S:
+                        break
+                    # the read blocked on a refresh while the bucket refilled: admit again, so the send keeps the bound
+                    wait, readmitted = self.pacer.acquire(), True
+                sub["pace_wait_ms"] = wait if wait is not None and not readmitted else (self.pacer.clock() - pace_start) * 1000
+                if wait is None or self.stopped:
+                    with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
+                        fcntl.flock(f, fcntl.LOCK_EX)
+                        b = json.load(f)
+                        b["total"] -= 1
+                        b["by_run"][self.a.run] -= 1
+                        b["by_kind"][kind] -= 1
+                        f.seek(0), f.truncate(), json.dump(b, f)
+                    return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
+            finally:
+                with self.pacing_cv:
+                    self.pacing_now -= 1
+                    self.pacing_cv.notify_all()
             req = urllib.request.Request(self.url, data=data, method="POST", headers={
                 "Authorization": f"Bearer {token}", "Content-Type": "application/json",
                 "Accept": "text/event-stream", **IDENTITY, **account_headers(token), **fwd})
+            sub["t_sent"] = self.pacer.clock()
+            t0 = time.monotonic()  # service time excludes pacing
             try:
                 with self.urlopen(req, timeout=self.a.timeout) as r:
-                    raw, status, hdrs = r.read(), r.status, dict(r.headers)
+                    raw, status, hdrs = r.read(MAX_BODY + 1), r.status, dict(r.headers)
+                if len(raw) > MAX_BODY:
+                    return {**sub, "status": status, "category": "error:oversize", "ok": False, "t_ms": 0}
             except urllib.error.HTTPError as e:
                 if e.code in (401, 403):  # latched before the body read, which can fail or stall
                     self.stop(f"upstream_{e.code}", login=True)
+                elif 400 <= e.code < 500 and e.code != 429:
+                    self.stop(f"upstream_invalid_request_{e.code}")
                 try:
-                    text, hdrs = self._scrub(e.read(), sub).decode("utf-8", "replace"), dict(e.headers or {})
+                    raw = e.read(MAX_BODY + 1)
+                    if len(raw) > MAX_BODY:
+                        return {**sub, "status": e.code, "category": "error:oversize", "ok": False, "t_ms": 0}
+                    text, hdrs = self._scrub(raw, sub).decode("utf-8", "replace"), dict(e.headers or {})
                 except Exception as x:  # noqa: BLE001 - a truncated or stalled body: the class only, status kept
                     return {**sub, "status": e.code, "category": sol_category(e.code, ""), "ok": False,
                             "body_read_error": type(x).__name__, "t_ms": round((time.monotonic() - t0) * 1000)}
@@ -740,13 +888,22 @@ def main():
     p.add_argument("--chars-per-token", type=float, default=4.0)
     p.add_argument("--context-length", type=int, default=272000)
     p.add_argument("--timeout", type=float, default=900)
+    p.add_argument("--rate-per-min", type=float, default=180, help="0 disables pacing")
+    p.add_argument("--burst", type=int, default=10)
+    p.add_argument("--allow-over-window", action="store_true")
     a = p.parse_args()
     if a.mode == "live" and not os.environ.get("BICENTENNIAL_SOL_AUTH"):
         sys.exit("live mode needs the Sol environment (run under the local helper)")
     d = Director(a)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(d))
     print(f"director ready on 127.0.0.1:{a.port} run={a.run} mode={a.mode} model={a.model}", flush=True)
-    srv.serve_forever()
+    try:
+        srv.serve_forever()
+    finally:
+        d.stop("director_exit")
+        with d.pacing_cv:  # woken pace waiters release their reservations before the interpreter exits
+            d.pacing_cv.wait_for(lambda: not d.pacing_now, timeout=2)
 
 
 if __name__ == "__main__":

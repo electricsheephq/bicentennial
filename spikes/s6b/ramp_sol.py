@@ -1,5 +1,6 @@
 """Concurrency ramp on the Sol lane (spike S6b), on the Responses SSE wire. S6a's ramp, ported.
 
+Pacing is disabled (rate 0): this burst ramp measures the refusal threshold.
 Level n sends 2n tiny requests through n concurrent workers: levels 4, 8, 16, 24 and 32, then 48 only if 32
 had no refusal. Each call is the S6b director's own upstream call, made in this process (no director server
 runs alongside), so the director's code stays the login store's only reader. Ramp calls are never retried, so
@@ -29,7 +30,7 @@ from ramp import run_level
 from sol_director import EFFORT, MODEL, Director, marker_state
 
 KEEP = ("status", "ok", "category", "t_ms", "served_model", "n_events", "limit_headers", "body_shape", "error_obj",
-        "scrubbed", "req", "resp")
+        "scrubbed", "req", "resp", "pace_wait_ms")
 QUOTA_HDRS = ("x-codex-primary-used-percent", "x-codex-secondary-used-percent", "x-codex-primary-window-minutes",
               "x-codex-secondary-window-minutes")
 
@@ -89,7 +90,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     d = Director(SimpleNamespace(budget_file=a.budget_file, budget_cap=a.budget_cap, mode="live", run=a.run,
                                  ledger_dir=str(out / "ledger"), life=str(HERE.parent / "s6a" / "micro_life.json"),
-                                 model=MODEL, write_turns=False, timeout=a.timeout, chars_per_token=4.0))
+                                 model=MODEL, write_turns=False, rate_per_min=0, timeout=a.timeout, chars_per_token=4.0))
     state, levels, used = {"quota_streak": 0, "quota_stop": False}, [], 0
     for n in (4, 8, 16, 24, 32, 48):
         if n == 48 and not (levels and levels[-1]["level"] == 32 and levels[-1]["refused"] == 0):
@@ -111,6 +112,7 @@ def main():
                "binding_limit": ("quota" if state["quota_stop"] else d.stop_reason if d.stopped else
                                  max(first_bad["categories"], key=first_bad["categories"].get) if first_bad
                                  else "none reached (ramp ceiling)")}
+    d.summary()
     (out / "ramp.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items() if k != "levels"}))
 
