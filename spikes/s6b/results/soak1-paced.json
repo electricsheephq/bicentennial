@@ -15,6 +15,15 @@
   "source": "r7c-write payloads (60 write turns, 2 compactions)"
  },
  "results": {
+  "send_window": {
+   "admission_s": 600,
+   "last_send_s": 600.345,
+   "sent_before_600_s": 1809,
+   "sent_after_600_s": 2,
+   "wall_s": 670.14,
+   "drain_s": 69.8,
+   "note": "new calls were admitted for the configured 600 s; two calls admitted before the deadline sent after it, then the run drained"
+  },
   "sent": 1811,
   "ok": 1808,
   "http_429": 0,
