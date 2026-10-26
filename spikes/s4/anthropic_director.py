@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +38,20 @@ DROP = re.compile(r"^(authorization|x-api-key|cookie|proxy-authorization|anthrop
 PLACEHOLDER = "placeholder"
 PROTECTED = {"model", "messages", "max_tokens", "stream", "system", "tools"}  # never stripped
 ANTHROPIC_VERSION = "2023-06-01"
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None  # a 3xx comes back as its own status: the key never follows it to another URL
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
+def upstream_ok(url: str) -> bool:
+    """HTTPS, or plain HTTP to this machine's loopback (the tests' fake upstream)."""
+    u = urllib.parse.urlsplit(url)
+    return u.scheme == "https" or (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost", "::1"))
 BACKOFF = (5, 15, 45)  # upstream 429/503/529, as in the other directors
 ERR_TYPE = {400: "invalid_request_error", 401: "authentication_error", 404: "not_found_error",
             429: "rate_limit_error", 529: "overloaded_error"}
@@ -166,7 +181,7 @@ class Director:
             "Content-Type": "application/json", "anthropic-version": ANTHROPIC_VERSION,
             "Authorization": f"Bearer {self.key}"})
         try:
-            with urllib.request.urlopen(req, timeout=self.a.timeout) as r:
+            with OPENER.open(req, timeout=self.a.timeout) as r:
                 return r.status, r.headers.get("Content-Type", "application/json"), r.read()
         except urllib.error.HTTPError as e:
             data = e.read()
@@ -330,6 +345,8 @@ def main():
     a = build_parser().parse_args()
     if not os.environ.get("BICENTENNIAL_UPSTREAM_KEY") or not os.environ.get("BICENTENNIAL_UPSTREAM_ANTHROPIC_URL"):
         sys.exit("needs the upstream environment (run under the helper)")
+    if not upstream_ok(os.environ["BICENTENNIAL_UPSTREAM_ANTHROPIC_URL"]):
+        sys.exit("the upstream URL must be HTTPS")
     srv = Server(("127.0.0.1", a.port), make_handler(Director(a)))
     tmp = Path(a.port_file + ".tmp")
     tmp.write_text(str(srv.server_address[1]))

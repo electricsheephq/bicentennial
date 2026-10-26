@@ -61,11 +61,17 @@ STEPS = [
 
 
 def gate(cmd: str, log) -> int:
-    """The busy marker before each live step: exit 11 waits (60 s re-check); 0 and 10 proceed."""
+    """The busy marker before each live step: exit 11 waits (60 s re-check); 0 and 10 proceed; anything else, or a
+    marker that hangs, stops the run before the step."""
     while cmd:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
-        if r.returncode != 11:
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False, timeout=60)
+        except subprocess.TimeoutExpired:
+            sys.exit("busy marker timed out; no live step starts")
+        if r.returncode in (0, 10):
             return r.returncode
+        if r.returncode != 11:
+            sys.exit(f"busy marker exit {r.returncode}; no live step starts")
         log("marker exit 11; waiting 60 s")
         time.sleep(60)
     return -1

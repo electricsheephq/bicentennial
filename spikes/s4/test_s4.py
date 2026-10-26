@@ -47,11 +47,19 @@ class FakeUpstream:
                 status, data = up.replies.pop(0) if up.replies else (200, (b'{"model":"glm-5.3","content":[],'
                                                                            b'"usage":{"input_tokens":3}}'))
                 self.send_response(status)
+                if 300 <= status < 400:
+                    self.send_header("Location", up.url + "/elsewhere")
                 self.send_header("Content-Type", "text/event-stream" if data.startswith(b"event:") else
                                  "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+
+            def do_GET(self):  # where a followed redirect would land
+                up.calls.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}})
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
@@ -225,6 +233,29 @@ def test_driver_paths_are_absolute_and_never_combine_runs(tmp_path, monkeypatch)
     (tmp_path / "ev" / "director-ledger.jsonl").write_text("{}\n")
     with pytest.raises(SystemExit):
         run_s4.fresh_paths("scratch", "ev")
+
+
+def test_the_upstream_never_follows_a_redirect_and_needs_https(up, tmp_path):
+    d = director(tmp_path)
+    up.replies = [(302, b"")]  # urllib's default handler would follow this as a GET, Authorization included
+    status, _, _ = d.send_upstream("/v1/messages", json.loads(msg()))
+    assert status == 302 and [c["path"] for c in up.calls] == ["/v1/messages"]
+    assert ad.upstream_ok("https://api.example.invalid/anthropic") and ad.upstream_ok("http://127.0.0.1:9/x")
+    assert not ad.upstream_ok("http://api.example.invalid/anthropic") and not ad.upstream_ok("ftp://127.0.0.1/x")
+
+
+@pytest.mark.parametrize("code, outcome", [(0, 0), (10, 10), (3, "exit 3"), (127, "exit 127"), (None, "timed out")])
+def test_the_busy_gate_fails_closed(monkeypatch, code, outcome):
+    def run(*a, **kw):
+        if code is None:
+            raise run_s4.subprocess.TimeoutExpired("marker", kw["timeout"])
+        return types.SimpleNamespace(returncode=code)
+    monkeypatch.setattr(run_s4.subprocess, "run", run)
+    if isinstance(outcome, int):
+        assert run_s4.gate("marker", print) == outcome
+    else:
+        with pytest.raises(SystemExit, match=outcome):
+            run_s4.gate("marker", print)
 
 
 @pytest.mark.parametrize("busy", ["", "marker --json"])
