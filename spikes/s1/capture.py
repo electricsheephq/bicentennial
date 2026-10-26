@@ -12,7 +12,7 @@ calls, their results and (Claude Code) a subagent on the small-fast alias appear
 per-turn stdout, and run.json (exits, compaction markers, endpoints).
 
     python3.14 capture.py claude --root <fresh dir> --out <dir> [--turns 30] [--compact]
-    python3.14 capture.py codex  --root <fresh dir> --out <dir> [--turns 20] [--limit 6000]
+    python3.14 capture.py codex  --root <fresh dir> --out <dir> [--turns 20] [--limit 6000] --inflate 1000
 """
 
 from __future__ import annotations

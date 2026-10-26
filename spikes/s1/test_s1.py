@@ -135,6 +135,44 @@ def test_responses_wire():
         "compaction", "shape")
 
 
+@pytest.mark.parametrize("role", ["system", "developer"])
+def test_responses_system_text_in_input_is_read_for_markers(role):
+    title = roles.Signature("t", "title", "system", 6, roles.h16("Title:"))
+    c = ctx1(signatures=(title,))
+    tools = [{"type": "function", "name": "shell"}]
+    turn = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "scripted turn one"}]}
+    sys_msg = {"type": "message", "role": role, "content": [{"type": "input_text", "text": "Title: x"}]}
+    via_input = {"method": "POST", "path": "/v1/responses", "body": {"model": "m", "input": [sys_msg, turn],
+                                                                     "tools": tools}}
+    via_field = {"method": "POST", "path": "/v1/responses", "body": {"model": "m", "instructions": "Title: x",
+                                                                     "input": [turn], "tools": tools}}
+    assert roles.classify(via_input, c)[:2] == roles.classify(via_field, c)[:2] == ("title", "shape")
+
+
+@pytest.mark.parametrize("body", [
+    {"model": "m", "messages": [{"role": "user", "content": "scripted turn one"},
+                                {"role": "assistant", "tool_calls": ["not-a-dict"]},
+                                {"role": "tool", "tool_call_id": "x", "content": "r"}], "tools": TOOLS},
+    {"model": "m", "messages": [{"role": "user", "content": "scripted turn one"},
+                                {"role": "assistant", "tool_calls": 7},
+                                {"role": "tool", "tool_call_id": "x", "content": "r"}], "tools": TOOLS},
+    {"model": ["m"], "messages": [{"role": "user", "content": "scripted turn one"}], "tools": TOOLS},
+    {"model": "m", "messages": [{"role": "user", "content": "scripted turn one"}], "tools": 3},
+])
+def test_malformed_chat_bodies_are_unknown(body):
+    req = {"method": "POST", "path": "/v1/chat/completions", "body": body}
+    assert roles.classify(req, ctx1(aliases={"fast": roles.alias("aux")}))[:2] == ("unknown", "unknown")
+
+
+def test_malformed_anthropic_parts_are_unknown():
+    body = {"model": "m", "messages": [{"role": "user", "content": "x"},
+                                       {"role": "assistant", "content": ["bare", {"type": "tool_use", "id": "a"}]},
+                                       {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a"},
+                                                                    "bare"]}]}
+    req = {"method": "POST", "path": "/v1/messages", "body": body}
+    assert roles.classify(req, ctx1())[:2] == ("unknown", "unknown")
+
+
 def test_anthropic_wire_trailing_system_and_continuation():
     note = roles.Signature("n", roles.CONTINUATION, "last_user", 7, roles.h16("[notice"))
     c = ctx1(signatures=(note,))

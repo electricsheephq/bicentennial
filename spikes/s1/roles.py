@@ -126,6 +126,7 @@ def _items(wire: str, body: dict) -> tuple[str, tuple[list, list], list[list[str
             if t == "message":
                 toks.append({"user": "u", "assistant": "a", "system": "s", "developer": "s"}.get(r, "x"))
                 users += [_blocks(it.get("content"))] if r == "user" else []
+                system += _blocks(it.get("content")) if r in ("system", "developer") else []
             else:
                 toks.append("t" if t.endswith("_output") else "c" if t.endswith("_call") else "r" if t == "reasoning"
                             else "x")
@@ -167,6 +168,8 @@ def shape(req: dict, signatures=SIGNATURES) -> dict:
     method, path = req.get("method", "POST"), (req.get("path") or "").split("?")[0]
     wire = req.get("wire") or wire_of(method, path)
     body = req.get("body") if isinstance(req.get("body"), dict) else {}
+    if not isinstance(body.get("model"), (str, type(None))) or not isinstance(body.get("tools"), (list, type(None))):
+        raise TypeError("model or tools of an unseen type")  # classify turns this into unknown
     toks, tail, users, system = _items(wire, body)
     last = users[-1] if users else []
     whole = "\n".join(last).strip()
@@ -261,7 +264,10 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
 
 
 def classify(req: dict, ctx: Context) -> tuple[str, str, dict]:
-    return classify_shape(shape(req, ctx.signatures), ctx)
+    try:
+        return classify_shape(shape(req, ctx.signatures), ctx)
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as e:  # a malformed body fails closed
+        return "unknown", "unknown", {"reason": "malformed body", "error": type(e).__name__}
 
 
 def advance(ctx: Context, result: tuple[str, str, dict], issued_ids=(), issued_as: str | None = None) -> None:

@@ -36,7 +36,7 @@ ROLE_OF_TASK = {"compression": "compaction", "title_generation": "title"}
 LABEL = {("summariser", "compression"): "compaction", ("aux", "title_generation"): "title"}
 # Manual labels for the fresh captures, by stub ledger seq (every other request: replay_main), each read from
 # the capture: Claude Code's subagent request (the Explore agent the turn-9 directive spawned), its two
-# compaction requests (auto at turn 30, then /compact); Codex's three inline compaction requests.
+# compaction requests (auto at turn 28, then /compact); Codex's three inline compaction requests.
 MANUAL = {"s1-claude": {11: "aux", 33: "compaction", 37: "compaction"}, "s1-codex": {7: "compaction",
                                                                                    9: "compaction",
                                                                                    11: "compaction"}}

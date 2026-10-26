@@ -68,7 +68,7 @@
 - **Egress.** No capture of record reached a non-loopback endpoint. A first Codex capture with the default feature set connected to a public code-hosting address on 3 of 8 runs. It made no model call and used no login. The capture of record turns off Codex's plugin, app and tool-suggestion features, and no such connection recurred. To identify that address, the lane also ran `strings` once on the installed Codex binary. No file-open audit was captured, so the claim that no configuration, auth or session file was read rests on the lane's statement, not on a measurement.
 
 ## Shape test
-`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 61 tests, all passing.
+`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 68 tests, all passing.
 - The fixtures, `fixtures/shapes.json`, are minimized shapes: no harness or life text, only paths, key sets, model aliases, role sequences, marker names, lengths and hashes. A test asserts that no fixture string can hold text.
 - Every recorded request must classify to its expected role. Where a source records the harness's own compaction count, the classified compactions must equal it.
 - Unseen shapes must be `unknown`: an unscripted main turn, the scripted turn with no tools, an unissued call id, an unknown wire, an unknown GET, and fresh Responses and Anthropic shapes.
@@ -77,6 +77,9 @@
   - A trailing tool result must answer a call id the director issued or forwarded. There is one exception. Hermes can add a call of its own beside a forwarded call, in the same assistant message (r6 request 136 and r7c request 165). A result answering that call is accepted only when the same message holds an issued call and its result is also present. Otherwise any unmatched result is `unknown`.
   - A supplied wire must agree with the request's method and path.
   - An alias match on a body with no messages or input is `unknown`.
+- **Added after the bot review of the PR.**
+  - On the Responses wire, system and developer messages inside `input` are read as system text, like `instructions`. Codex sends its instructions that way, so its recorded system length is now 19,325 characters; no recorded role changes.
+  - A malformed body is `unknown`: a `model` or `tools` of an unseen type, or a list element that is not an object.
 - Each wire's cursor, retry, issued-id, alias and endpoint rules are tested on synthetic bodies.
 - The repository has no CI workflow. The test is ready for one: `python -m pytest spikes/s1 -q`.
 
