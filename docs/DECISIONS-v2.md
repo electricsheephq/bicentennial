@@ -1,6 +1,6 @@
 # Design v2.0: the decision record
 
-**Status: draft.** This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.2.md`](../prereg/PREREG-v0.2.md)) is the only normative source for frozen quantities. PREREG-v0.2 is frozen only after the owner co-signs its hash on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964).
+**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.2.md`](../prereg/PREREG-v0.2.md)) is the only normative source for frozen quantities. PREREG-v0.2 is frozen. Its hash is in [`prereg/FREEZE-v0.2.md`](../prereg/FREEZE-v0.2.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964) for the owner's co-sign.
 
 The other documents cite these decisions as DV1-DV46. DV42 is reserved. Section references (DESIGN §, PREREG §) are to the v2.0 design and PREREG-v0.2.
 
@@ -369,7 +369,7 @@ Spatial memory waits for E1 (DV15).
 - **S8's vision-capable main model:** chosen by the benchmark maintainers in S8 from the census, and pinned in C-1's route table before any Image board.
 - **E1's done-when:** written by the benchmark maintainers after v1 (DV15).
 - **README's freeze status, date and link:** filled by the benchmark maintainers at the v0.2 freeze.
-- **This record:** published only after the owner reviews it (DV33).
+- **This record:** published after the owner's review on 2026-10-26 (DV33).
 
 **DV42.** Reserved for the pinned agent family's model lane, decided after a measurement spike of its sustained concurrency and latency.
 

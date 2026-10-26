@@ -1,6 +1,6 @@
-# Bicentennial pre-registration — PREREG-v0.2 (pilot, draft)
+# Bicentennial pre-registration — PREREG-v0.2 (pilot)
 
-**Status:** PREREG-v0.2, a **draft, not yet frozen**. When frozen it supersedes PREREG-v0.1, which was frozen 2026-10-26, by carrying design v2.0: the capability map with three stages, evaluation profiles, cell verdicts and certification on Act, the developer rings, and five amendments to v0.1 (long sprints by count, the Wake claim contract, per-item accuracy reported, added turn latency, G1 task completion). Its changelog is at the end. It follows an adversarial review of the v2.0 decisions, a statistics check of the certification rule and a passage-by-passage enumeration of every consumer of the changed decisions. The resulting decisions are recorded in `docs/DECISIONS-v2.md`. It is frozen only when the owner co-signs its sha256, commit and time on lcm-x #1964.
+**Status:** PREREG-v0.2, frozen 2026-10-26 by the benchmark session after the owner approved design v2.0. It supersedes PREREG-v0.1, which was frozen earlier the same day and never co-signed, by carrying design v2.0: the capability map with three stages, evaluation profiles, cell verdicts and certification on Act, the developer rings, and five amendments to v0.1 (long sprints by count, the Wake claim contract, per-item accuracy reported, added turn latency, G1 task completion). Its changelog is at the end. It follows an adversarial review of the v2.0 decisions, a statistics check of the certification rule and a passage-by-passage enumeration of every consumer of the changed decisions. The resulting decisions are recorded in `docs/DECISIONS-v2.md`. Its sha256, commit and time are in `prereg/FREEZE-v0.2.md` and posted on lcm-x #1964 for the owner's co-sign, which is recorded there once given.
 
 **Precedence.** This document is the **only normative source** for every frozen quantity: constants, rules, thresholds, rosters, sample sizes, tests and ceilings. DESIGN-v2.0 (`docs/DESIGN.md`) explains and motivates. Where the two differ on a frozen quantity, this document governs, and the difference is logged as an erratum to DESIGN. "The addendum" means the binding requirements summarised in `docs/REQUIREMENTS.md`.
 
@@ -78,7 +78,7 @@
 The subscript k always indexes a cell (a_k, g_k, m_k), and K counts the cells. Fault reruns are counted by q and contrasts by M, so neither shares a letter with a cell symbol.
 
 ## 1. Identity
-- **This document:** PREREG-v0.2, a draft, not yet frozen. sha256: [HASH: computed and posted on #1964 at freeze]. Commit and time: [at freeze].
+- **This document:** PREREG-v0.2, frozen 2026-10-26. Its sha256, commit and time are in `prereg/FREEZE-v0.2.md` and posted on lcm-x #1964.
 - **Design:** DESIGN-v2.0. Its hash is recorded at freeze.
 - **Generator:** the version is recorded at freeze.
 - **Genres:** G1 software partner and G2 personal assistant, in text and code.
@@ -718,7 +718,7 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 If a cut leaves a season below the certification rule's powered size (§7), no certificate is issued that season, and its results are still published. If it still does not fit, the design returns to the owner.
 
 ## Changelog: PREREG-v0.1 → PREREG-v0.2
-- **Status and identity:** a draft for design v2.0, with a hash placeholder; DESIGN-v2.0; the Image profile marked pending; requirements met differently recorded; the decision record cited as `docs/DECISIONS-v2.md`.
+- **Status and identity:** frozen for design v2.0, with its hash in `prereg/FREEZE-v0.2.md`; DESIGN-v2.0; the Image profile marked pending; requirements met differently recorded; the decision record cited as `docs/DECISIONS-v2.md`.
 - **Freezes:** rules frozen, not per-season contents; slots C-12 to C-15 added, C-1, C-7 and C-8 extended, no credits slot; the operating-characteristic freeze gate for PREREG-v1, with its pass criteria, setting the final certification size; the redesigned scoring goes to the veto reviewer before PREREG-v1; C-1 names the pinned agent family and S8's vision-capable main model.
 - **Notation:** M for the contrast count and q for fault reruns, so the subscript k indexes cells only; L_img and b_img added.
 - **§2:** the capability map with the Remember, Survive and Act stages; evaluation profiles and their declarations; the cell inventory and the census annotation, with required cells from the track design; the Image profile's sealed-board season; E2's confirming spike; Learn as a supporting diagnostic, with the shared-memory chain in G2; Flatten deferred and not in the pilot; Hands with World profiles; the claim contract; per-item accuracy, G1 task completion and added turn latency reported; track inclusion condition 1 on the raw scale, a track test separate from cell admission, with every §2 and §9 threshold in raw penalised points; a placement reason for every season-1 frontier annotation.

@@ -7,8 +7,8 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 **The claim Bicentennial has to earn with results:** memory measured inside a real agent harness across a life, judged on actions, covering governance (forgetting, consent, standing rules), with a fast diagnostic loop for developers. It claims no firstness, no multimodal novelty, and no superiority for any system before the results exist.
 
 > **Status: pre-pilot.**
-> - Design v2.0 is drafted. ⟦Placeholder, filled by the benchmark maintainers at the v0.2 freeze: "Design v2.0 is done."⟧
-> - PREREG-v0.1 was frozen on 2026-10-26. **PREREG-v0.2** is frozen only after the owner co-signs its hash on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). ⟦Placeholder, filled by the benchmark maintainers at the v0.2 freeze: the freeze date and a link to `prereg/FREEZE-v0.2.md`.⟧
+> - Design v2.0 is done.
+> - **PREREG-v0.2 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.2.md`](prereg/FREEZE-v0.2.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964) for the owner's co-sign. It supersedes PREREG-v0.1, which was never co-signed.
 > - **The 24-hour rule:** the hardest run, the full board for one system, finishes within a day, sized by the measured concurrency of the model lane. The Image board, when it runs, is a separate run per system under the same rule.
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
 > - There is no benchmark code and there are no results yet.
