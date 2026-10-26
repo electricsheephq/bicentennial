@@ -55,8 +55,15 @@ AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim n
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
 IDENTITY_NAMES = {"authorization", "chatgpt-account-id", "x-openai-internal-codex-residency"}  # never persisted
-SSE_AUTH = re.compile(r"invalid_api_key|invalid_token|token_(expired|invalid|revoked)|unauthori[sz]ed|"
-                      r"authentication|permission_denied|forbidden|account_deactivated|\b40[13]\b", re.IGNORECASE)
+IDENTITY_NAME_RE = re.compile("|".join(map(re.escape, sorted(IDENTITY_NAMES))), re.IGNORECASE)
+# underscore codes, and the pinned Hermes' spaced auth phrases (agent/error_classifier.py _AUTH_PATTERNS)
+SSE_AUTH = re.compile(r"invalid[ _]api[ _]key|invalid[ _]token|token[ _](expired|invalid|revoked)|unauthori[sz]ed|"
+                      r"authentication|permission_denied|forbidden|account_deactivated|access[ _]denied|"
+                      r"gateway_auth_failed|failed to extract accountid from token", re.IGNORECASE)
+# Hermes matches overload, billing and rate limits before auth: such an error is never an auth stop
+SSE_NOT_AUTH = re.compile(r"overload|capacity|usage[ _]limit|quota|billing|credit|rate[ _]?limit|too many requests",
+                          re.IGNORECASE)
+ERROR_FIELDS = ("code", "type", "status", "status_code", "message", "detail")  # provider-authored; never output
 
 
 class Stop(Exception):
@@ -111,11 +118,24 @@ class Login:
     single-use). Refresh runs under a process lock and a file lock; the rotated pair is written back
     atomically, in the file's own format, before the new access token is used. Any failure under the lock
     (a refused or failed refresh, a failed write-back) is latched: every later caller gets the same Stop and
-    no caller reaches the token endpoint again, so a consumed refresh token is never sent twice."""
+    no caller reaches the token endpoint again, so a consumed refresh token is never sent twice. The latch
+    is also persisted as a sentinel beside the store (the reason and a UTC time, never a token), so a later
+    process refuses too, until the owner has looked and removed it."""
     def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None):
         self.path, self.token_url, self.client_id, self.post = Path(path), token_url, client_id, post
         self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), {}, []
         self.dead = ""  # the latched failure
+        self.sentinel = self.path.with_name(self.path.name + ".stopped")
+
+    def latch(self, reason: str):
+        """Latch a login stop in this process and on disk; the first reason is kept."""
+        self.dead = self.dead or reason
+        try:
+            fd = os.open(self.sentinel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError:  # already latched on disk, or not writable: the in-process latch still holds
+            return
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps({"reason": reason, "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
 
     def token(self) -> str:
         with self.lock, os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR,
@@ -124,6 +144,8 @@ class Login:
             if self.dead:
                 raise Stop(self.dead)
             try:
+                if self.sentinel.exists():  # an earlier process latched a login stop: no POST, ever
+                    raise Stop(f"login_latched:{json.loads(self.sentinel.read_text()).get('reason', '')}")
                 raw = self.path.read_text()
                 store = json.loads(raw)
                 at = store["tokens"]["access_token"]
@@ -132,10 +154,10 @@ class Login:
                     return at
                 return self._refresh(raw, store)  # persisted before it returns
             except Stop as e:
-                self.dead = str(e)
+                self.latch(str(e))
                 raise
-            except (OSError, ValueError, LookupError, TypeError, AttributeError) as e:  # e.g. a failed write-back
-                self.dead = f"login_error:{type(e).__name__}"
+            except Exception as e:  # noqa: BLE001 - any failure after a POST may have consumed the refresh token
+                self.latch(f"login_error:{type(e).__name__}")  # the class only: a message can carry a value
                 raise Stop(self.dead) from None
 
     def _refresh(self, raw: str, store: dict) -> str:
@@ -170,20 +192,38 @@ class Login:
         return store["tokens"]["access_token"]
 
     def _learn(self, store: dict):
-        """Every token, and every account, user or email value in their claims, becomes a guard needle
-        (value -> a label naming only the field)."""
+        """Every token, and every account, user, email or residency value in their claims, becomes a guard
+        needle (value -> a label naming only the field). Residency feeds a rebuilt identity header."""
         for name, tok in store["tokens"].items():
             if isinstance(tok, str):
                 self.secrets[tok] = f"tokens.{name}"
                 for k, v in jwt_claims(tok).items():  # top-level claims and the namespaced auth/profile claims
                     for kk, vv in (v.items() if isinstance(v, dict) else [(k, v)]):
-                        if isinstance(vv, str) and re.search(r"account|user|email|org|^sub$", kk):
+                        if isinstance(vv, str) and re.search(r"account|user|email|org|residency|^sub$", kk):
                             self.secrets.setdefault(vv, f"claim.{kk}")
 
     def learn_only(self) -> dict:
         """Read-only (no lock, no refresh): the needles, for --scan."""
         self._learn(json.loads(self.path.read_text()))
         return self.secrets
+
+
+class NamelessLedger(Ledger):
+    """S6a's ledger, with the identity-name rule applied at the point of persistence: an identity header
+    name in any record or blob (an upstream refusal can echo one) becomes a placeholder, before hashing."""
+    def blob(self, obj) -> str:
+        return super().blob(_nameless(obj))
+
+    def append(self, rec: dict) -> dict:
+        return super().append(_nameless(rec))
+
+
+def _nameless(o):
+    if isinstance(o, str):
+        return IDENTITY_NAME_RE.sub("redacted-header-name", o)
+    if isinstance(o, dict):
+        return {_nameless(k): _nameless(v) for k, v in o.items()}
+    return [_nameless(v) for v in o] if isinstance(o, list | tuple) else o
 
 
 class Guard:
@@ -262,9 +302,9 @@ def _untyped_eq(w, b) -> bool:
 
 
 def parse_sse(raw: bytes) -> list[dict]:
-    events = []  # CRLF, CR and LF line endings are all valid SSE
+    events = []  # CRLF, CR and LF line endings are all valid SSE; after normalising, only \n ends a line
     for block in raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n").split("\n\n"):
-        data = "\n".join(line[5:].lstrip() for line in block.splitlines() if line.startswith("data:"))
+        data = "\n".join(line[5:].lstrip() for line in block.split("\n") if line.startswith("data:"))
         if data and data != "[DONE]":
             try:
                 events.append(json.loads(data))
@@ -289,15 +329,30 @@ def sse_bytes(items: list[dict], usage: dict, model: str) -> bytes:
                     for n, e in enumerate(evs))
 
 
+def error_objects(e: dict) -> list[dict]:
+    """The provider-authored error objects of one event, as Hermes reads them: an error event itself, its
+    nested error, a failed or incomplete response's response.error, and the truthy top-level error of any
+    event. Never model output (output text deltas, response.output, function-call arguments)."""
+    objs = [e] if e.get("type") == "error" else []
+    if e.get("type") in ("response.failed", "response.incomplete"):
+        objs.append((e.get("response") or {}).get("error"))
+    objs.append(e.get("error"))
+    return [o if isinstance(o, dict) else {"message": o} for o in objs if o]
+
+
+def _error_text(o: dict, etype) -> str:
+    return " ".join(str(o[k]) for k in ERROR_FIELDS if o.get(k) is not None and o.get(k) != etype)
+
+
 def sse_auth_error(events: list[dict]) -> bool:
-    """An in-stream auth failure inside an HTTP 200: an error event, or a failed response, whose code, type
-    or status names an auth refusal (top level or nested under error, as Hermes reads it)."""
+    """An in-stream auth failure inside an HTTP 200: an error object (above) whose code, type, status, message
+    or detail names an auth refusal. An overload, quota or rate-limit error is never auth (Hermes' order)."""
     for e in events:
-        if e.get("type") not in ("error", "response.failed"):
-            continue
-        for o in (e, e.get("error"), (e.get("response") or {}).get("error")):
-            if isinstance(o, dict) and any(SSE_AUTH.search(str(o.get(k))) for k in (
-                    "code", "type", "status", "status_code") if o.get(k) is not None and o.get(k) != e["type"]):
+        for o in error_objects(e):
+            text = _error_text(o, e.get("type"))
+            if SSE_NOT_AUTH.search(text):
+                continue
+            if SSE_AUTH.search(text) or any(str(o.get(k)) in ("401", "403") for k in ("code", "status", "status_code")):
                 return True
     return False
 
@@ -342,7 +397,7 @@ class Director:
             self.login and self.login.token()
         except Stop as e:
             self.stop(str(e))
-        self.ledger = Ledger(Path(a.ledger_dir), self.guard)
+        self.ledger = NamelessLedger(Path(a.ledger_dir), self.guard)
         life = json.loads(Path(a.life).read_text())
         self.expected = [{"kind": "replay", "session": s["index"], "turn": i, **t}
                          for s in life["sessions"] for i, t in enumerate(s["turns"], 1)]
@@ -355,8 +410,10 @@ class Director:
         self.write_turns = a.write_turns
         self.url = os.environ.get("BICENTENNIAL_SOL_BASE_URL", "").rstrip("/") + "/responses"
 
-    def stop(self, reason: str):
+    def stop(self, reason: str, login: bool = False):
         self.stopped, self.stop_reason = True, self.stop_reason or reason
+        if login and self.login:  # the credential was refused: a re-login is an owner step, so no later run uses it
+            self.login.latch(reason)
 
     # ---- upstream ------------------------------------------------------------------------------
     def upstream_retry(self, body: dict, kind: str, rec: dict, fwd: dict) -> dict:
@@ -404,7 +461,7 @@ class Director:
                 e.close()
                 cat = sol_category(e.code, text)
                 if e.code in (401, 403):
-                    self.stop(f"upstream_{e.code}")
+                    self.stop(f"upstream_{e.code}", login=True)
                 self._streak(cat)
                 try:
                     body_shape = shape(json.loads(text))
@@ -422,11 +479,12 @@ class Director:
             "response.completed", "response.failed", "response.incomplete", "error")), {})
         resp = done.get("response") or {}
         ok = done.get("type") == "response.completed"
-        err = done.get("error") or resp.get("error") or done  # the error object: the event echoes the whole request
-        cat = None if ok else sol_category(0, json.dumps(err)[:2000])  # an in-stream failure in an HTTP 200
+        basis = {"error": [{k: o[k] for k in ERROR_FIELDS if k in o} for o in error_objects(done)], "status": resp.get(
+            "status"), "incomplete_details": resp.get("incomplete_details")}  # never the event: it carries model text
+        cat = None if ok else sol_category(0, json.dumps(basis)[:2000])  # an in-stream failure in an HTTP 200
         if sse_auth_error(events):  # never replayed: Hermes would rotate its credential on the auth text
             ok, cat = False, "auth_sse"
-            self.stop("upstream_sse_auth")
+            self.stop("upstream_sse_auth", login=True)
         self._streak(cat or "ok")
         sub.update(status=status, ok=ok, category=cat, t_ms=round((time.monotonic() - t0) * 1000),
                    resp=self.ledger.blob({"sse": raw.decode("utf-8", "replace")}), usage=resp.get("usage"),
