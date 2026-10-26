@@ -1,0 +1,321 @@
+# Ring 0 specification (v0.1 Kit)
+
+**Status:** v0.1, written by the benchmark session for the v0.1 Kit (#29). It fixes the terms that design v2.2 and PREREG-v0.4 leave undefined for the developer tiers T0 and T1. PREREG-v0.4 governs every frozen quantity. Where this text and DESIGN differ, `docs/ERRATA-v2.2.md` records the difference and its basis. Nothing here changes a board rule, a bar or a completion slot.
+
+**What Ring 0 is** (PREREG §6 l.383-388; DESIGN §9.1). Ring 0 is the public developer packs. Every Ring 0 result carries these labels:
+- "not predictive of the full tier; never certifies";
+- "filters: not run (v0.2)";
+- "rungs: uncalibrated (v0.2)";
+- "voice: template".
+
+Each lever takes one uncalibrated value in v0.1. The developer tiers carry no decision bar.
+
+## 1. The scripted reader
+
+The scripted reader answers T0 and T1 probes without a model. It is deterministic. Its result measures **evidence availability** at probe time: whether the system put the right evidence in front of the agent. It is not a model's judgement.
+
+**Inputs.** The reader reads exactly two things.
+- **The probe-time context:**
+  - In **memory-layer mode** (T0 by default), the context is the output of the system's query surface for the item: `adapter.query(task, now)`, plus any context block the system injects for that turn (a provider's prefetch block, say).
+  - In **Hermes mode** (T1, and T0's fallback), the reader makes the system's **declared recall call**: a tool from the system's declared read-tool list, with arguments filled from the item's argument template and the item prompt only. The context is the bytes of the harness's next request after that call: the tool result plus everything the harness put in the request (its system prompt with any injected memory, and the session's messages).
+- **The item's option list.** Each item ships a list of options. An option has an id, a list of **locked tokens** (the numbers, names, dates and codes the renderer passed through unchanged; DESIGN §4.4), and either a typed QA envelope or a scripted action plan. One option may have an empty token list. It means UNKNOWN, "never observed" or refrain, according to the item type.
+
+**What it never reads:** the generator's manifest, the answer key, the world database, the ledger, the system's store or any file the system wrote. Its one gold-derived input is the option order (below). The order can choose only among options whose tokens are present in the context. A token that is absent from the context can never be emitted, so a system whose context lacks the evidence cannot score as if it had it.
+
+**Presence.**
+- An option is **present** when every one of its locked tokens occurs in the context.
+- A token occurs when the context contains it as an exact, case-sensitive substring of the UTF-8 text, after Unicode NFC normalisation of both.
+- **Build check:** the generator refuses any locked token shorter than 4 characters. It also refuses any token that occurs in the rendered life outside its own evidence events, the probe prompts included.
+
+**Policy (lenient).** Options are listed in a fixed **priority order**: the gold option first, then the competing options in keyed order (`keyed.shuffle` over the item id).
+1. The reader selects the first present option with a non-empty token list.
+2. If none is present, it selects the empty-token option. If the item has no empty-token option, the reader emits UNKNOWN.
+
+The order encodes one leniency: when the gold evidence and a stale or decoy value are both present, the reader acts on gold. A lossless store that keeps the stale value beside the current one therefore loses nothing here. The **competing-token diagnostic** records it: every option with a non-empty token list that is present but not selected is listed on the item's result. The card prints the share of items with a competing option present, per system and per track. Lenient scoring under-tests supersession, and the card says so; the live tiers (T2 and up, v0.2) judge it with a model.
+
+**Outputs:**
+- **A QA item** yields its typed envelope, from the selected option:
+  - a selected option with tokens is asserted, at confidence 1.0;
+  - the empty-token option is an UNKNOWN envelope at confidence 0.
+  The envelope cites, as a quote match, the context span where the selected option's first token occurs (DESIGN §7.5). It is scored by the real QA scorer (PREREG §3).
+- **An action item** yields its scripted action plan, from the selected option. The plan is compiled into the harness's tool dialect by the tool-call compiler (DESIGN §6.2d) and executed in the sandbox at the item's action point. The real action scorer scores it from the trace and the end state, twin minimum included (PREREG §3). The empty-token option's plan is to refrain, which executes no action.
+- **recall@5** is a report-only diagnostic for memory-layer mode, wherever the query returns ranked citations: the share of the item's evidence events whose quote is matched in the top 5 citations. Hermes mode reports presence in context instead.
+- **Stages** (DESIGN §7.3a) are attributed per failed item:
+  - stored and retained, from the span search of our snapshot copy of each declared surface;
+  - retrieved, from presence in the probe-time context.
+  The reader uses whatever is present, so "used" never fails at Ring 0: a failure is attributed to retrieval or an earlier stage, or reads unknown.
+
+## 2. The scripted model (T1)
+
+At T1 every request the harness or the system sends is answered by a deterministic responder in the director. The responder is chosen by the request's S1 role (`spikes/s1/REPORT.md`). No upstream socket opens, and no credential is loaded.
+
+| S1 role | Responder |
+|---|---|
+| `replay_main` | the scripted turn at the cursor, through the tool-call compiler, as in S6a |
+| `write_turn` | the content-blind write rule (below) |
+| `probe_main` | the scripted reader's recall call (§1), then the envelope or the first step of the action plan |
+| `compaction`, `summariser`, `extraction` | the extractive stub (below) |
+| `memory_write` | the content-blind write rule. This role is added when the classifier is promoted (R01): S1's background-review marker, and any pre-compaction-flush or session-end marker, map to it instead of `aux` |
+| `title` | the fixed title `Session` |
+| `aux` | an empty assistant message with no tool call |
+| `unknown` | refused, as the director does on every tier |
+
+Embedding requests (an embeddings endpoint on a declared alias) go to the hashed-vector stub.
+
+**The content-blind write rule.** It applies to every write turn, and to every harness- or system-originated memory-write request (DESIGN §6.2's `memory_write`: background review, the pre-compaction flush, session-end hooks).
+- **When the request offers at least one of the system's declared write tools,** the responder makes exactly one call, to the first declared write tool on the system's list (C-6). The call carries the latest user message in that request verbatim, as the tool's content argument. That message is the last user-role message in the harness's own request, and never a director-added suffix.
+- **When the tool documents a per-call length limit,** the content is cut at that limit, by character.
+- **The per-system mapping:**
+  - Hermes native: `memory`, with `action: "add"`, `target: "memory"` and `content`;
+  - Holographic: `fact_store`, with its add action and the content argument;
+  - Mem0 OSS: `mem0_add`, with its content argument.
+  The exact argument names come from each pinned release's tool schema, recorded with the route table.
+- **The tool's answer is not acted on.** A refusal, a full budget or an error is the system's own answer: the ledger records it, and the call is never retried.
+- **Text the model writes** in a write turn is discarded, as on every tier.
+
+The rule cannot see content: every system gets the same call on the same turns. A system whose declared write-tool list is empty gets no write turns (PREREG §10).
+
+**The extractive stub.** One stub serves the compaction, summariser and extraction roles.
+- Its output is built from the request's own message text, in order:
+  - each user and assistant message's text, cut to its first 240 characters;
+  - joined with newlines;
+  - cut to the request's output-token limit, measured with the token estimator (§9). A request with no limit is cut at 4,096 characters.
+- **Where a system parses a structured reply,** the stub fills the declared format with the same text. Mem0 OSS's extraction step gets a fact list with one fact per user message, cut as above, and its update step gets an ADD for every new fact, never UPDATE or DELETE. Each system's formats are recorded in its registry entry.
+
+**The hashed-vector stub.** For text t and dimension D (the system's configured embedding dimension, recorded in its registry entry):
+1. The text is split into lower-case word tokens on Unicode word boundaries.
+2. Each token adds ±1 to one coordinate. The coordinate is the first 8 bytes of sha256(token), read as an unsigned integer, mod D. The sign is the lowest bit of the 9th byte.
+3. The vector is L2-normalised; an empty text gives the zero vector.
+
+Similarity is then lexical overlap. That is crude, model-free and the same for every system.
+
+**Labels.** Every T1 card prints "scripted model: wiring-only".
+- The stubs prove that requests route and that the plumbing holds. They never measure extraction or summary quality.
+- A store that the stubs leave empty or degenerate is reported as found. The wiped-store control is then labelled "uninformative" for that system (§5).
+
+## 3. Stages and the Act label
+
+| Stage (PREREG §2) | What it is at T0 and T1 |
+|---|---|
+| **Remember** | QA items whose evidence crosses only cold restarts and simulated gaps before the probe |
+| **Survive** | QA items whose evidence crosses at least one fault-lite stress before the probe: a compaction, the SIGKILL, or the wiring-only swap (§6) |
+| **Act** | action items, probed at their action point |
+
+The stage of an item follows from the life's schedule, never from its result. The stages are reported separately and never summed.
+
+Act results at T0 and T1 carry the label **"evidence-conditioned scripted action; not an Act judgement"**:
+- PREREG §3 takes the action class from the trace and the end state;
+- a scripted policy's trace measures whether the evidence was available, not what a model would do with it.
+
+The live tiers (v0.2) carry the Act stage proper.
+
+## 4. Stable and volatile result fields
+
+**Stable** fields are everything in `card.json`.
+- **Pins and hashes:** the benchmark, generator, director and scorer commits; the pack and seed hashes; the harness and system artifacts; the route table; the write-turn package; the environment boundary hash; the repository boundary hash.
+- **The masked ledger digest:** sha256 over the stable projection of every ledger record, in canonical order (below).
+- **Per item and per bundle:** the outcome, in integer milli-points (`canon.milli`), with the selected option, the competing-option list and the stage.
+- **Aggregates:** stage and track aggregates, the sensitivity rows (PREREG §3), per-item accuracy, coverage, the controls, and the gate verdict (§6).
+
+Everything in `card.json` is written by `canon.canon`, with no floats.
+
+**Volatile** fields are in `receipt.json`: wall times, latency, load, the busy-marker readings, token counts, spend, store growth in bytes, process ids, ports and temporary paths.
+
+**The stable projection** of a ledger record keeps its role, served kind, cursor position and the sha256 of its canonical request and response bodies. Before that hash is taken, these values are masked:
+- Hermes session ids;
+- tool-call ids that the harness generated;
+- response ids that the harness generated;
+- every wall-clock timestamp field;
+- the run's sandbox root and the director's port, wherever they occur in body text. Each is replaced by a fixed placeholder (`{SANDBOX_ROOT}`, `{DIRECTOR_PORT}`), so a path or port embedded in a tool result does not reach the digest.
+
+Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, or a literal substitution for body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
+
+**Canonical order:** (life, branch, session, cursor turn, role, served kind), then the sha256 of the masked canonical record bytes as the tie-break. The arrival sequence is never used, since concurrent auxiliary calls reorder it.
+
+**The claim:** two T1 runs on the same machine, with the same pin set, produce byte-identical `card.json`. Determinism is claimed only per machine and pin set. SQLite page layout and vector indexes make cross-machine byte identity unlikely, and no claim is made there.
+
+**What determinism needs:**
+- keyed ids (`keyed.py`);
+- a logical-tick simulated clock that stays behind wall time (R05);
+- the masked digest (R02).
+
+The determinism check names the first stable field that differs.
+
+## 5. Verified empty, and the wiped-store control
+
+**Declared surfaces.** Each system's registry entry lists its **declared state surfaces**: every file tree the harness and the system write. Examples:
+- `HERMES_HOME`;
+- Mem0's vector directory and its history database, moved inside the sandbox (S5 finding 2);
+- a server's data directory.
+
+**The fresh-install hash.** A surface's fresh-install hash is sha256 over a canonical listing of its tree, computed after install and configuration and before the first ingest. The listing has one line per path: relative path, mode, size and the sha256 of the content. The only paths left out are those the registry entry declares volatile, such as logs and lock files; each one is listed on the card.
+
+**Verified empty** means every declared surface hashes to its fresh-install hash. A run starts only from verified-empty surfaces (DESIGN §6.8).
+
+**The wiped-store positive control.** An arm identical to the system arm, except at every **wake**: every declared surface is restored from the fresh-install snapshot and verified by hash before the harness starts.
+- **A wake** is any harness start on existing state: the start of every session after the first (each T1 session is a new process, as in S6a), the restart after the SIGKILL, and the start of every probe session.
+- **Its replay is not skipped.** It drives every write path the system has. A surface that the registry failed to declare survives the wipe, and the control then catches it.
+- **Expected result:** every scored item's evidence crosses a wake (§6), so on memory-exclusive bundles this arm must score the no-memory value.
+- **The gate:** the T1 gate must return FAIL on it. If it passes, the run is **invalid**.
+- **Uninformative:** a system whose own arm has zero wake-crossing recall makes the control uninformative. That is disclosed, and it is not a pass.
+
+## 6. T1 composition and the probe budget
+
+**Lives:** one public G1 base life and one public G2 base life, each with 20 sessions of about 5 assistant turns.
+- Each base life B0 has its twin life B1. B1 is replayed in full from session 1. When replay is deterministic, that is identical to forking at the first flipped event. Forking is a v0.2 optimisation.
+- That makes 80 replay sessions per replaying arm.
+
+**Fault-lite points,** the same for every system:
+- **The SIGKILL:** a kill of the harness process at the first turn boundary of session ⌈0.55 × 20⌉ = 11, on B0 and B1, then a cold restart. This is the board rule (PREREG §6) scaled to 20 sessions.
+- **Compaction sprints:** at least 2 per life, one before session 11 and one after it. Each is at least 1.25 × W in history tokens, at the provisional C-5 window W (§9; K02). Compaction then fires inside sessions.
+- **One wiring-only swap:** at the start of session 15, the route table moves the harness's alias from `bicentennial-main` to `bicentennial-swap`. The scripted model serves both aliases identically, so the swap exercises the harness's model-switch path and not a model.
+- **Delivery faults** (DESIGN §6.5) are not in fault-lite, so T1 has no exactly-once invariant (v0.2).
+
+**Checkpoints:** after sessions 10 and 20. One is before the kill and one is after it.
+
+**Placement** (G17):
+- every scored item's evidence lies in an earlier session than its probe, so it crosses at least one wake;
+- at least two scored bundles per life have their evidence in session 1 or 2, so a store whose budget fills early still has wake-crossing items.
+
+**The probe budget** per (life, branch, checkpoint): at most 6 QA items and 2 action items.
+- **The QA items** run in one probe session, in the pack's fixed item order, on a clone of every declared surface that is discarded afterwards.
+  - **Isolation is per checkpoint, not per item** (DESIGN §6.7), and the card says so.
+  - **Carry-over:** an earlier probe's recall result or answer can stay in the session, or be captured by the system's store, and make a later option present. The reader's context is still the one §1 defines, so this is measured, not removed.
+  - **The carry-over diagnostic:** for each QA item, the result records whether its selected option's tokens also occur in an earlier probe exchange of the same session, from the ledger. The card prints the share per system.
+  - **Fixed order:** a run with the same pack gives the same carry-over, so determinism holds. The live tiers keep one clone per item.
+- **Each action item** runs in its own probe session on its own clone, because its plan changes the world.
+- That makes at most 3 probe sessions per (life, branch, checkpoint), and 24 per arm.
+
+**Arms:**
+- the system;
+- the wiped-store control;
+- the no-memory floor, a cached control: the reader on an empty context, computed once per pack.
+
+The oracle-evidence, full-history and naive-RAG columns are cached with the pack. The baselines rule (PREREG §2) puts all four baselines in every table:
+- **naive RAG** at T1 is the cached API-mode control (S09) over the same lives, labelled "cached, API mode";
+- until S09 lands, the column reads "not run in v0.1", and the card discloses that the baseline set is incomplete. No value is invented.
+
+**Also run:** the public regression corpus, and the write-turn audit (R10).
+
+**Forgetting is not exercised at T1.** The scripted model only adds (§2), so no deletion is ever requested.
+- KEEP-FORGET and KEEP-NEIGH items are reported "not exercised at T1" and sit outside the T1 gate. They are never scored as a system failure.
+- T0 exercises forgetting through the adapter contract (§7).
+- A content-blind delete for T1 waits for v0.2: it needs a declared forget plan per system and a forget target that a script can carry without a gold token.
+
+**The T1 gate** is PASS only when all of the following hold:
+- every S05 invariant passes:
+  - recall verbatim after compaction and after the crash, where gold needs verbatim;
+  - the newest correction governs after a restart;
+  - a tool result sits with its call after the crash;
+- no restart-crossing bundle scores below the system's own baseline card;
+- every corpus case meets its expectation;
+- the wiped-store control FAILs.
+
+**Order of evaluation:**
+1. The wiped arm is evaluated on its own invariants, corpus cases and bundles, never on the control condition itself.
+2. The control condition then applies to the system arm only.
+
+A first run has no baseline card. If every other condition holds, it is a labelled conformance PASS.
+
+**Budget:** ≤ 10 min and $0. That is an engineering budget, not a bar (PREREG §6). For scale, take S6a's measured fixed time per Hermes session, about 30 s on a shared machine, and its mean probe session, about 26 s. At those figures, 2 × 80 replay sessions and 2 × 24 probe sessions come to about 100 min run serially, and about 25 min across 4 parallel sandbox roots. Scripted responders remove S6a's upstream time, so the real figure should be lower, but it is not measured. Loop time is measured and published idle and busy, and a miss is disclosed. If the measured T1 misses by more than 2×, v0.2 cuts the probe budget first, then B1's full replay.
+
+## 7. T0 surfaces
+
+- **Packs:** micro-lives of 1-3 sessions per track and ability, from the pack catalogue (G18).
+- **Default mode, memory-layer:**
+  - **API systems** go through the adapter contract (§11), settle included.
+  - **Hermes plug-in systems** go through an in-process memory host. It calls the provider's documented lifecycle hooks, in their documented order, to ingest each scripted turn. The content-blind write rule (§2) fills its write tools, and the reader's recall call uses its read tools.
+  - **Hermes native memory** is driven through its documented agent tools, `memory` and `session_search`, called in process with the arguments an agent would send. That is the surface the agent uses. It exercises storage and retrieval, not the harness's prompt injection, which T1 covers, and the card says so.
+- **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed.
+- **Forgetting:** at each forget-request event, the runner calls `forget(selector)` with the target's locked tokens as the selector.
+  - Each adapter maps the call onto the system's documented deletion surface: Hermes native's `memory` `remove`, Mem0's delete after its own search, Holographic's forget or remove action (C-6).
+  - The forgetting invariant is then checked by byte search of the declared surfaces, beside the KEEP-FORGET and KEEP-NEIGH items.
+- **Scoring:** the scripted reader and the S05 invariants, forgetting included.
+- **Budget:** ≤ 60 s per pack and $0, with no upstream credential loaded.
+- **Outputs:** `junit.xml`, `card.json` and `receipt.json`.
+
+## 8. Exit codes
+
+The T0 and T1 runners use these exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | pass |
+| 1 | fail: the gate is FAIL, or an invariant or corpus case failed |
+| 2 | BLOCKED: benchmark infrastructure failed after its reruns (PREREG §7) |
+| 3 | guard refused: the busy marker, the load guard, a pinned-artifact hash mismatch, `PYTHONHASHSEED` not 0, or a refused system (§12) |
+
+- Any other code means the tool itself failed, and no result exists. For example, `keyed.assert_hashseed` exits 70 when a library process starts without the seed, and an uncaught exception exits 1 by Python's convention. The runners therefore check their own preconditions before work and exit 3.
+- A result file is written only for codes 0-2.
+
+## 9. Windows and the token estimator
+
+- **The developer window W** is the provisional C-5 entry (K02). The C-5 rule is the smallest of 16K, 24K, 32K, 48K and 64K that is at least twice the harness's fixed overhead (system prompt plus tool schemas) on the pinned model.
+  - S6a's figures were measured on a provisional model: 24K at Hermes defaults, and 16K for its 4-tool configuration.
+  - K02 re-measures the frozen T1 toolset's overhead at $0. A recording stub captures the harness's own first request, and the token estimator counts it, until C-1 names the pinned model's tokenizer.
+- **The generation-time estimator** is a pinned offline BPE: `o200k_base`, provisional until C-1 names the pinned model's encoding.
+  - Its rank file is vendored with its sha256.
+  - It is used only to size sprints, windows and stub cuts.
+  - Every reported token count comes from the ledger's usage fields or is labelled an estimate.
+  - The card names the estimator and its hash.
+
+## 10. Canary placement
+
+- **Where it goes:** the canary GUID (`CANARY`) sits in the header or manifest field of every public data file under `packs/`, `corpus/` and `schemas/fixtures/`. `scripts/public_check.py` enforces this.
+- **Where it never goes:** text that an agent can see. The renderer never copies a header or manifest field into a rendered turn, and a build check refuses a rendered life that contains the GUID. If a store or a model output does contain it, it came from contamination and not from a run.
+
+## 11. External systems in v0.1
+
+**Selection.** Ring 0 v0.1 runs on Hermes native memory and two external systems. An external system qualifies by mechanics only:
+- an OSI-approved licence;
+- a pinned released artifact;
+- $0 to run locally;
+- all of its state isolatable in declared surfaces inside the sandbox;
+- every model call of its own (extraction, summary, embeddings) routable to the director;
+- not LCM-X.
+
+**The choices,** from the S5 survey:
+- **Holographic** (MIT; a Hermes provider with no model calls of its own; `memory_store.db`) for the class with no model calls.
+- **Mem0 OSS** (Apache-2.0; Hermes OSS mode). It covers the class with its own extraction and embedding calls, all served by the director's stubs, with its vector directory and history database moved into the sandbox and telemetry off.
+- **Fallback:** **Hindsight local** (MIT; embedded Postgres; settle, since `retain_async` is on by default). It is used if Mem0 OSS cannot run under the stubs, or its store is degenerate under them.
+
+Each route deviation is disclosed. For Mem0 that is the hosted extraction model replaced by the director's stub.
+
+**The adapter contract** gains one step: `settle`, before every checkpoint and every probe, for systems whose writes become searchable only after background work (S5 finding 1; `docs/ERRATA-v2.2.md`).
+- **Settled** means the system was observed to report its queue drained, within its declared bound.
+- **Reaching the bound without that observation** is a SYSTEM_FAILURE for the items that settle precedes, even if the settle call itself returns normally. No probe reads a store that has not settled.
+
+**What this selection is not.** It is not C-9. It confers no roster place, ranks nothing, and is not the public adoption metric.
+
+## 12. LCM-X
+
+- LCM-X is in the system registry, as its Hermes plug-in release.
+- The benchmark session never runs it at Ring 0. The runners refuse it under the benchmark operator's identity, with exit 3.
+- LCM-X's own lanes may run the public kit, on equal terms with every other system (PREREG §10, the firewall).
+- No unit configures, tunes or advises on LCM-X.
+
+## References
+
+- PREREG-v0.4:
+  - §2: stages, the estimand and the bundle minimum;
+  - §3: action, QA and Tuesday scoring;
+  - §6 l.383-409: Ring 0, the fault rule and the regression corpus;
+  - §7: failure classes;
+  - §10: write turns, the declared tool lists and the firewall;
+  - Freezes: C-5, C-6 and C-7.
+- DESIGN v2.2:
+  - §4.4: locked tokens;
+  - §6.2 and §6.2a: the director and write turns;
+  - §6.2d: the tool-call compiler;
+  - §6.5: faults;
+  - §6.7: probe isolation;
+  - §6.8: hygiene;
+  - §6.9: adapters;
+  - §7.3a: stages;
+  - §7.5: answer types;
+  - §9.1: the developer rings.
+- Spikes:
+  - S1: request roles;
+  - S5: surfaces, findings 1-3;
+  - S6a: harness overhead, fixed times and the in-process driver;
+  - S7 Part A: write-turn readback.
