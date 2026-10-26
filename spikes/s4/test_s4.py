@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import sys
 import threading
@@ -106,6 +107,76 @@ def test_foreign_credential_stops_and_is_never_forwarded(up, tmp_path):
     assert ledger(tmp_path)[0]["credential"] == "foreign"
     status, _, _, _ = d.serve("POST", "/v1/messages", HDRS, msg())  # the stop file now refuses everything
     assert status == 503 and up.calls == []
+
+
+@pytest.mark.parametrize("name,value", [("cookie", "session=abc"), ("Cookie", "placeholder"),
+                                        ("proxy-authorization", "Bearer placeholder"),
+                                        ("anthropic-api-key", FOREIGN)])
+def test_every_credential_header_kind_stops(up, tmp_path, name, value):
+    d = director(tmp_path)
+    status, _, _, _ = d.serve("POST", "/v1/messages", dict(HDRS, **{name: value}), msg())
+    assert status == 401 and up.calls == [] and (tmp_path / "STOP").exists()
+    assert ledger(tmp_path)[0]["credential"] == "foreign"
+
+
+def test_placeholder_anthropic_api_key_is_served(up, tmp_path):
+    d = director(tmp_path)
+    status, _, _, _ = d.serve("POST", "/v1/messages", dict(HDRS, **{"anthropic-api-key": "placeholder"}), msg())
+    assert status == 200 and len(up.calls) == 1
+
+
+def test_duplicate_authorization_headers_are_all_checked(up, tmp_path):
+    d = director(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), ad.make_handler(d))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    body = msg()
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+    c.putrequest("POST", "/v1/messages")
+    for k, v in (("Authorization", f"Bearer {FOREIGN}"), ("Authorization", "Bearer placeholder"),
+                 ("Content-Type", "application/json"), ("Content-Length", str(len(body)))):
+        c.putheader(k, v)
+    c.endheaders(body)
+    r = c.getresponse()
+    r.read()
+    srv.shutdown()
+    assert r.status == 401 and up.calls == [] and (tmp_path / "STOP").exists()
+
+
+class Fatal(Exception):
+    pass
+
+
+@pytest.fixture
+def fatal(monkeypatch):
+    def boom(code):
+        raise Fatal(code)
+    monkeypatch.setattr(ad.os, "_exit", boom)
+
+
+def test_key_in_a_reply_stops_before_the_reply_is_written(up, tmp_path, fatal):
+    d = director(tmp_path)  # no --bodies-dir, the default
+    up.replies = [(200, json.dumps({"model": "glm-5.3", "content": [{"type": "text", "text": UP_KEY}],
+                                    "usage": {}}).encode())]
+    with pytest.raises(Fatal):
+        d.serve("POST", "/v1/messages", HDRS, msg())
+    assert not (tmp_path / "ledger.jsonl").exists()
+
+
+def test_key_in_a_stripped_field_name_never_reaches_the_strip_file(up, tmp_path, fatal):
+    d = director(tmp_path)
+    up.replies = [(400, json.dumps({"error": {"message": f"unknown field {UP_KEY}"}}).encode())]
+    with pytest.raises(Fatal):
+        d.serve("POST", "/v1/messages", HDRS, msg(**{UP_KEY: 1}))
+    assert not (tmp_path / "strip.json").exists()
+
+
+def test_metadata_user_id_dropped_unless_kept(up, tmp_path):
+    d = director(tmp_path)
+    d.serve("POST", "/v1/messages", HDRS, msg(metadata={"user_id": "uid-123"}))
+    d.serve("POST", "/v1/messages", HDRS, msg(metadata={"user_id": "uid-123", "other": 1}))
+    assert "metadata" not in up.calls[0]["body"] and up.calls[1]["body"]["metadata"] == {"other": 1}
+    director(tmp_path, "--keep-user-id").serve("POST", "/v1/messages", HDRS, msg(metadata={"user_id": "uid-123"}))
+    assert up.calls[2]["body"]["metadata"] == {"user_id": "uid-123"}
 
 
 def test_ledger_holds_no_header_value_or_key(up, tmp_path):

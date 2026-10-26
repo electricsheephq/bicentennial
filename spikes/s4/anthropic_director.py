@@ -47,12 +47,21 @@ def err_body(status: int, msg: str) -> bytes:
                                                   "message": f"director: {msg}"}}).encode()
 
 
-def credential_class(headers: dict) -> str:
-    """placeholder, absent or foreign; the value itself is never returned or stored."""
-    vals = [v for k, v in headers.items() if k.lower() in ("x-api-key", "authorization")]
+CRED = ("x-api-key", "authorization", "anthropic-api-key", "proxy-authorization", "cookie")
+NO_PLACEHOLDER = ("proxy-authorization", "cookie")  # any value of these is foreign
+
+
+def header_pairs(headers) -> list[tuple[str, str]]:
+    """Every (name, value) occurrence; a dict has one per name, an HTTP message may repeat a name."""
+    return list(headers.items()) if isinstance(headers, dict) else list(headers)
+
+
+def credential_class(headers) -> str:
+    """placeholder, absent or foreign, over every occurrence; the value itself is never returned or stored."""
+    vals = [(k.lower(), v.strip()) for k, v in header_pairs(headers) if k.lower() in CRED]
     if not vals:
         return "absent"
-    ok = all(v.strip() in (PLACEHOLDER, f"Bearer {PLACEHOLDER}") for v in vals)
+    ok = all(k not in NO_PLACEHOLDER and v in (PLACEHOLDER, f"Bearer {PLACEHOLDER}") for k, v in vals)
     return "placeholder" if ok else "foreign"
 
 
@@ -174,6 +183,11 @@ class Director:
         while True:
             wire = {k: v for k, v in body.items() if k not in self.strip}
             wire["model"] = self.a.model
+            if isinstance(wire.get("metadata"), dict) and not self.a.keep_user_id:
+                md = {k: v for k, v in wire["metadata"].items() if k != "user_id"}
+                wire.pop("metadata")
+                if md:
+                    wire["metadata"] = md
             rec["stripped"] = sorted(set(body) & self.strip)
             if self.stop_file.exists():
                 return 503, "application/json", err_body(503, "stopped")
@@ -195,7 +209,7 @@ class Director:
                     att["fields"] = sorted(new)
                     with self.lock:
                         self.strip |= new
-                        self.strip_file.write_text(json.dumps(sorted(self.strip)))
+                        self.strip_file.write_bytes(self._guard(json.dumps(sorted(self.strip)).encode()))
                     continue
             if status in (429, 503, 529) and waits:
                 att["category"] = "retry"
@@ -215,8 +229,8 @@ class Director:
             nth = self.n_messages
         cred = credential_class(headers)
         rec = {"seq": seq, "run": self.a.run, "t": time.time(), "method": method, "path": base,
-               "query_keys": sorted(q.split("=")[0] for q in query.split("&") if q),
-               "credential": cred, "dropped_header_names": sorted(k.lower() for k in headers if DROP.match(k)),
+               "query_keys": sorted(q.split("=")[0] for q in query.split("&") if q), "credential": cred,
+               "dropped_header_names": sorted({k.lower() for k, _ in header_pairs(headers) if DROP.match(k)}),
                "upstream": []}
         t0, extra = time.monotonic(), {}
         if cred == "foreign":  # stop condition: never forwarded, and the director stops serving
@@ -249,6 +263,7 @@ class Director:
                         status = status if status > 0 else 502
                         ctype, data = "application/json", err_body(status, f"upstream refused ({status})")
         rec.update(status=status, t_ms=round((time.monotonic() - t0) * 1000))
+        self._guard(ctype.encode() + b"\n" + data)  # the reply is a write too
         self.log(rec)
         return status, ctype, data, extra
 
@@ -262,7 +277,7 @@ def make_handler(d: Director):
 
         def _do(self):
             raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-            status, ctype, data, extra = d.serve(self.command, self.path, dict(self.headers.items()), raw)
+            status, ctype, data, extra = d.serve(self.command, self.path, self.headers.items(), raw)
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -292,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--retry-after", type=int, default=3)
     p.add_argument("--backoff-scale", type=float, default=1.0)
     p.add_argument("--timeout", type=float, default=300)
+    p.add_argument("--keep-user-id", action="store_true", help="forward metadata.user_id (dropped by default)")
     return p
 
 
