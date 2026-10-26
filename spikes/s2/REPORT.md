@@ -2,14 +2,14 @@
 
 ## Claim
 
-**Claim class: `advisory`.** Hermes (0.22.2, in-process `sitecustomize` shim) and Claude Code (the Node build 2.1.112 with `NODE_OPTIONS=--require`, and the pinned native 2.1.306 with `BUN_OPTIONS=--preload`) both see a simulated 3-day gap consistently in the prompt date and in every timestamp they write themselves. Three kinds of value stay on wall time: kernel file times, clocks read by non-Python and non-Node children, and engine-internal clock reads. Hermes' wall-time guards behave correctly only while simulated time stays behind wall time. Two of the four guards probed trip when simulated time runs ahead of it.
+**Claim class: `advisory`.** Hermes (0.22.2, in-process `sitecustomize` shim) and Claude Code (the Node build 2.1.112 with `NODE_OPTIONS=--require`, and the pinned native 2.1.306 with `BUN_OPTIONS=--preload`) both see a simulated 3-day gap consistently in the prompt date and in the timestamps they generate from the Python or Node clock. Three kinds of value stay on wall time: kernel-sourced values (file times, including mtimes recorded as data, and process start times), clocks read by non-Python and non-Node children, and engine-internal clock reads. Hermes' wall-time guards behave correctly only while simulated time stays behind wall time. Two of the four guards probed trip when simulated time runs ahead of it.
 
 ## Method
 
 - **Clock file.** The director writes `clock.json`, `{"sim_start", "wall_anchor", "rate"}`, before each session. Simulated time is `sim_start + (wall_now - wall_anchor) * rate`, so it ticks normally inside a session. Both shims re-read the file when it changes. Both exit with code 70 instead of falling back to wall time when the file is set but unreadable. With the variable unset, both do nothing.
-- **Python shim** (`clockshim/sitecustomize.py`, loaded through `PYTHONPATH`). It patches the functions the spec names, plus the no-argument forms of `ctime`, `asctime` and `strftime`. `datetime.date` and `datetime.datetime` are replaced by subclasses whose metaclass keeps `isinstance` true for C-made instances. Pickle and `repr` keep the stdlib names. The patched time functions do not bind as class attributes, so `logging.Formatter.converter` still works. `time.monotonic`, `perf_counter`, `process_time` and asyncio loop time are deliberately left alone: they measure durations, timeouts depend on them, and the jump happens between processes.
+- **Python shim** (`clockshim/sitecustomize.py`, loaded through `PYTHONPATH`). It patches the functions the spec names, plus the no-argument forms of `ctime`, `asctime` and `strftime`. `datetime.date` and `datetime.datetime` are replaced by subclasses whose metaclass keeps `isinstance` true for C-made instances. Pickle and `repr` keep the stdlib names. Known limit: instances made by the original C classes (for example by a class reference taken before the shim installs) keep `isinstance` but no longer pickle, because `datetime.datetime` is now a different object; instances the shim's classes create pickle and round-trip. A user subclass of `datetime.datetime` keeps ordinary `isinstance` semantics. A self-test asserts all three. The patched time functions do not bind as class attributes, so `logging.Formatter.converter` still works. `time.monotonic`, `perf_counter`, `process_time` and asyncio loop time are deliberately left alone: they measure durations, timeouts depend on them, and the jump happens between processes.
 - **Node shim** (`clockshim/clock_shim.cjs`). It patches `Date.now()`, `new Date()` with no arguments, and `Date()` called as a function. The replacement constructor shares `Date.prototype`, so `instanceof` and subclassing still work. `performance.now` is left alone.
-- **Model stub** (`stub/recording_stub.py`). It binds 127.0.0.1 only and records every request with credential headers dropped. It answers OpenAI chat completions (JSON or SSE) and Anthropic messages (JSON or SSE) with canned replies. Directive lines in the user turn (`STUB_MEMORY`, `STUB_RUN`, `STUB_TOOL`) become tool calls, so the harness writes memory and runs child processes. No upstream model was called.
+- **Model stub** (`stub/recording_stub.py`). It binds 127.0.0.1 only and records every request with credential headers dropped. It answers OpenAI chat completions (JSON or SSE) and Anthropic messages (JSON or SSE) with canned replies. Directive lines in the user turn (`STUB_MEMORY`, `STUB_RUN`, `STUB_TOOL`) become tool calls, so the harness writes memory and runs child processes. Every model response came from the stub.
 - **Hermes runs** (`hermes/run_all.sh`). There are four runs, each with two fresh `hermes chat -q` sessions 3 days apart in a fresh `HERMES_HOME`. Outbound HTTP(S) goes to a closed local proxy port.
   - `control`: no shim (wall time).
   - `past-default`: t0 = 2025-03-03T09:00Z, default config.
@@ -22,7 +22,7 @@
   - `node-past` and `node-future`: the Node build with `NODE_OPTIONS`, at the same two t0 values as Hermes;
   - `native-node-options`: the native build with `NODE_OPTIONS`;
   - `native-bun-preload`: the native build with `BUN_OPTIONS=--preload`.
-- **Shim self-tests.** `tests/test_clockshims.py`, run with `python3 -m pytest spikes/s2/tests`, has 9 cases. The 9 pass on CPython 3.9, and the shim was also smoke-checked by hand on 3.14, the Hermes interpreter.
+- **Shim self-tests.** `tests/test_clockshims.py`, run with `python3 -m pytest spikes/s2/tests`, has 11 cases. In the closeout re-run, all 11 pass on CPython 3.9.6, and all 11 pass again with `S2_CHILD_PYTHON` set to the Hermes interpreter (CPython 3.14.9), so the shim runs in 3.14 children. The saved output stays with the run evidence, outside the repo. The earlier hand smoke on 3.14 left no saved output.
 
 Aggregate numbers are in [`results/summary.json`](results/summary.json). Ledgers, bodies and logs stay out of the repo.
 
@@ -58,7 +58,7 @@ Aggregate numbers are in [`results/summary.json`](results/summary.json). Ledgers
 
 The only wall values in `state.db` are in `messages.content`: tool output that quotes the children's clocks. No `CURRENT_TIMESTAMP`, `'now'` or `unixepoch()` appears in any stored schema. No other database was created.
 
-**Hermes files**: simulated in every shimmed run.
+**Hermes files**: the files below carry simulated timestamps in every shimmed run. `.skills_prompt_snapshot.json` (`mtime_ns`) and `spawn-ledger.json` `create_time` carry wall values (see the table below).
 - `logs/agent.log` and `logs/errors.log`: 134 and 5 timestamps;
 - `source-checks/*.json` (the source-update check's `ts`);
 - `cache/local_endpoint_probes.json` (a TTL cache);
@@ -68,7 +68,7 @@ The only wall values in `state.db` are in `messages.content`: tool output that q
 
 Memory (`memories/MEMORY.md`) holds no timestamp in its content.
 
-**Claude Code transcripts** (`projects/<cwd>/<session>.jsonl`, n = 2 per run). In the shimmed runs, every record `timestamp` is simulated: 9 + 9 in the Node build and 22 + 22 in the native build. The native build also records `attachment.date` and its own `api-request` records. `.claude.json` (`firstStartTime` and similar) is simulated as well. The wall values in transcripts are the quoted tool output only. In `native-node-options` the transcripts and `.claude.json` are on wall time (48 wall values).
+**Claude Code transcripts** (`projects/<cwd>/<session>.jsonl`, n = 2 per run). In the shimmed runs, every record `timestamp` is simulated. Top-level record `timestamp` fields number 7 + 7 per Node-build run and 21 + 21 in the native build. The checker's scan also counts nested dates, such as quoted child records, giving the 9 + 9 and 22 + 22 simulated values (session 1 window + session 2 window) in `results/summary.json`. The native build also records `attachment.date` and its own `api-request` records. `.claude.json` (`firstStartTime` and similar) is simulated as well. The wall values in transcripts are the quoted tool output only. In `native-node-options` the transcripts and `.claude.json` are on wall time (48 wall values).
 
 ### Timestamps the shims cannot reach
 
@@ -81,7 +81,7 @@ Memory (`memories/MEMORY.md`) holds no timestamp in its content.
 | Hermes `execute_code` sandbox, default config | The sandbox's env scrub drops `BICENTENNIAL_CLOCK_FILE` (`PYTHONPATH` survives) | wall in `past-default` (1/1) | Add `terminal.env_passthrough: [BICENTENNIAL_CLOCK_FILE]` to the life's config. With it, the reading is simulated in `past` and `future` (2/2). |
 | Python children | Hermes terminal tool, local backend: `PYTHONPATH` and the clock variable are inherited | simulated (2/2 per run) | None needed for the local backend. Docker, SSH and other backends were not tested. |
 | Node children of Claude Code | `node -e` in the Bash tool | simulated under `NODE_OPTIONS` (2/2). Wall in `native-bun-preload` (2/2), where only `BUN_OPTIONS` was set | Set both `NODE_OPTIONS` and `BUN_OPTIONS`. |
-| SQLite `'now'` | One site in the pinned Hermes source: `hermes_cli/session_recovery.py:956` (`CAST(strftime('%s','now') AS REAL)`), on the out-of-window repair path only; not reached in any run | wall if reached | The shim can override `strftime`, `datetime`, `julianday`, `date`, `time` and `unixepoch` per connection with `create_function`. Checked: this also covers `DEFAULT (strftime(…))`. The `CURRENT_TIMESTAMP`, `CURRENT_DATE` and `CURRENT_TIME` keywords cannot be overridden and need a schema-side rewrite. None exists in Hermes today. |
+| SQLite `'now'` | One site in the pinned Hermes source: `hermes_cli/session_recovery.py:956` (`CAST(strftime('%s','now') AS REAL)`), on the out-of-window repair path only; not reached in any run | wall if reached | The shim can override `strftime`, `datetime`, `julianday`, `date`, `time` and `unixepoch` per connection with `create_function`. Checked: this also covers `DEFAULT (strftime(…))`. The `CURRENT_TIMESTAMP`, `CURRENT_DATE` and `CURRENT_TIME` keywords can be overridden the same way, by zero-argument functions of those names (checked on SQLite 3.54.0). No measured schema uses any of them. |
 | Engine-internal clock reads in Node | `Intl.DateTimeFormat#format()` with no date, and `performance.timeOrigin` | wall | Disclose. Not seen in a captured prompt. |
 | Peer timestamps | The stub's own `created` fields (wall) | wall | Not stored by either harness in these runs. A real provider's dates are out of scope (stub only). |
 
@@ -96,15 +96,15 @@ Memory (`memories/MEMORY.md`) holds no timestamp in its content.
 | `prune_scratch_dir`, 24 h idle | sim now vs kernel mtimes | fresh entry kept; backdated entry pruned | fresh entry kept; entry backdated with sim-based `utime` pruned | **fresh entry deleted** (A and A+3d) |
 | model-metadata cache age | sim now vs kernel mtime | 0.0 s | negative, so `None` (freshness unknown) | 11,167,071 s (129 days): always stale |
 
-- **A 3-day jump alone trips none of these.** The 7-day curator interval sees the jump correctly. Trips depend on the sign of (sim − wall), because these guards mix simulated time with kernel file times.
+- **A 3-day jump alone trips none of the four guards probed.** The 7-day curator interval sees the jump correctly. Only the curator interval was called before and after a jump in one process (A, A+3d, A+8d). Lock takeover and scratch pruning were called at A and A+3d with fresh fixtures each time. The metadata cache age was called once, after the last jump, so it has no before/after pair. Trips depend on the sign of (sim − wall), because these guards mix simulated time with kernel file times.
 - **Static inventory.** The pinned Hermes source has 31 lines in 28 files that compare a kernel file time with a wall reader on the same line. Among them are the curator, model-metadata, models.dev, plugin-catalog, skills-hub, update-lock and runtime-state caches and locks. Comparisons split across lines, such as the scratch prune, are not counted, so this is a lower bound. All 1,142 monotonic-clock lines (timeouts, in-process idle timers) are unaffected by design: they never see a jump between processes.
-- **Not exercised** (the gateway was not run): gateway session reset, the cron ticker, and the terminal and browser inactivity reapers. Each reads `time.time()` or `hermes_time.now()` against simulated stored values, so in a long-lived gateway a jump would act as real elapsed time.
+- **Not exercised dynamically:** the rest of the static inventory above, every Claude Code guard, and (the gateway was not run) gateway session reset, the cron ticker, and the terminal and browser inactivity reapers. The gateway guards each read `time.time()` or `hermes_time.now()` against simulated stored values, so in a long-lived gateway a jump would act as real elapsed time.
 
 **Claude Code (static, from the shipped Node bundle; not probed function by function):**
 - Transcript retention (`cleanupPeriodDays`, default 30) computes its cutoff from `Date.now()`.
 - The update lock and the deep-link registration cooldown compare `Date.now()` with file `mtimeMs`.
 - In `node-future` (sim 126 days ahead) both transcripts survived the second session (2/2). The retention cleanup did not delete the 3-day-old session in `-p` mode.
-- **One outbound connection.** In `node-future` session 2 only, the socket monitor saw one connection to an Anthropic front-end address on port 443, even with non-essential traffic disabled. Every other session showed 0 (9/10). All model traffic went to the stub (4/4 message requests), and the only key present was the placeholder. The trigger was not identified: a cache or cooldown judged stale under the simulated-ahead clock is the likely class.
+- **One non-loopback endpoint observed.** In `node-future` session 2 only, the socket monitor observed one non-loopback endpoint on port 443, even with non-essential traffic disabled. Its address block was read as an Anthropic front end at run time; the endpoint string stays in the local run evidence and is not in the committed aggregate. Every other session showed 0 (9/10). The monitor samples `lsof` about every 0.3 s and blocks nothing, so a zero means no endpoint was observed, not that none opened. The stub recorded the 4/4 expected message requests, and the only key present was the placeholder. The trigger was not identified: a cache or cooldown judged stale under the simulated-ahead clock is the likely class.
 
 ### Recommendations for the director (advisory)
 
@@ -117,6 +117,8 @@ Memory (`memories/MEMORY.md`) holds no timestamp in its content.
 ## Deviations and incidents
 
 - **The pinned 2.1.306 is not a Node build.** On npm, `@anthropic-ai/claude-code@2.1.306` ships `bin/claude.exe`, a native executable built on Bun 1.4.4, plus a Node wrapper that only spawns it. The last version whose `bin` is `cli.js` is **2.1.112**, so the Node-shim runs use 2.1.112 and the native 2.1.306 runs test `NODE_OPTIONS` (ignored) and `BUN_OPTIONS=--preload` (works).
+- **The Hermes child environment was not an allow-list.** `run_hermes.py` passed the parent environment minus `HERMES_`, `OPENAI_`, `ANTHROPIC_` and `OPENROUTER_` variables, with the real `HOME`; only `HERMES_HOME` was fresh. The model was the stub, so the only tool calls were its scripted ones (a memory write, the `date` and Python probes, and one `execute_code`). The Claude Code runner already used an allow-list and an isolated `HOME`. A future Hermes runner should do the same; the measured runner is left as run.
+- **Runner and shim corrections after the runs.** The closeout bounded the wait after a killed Claude Code session, recorded a Hermes session timeout in `run.json` instead of aborting, and stopped the stub on a startup failure. No session timed out (18/18 exited 0), so the measured runner path is unchanged. It also made the Python shim's clock reload all-or-nothing (a bad rewrite keeps the last reading) and limited the metaclass `isinstance` shortcut to the two shim classes. The measured runs used the earlier shim; neither change was re-measured in a harness run.
 - **Hermes outbound traffic was blocked differently.** Hermes reached the outside only through a blackhole proxy. Claude Code could not use one, because `HTTPS_PROXY` makes it fail to reach even the loopback stub. It ran with the socket monitor instead.
 - **A debug run read the real memory file.** An early debug run had its working directory under the user's home directory. Claude Code loads `<ancestor>/.claude/CLAUDE.md` for every ancestor of the working directory, whatever `HOME` and `CLAUDE_CONFIG_DIR` say, so the real user memory file was read and reached only the local stub's ledger. That ledger and the debug evidence were deleted. No credential was involved.
   - All reported runs use a working directory under the per-user temporary directory, whose ancestors hold no `.claude` directory.
@@ -125,7 +127,7 @@ Memory (`memories/MEMORY.md`) holds no timestamp in its content.
 ## What is deferred
 
 - Gateway-mode guards (session reset, cron ticker, inactivity reapers), and a long-lived process that spans a jump in place. The shim supports one: it re-reads `clock.json`, and the probe exercises the re-read.
-- The SQLite function override is not built into the shim, because Hermes has no reachable `'now'` today.
+- The SQLite function override is not built into the shim, because Hermes has no reachable `'now'` and no measured schema uses the `CURRENT_*` keywords.
 - Docker, SSH and other terminal backends. The Hermes desktop and TUI (Node) front ends.
 - The cause of the one outbound Claude Code connection under a sim-ahead clock, and Claude Code guards probed function by function.
 - Codex (needs a VM). Every memory plug-in's own clocks, which are checked when each plug-in is onboarded.

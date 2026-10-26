@@ -73,7 +73,11 @@ def main():
         if port_file.exists() and port_file.read_text().strip():
             break
         time.sleep(0.1)
-    port = int(port_file.read_text())
+    try:
+        port = int(port_file.read_text())
+    except (OSError, ValueError):
+        stub.kill()
+        raise
     (home / "config.yaml").write_text(
         "model:\n  provider: custom\n  default: stub-model\n"
         f"  base_url: http://127.0.0.1:{port}/v1\n  api_key: placeholder\n"
@@ -98,9 +102,15 @@ def main():
             if not a.no_shim:
                 write_clock(clock, sim_start)
             wall0 = time.time()
-            proc = subprocess.run(NICE + [str(hermes_dir / ".venv" / "bin" / "python"), str(hermes_dir / "hermes"),
-                                          "chat", "-Q", "--yolo", "-q", prompt],
-                                  cwd=home, env=env, capture_output=True, text=True, check=False, timeout=a.timeout)
+            cmd = NICE + [str(hermes_dir / ".venv" / "bin" / "python"), str(hermes_dir / "hermes"),
+                          "chat", "-Q", "--yolo", "-q", prompt]
+            try:
+                proc = subprocess.run(cmd, cwd=home, env=env, capture_output=True, text=True, check=False,
+                                      timeout=a.timeout)
+            except subprocess.TimeoutExpired as exc:  # record the timeout and keep run.json writable
+                def _text(v):
+                    return v.decode("utf-8", "replace") if isinstance(v, bytes) else (v or "")
+                proc = subprocess.CompletedProcess(cmd, "timeout", _text(exc.stdout), _text(exc.stderr))
             wall1 = time.time()
             (ev / f"session{i + 1}.stdout").write_text(proc.stdout)
             (ev / f"session{i + 1}.stderr").write_text(proc.stderr)
@@ -114,7 +124,10 @@ def main():
             time.sleep(1.0)
     finally:
         stub.terminate()
-        stub.wait(timeout=10)
+        try:
+            stub.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            stub.kill()
     (ev / "run.json").write_text(json.dumps(run, indent=2))
     if clock.exists():
         shutil.copy(clock, ev / "clock.last.json")

@@ -50,9 +50,7 @@ class _Clock:
     def __init__(self, path):
         self.path = path
         self.mtime_ns = None
-        self.sim_start = 0.0
-        self.wall_anchor = 0.0
-        self.rate = 1.0
+        self.state = (0.0, 0.0, 1.0)  # (sim_start, wall_anchor, rate)
         self.next_check = 0.0
         self.load()
 
@@ -60,9 +58,10 @@ class _Clock:
         st = _os.stat(self.path)
         with open(self.path, encoding="utf-8") as fh:
             data = _json.load(fh)
-        self.sim_start = float(data["sim_start"])
-        self.wall_anchor = float(data["wall_anchor"])
-        self.rate = float(data.get("rate", 1.0))
+        state = (float(data["sim_start"]), float(data["wall_anchor"]), float(data.get("rate", 1.0)))
+        # One attribute store: a concurrent now() sees the old or the new reading, never a mix,
+        # and a bad file leaves the old reading intact.
+        self.state = state
         self.mtime_ns = st.st_mtime_ns
 
     def refresh(self):
@@ -74,12 +73,13 @@ class _Clock:
         try:
             if _os.stat(self.path).st_mtime_ns != self.mtime_ns:
                 self.load()
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, TypeError):
             pass  # keep the last good reading; startup already proved the file valid
 
     def now(self):
         self.refresh()
-        return self.sim_start + (_real_time() - self.wall_anchor) * self.rate
+        sim_start, wall_anchor, rate = self.state
+        return sim_start + (_real_time() - wall_anchor) * rate
 
 
 class _Unbound:
@@ -131,12 +131,17 @@ def _install(clock):
 
     class _DateMeta(type(_RealDate)):
         # Objects built by C code (sqlite3, zoneinfo, arithmetic) are real date/datetime
-        # instances; keep isinstance(x, datetime.datetime) true for them.
+        # instances; keep isinstance(x, datetime.datetime) true for them. Only the two shim
+        # classes get this; a user subclass of them keeps ordinary isinstance semantics.
         def __instancecheck__(cls, obj):
-            return isinstance(obj, cls.__real__)
+            if "__real__" in cls.__dict__:
+                return isinstance(obj, cls.__real__)
+            return super().__instancecheck__(obj)
 
         def __subclasscheck__(cls, sub):
-            return issubclass(sub, cls.__real__)
+            if "__real__" in cls.__dict__:
+                return issubclass(sub, cls.__real__)
+            return super().__subclasscheck__(sub)
 
     class SimDate(_RealDate, metaclass=_DateMeta):
         __real__ = _RealDate
@@ -170,7 +175,9 @@ def _install(clock):
             return aware.replace(tzinfo=None)
 
     # Pickle and repr resolve these by name, so instances round-trip as datetime.datetime /
-    # datetime.date and load as the real classes in an unshimmed process.
+    # datetime.date and load as the real classes in an unshimmed process. Known limit: an
+    # instance made by the original C classes (sqlite3, zoneinfo, an import taken before the
+    # shim) no longer pickles, because datetime.datetime is now a different object.
     for cls, name in ((SimDate, "date"), (SimDatetime, "datetime")):
         cls.__name__ = cls.__qualname__ = name
         cls.__module__ = "datetime"

@@ -130,7 +130,10 @@ def main():
                 out, err = proc.communicate(timeout=a.timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                out, err = proc.communicate()
+                try:  # orphaned descendants can hold the pipes open; do not block the batch on them
+                    out, err = proc.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    out, err = "", "killed; pipes still held by orphaned child processes"
             stop.set()
             mon.join(timeout=5)
             proc.stdout, proc.stderr = out, err

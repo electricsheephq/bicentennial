@@ -1,6 +1,8 @@
 """Self-checks for the S2 clock shims (no harness needed). Run: python3 -m pytest spikes/s2/tests -q
 
 Each case runs a fresh interpreter with the shim, so nothing leaks into the test process.
+S2_CHILD_PYTHON picks that interpreter (default: the one running pytest), so the shim can be
+checked on another Python without installing pytest there.
 The Node cases are skipped when ``node`` is not on PATH.
 """
 
@@ -16,6 +18,7 @@ import pytest
 
 SHIM_DIR = Path(__file__).resolve().parent.parent / "clockshim"
 SIM = 1740992400.0  # 2025-03-03T09:00:00Z
+CHILD_PYTHON = os.environ.get("S2_CHILD_PYTHON") or sys.executable
 
 
 def _clock(tmp_path, sim=SIM):
@@ -27,7 +30,7 @@ def _clock(tmp_path, sim=SIM):
 def _py(code, clock, extra_env=None):
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "BICENTENNIAL_CLOCK_FILE")}
     env.update({"PYTHONPATH": str(SHIM_DIR), "BICENTENNIAL_CLOCK_FILE": str(clock)}, **(extra_env or {}))
-    return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=False, timeout=60)
+    return subprocess.run([CHILD_PYTHON, "-c", code], env=env, capture_output=True, text=True, check=False, timeout=60)
 
 
 def test_wall_readers_are_simulated(tmp_path):
@@ -64,6 +67,37 @@ def test_datetime_identity_pickle_and_logging(tmp_path):
     assert r.stdout.startswith("True"), r.stdout + r.stderr
 
 
+def test_pickle_limit_and_subclass_isinstance(tmp_path):
+    # Documented limit (REPORT.md): instances made by the original C classes keep isinstance
+    # but no longer pickle; shim-made instances do. A user subclass keeps ordinary isinstance.
+    code = ("import datetime as d, pickle\n"
+            "RD, RDate = d.datetime.__bases__[0], d.date.__bases__[0]\n"
+            "def pk(o):\n"
+            "    try:\n"
+            "        return pickle.loads(pickle.dumps(o)) == o\n"
+            "    except pickle.PicklingError:\n"
+            "        return False\n"
+            "class MyDT(d.datetime): pass\n"
+            "c_dt, c_date = RD.now(), RDate.today()\n"
+            "print([isinstance(c_dt, d.datetime), isinstance(c_date, d.date), pk(c_dt), pk(c_date),\n"
+            "       pk(d.datetime.now()), pk(d.date.today()),\n"
+            "       isinstance(d.datetime.now(), MyDT), isinstance(MyDT.now(), MyDT), issubclass(RD, MyDT)])")
+    r = _py(code, _clock(tmp_path))
+    assert r.stdout.strip() == "[True, True, False, False, True, True, False, True, False]", r.stdout + r.stderr
+
+
+def test_bad_rewrite_keeps_last_reading(tmp_path):
+    clock = _clock(tmp_path)
+    code = ("import time, json, os\n"
+            "a = time.time()\n"
+            f"p = {str(clock)!r}\n"
+            "json.dump({'sim_start': a + 3 * 86400, 'wall_anchor': 1.0, 'rate': None}, open(p + '.t', 'w'))\n"
+            "os.replace(p + '.t', p); time.sleep(0.4)\n"
+            "print(abs(time.time() - a) < 5)")
+    r = _py(code, clock)
+    assert r.stdout.strip() == "True", r.stdout + r.stderr
+
+
 def test_child_python_inherits_shim(tmp_path):
     r = _py("import subprocess, sys\n"
             "print(subprocess.run([sys.executable, '-c', 'import time; print(int(time.time()))'],"
@@ -92,7 +126,7 @@ def test_unreadable_clock_refuses_wall_time(tmp_path):
 def test_unset_clock_is_inert():
     env = {k: v for k, v in os.environ.items() if k != "BICENTENNIAL_CLOCK_FILE"}
     env["PYTHONPATH"] = str(SHIM_DIR)
-    r = subprocess.run([sys.executable, "-c", "import time; print(abs(time.time() - %r) < 30)" % time.time()],
+    r = subprocess.run([CHILD_PYTHON, "-c", "import time; print(abs(time.time() - %r) < 30)" % time.time()],
                        env=env, capture_output=True, text=True, check=False, timeout=60)
     assert r.stdout.strip() == "True"
 
