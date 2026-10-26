@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -111,3 +112,8 @@ def test_path_without_trailing_slash_or_on_windows_rejected(repo, text):
 def test_url_path_segment_is_not_a_local_path(repo):
     track(repo, "ok.txt", "https://example.org/" + "home/page and https://example.org/" + "Users/list\n")
     assert check(repo, "ok.txt").returncode == 0
+
+
+def test_json_escaped_windows_home_path_rejected(repo):
+    track(repo, "rec.json", json.dumps({"path": "C:" + "\\" + "Users" + "\\example\\private.txt"}) + "\n")
+    assert check(repo, "rec.json").returncode == 1
