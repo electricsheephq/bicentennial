@@ -729,7 +729,7 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 - **Delta boards:** the new GA and the system's previous version run interleaved in the same blocks (§6).
 
 **Sustainable capacity** (completion slot C-11):
-- **The value** is the sustainable capacity per account of the agent's model lane, as measured by the spike on that lane (S6a, or S6b), with the number of accounts a run uses.
+- **The value** is the sustainable capacity per account of each lane a run uses (the pinned family's, the swap model's and the replication family's), as measured by the spike on that lane (S6a, S6b, or a paced soak on that lane), with the number of accounts the run uses there.
   - Where concurrency binds, it is the sustained concurrency.
   - Where a request rate binds, it is the paced rate R_s, set below the observed refusal threshold. Before the pilot, a paced soak of at least 10 minutes with no rate refusal, on the account count the run uses, confirms it and measures probe cost at scale; if the soak is refused, R_s drops to the largest clean rate.
 - **The fit:** a run fits when, on each lane it uses, max(lane time at the planning concurrency, N_req ÷ (R_s × accounts)) × (1 + a) ≤ W_max, and every life's projected critical path is at most 24 h. N_req is the run's upstream request count on that lane: replay, probes, auxiliary calls and every other workload sharing that account's lane in the run window (the load sharing the lane, above), from the declared workload counts and the spike's requests per session. Where only concurrency binds, the second term is dropped. The projection gives each life's chain priority on its lane, and states the swap session it assumes.
