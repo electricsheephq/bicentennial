@@ -153,11 +153,12 @@ def _parts(m: dict) -> list:
     return m["content"] if isinstance(m.get("content"), list) else []
 
 
-def _items(wire: str, body: dict) -> tuple[str, tuple[list, list], list[list[str]], list[str]]:
+def _items(wire: str, body: dict) -> tuple[str, tuple[list, list], list[list[str]], list[str], list[str]]:
     """(role tokens, (trailing tool-result ids, ids of the calls they answer), user text-block lists in order,
-    system blocks) for one wire.
+    system blocks, text blocks riding with the final tool results) for one wire. Only Anthropic mixes text and
+    tool results in one message; its text is read for markers, never as a user turn.
     Tokens: s system/developer, u user text, a assistant, c tool call, t tool result, r reasoning, x other."""
-    toks, users, system, tail, calls = [], [], [], [], []
+    toks, users, system, tail, calls, mixed = [], [], [], [], [], []
     if wire == "openai_chat":
         msgs = [m for m in body.get("messages") or [] if isinstance(m, dict)]
         for m in msgs:
@@ -215,7 +216,8 @@ def _items(wire: str, body: dict) -> tuple[str, tuple[list, list], list[list[str
         if [t for t in toks if t != "s"][-1:] == ["t"]:
             tail = [p.get("tool_use_id") or "" for p in _parts(convo[-1]) if p.get("type") == "tool_result"]
             calls = [p.get("id") or "" for p in _parts(convo[-2]) if p.get("type") == "tool_use"] if len(convo) > 1 else []
-    return "".join(toks), (tail, calls), users, system
+            mixed = _blocks(convo[-1].get("content"))
+    return "".join(toks), (tail, calls), users, system, mixed
 
 
 def markers(fields: dict[str, list[str]], signatures=SIGNATURES) -> list[str]:
@@ -228,11 +230,11 @@ def shape(req: dict, signatures=SIGNATURES) -> dict:
     wire = req.get("wire") or wire_of(method, path)
     body = req.get("body") if isinstance(req.get("body"), dict) else {}
     _well_formed(wire, body)  # classify turns its TypeError into unknown
-    toks, tail, users, system = _items(wire, body)
+    toks, tail, users, system, mixed = _items(wire, body)
     last = users[-1] if users else []
     whole = "\n".join(last).strip()
     final = toks.rstrip("s")[-1:]  # trailing system context is not a turn
-    fields = {"system": system, "first_user": users[0] if users else [], "last_user": last}
+    fields = {"system": system, "first_user": users[0] if users else [], "last_user": last + mixed}
     return {"wire": wire, "method": method, "path": path, "keys": sorted(body), "model": body.get("model"),
             "seq": toks, "n_tools": len(body.get("tools") or []), "tail_ids": tail[0], "tail_calls": tail[1],
             "last_is": {"u": "user_text", "t": "tool_result"}.get(final, "other"),

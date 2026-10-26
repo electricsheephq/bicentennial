@@ -261,6 +261,22 @@ def test_malformed_anthropic_parts_are_unknown():
     assert roles.classify(req, ctx1())[:2] == ("unknown", "unknown")
 
 
+def test_anthropic_marker_text_beside_tool_results_is_read():
+    comp = roles.Signature("c", "compaction", "last_user", 9, roles.h16("Summarise"))
+    c = ctx1(signatures=(comp,))
+    c.issued["toolu_1"] = "replay_main"
+    use = {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1"}]}
+
+    def req(text):
+        result = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1"},
+                                              {"type": "text", "text": text}]}
+        return {"method": "POST", "path": "/v1/messages", "body": {"model": "m", "tools": [{"name": "Bash"}],
+                                                                   "messages": [TURN, use, result]}}
+    assert roles.classify(req("a reminder"), c)[:2] == ("replay_main", "cursor")
+    assert roles.classify(req("Summarise the conversation"), c)[:2] == ("compaction", "shape")
+    assert roles.shape(req("a reminder"))["user_hashes"] == roles.shape(req("other"))["user_hashes"]  # not a turn
+
+
 def test_anthropic_wire_trailing_system_and_continuation():
     note = roles.Signature("n", roles.CONTINUATION, "last_user", 7, roles.h16("[notice"))
     c = ctx1(signatures=(note,))

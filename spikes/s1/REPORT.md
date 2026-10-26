@@ -10,7 +10,7 @@
   4. **Unknown:** anything else, and any conflict between steps.
 - **Roles:** `replay_main`, `write_turn`, `probe_main`, `compaction`, `summariser`, `extraction`, `title`, `aux` and `unknown`. `compaction` is the harness's own context compaction. The S6a and S6b directors call Hermes' compression call `summariser/compression`; S1 maps that label to `compaction` and keeps `summariser` and `extraction` for a memory system's declared summary and extraction models.
 - **Two pure steps.** `shape(request)` reduces a request to wire, path, sorted key set, model, the item-role sequence, trailing tool ids, 16-hex hashes of the last user message's text blocks, text lengths and the names of the markers present. `classify_shape(shape, ctx)` applies the rule. `classify(request, ctx)` composes the two. The context holds the cursor's expected turns (as hashes), the call ids issued, and the declared aliases. No header value is read.
-- **Markers hold no text.** Each is a (field, prefix length, SHA-256 prefix) triple, derived once from a captured sample. The repository therefore keeps no harness text.
+- **Markers hold no text.** Each is a (field, prefix length, SHA-256 prefix) triple, derived once from a captured sample. The repository therefore keeps no harness text. On Anthropic, text blocks that ride in the same user message as the final tool results are read for `last_user` markers too, so a marker there still takes the request out of the main frame; that text never counts as a user turn.
 
 | Marker | Harness | Field, prefix | Role |
 |---|---|---|---|
@@ -68,7 +68,7 @@
 - **Egress.** No capture of record reached a non-loopback endpoint. A first Codex capture with the default feature set connected to a public code-hosting address on 3 of 8 runs. It made no model call and used no login. The capture of record turns off Codex's plugin, app and tool-suggestion features, and no such connection recurred. To identify that address, the lane also ran `strings` once on the installed Codex binary. No file-open audit was captured, so the claim that no configuration, auth or session file was read rests on the lane's statement, not on a measurement.
 
 ## Shape test
-`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 96 tests, all passing.
+`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 97 tests, all passing.
 - The fixtures, `fixtures/shapes.json`, are minimized shapes: no harness or life text, only paths, key sets, model aliases, role sequences, marker names, lengths and hashes. A test asserts that no fixture string can hold text.
 - Every recorded request must classify to its expected role. Where a source records the harness's own compaction count, the classified compactions must equal it.
 - Unseen shapes must be `unknown`: an unscripted main turn, the scripted turn with no tools, an unissued call id, an unknown wire, an unknown GET, and fresh Responses and Anthropic shapes.
