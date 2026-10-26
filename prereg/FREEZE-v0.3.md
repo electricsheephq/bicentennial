@@ -1,5 +1,7 @@
 # PREREG-v0.3 freeze record
 
+**Superseded** by PREREG-v0.4 (`prereg/FREEZE-v0.4.md`) on 2026-10-26. This record is kept unchanged below.
+
 | Field | Value |
 |---|---|
 | Version | PREREG-v0.3, the pilot pre-registration (text) for design v2.1. It supersedes PREREG-v0.2. |

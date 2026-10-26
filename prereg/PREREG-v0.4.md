@@ -1,6 +1,6 @@
 # Bicentennial pre-registration — PREREG-v0.4 (pilot)
 
-**Status:** PREREG-v0.4, frozen FREEZE_DATE by the benchmark session, the product and release owner under the owner's grant of 2026-10-26. It supersedes PREREG-v0.3 by carrying design v2.2, which adds one decision: DV47, the run-time rule. At the owner's direction of 2026-10-26, a run of record no longer needs one contiguous 24-hour window: it runs in locked, resumable segments, with every life inside 24 h and each system's work inside a work bound (§11). DV47 also corrects DV42's fit, which left the mid-life swap's lane uncounted, and sets the paid-lane ceiling to the owner's $100 per run. No full-tier data has been collected. Every other rule, constant and threshold is PREREG-v0.3's, which carried design v2.1 (DV42, the pinned agent family) on top of PREREG-v0.2 and design v2.0. Its changelog is at the end. The decisions are recorded in `docs/DECISIONS-v2.md`. Its sha256 and time are in `prereg/FREEZE-v0.4.md`, and the commit and the tag `prereg-v0.4` are posted on lcm-x #1964.
+**Status:** PREREG-v0.4, frozen 2026-10-26 by the benchmark session, the product and release owner under the owner's grant of 2026-10-26. It supersedes PREREG-v0.3 by carrying design v2.2, which adds one decision: DV47, the run-time rule. At the owner's direction of 2026-10-26, a run of record no longer needs one contiguous 24-hour window: it runs in locked, resumable segments, with every life inside 24 h and each system's work inside a work bound (§11). DV47 also corrects DV42's fit, which left the mid-life swap's lane uncounted, and sets the paid-lane ceiling to the owner's $100 per run. No full-tier data has been collected. Every other rule, constant and threshold is PREREG-v0.3's, which carried design v2.1 (DV42, the pinned agent family) on top of PREREG-v0.2 and design v2.0. Its changelog is at the end. The decisions are recorded in `docs/DECISIONS-v2.md`. Its sha256 and time are in `prereg/FREEZE-v0.4.md`, and the commit and the tag `prereg-v0.4` are posted on lcm-x #1964.
 
 **Precedence.** This document is the **only normative source** for every frozen quantity: constants, rules, thresholds, rosters, sample sizes, tests and ceilings. DESIGN-v2.2 (`docs/DESIGN.md`) explains and motivates. Where the two differ on a frozen quantity, this document governs, and the difference is logged as an erratum to DESIGN. "The addendum" means the binding requirements summarised in `docs/REQUIREMENTS.md`.
 
@@ -86,7 +86,7 @@
 The subscript k always indexes a cell (a_k, g_k, m_k), and K counts the cells. Fault reruns are counted by q and contrasts by M, so neither shares a letter with a cell symbol.
 
 ## 1. Identity
-- **This document:** PREREG-v0.4, frozen FREEZE_DATE. Its sha256 and time are in `prereg/FREEZE-v0.4.md`; the commit and the tag `prereg-v0.4` are posted on lcm-x #1964.
+- **This document:** PREREG-v0.4, frozen 2026-10-26. Its sha256 and time are in `prereg/FREEZE-v0.4.md`; the commit and the tag `prereg-v0.4` are posted on lcm-x #1964.
 - **Design:** DESIGN-v2.2. Its hash is recorded at freeze.
 - **Generator:** the version is recorded at freeze.
 - **Genres:** G1 software partner and G2 personal assistant, in text and code.

@@ -12,7 +12,7 @@ Earlier versions were revised after three adversarial review rounds and a closur
 - **v2.1:** DV42 pins the agent family: OpenAI's gpt-6.1-sol, on dedicated benchmark accounts, with GLM as the replication family. The blind panel, the capacity slot and the tuning disclosure follow (PREREG-v0.3).
 - **v2.2:** DV47, the run-time rule. The full-tier runs execute in locked, resumable segments: every arm's run of a life finishes within 24 h, and each system's work fits a work bound in each of its board, study and Image board runs. The pilot's runs of record stay contiguous. v1.4's cadence goal now lives in Rings 0-2 (§9); the board keeps v1.4's sizing discipline and a day per life (PREREG-v0.4).
 
-PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16). PREREG-v0.4 carries v2.2's rules.
+PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16). PREREG-v0.4 carries v2.2's rules. It was frozen on 2026-10-26, and its hash is posted on #1964 (§16).
 
 **Precedence:** `prereg/PREREG-v0.4.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
 
@@ -1520,7 +1520,7 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 
 ## 16. Approval and channels
 - **Ownership.** The benchmark session owns this design.
-- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; PREREG-v0.4 carries v2.2's; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
+- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; PREREG-v0.4 carries v2.2's and was frozen on 2026-10-26; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
 - **External veto.** An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. PREREG-v1 is not frozen without one unless the owner waives that in writing. DV1, DV4 and DV5 go to that reviewer first (§14).
 - **Channel.** #1964 is the status channel, not an approval point.
 

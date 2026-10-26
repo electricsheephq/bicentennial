@@ -8,7 +8,7 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 
 > **Status: pre-pilot.**
 > - Design v2.2 is done.
-> - **PREREG-v0.4 was frozen on FREEZE_DATE.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
+> - **PREREG-v0.4 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
 > - **The run-time rule:** the full-tier runs (the board with its seasonal study, each delta board and the Image board) execute in locked, resumable segments from the same commit and stores. Every replaying arm's run of a life finishes within a day, and each system's work fits a work bound in each of its board, study and Image board runs. It is sized by the measured capacity of each model lane, per account. Paid-lane spend is capped at $100 per full-tier run, all systems together. The Image board, when it runs, is a run separate from the Text board, under the same rule. The pilot's runs of record run contiguously, within wall-time ceilings.
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
 > - There is no benchmark code and there are no results yet.
