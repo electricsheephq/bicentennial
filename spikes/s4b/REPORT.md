@@ -31,11 +31,11 @@ Two lives ran, on the same pinned endpoint, life and settings. **Life 1** used S
 | Overload refusals (HTTP 429, shared pool) | 0 on write turns | 17, all recovered; 220 s held | 16; the life stopped |
 | Clean ramp (in flight) | 8 | 32 (two rounds per level, none refused) | (same ramp) |
 
-The refusals were the endpoint's: `engine_overloaded`, with the router naming the provider's shared pool as their source. They came during the life, which sends about one request at a time, after the ramp had run clean at 32 in flight; capacity on this endpoint is therefore not steady. Life 2's 17 refusals fell on 9 write turns, 6 auxiliary calls, 1 summariser call and 1 probe.
+The refusals were the endpoint's: `engine_overloaded`, with the router naming the provider's shared pool as their source. They came during the life, which sends about one request at a time, after the ramp had run clean at 32 in flight; capacity on this endpoint is therefore not steady. Life 2's 17 refused attempts were 9 write-turn attempts across 5 turns, 6 auxiliary attempts, 1 summariser attempt and 1 probe attempt; each was followed by a successful retry.
 
-Measurements: `results/measurements.json` (life 2) and `results/life1/measurements.json`; each file's spend block is the spike's one shared spend file, read when the file was written.
+Measurements: `results/measurements.json` (life 2) and `results/life1/measurements.json`; each file's spend block is the spike's one shared spend file, read when the file was written. The run's result card (run id `s4b-live`, both lives, the ramp, their ledgers, the spend file and the two usage receipts) is published with this report.
 
-**Spend.** Every call settled at the router's own `usage.cost`; none was estimated, none was refused by the spend guard, and the largest single call cost $0.0038.
+**Spend.** Every successful billed call settled at the router's own `usage.cost`, and none needed a token estimate. Refused calls returned no usage and settled at $0 under the refusal rule. None was refused by the spend guard, and the largest single call cost $0.0038.
 
 | Part | Calls | Spend |
 |---|---:|---:|
@@ -45,11 +45,11 @@ Measurements: `results/measurements.json` (life 2) and `results/life1/measuremen
 | First-party endpoint, refused by the account filter | 2 | $0 |
 | **Total** | **271 settled** | **$0.03073** |
 
-The key's router-side usage rose by $0.03073 over the spike.
+The key's router-side usage rose from $84.269156 before the spike to $84.299885 after it: $0.03073, the same total.
 
 **For C-2.** S4b supplies three facts and makes no choice:
 - On this endpoint, DeepSeek sustains far more bursts in flight than GLM's lane, but its throughput during the life is not reliable at one request in flight without long holds.
-- It is slower per write turn, because it reasons at the default effort.
+- Its write turns were slower in these runs, and 72% of their completion tokens were reasoning; no run here separates the effect of reasoning effort.
 - Its marginal cost on this life is about two cents.
 
 A board on this account could not use the model maker's own endpoint; it would face the same privacy filter.

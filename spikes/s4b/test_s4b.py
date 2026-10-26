@@ -122,6 +122,10 @@ class TestS4b(unittest.TestCase):
             rec = {'upstream': []}
             self.assertEqual(d.upstream_retry({}, 'aux', rec)['category'], 'rate')
         self.assertEqual(([c.args[0] for c in sleep.call_args_list], len(rec['upstream']), rec['held_s']), ([5, 15], 3, 20))
+        self.assertEqual(lane.hold_schedule(''), [])
+        for bad in ('-1', '5,,15', 'x'):
+            with self.subTest(schedule=bad), self.assertRaises((ValueError, lane.argparse.ArgumentTypeError)):
+                lane.hold_schedule(bad)
         d.upstream = lambda body, kind: {'ok': False, 'category': 'auth'}
         with patch.object(lane.time, 'sleep') as sleep:
             d.upstream_retry({}, 'aux', {'upstream': []})

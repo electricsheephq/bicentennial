@@ -186,6 +186,14 @@ class Director(s6.Director):
         return super().handle(path, body)
 
 
+def hold_schedule(v):
+    """Comma-separated non-negative whole seconds; an empty string means no retries."""
+    holds = [int(x) for x in v.split(',')] if v else []
+    if any(h < 0 for h in holds):
+        raise argparse.ArgumentTypeError('hold durations must be non-negative')
+    return holds
+
+
 def parser():
     p = argparse.ArgumentParser()
     p.add_argument('--spend-file', required=True)
@@ -195,7 +203,7 @@ def parser():
     p.add_argument('--chars-per-token', type=float, default=4.0)
     p.add_argument('--model', default=MODEL)
     p.add_argument('--provider-only', default='deepseek', help='the router endpoint slug every request is pinned to')
-    p.add_argument('--hold-schedule', type=lambda v: [int(x) for x in v.split(',') if x], default=[5, 15],
+    p.add_argument('--hold-schedule', type=hold_schedule, default=[5, 15],
                    help='seconds to hold before each retry of a refused director-originated call (S6a: 5,15)')
     p.add_argument('--served-provider', default='DeepSeek', help='the provider name every response must report')
     p.add_argument('--mode', choices=['stub', 'live'], default='stub')
