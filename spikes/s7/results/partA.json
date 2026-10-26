@@ -1,0 +1,3138 @@
+{
+  "claim_class": "advisory",
+  "mode": "offline",
+  "runs": {
+    "r6": {
+      "A1": {
+        "flag_disagreements": [],
+        "forwarded": 60,
+        "matches": 60,
+        "mismatches": [],
+        "write_records": 60
+      },
+      "A2": {
+        "hits": [
+          {
+            "attempt": 1,
+            "id": "8:5:user",
+            "inherited": true,
+            "kind": "future_user",
+            "record": 43
+          },
+          {
+            "attempt": 1,
+            "id": "8:2:assistant",
+            "inherited": true,
+            "kind": "future_assistant",
+            "record": 90
+          },
+          {
+            "attempt": 1,
+            "id": "8:2:assistant",
+            "inherited": true,
+            "kind": "future_assistant",
+            "record": 92
+          },
+          {
+            "attempt": 1,
+            "id": "8:2:assistant",
+            "inherited": true,
+            "kind": "future_assistant",
+            "record": 93
+          },
+          {
+            "attempt": 1,
+            "id": "8:2:assistant",
+            "inherited": true,
+            "kind": "future_assistant",
+            "record": 94
+          },
+          {
+            "attempt": 1,
+            "id": "8:2:assistant",
+            "inherited": true,
+            "kind": "future_assistant",
+            "record": 97
+          }
+        ],
+        "introduced": [],
+        "introduced_hits": 0,
+        "raw_hits": 6
+      },
+      "A3": {
+        "executed": 14,
+        "failures": [],
+        "non_write_attempts": 0,
+        "non_write_blocked": 0,
+        "non_write_calls": [],
+        "offered": 60
+      },
+      "A4": {
+        "applied": 14,
+        "applied_operations": 14,
+        "calls": [
+          {
+            "applied": true,
+            "call": "bcw00001",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00001:1",
+                "in_store": true,
+                "next_session_record": 16,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 5
+          },
+          {
+            "applied": true,
+            "call": "bcw00002",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00002:1",
+                "in_store": false,
+                "next_session_record": 16,
+                "next_session_satisfied": true,
+                "reasons": [
+                  "later_modified_or_removed"
+                ],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [
+                  "bcw00010:1"
+                ],
+                "visible_next_session": true
+              }
+            ],
+            "record": 8
+          },
+          {
+            "applied": true,
+            "call": "bcw00003",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00003:1",
+                "in_store": true,
+                "next_session_record": 16,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 10
+          },
+          {
+            "applied": true,
+            "call": "bcw00004",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00004:1",
+                "in_store": true,
+                "next_session_record": 27,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 16
+          },
+          {
+            "applied": true,
+            "call": "bcw00005",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00005:1",
+                "in_store": true,
+                "next_session_record": 27,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 19
+          },
+          {
+            "applied": true,
+            "call": "bcw00006",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00006:1",
+                "in_store": true,
+                "next_session_record": 27,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 21
+          },
+          {
+            "applied": true,
+            "call": "bcw00007",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00007:1",
+                "in_store": true,
+                "next_session_record": 38,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 27
+          },
+          {
+            "applied": true,
+            "call": "bcw00008",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00008:1",
+                "in_store": false,
+                "next_session_record": 38,
+                "next_session_satisfied": true,
+                "reasons": [
+                  "later_modified_or_removed"
+                ],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [
+                  "bcw00011:1",
+                  "bcw00012:1"
+                ],
+                "visible_next_session": true
+              }
+            ],
+            "record": 30
+          },
+          {
+            "applied": true,
+            "call": "bcw00009",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00009:1",
+                "in_store": true,
+                "next_session_record": 38,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 34
+          },
+          {
+            "applied": true,
+            "call": "bcw00010",
+            "operations": [
+              {
+                "action": "patch",
+                "id": "bcw00010:1",
+                "in_store": true,
+                "next_session_record": 58,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 46
+          },
+          {
+            "applied": true,
+            "call": "bcw00011",
+            "operations": [
+              {
+                "action": "patch",
+                "id": "bcw00011:1",
+                "in_store": false,
+                "next_session_record": 97,
+                "next_session_satisfied": true,
+                "reasons": [
+                  "later_modified_or_removed"
+                ],
+                "store_satisfied": true,
+                "superseded_before_next": [
+                  "bcw00012:1"
+                ],
+                "superseded_by": [
+                  "bcw00012:1"
+                ],
+                "visible_next_session": false
+              }
+            ],
+            "record": 87
+          },
+          {
+            "applied": true,
+            "call": "bcw00012",
+            "operations": [
+              {
+                "action": "patch",
+                "id": "bcw00012:1",
+                "in_store": true,
+                "next_session_record": 97,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 90
+          },
+          {
+            "applied": true,
+            "call": "bcw00013",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00013:1",
+                "in_store": true,
+                "next_session_record": 106,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 101
+          },
+          {
+            "applied": true,
+            "call": "bcw00014",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00014:1",
+                "in_store": true,
+                "next_session_record": 125,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 119
+          }
+        ],
+        "executed": 14,
+        "gaps": [],
+        "in_store": 11,
+        "next_session_satisfied": 14,
+        "refused": 0,
+        "store_satisfied": 14,
+        "visible_next_session": 13
+      },
+      "A5": {
+        "matches": 60,
+        "missing_scripts": [],
+        "non_content_collisions": [
+          {
+            "record": 14,
+            "write_record": 12
+          },
+          {
+            "record": 25,
+            "write_record": 12
+          },
+          {
+            "record": 36,
+            "write_record": 12
+          },
+          {
+            "record": 44,
+            "write_record": 12
+          },
+          {
+            "record": 55,
+            "write_record": 12
+          },
+          {
+            "record": 84,
+            "write_record": 12
+          },
+          {
+            "record": 95,
+            "write_record": 12
+          },
+          {
+            "record": 104,
+            "write_record": 12
+          },
+          {
+            "record": 112,
+            "write_record": 12
+          },
+          {
+            "record": 122,
+            "write_record": 12
+          },
+          {
+            "record": 128,
+            "write_record": 12
+          },
+          {
+            "record": 129,
+            "write_record": 12
+          },
+          {
+            "record": 14,
+            "write_record": 13
+          },
+          {
+            "record": 25,
+            "write_record": 13
+          },
+          {
+            "record": 36,
+            "write_record": 13
+          },
+          {
+            "record": 44,
+            "write_record": 13
+          },
+          {
+            "record": 55,
+            "write_record": 13
+          },
+          {
+            "record": 84,
+            "write_record": 13
+          },
+          {
+            "record": 95,
+            "write_record": 13
+          },
+          {
+            "record": 104,
+            "write_record": 13
+          },
+          {
+            "record": 112,
+            "write_record": 13
+          },
+          {
+            "record": 122,
+            "write_record": 13
+          },
+          {
+            "record": 128,
+            "write_record": 13
+          },
+          {
+            "record": 129,
+            "write_record": 13
+          },
+          {
+            "record": 25,
+            "write_record": 23
+          },
+          {
+            "record": 36,
+            "write_record": 23
+          },
+          {
+            "record": 44,
+            "write_record": 23
+          },
+          {
+            "record": 55,
+            "write_record": 23
+          },
+          {
+            "record": 84,
+            "write_record": 23
+          },
+          {
+            "record": 95,
+            "write_record": 23
+          },
+          {
+            "record": 104,
+            "write_record": 23
+          },
+          {
+            "record": 112,
+            "write_record": 23
+          },
+          {
+            "record": 122,
+            "write_record": 23
+          },
+          {
+            "record": 128,
+            "write_record": 23
+          },
+          {
+            "record": 129,
+            "write_record": 23
+          },
+          {
+            "record": 25,
+            "write_record": 24
+          },
+          {
+            "record": 36,
+            "write_record": 24
+          },
+          {
+            "record": 44,
+            "write_record": 24
+          },
+          {
+            "record": 55,
+            "write_record": 24
+          },
+          {
+            "record": 84,
+            "write_record": 24
+          },
+          {
+            "record": 95,
+            "write_record": 24
+          },
+          {
+            "record": 104,
+            "write_record": 24
+          },
+          {
+            "record": 112,
+            "write_record": 24
+          },
+          {
+            "record": 122,
+            "write_record": 24
+          },
+          {
+            "record": 128,
+            "write_record": 24
+          },
+          {
+            "record": 129,
+            "write_record": 24
+          },
+          {
+            "record": 36,
+            "write_record": 32
+          },
+          {
+            "record": 44,
+            "write_record": 32
+          },
+          {
+            "record": 55,
+            "write_record": 32
+          },
+          {
+            "record": 84,
+            "write_record": 32
+          },
+          {
+            "record": 95,
+            "write_record": 32
+          },
+          {
+            "record": 104,
+            "write_record": 32
+          },
+          {
+            "record": 112,
+            "write_record": 32
+          },
+          {
+            "record": 122,
+            "write_record": 32
+          },
+          {
+            "record": 128,
+            "write_record": 32
+          },
+          {
+            "record": 129,
+            "write_record": 32
+          },
+          {
+            "record": 36,
+            "write_record": 33
+          },
+          {
+            "record": 44,
+            "write_record": 33
+          },
+          {
+            "record": 55,
+            "write_record": 33
+          },
+          {
+            "record": 84,
+            "write_record": 33
+          },
+          {
+            "record": 95,
+            "write_record": 33
+          },
+          {
+            "record": 104,
+            "write_record": 33
+          },
+          {
+            "record": 112,
+            "write_record": 33
+          },
+          {
+            "record": 122,
+            "write_record": 33
+          },
+          {
+            "record": 128,
+            "write_record": 33
+          },
+          {
+            "record": 129,
+            "write_record": 33
+          },
+          {
+            "record": 44,
+            "write_record": 38
+          },
+          {
+            "record": 55,
+            "write_record": 38
+          },
+          {
+            "record": 84,
+            "write_record": 38
+          },
+          {
+            "record": 95,
+            "write_record": 38
+          },
+          {
+            "record": 104,
+            "write_record": 38
+          },
+          {
+            "record": 112,
+            "write_record": 38
+          },
+          {
+            "record": 122,
+            "write_record": 38
+          },
+          {
+            "record": 128,
+            "write_record": 38
+          },
+          {
+            "record": 129,
+            "write_record": 38
+          },
+          {
+            "record": 44,
+            "write_record": 40
+          },
+          {
+            "record": 55,
+            "write_record": 40
+          },
+          {
+            "record": 84,
+            "write_record": 40
+          },
+          {
+            "record": 95,
+            "write_record": 40
+          },
+          {
+            "record": 104,
+            "write_record": 40
+          },
+          {
+            "record": 112,
+            "write_record": 40
+          },
+          {
+            "record": 122,
+            "write_record": 40
+          },
+          {
+            "record": 128,
+            "write_record": 40
+          },
+          {
+            "record": 129,
+            "write_record": 40
+          },
+          {
+            "record": 44,
+            "write_record": 41
+          },
+          {
+            "record": 55,
+            "write_record": 41
+          },
+          {
+            "record": 84,
+            "write_record": 41
+          },
+          {
+            "record": 95,
+            "write_record": 41
+          },
+          {
+            "record": 104,
+            "write_record": 41
+          },
+          {
+            "record": 112,
+            "write_record": 41
+          },
+          {
+            "record": 122,
+            "write_record": 41
+          },
+          {
+            "record": 128,
+            "write_record": 41
+          },
+          {
+            "record": 129,
+            "write_record": 41
+          },
+          {
+            "record": 44,
+            "write_record": 42
+          },
+          {
+            "record": 55,
+            "write_record": 42
+          },
+          {
+            "record": 84,
+            "write_record": 42
+          },
+          {
+            "record": 95,
+            "write_record": 42
+          },
+          {
+            "record": 104,
+            "write_record": 42
+          },
+          {
+            "record": 112,
+            "write_record": 42
+          },
+          {
+            "record": 122,
+            "write_record": 42
+          },
+          {
+            "record": 128,
+            "write_record": 42
+          },
+          {
+            "record": 129,
+            "write_record": 42
+          },
+          {
+            "record": 44,
+            "write_record": 43
+          },
+          {
+            "record": 55,
+            "write_record": 43
+          },
+          {
+            "record": 84,
+            "write_record": 43
+          },
+          {
+            "record": 95,
+            "write_record": 43
+          },
+          {
+            "record": 104,
+            "write_record": 43
+          },
+          {
+            "record": 112,
+            "write_record": 43
+          },
+          {
+            "record": 122,
+            "write_record": 43
+          },
+          {
+            "record": 128,
+            "write_record": 43
+          },
+          {
+            "record": 129,
+            "write_record": 43
+          },
+          {
+            "record": 55,
+            "write_record": 49
+          },
+          {
+            "record": 84,
+            "write_record": 49
+          },
+          {
+            "record": 95,
+            "write_record": 49
+          },
+          {
+            "record": 104,
+            "write_record": 49
+          },
+          {
+            "record": 112,
+            "write_record": 49
+          },
+          {
+            "record": 122,
+            "write_record": 49
+          },
+          {
+            "record": 128,
+            "write_record": 49
+          },
+          {
+            "record": 129,
+            "write_record": 49
+          },
+          {
+            "record": 55,
+            "write_record": 51
+          },
+          {
+            "record": 84,
+            "write_record": 51
+          },
+          {
+            "record": 95,
+            "write_record": 51
+          },
+          {
+            "record": 104,
+            "write_record": 51
+          },
+          {
+            "record": 112,
+            "write_record": 51
+          },
+          {
+            "record": 122,
+            "write_record": 51
+          },
+          {
+            "record": 128,
+            "write_record": 51
+          },
+          {
+            "record": 129,
+            "write_record": 51
+          },
+          {
+            "record": 55,
+            "write_record": 53
+          },
+          {
+            "record": 84,
+            "write_record": 53
+          },
+          {
+            "record": 95,
+            "write_record": 53
+          },
+          {
+            "record": 104,
+            "write_record": 53
+          },
+          {
+            "record": 112,
+            "write_record": 53
+          },
+          {
+            "record": 122,
+            "write_record": 53
+          },
+          {
+            "record": 128,
+            "write_record": 53
+          },
+          {
+            "record": 129,
+            "write_record": 53
+          },
+          {
+            "record": 55,
+            "write_record": 54
+          },
+          {
+            "record": 84,
+            "write_record": 54
+          },
+          {
+            "record": 95,
+            "write_record": 54
+          },
+          {
+            "record": 104,
+            "write_record": 54
+          },
+          {
+            "record": 112,
+            "write_record": 54
+          },
+          {
+            "record": 122,
+            "write_record": 54
+          },
+          {
+            "record": 128,
+            "write_record": 54
+          },
+          {
+            "record": 129,
+            "write_record": 54
+          },
+          {
+            "record": 84,
+            "write_record": 58
+          },
+          {
+            "record": 95,
+            "write_record": 58
+          },
+          {
+            "record": 104,
+            "write_record": 58
+          },
+          {
+            "record": 112,
+            "write_record": 58
+          },
+          {
+            "record": 122,
+            "write_record": 58
+          },
+          {
+            "record": 128,
+            "write_record": 58
+          },
+          {
+            "record": 129,
+            "write_record": 58
+          },
+          {
+            "record": 84,
+            "write_record": 60
+          },
+          {
+            "record": 95,
+            "write_record": 60
+          },
+          {
+            "record": 104,
+            "write_record": 60
+          },
+          {
+            "record": 112,
+            "write_record": 60
+          },
+          {
+            "record": 122,
+            "write_record": 60
+          },
+          {
+            "record": 128,
+            "write_record": 60
+          },
+          {
+            "record": 129,
+            "write_record": 60
+          },
+          {
+            "record": 84,
+            "write_record": 61
+          },
+          {
+            "record": 95,
+            "write_record": 61
+          },
+          {
+            "record": 104,
+            "write_record": 61
+          },
+          {
+            "record": 112,
+            "write_record": 61
+          },
+          {
+            "record": 122,
+            "write_record": 61
+          },
+          {
+            "record": 128,
+            "write_record": 61
+          },
+          {
+            "record": 129,
+            "write_record": 61
+          },
+          {
+            "record": 84,
+            "write_record": 62
+          },
+          {
+            "record": 95,
+            "write_record": 62
+          },
+          {
+            "record": 104,
+            "write_record": 62
+          },
+          {
+            "record": 112,
+            "write_record": 62
+          },
+          {
+            "record": 122,
+            "write_record": 62
+          },
+          {
+            "record": 128,
+            "write_record": 62
+          },
+          {
+            "record": 129,
+            "write_record": 62
+          },
+          {
+            "record": 84,
+            "write_record": 63
+          },
+          {
+            "record": 95,
+            "write_record": 63
+          },
+          {
+            "record": 104,
+            "write_record": 63
+          },
+          {
+            "record": 112,
+            "write_record": 63
+          },
+          {
+            "record": 122,
+            "write_record": 63
+          },
+          {
+            "record": 128,
+            "write_record": 63
+          },
+          {
+            "record": 129,
+            "write_record": 63
+          },
+          {
+            "record": 84,
+            "write_record": 64
+          },
+          {
+            "record": 95,
+            "write_record": 64
+          },
+          {
+            "record": 104,
+            "write_record": 64
+          },
+          {
+            "record": 112,
+            "write_record": 64
+          },
+          {
+            "record": 122,
+            "write_record": 64
+          },
+          {
+            "record": 128,
+            "write_record": 64
+          },
+          {
+            "record": 129,
+            "write_record": 64
+          },
+          {
+            "record": 84,
+            "write_record": 65
+          },
+          {
+            "record": 95,
+            "write_record": 65
+          },
+          {
+            "record": 104,
+            "write_record": 65
+          },
+          {
+            "record": 112,
+            "write_record": 65
+          },
+          {
+            "record": 122,
+            "write_record": 65
+          },
+          {
+            "record": 128,
+            "write_record": 65
+          },
+          {
+            "record": 129,
+            "write_record": 65
+          },
+          {
+            "record": 84,
+            "write_record": 66
+          },
+          {
+            "record": 95,
+            "write_record": 66
+          },
+          {
+            "record": 104,
+            "write_record": 66
+          },
+          {
+            "record": 112,
+            "write_record": 66
+          },
+          {
+            "record": 122,
+            "write_record": 66
+          },
+          {
+            "record": 128,
+            "write_record": 66
+          },
+          {
+            "record": 129,
+            "write_record": 66
+          },
+          {
+            "record": 84,
+            "write_record": 67
+          },
+          {
+            "record": 95,
+            "write_record": 67
+          },
+          {
+            "record": 104,
+            "write_record": 67
+          },
+          {
+            "record": 112,
+            "write_record": 67
+          },
+          {
+            "record": 122,
+            "write_record": 67
+          },
+          {
+            "record": 128,
+            "write_record": 67
+          },
+          {
+            "record": 129,
+            "write_record": 67
+          },
+          {
+            "record": 84,
+            "write_record": 68
+          },
+          {
+            "record": 95,
+            "write_record": 68
+          },
+          {
+            "record": 104,
+            "write_record": 68
+          },
+          {
+            "record": 112,
+            "write_record": 68
+          },
+          {
+            "record": 122,
+            "write_record": 68
+          },
+          {
+            "record": 128,
+            "write_record": 68
+          },
+          {
+            "record": 129,
+            "write_record": 68
+          },
+          {
+            "record": 84,
+            "write_record": 69
+          },
+          {
+            "record": 95,
+            "write_record": 69
+          },
+          {
+            "record": 104,
+            "write_record": 69
+          },
+          {
+            "record": 112,
+            "write_record": 69
+          },
+          {
+            "record": 122,
+            "write_record": 69
+          },
+          {
+            "record": 128,
+            "write_record": 69
+          },
+          {
+            "record": 129,
+            "write_record": 69
+          },
+          {
+            "record": 84,
+            "write_record": 77
+          },
+          {
+            "record": 95,
+            "write_record": 77
+          },
+          {
+            "record": 104,
+            "write_record": 77
+          },
+          {
+            "record": 112,
+            "write_record": 77
+          },
+          {
+            "record": 122,
+            "write_record": 77
+          },
+          {
+            "record": 128,
+            "write_record": 77
+          },
+          {
+            "record": 129,
+            "write_record": 77
+          },
+          {
+            "record": 84,
+            "write_record": 79
+          },
+          {
+            "record": 95,
+            "write_record": 79
+          },
+          {
+            "record": 104,
+            "write_record": 79
+          },
+          {
+            "record": 112,
+            "write_record": 79
+          },
+          {
+            "record": 122,
+            "write_record": 79
+          },
+          {
+            "record": 128,
+            "write_record": 79
+          },
+          {
+            "record": 129,
+            "write_record": 79
+          },
+          {
+            "record": 84,
+            "write_record": 80
+          },
+          {
+            "record": 95,
+            "write_record": 80
+          },
+          {
+            "record": 104,
+            "write_record": 80
+          },
+          {
+            "record": 112,
+            "write_record": 80
+          },
+          {
+            "record": 122,
+            "write_record": 80
+          },
+          {
+            "record": 128,
+            "write_record": 80
+          },
+          {
+            "record": 129,
+            "write_record": 80
+          },
+          {
+            "record": 84,
+            "write_record": 82
+          },
+          {
+            "record": 95,
+            "write_record": 82
+          },
+          {
+            "record": 104,
+            "write_record": 82
+          },
+          {
+            "record": 112,
+            "write_record": 82
+          },
+          {
+            "record": 122,
+            "write_record": 82
+          },
+          {
+            "record": 128,
+            "write_record": 82
+          },
+          {
+            "record": 129,
+            "write_record": 82
+          },
+          {
+            "record": 95,
+            "write_record": 92
+          },
+          {
+            "record": 104,
+            "write_record": 92
+          },
+          {
+            "record": 112,
+            "write_record": 92
+          },
+          {
+            "record": 122,
+            "write_record": 92
+          },
+          {
+            "record": 128,
+            "write_record": 92
+          },
+          {
+            "record": 129,
+            "write_record": 92
+          },
+          {
+            "record": 95,
+            "write_record": 93
+          },
+          {
+            "record": 104,
+            "write_record": 93
+          },
+          {
+            "record": 112,
+            "write_record": 93
+          },
+          {
+            "record": 122,
+            "write_record": 93
+          },
+          {
+            "record": 128,
+            "write_record": 93
+          },
+          {
+            "record": 129,
+            "write_record": 93
+          },
+          {
+            "record": 95,
+            "write_record": 94
+          },
+          {
+            "record": 104,
+            "write_record": 94
+          },
+          {
+            "record": 112,
+            "write_record": 94
+          },
+          {
+            "record": 122,
+            "write_record": 94
+          },
+          {
+            "record": 128,
+            "write_record": 94
+          },
+          {
+            "record": 129,
+            "write_record": 94
+          },
+          {
+            "record": 104,
+            "write_record": 97
+          },
+          {
+            "record": 112,
+            "write_record": 97
+          },
+          {
+            "record": 122,
+            "write_record": 97
+          },
+          {
+            "record": 128,
+            "write_record": 97
+          },
+          {
+            "record": 129,
+            "write_record": 97
+          },
+          {
+            "record": 104,
+            "write_record": 99
+          },
+          {
+            "record": 112,
+            "write_record": 99
+          },
+          {
+            "record": 122,
+            "write_record": 99
+          },
+          {
+            "record": 128,
+            "write_record": 99
+          },
+          {
+            "record": 129,
+            "write_record": 99
+          },
+          {
+            "record": 104,
+            "write_record": 100
+          },
+          {
+            "record": 112,
+            "write_record": 100
+          },
+          {
+            "record": 122,
+            "write_record": 100
+          },
+          {
+            "record": 128,
+            "write_record": 100
+          },
+          {
+            "record": 129,
+            "write_record": 100
+          },
+          {
+            "record": 104,
+            "write_record": 103
+          },
+          {
+            "record": 112,
+            "write_record": 103
+          },
+          {
+            "record": 122,
+            "write_record": 103
+          },
+          {
+            "record": 128,
+            "write_record": 103
+          },
+          {
+            "record": 129,
+            "write_record": 103
+          },
+          {
+            "record": 112,
+            "write_record": 106
+          },
+          {
+            "record": 122,
+            "write_record": 106
+          },
+          {
+            "record": 128,
+            "write_record": 106
+          },
+          {
+            "record": 129,
+            "write_record": 106
+          },
+          {
+            "record": 112,
+            "write_record": 108
+          },
+          {
+            "record": 122,
+            "write_record": 108
+          },
+          {
+            "record": 128,
+            "write_record": 108
+          },
+          {
+            "record": 129,
+            "write_record": 108
+          },
+          {
+            "record": 112,
+            "write_record": 109
+          },
+          {
+            "record": 122,
+            "write_record": 109
+          },
+          {
+            "record": 128,
+            "write_record": 109
+          },
+          {
+            "record": 129,
+            "write_record": 109
+          },
+          {
+            "record": 112,
+            "write_record": 110
+          },
+          {
+            "record": 122,
+            "write_record": 110
+          },
+          {
+            "record": 128,
+            "write_record": 110
+          },
+          {
+            "record": 129,
+            "write_record": 110
+          },
+          {
+            "record": 112,
+            "write_record": 111
+          },
+          {
+            "record": 122,
+            "write_record": 111
+          },
+          {
+            "record": 128,
+            "write_record": 111
+          },
+          {
+            "record": 129,
+            "write_record": 111
+          },
+          {
+            "record": 122,
+            "write_record": 114
+          },
+          {
+            "record": 128,
+            "write_record": 114
+          },
+          {
+            "record": 129,
+            "write_record": 114
+          },
+          {
+            "record": 122,
+            "write_record": 116
+          },
+          {
+            "record": 128,
+            "write_record": 116
+          },
+          {
+            "record": 129,
+            "write_record": 116
+          },
+          {
+            "record": 122,
+            "write_record": 117
+          },
+          {
+            "record": 128,
+            "write_record": 117
+          },
+          {
+            "record": 129,
+            "write_record": 117
+          },
+          {
+            "record": 122,
+            "write_record": 118
+          },
+          {
+            "record": 128,
+            "write_record": 118
+          },
+          {
+            "record": 129,
+            "write_record": 118
+          }
+        ],
+        "script_failures": [],
+        "scripted": 60,
+        "text_hits": [
+          {
+            "record": 75,
+            "write_record": 12
+          },
+          {
+            "record": 78,
+            "write_record": 12
+          },
+          {
+            "record": 79,
+            "write_record": 12
+          },
+          {
+            "record": 80,
+            "write_record": 12
+          },
+          {
+            "record": 82,
+            "write_record": 12
+          },
+          {
+            "record": 75,
+            "write_record": 13
+          },
+          {
+            "record": 78,
+            "write_record": 13
+          },
+          {
+            "record": 79,
+            "write_record": 13
+          },
+          {
+            "record": 80,
+            "write_record": 13
+          },
+          {
+            "record": 82,
+            "write_record": 13
+          },
+          {
+            "record": 75,
+            "write_record": 23
+          },
+          {
+            "record": 78,
+            "write_record": 23
+          },
+          {
+            "record": 79,
+            "write_record": 23
+          },
+          {
+            "record": 80,
+            "write_record": 23
+          },
+          {
+            "record": 82,
+            "write_record": 23
+          },
+          {
+            "record": 75,
+            "write_record": 24
+          },
+          {
+            "record": 78,
+            "write_record": 24
+          },
+          {
+            "record": 79,
+            "write_record": 24
+          },
+          {
+            "record": 80,
+            "write_record": 24
+          },
+          {
+            "record": 82,
+            "write_record": 24
+          },
+          {
+            "record": 75,
+            "write_record": 32
+          },
+          {
+            "record": 78,
+            "write_record": 32
+          },
+          {
+            "record": 79,
+            "write_record": 32
+          },
+          {
+            "record": 80,
+            "write_record": 32
+          },
+          {
+            "record": 82,
+            "write_record": 32
+          },
+          {
+            "record": 75,
+            "write_record": 33
+          },
+          {
+            "record": 78,
+            "write_record": 33
+          },
+          {
+            "record": 79,
+            "write_record": 33
+          },
+          {
+            "record": 80,
+            "write_record": 33
+          },
+          {
+            "record": 82,
+            "write_record": 33
+          },
+          {
+            "record": 75,
+            "write_record": 38
+          },
+          {
+            "record": 78,
+            "write_record": 38
+          },
+          {
+            "record": 79,
+            "write_record": 38
+          },
+          {
+            "record": 80,
+            "write_record": 38
+          },
+          {
+            "record": 82,
+            "write_record": 38
+          },
+          {
+            "record": 75,
+            "write_record": 40
+          },
+          {
+            "record": 78,
+            "write_record": 40
+          },
+          {
+            "record": 79,
+            "write_record": 40
+          },
+          {
+            "record": 80,
+            "write_record": 40
+          },
+          {
+            "record": 82,
+            "write_record": 40
+          },
+          {
+            "record": 75,
+            "write_record": 41
+          },
+          {
+            "record": 78,
+            "write_record": 41
+          },
+          {
+            "record": 79,
+            "write_record": 41
+          },
+          {
+            "record": 80,
+            "write_record": 41
+          },
+          {
+            "record": 82,
+            "write_record": 41
+          },
+          {
+            "record": 75,
+            "write_record": 42
+          },
+          {
+            "record": 78,
+            "write_record": 42
+          },
+          {
+            "record": 79,
+            "write_record": 42
+          },
+          {
+            "record": 80,
+            "write_record": 42
+          },
+          {
+            "record": 82,
+            "write_record": 42
+          },
+          {
+            "record": 75,
+            "write_record": 43
+          },
+          {
+            "record": 78,
+            "write_record": 43
+          },
+          {
+            "record": 79,
+            "write_record": 43
+          },
+          {
+            "record": 80,
+            "write_record": 43
+          },
+          {
+            "record": 82,
+            "write_record": 43
+          },
+          {
+            "record": 75,
+            "write_record": 49
+          },
+          {
+            "record": 78,
+            "write_record": 49
+          },
+          {
+            "record": 79,
+            "write_record": 49
+          },
+          {
+            "record": 80,
+            "write_record": 49
+          },
+          {
+            "record": 82,
+            "write_record": 49
+          },
+          {
+            "record": 75,
+            "write_record": 51
+          },
+          {
+            "record": 78,
+            "write_record": 51
+          },
+          {
+            "record": 79,
+            "write_record": 51
+          },
+          {
+            "record": 80,
+            "write_record": 51
+          },
+          {
+            "record": 82,
+            "write_record": 51
+          },
+          {
+            "record": 75,
+            "write_record": 53
+          },
+          {
+            "record": 78,
+            "write_record": 53
+          },
+          {
+            "record": 79,
+            "write_record": 53
+          },
+          {
+            "record": 80,
+            "write_record": 53
+          },
+          {
+            "record": 82,
+            "write_record": 53
+          },
+          {
+            "record": 75,
+            "write_record": 54
+          },
+          {
+            "record": 78,
+            "write_record": 54
+          },
+          {
+            "record": 79,
+            "write_record": 54
+          },
+          {
+            "record": 80,
+            "write_record": 54
+          },
+          {
+            "record": 82,
+            "write_record": 54
+          },
+          {
+            "record": 75,
+            "write_record": 58
+          },
+          {
+            "record": 78,
+            "write_record": 58
+          },
+          {
+            "record": 79,
+            "write_record": 58
+          },
+          {
+            "record": 80,
+            "write_record": 58
+          },
+          {
+            "record": 82,
+            "write_record": 58
+          },
+          {
+            "record": 75,
+            "write_record": 60
+          },
+          {
+            "record": 78,
+            "write_record": 60
+          },
+          {
+            "record": 79,
+            "write_record": 60
+          },
+          {
+            "record": 80,
+            "write_record": 60
+          },
+          {
+            "record": 82,
+            "write_record": 60
+          },
+          {
+            "record": 75,
+            "write_record": 61
+          },
+          {
+            "record": 78,
+            "write_record": 61
+          },
+          {
+            "record": 79,
+            "write_record": 61
+          },
+          {
+            "record": 80,
+            "write_record": 61
+          },
+          {
+            "record": 82,
+            "write_record": 61
+          },
+          {
+            "record": 75,
+            "write_record": 62
+          },
+          {
+            "record": 78,
+            "write_record": 62
+          },
+          {
+            "record": 79,
+            "write_record": 62
+          },
+          {
+            "record": 80,
+            "write_record": 62
+          },
+          {
+            "record": 82,
+            "write_record": 62
+          },
+          {
+            "record": 75,
+            "write_record": 63
+          },
+          {
+            "record": 78,
+            "write_record": 63
+          },
+          {
+            "record": 79,
+            "write_record": 63
+          },
+          {
+            "record": 80,
+            "write_record": 63
+          },
+          {
+            "record": 82,
+            "write_record": 63
+          },
+          {
+            "record": 75,
+            "write_record": 64
+          },
+          {
+            "record": 78,
+            "write_record": 64
+          },
+          {
+            "record": 79,
+            "write_record": 64
+          },
+          {
+            "record": 80,
+            "write_record": 64
+          },
+          {
+            "record": 82,
+            "write_record": 64
+          },
+          {
+            "record": 75,
+            "write_record": 65
+          },
+          {
+            "record": 78,
+            "write_record": 65
+          },
+          {
+            "record": 79,
+            "write_record": 65
+          },
+          {
+            "record": 80,
+            "write_record": 65
+          },
+          {
+            "record": 82,
+            "write_record": 65
+          },
+          {
+            "record": 75,
+            "write_record": 66
+          },
+          {
+            "record": 78,
+            "write_record": 66
+          },
+          {
+            "record": 79,
+            "write_record": 66
+          },
+          {
+            "record": 80,
+            "write_record": 66
+          },
+          {
+            "record": 82,
+            "write_record": 66
+          },
+          {
+            "record": 75,
+            "write_record": 67
+          },
+          {
+            "record": 78,
+            "write_record": 67
+          },
+          {
+            "record": 79,
+            "write_record": 67
+          },
+          {
+            "record": 80,
+            "write_record": 67
+          },
+          {
+            "record": 82,
+            "write_record": 67
+          },
+          {
+            "record": 75,
+            "write_record": 68
+          },
+          {
+            "record": 78,
+            "write_record": 68
+          },
+          {
+            "record": 79,
+            "write_record": 68
+          },
+          {
+            "record": 80,
+            "write_record": 68
+          },
+          {
+            "record": 82,
+            "write_record": 68
+          },
+          {
+            "record": 75,
+            "write_record": 69
+          },
+          {
+            "record": 78,
+            "write_record": 69
+          },
+          {
+            "record": 79,
+            "write_record": 69
+          },
+          {
+            "record": 80,
+            "write_record": 69
+          },
+          {
+            "record": 82,
+            "write_record": 69
+          },
+          {
+            "record": 78,
+            "write_record": 77
+          },
+          {
+            "record": 79,
+            "write_record": 77
+          },
+          {
+            "record": 80,
+            "write_record": 77
+          },
+          {
+            "record": 82,
+            "write_record": 77
+          },
+          {
+            "record": 80,
+            "write_record": 79
+          },
+          {
+            "record": 82,
+            "write_record": 79
+          },
+          {
+            "record": 82,
+            "write_record": 80
+          }
+        ],
+        "whole_content_hits": [],
+        "write_texts_checked": 46
+      },
+      "ledger_records": 136,
+      "ledger_sha256": "cbab9d5ad491eb39c4afb2f28183e7447f48ec093d4ef72e7cc777ec4fc11b90",
+      "wire": "chat"
+    },
+    "r7c": {
+      "A1": {
+        "flag_disagreements": [],
+        "forwarded": 60,
+        "matches": 60,
+        "mismatches": [],
+        "write_records": 60
+      },
+      "A2": {
+        "hits": [
+          {
+            "attempt": 1,
+            "id": "8:5:user",
+            "inherited": true,
+            "kind": "future_user",
+            "record": 49
+          }
+        ],
+        "introduced": [],
+        "introduced_hits": 0,
+        "raw_hits": 1
+      },
+      "A3": {
+        "executed": 1,
+        "failures": [],
+        "non_write_attempts": 0,
+        "non_write_blocked": 0,
+        "non_write_calls": [],
+        "offered": 60
+      },
+      "A4": {
+        "applied": 1,
+        "applied_operations": 1,
+        "calls": [
+          {
+            "applied": true,
+            "call": "bcw00001",
+            "operations": [
+              {
+                "action": "add",
+                "id": "bcw00001:1",
+                "in_store": true,
+                "next_session_record": 76,
+                "next_session_satisfied": true,
+                "reasons": [],
+                "store_satisfied": true,
+                "superseded_before_next": [],
+                "superseded_by": [],
+                "visible_next_session": true
+              }
+            ],
+            "record": 56
+          }
+        ],
+        "executed": 1,
+        "gaps": [],
+        "in_store": 1,
+        "next_session_satisfied": 1,
+        "refused": 0,
+        "store_satisfied": 1,
+        "visible_next_session": 1
+      },
+      "A5": {
+        "matches": 60,
+        "missing_scripts": [],
+        "non_content_collisions": [],
+        "script_failures": [],
+        "scripted": 60,
+        "text_hits": [
+          {
+            "record": 86,
+            "write_record": 8
+          },
+          {
+            "record": 88,
+            "write_record": 8
+          },
+          {
+            "record": 89,
+            "write_record": 8
+          },
+          {
+            "record": 90,
+            "write_record": 8
+          },
+          {
+            "record": 91,
+            "write_record": 8
+          },
+          {
+            "record": 92,
+            "write_record": 8
+          },
+          {
+            "record": 86,
+            "write_record": 9
+          },
+          {
+            "record": 88,
+            "write_record": 9
+          },
+          {
+            "record": 89,
+            "write_record": 9
+          },
+          {
+            "record": 90,
+            "write_record": 9
+          },
+          {
+            "record": 91,
+            "write_record": 9
+          },
+          {
+            "record": 92,
+            "write_record": 9
+          },
+          {
+            "record": 86,
+            "write_record": 10
+          },
+          {
+            "record": 88,
+            "write_record": 10
+          },
+          {
+            "record": 89,
+            "write_record": 10
+          },
+          {
+            "record": 90,
+            "write_record": 10
+          },
+          {
+            "record": 91,
+            "write_record": 10
+          },
+          {
+            "record": 92,
+            "write_record": 10
+          },
+          {
+            "record": 86,
+            "write_record": 11
+          },
+          {
+            "record": 88,
+            "write_record": 11
+          },
+          {
+            "record": 89,
+            "write_record": 11
+          },
+          {
+            "record": 90,
+            "write_record": 11
+          },
+          {
+            "record": 91,
+            "write_record": 11
+          },
+          {
+            "record": 92,
+            "write_record": 11
+          },
+          {
+            "record": 86,
+            "write_record": 12
+          },
+          {
+            "record": 88,
+            "write_record": 12
+          },
+          {
+            "record": 89,
+            "write_record": 12
+          },
+          {
+            "record": 90,
+            "write_record": 12
+          },
+          {
+            "record": 91,
+            "write_record": 12
+          },
+          {
+            "record": 92,
+            "write_record": 12
+          },
+          {
+            "record": 86,
+            "write_record": 19
+          },
+          {
+            "record": 88,
+            "write_record": 19
+          },
+          {
+            "record": 89,
+            "write_record": 19
+          },
+          {
+            "record": 90,
+            "write_record": 19
+          },
+          {
+            "record": 91,
+            "write_record": 19
+          },
+          {
+            "record": 92,
+            "write_record": 19
+          },
+          {
+            "record": 86,
+            "write_record": 21
+          },
+          {
+            "record": 88,
+            "write_record": 21
+          },
+          {
+            "record": 89,
+            "write_record": 21
+          },
+          {
+            "record": 90,
+            "write_record": 21
+          },
+          {
+            "record": 91,
+            "write_record": 21
+          },
+          {
+            "record": 92,
+            "write_record": 21
+          },
+          {
+            "record": 86,
+            "write_record": 22
+          },
+          {
+            "record": 88,
+            "write_record": 22
+          },
+          {
+            "record": 89,
+            "write_record": 22
+          },
+          {
+            "record": 90,
+            "write_record": 22
+          },
+          {
+            "record": 91,
+            "write_record": 22
+          },
+          {
+            "record": 92,
+            "write_record": 22
+          },
+          {
+            "record": 86,
+            "write_record": 23
+          },
+          {
+            "record": 88,
+            "write_record": 23
+          },
+          {
+            "record": 89,
+            "write_record": 23
+          },
+          {
+            "record": 90,
+            "write_record": 23
+          },
+          {
+            "record": 91,
+            "write_record": 23
+          },
+          {
+            "record": 92,
+            "write_record": 23
+          },
+          {
+            "record": 86,
+            "write_record": 25
+          },
+          {
+            "record": 88,
+            "write_record": 25
+          },
+          {
+            "record": 89,
+            "write_record": 25
+          },
+          {
+            "record": 90,
+            "write_record": 25
+          },
+          {
+            "record": 91,
+            "write_record": 25
+          },
+          {
+            "record": 92,
+            "write_record": 25
+          },
+          {
+            "record": 86,
+            "write_record": 33
+          },
+          {
+            "record": 88,
+            "write_record": 33
+          },
+          {
+            "record": 89,
+            "write_record": 33
+          },
+          {
+            "record": 90,
+            "write_record": 33
+          },
+          {
+            "record": 91,
+            "write_record": 33
+          },
+          {
+            "record": 92,
+            "write_record": 33
+          },
+          {
+            "record": 86,
+            "write_record": 34
+          },
+          {
+            "record": 88,
+            "write_record": 34
+          },
+          {
+            "record": 89,
+            "write_record": 34
+          },
+          {
+            "record": 90,
+            "write_record": 34
+          },
+          {
+            "record": 91,
+            "write_record": 34
+          },
+          {
+            "record": 92,
+            "write_record": 34
+          },
+          {
+            "record": 86,
+            "write_record": 35
+          },
+          {
+            "record": 88,
+            "write_record": 35
+          },
+          {
+            "record": 89,
+            "write_record": 35
+          },
+          {
+            "record": 90,
+            "write_record": 35
+          },
+          {
+            "record": 91,
+            "write_record": 35
+          },
+          {
+            "record": 92,
+            "write_record": 35
+          },
+          {
+            "record": 86,
+            "write_record": 36
+          },
+          {
+            "record": 88,
+            "write_record": 36
+          },
+          {
+            "record": 89,
+            "write_record": 36
+          },
+          {
+            "record": 90,
+            "write_record": 36
+          },
+          {
+            "record": 91,
+            "write_record": 36
+          },
+          {
+            "record": 92,
+            "write_record": 36
+          },
+          {
+            "record": 86,
+            "write_record": 37
+          },
+          {
+            "record": 88,
+            "write_record": 37
+          },
+          {
+            "record": 89,
+            "write_record": 37
+          },
+          {
+            "record": 90,
+            "write_record": 37
+          },
+          {
+            "record": 91,
+            "write_record": 37
+          },
+          {
+            "record": 92,
+            "write_record": 37
+          },
+          {
+            "record": 86,
+            "write_record": 44
+          },
+          {
+            "record": 88,
+            "write_record": 44
+          },
+          {
+            "record": 89,
+            "write_record": 44
+          },
+          {
+            "record": 90,
+            "write_record": 44
+          },
+          {
+            "record": 91,
+            "write_record": 44
+          },
+          {
+            "record": 92,
+            "write_record": 44
+          },
+          {
+            "record": 86,
+            "write_record": 46
+          },
+          {
+            "record": 88,
+            "write_record": 46
+          },
+          {
+            "record": 89,
+            "write_record": 46
+          },
+          {
+            "record": 90,
+            "write_record": 46
+          },
+          {
+            "record": 91,
+            "write_record": 46
+          },
+          {
+            "record": 92,
+            "write_record": 46
+          },
+          {
+            "record": 86,
+            "write_record": 47
+          },
+          {
+            "record": 88,
+            "write_record": 47
+          },
+          {
+            "record": 89,
+            "write_record": 47
+          },
+          {
+            "record": 90,
+            "write_record": 47
+          },
+          {
+            "record": 91,
+            "write_record": 47
+          },
+          {
+            "record": 92,
+            "write_record": 47
+          },
+          {
+            "record": 86,
+            "write_record": 48
+          },
+          {
+            "record": 88,
+            "write_record": 48
+          },
+          {
+            "record": 89,
+            "write_record": 48
+          },
+          {
+            "record": 90,
+            "write_record": 48
+          },
+          {
+            "record": 91,
+            "write_record": 48
+          },
+          {
+            "record": 92,
+            "write_record": 48
+          },
+          {
+            "record": 86,
+            "write_record": 49
+          },
+          {
+            "record": 88,
+            "write_record": 49
+          },
+          {
+            "record": 89,
+            "write_record": 49
+          },
+          {
+            "record": 90,
+            "write_record": 49
+          },
+          {
+            "record": 91,
+            "write_record": 49
+          },
+          {
+            "record": 92,
+            "write_record": 49
+          },
+          {
+            "record": 86,
+            "write_record": 59
+          },
+          {
+            "record": 88,
+            "write_record": 59
+          },
+          {
+            "record": 89,
+            "write_record": 59
+          },
+          {
+            "record": 90,
+            "write_record": 59
+          },
+          {
+            "record": 91,
+            "write_record": 59
+          },
+          {
+            "record": 92,
+            "write_record": 59
+          },
+          {
+            "record": 86,
+            "write_record": 66
+          },
+          {
+            "record": 88,
+            "write_record": 66
+          },
+          {
+            "record": 89,
+            "write_record": 66
+          },
+          {
+            "record": 90,
+            "write_record": 66
+          },
+          {
+            "record": 91,
+            "write_record": 66
+          },
+          {
+            "record": 92,
+            "write_record": 66
+          },
+          {
+            "record": 86,
+            "write_record": 67
+          },
+          {
+            "record": 88,
+            "write_record": 67
+          },
+          {
+            "record": 89,
+            "write_record": 67
+          },
+          {
+            "record": 90,
+            "write_record": 67
+          },
+          {
+            "record": 91,
+            "write_record": 67
+          },
+          {
+            "record": 92,
+            "write_record": 67
+          },
+          {
+            "record": 86,
+            "write_record": 68
+          },
+          {
+            "record": 88,
+            "write_record": 68
+          },
+          {
+            "record": 89,
+            "write_record": 68
+          },
+          {
+            "record": 90,
+            "write_record": 68
+          },
+          {
+            "record": 91,
+            "write_record": 68
+          },
+          {
+            "record": 92,
+            "write_record": 68
+          },
+          {
+            "record": 86,
+            "write_record": 76
+          },
+          {
+            "record": 88,
+            "write_record": 76
+          },
+          {
+            "record": 89,
+            "write_record": 76
+          },
+          {
+            "record": 90,
+            "write_record": 76
+          },
+          {
+            "record": 91,
+            "write_record": 76
+          },
+          {
+            "record": 92,
+            "write_record": 76
+          },
+          {
+            "record": 86,
+            "write_record": 77
+          },
+          {
+            "record": 88,
+            "write_record": 77
+          },
+          {
+            "record": 89,
+            "write_record": 77
+          },
+          {
+            "record": 90,
+            "write_record": 77
+          },
+          {
+            "record": 91,
+            "write_record": 77
+          },
+          {
+            "record": 92,
+            "write_record": 77
+          },
+          {
+            "record": 86,
+            "write_record": 78
+          },
+          {
+            "record": 88,
+            "write_record": 78
+          },
+          {
+            "record": 89,
+            "write_record": 78
+          },
+          {
+            "record": 90,
+            "write_record": 78
+          },
+          {
+            "record": 91,
+            "write_record": 78
+          },
+          {
+            "record": 92,
+            "write_record": 78
+          },
+          {
+            "record": 86,
+            "write_record": 79
+          },
+          {
+            "record": 88,
+            "write_record": 79
+          },
+          {
+            "record": 89,
+            "write_record": 79
+          },
+          {
+            "record": 90,
+            "write_record": 79
+          },
+          {
+            "record": 91,
+            "write_record": 79
+          },
+          {
+            "record": 92,
+            "write_record": 79
+          },
+          {
+            "record": 86,
+            "write_record": 80
+          },
+          {
+            "record": 88,
+            "write_record": 80
+          },
+          {
+            "record": 89,
+            "write_record": 80
+          },
+          {
+            "record": 90,
+            "write_record": 80
+          },
+          {
+            "record": 91,
+            "write_record": 80
+          },
+          {
+            "record": 92,
+            "write_record": 80
+          },
+          {
+            "record": 86,
+            "write_record": 81
+          },
+          {
+            "record": 88,
+            "write_record": 81
+          },
+          {
+            "record": 89,
+            "write_record": 81
+          },
+          {
+            "record": 90,
+            "write_record": 81
+          },
+          {
+            "record": 91,
+            "write_record": 81
+          },
+          {
+            "record": 92,
+            "write_record": 81
+          },
+          {
+            "record": 86,
+            "write_record": 82
+          },
+          {
+            "record": 88,
+            "write_record": 82
+          },
+          {
+            "record": 89,
+            "write_record": 82
+          },
+          {
+            "record": 90,
+            "write_record": 82
+          },
+          {
+            "record": 91,
+            "write_record": 82
+          },
+          {
+            "record": 92,
+            "write_record": 82
+          },
+          {
+            "record": 86,
+            "write_record": 83
+          },
+          {
+            "record": 88,
+            "write_record": 83
+          },
+          {
+            "record": 89,
+            "write_record": 83
+          },
+          {
+            "record": 90,
+            "write_record": 83
+          },
+          {
+            "record": 91,
+            "write_record": 83
+          },
+          {
+            "record": 92,
+            "write_record": 83
+          },
+          {
+            "record": 86,
+            "write_record": 84
+          },
+          {
+            "record": 88,
+            "write_record": 84
+          },
+          {
+            "record": 89,
+            "write_record": 84
+          },
+          {
+            "record": 90,
+            "write_record": 84
+          },
+          {
+            "record": 91,
+            "write_record": 84
+          },
+          {
+            "record": 92,
+            "write_record": 84
+          },
+          {
+            "record": 86,
+            "write_record": 85
+          },
+          {
+            "record": 88,
+            "write_record": 85
+          },
+          {
+            "record": 89,
+            "write_record": 85
+          },
+          {
+            "record": 90,
+            "write_record": 85
+          },
+          {
+            "record": 91,
+            "write_record": 85
+          },
+          {
+            "record": 92,
+            "write_record": 85
+          },
+          {
+            "record": 88,
+            "write_record": 87
+          },
+          {
+            "record": 89,
+            "write_record": 87
+          },
+          {
+            "record": 90,
+            "write_record": 87
+          },
+          {
+            "record": 91,
+            "write_record": 87
+          },
+          {
+            "record": 92,
+            "write_record": 87
+          },
+          {
+            "record": 90,
+            "write_record": 89
+          },
+          {
+            "record": 91,
+            "write_record": 89
+          },
+          {
+            "record": 92,
+            "write_record": 89
+          },
+          {
+            "record": 91,
+            "write_record": 90
+          },
+          {
+            "record": 92,
+            "write_record": 90
+          },
+          {
+            "record": 92,
+            "write_record": 91
+          }
+        ],
+        "whole_content_hits": [],
+        "write_texts_checked": 59
+      },
+      "ledger_records": 167,
+      "ledger_sha256": "c163b2077b324b55ea18e012225634e0e3da9fa25c47946d32ffb5a3ada7f6f2",
+      "wire": "responses"
+    }
+  }
+}
