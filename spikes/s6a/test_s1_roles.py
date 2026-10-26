@@ -84,21 +84,72 @@ class S1Roles(unittest.TestCase):
                 self.assertEqual(d.cursor, 63)
 
     def test_every_fixture_role_survives_both_director_seams(self):
+        for src in SOURCES:
+            name = src["source"]
+            # Skip director-originated write-suffix bodies: they go upstream, not into classify.
+            if name.endswith("-director-write-bodies"):
+                continue
+            # Skip soak payloads: the soak calls upstream directly.
+            if name == "s6b-soak":
+                continue
+            # Skip other harnesses' replays: s1-hermes-stub, s1-claude and s1-codex.
+            if not name.startswith(("s6a-", "s6b-")):
+                continue
+            sol = name.startswith("s6b-")
+            d = self.make(sol)
+            for row in src["rows"]:
+                if row.get("issued_as") == "write_turn":
+                    turn = next(t for t in d.expected if roles.h16(t["user"].strip()) in row["shape"]["user_hashes"])
+                    for cid in row["issued"]:
+                        d.pending[cid], d.id_roles[cid] = turn, ("write_turn", "tool_results")
+            for row in src["rows"]:
+                # Skip GET metadata: do_GET serves it without entering either classify seam.
+                if row["shape"]["method"] != "POST":
+                    continue
+                with self.subTest(source=name, seq=row["seq"]):
+                    with mock.patch.object(roles, "shape", return_value=row["shape"]):
+                        body = {"model": row["shape"]["model"]}
+                        mapped = d.classify(body) if sol else d.classify(row["shape"]["path"], body)
+                    self.assertEqual(d.s1[0], row["expected"])
+                    self.assertNotEqual(mapped[0], "unknown")
+                    self.assertEqual(mapped[0] == "summariser", row["expected"] == "compaction")
+                    if row["expected"] in ("title", "aux", "summariser", "extraction"):
+                        self.assertEqual(mapped[0], "aux")
+                    roles.advance(d.ctx, d.s1, row["issued"], row.get("issued_as"))
+        # These raw auxiliary roles are not all represented in the recorded POST rows.
         for sol in (False, True):
-            for src in SOURCES:
-                with self.subTest(sol=sol, source=src["source"]):
-                    d = self.make(sol)
-                    # Other harnesses have their own declared scripts/aliases; use their fixture context.
-                    d.ctx = roles.Context.of(src["ctx"])
-                    for row in src["rows"]:
-                        with mock.patch.object(roles, "shape", return_value=row["shape"]):
-                            mapped = director.s1_classify(d, row["shape"]["path"], {})
-                        result = mapped[3]
-                        self.assertEqual(result[0], row["expected"], (src["source"], row["seq"]))
-                        self.assertNotEqual(result[0], "unknown")
-                        if result[0] == "compaction":
-                            self.assertEqual(mapped[:3], ("summariser", "compression", None))
-                        roles.advance(d.ctx, result, row["issued"], row.get("issued_as"))
+            d = self.make(sol)
+            for raw in ("title", "aux", "summariser", "extraction"):
+                with self.subTest(sol=sol, raw=raw), mock.patch.object(roles, "classify", return_value=(raw, "shape", {})):
+                    mapped = d.classify({}) if sol else d.classify("/aux/compression/v1/chat/completions", {})
+                    self.assertEqual(mapped[0], "aux")
+
+    def test_s6a_rejects_bodyless_endpoints_without_budget(self):
+        for path in ("/v1/responses/compact", "/v1/messages/count_tokens"):
+            for body in ({}, {"messages": [{"role": "user", "content": "x"}]}):
+                with self.subTest(path=path, body=body):
+                    d = self.make()
+                    before = copy.deepcopy(d.ctx)
+                    with mock.patch.object(d.budget, "take", wraps=d.budget.take) as take:
+                        code, _, rec = d.handle(path, body)
+                    self.assertEqual((code, rec["role"], rec["subrole"]), (400, "unknown", ""))
+                    self.assertEqual(d.ctx, before)
+                    self.assertFalse(rec["upstream"])
+                    take.assert_not_called()
+
+    def test_s6a_rejects_responses_wire_without_advancing(self):
+        for index, path in ((0, "/main/v1/responses"), (62, "/responses")):
+            for write in (False, True):
+                with self.subTest(index=index, path=path, write=write):
+                    d = self.make()
+                    d.cursor, d.write_turns = index, write
+                    before = copy.deepcopy(d.ctx)
+                    with mock.patch.object(d.budget, "take", wraps=d.budget.take) as take:
+                        code, _, rec = d.handle(path, self.body(d, index, sol=True))
+                    self.assertEqual((code, rec["role"], rec["subrole"]), (400, "unknown", ""))
+                    self.assertEqual(d.ctx, before)
+                    self.assertFalse(rec["upstream"])
+                    take.assert_not_called()
 
     def test_reply_id_registration_after_two_concurrent_turns_does_not_rewind(self):
         for sol in (False, True):

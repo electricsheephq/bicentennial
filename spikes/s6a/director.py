@@ -320,6 +320,9 @@ class Director:
 
     # ---- classification ---------------------------------------------------------------------------
     def classify(self, path: str, body: dict) -> tuple[str, str, dict | None]:
+        if not path.endswith("/chat/completions"):
+            self.s1, self.s1_error = ("unknown", "unknown", {}), None
+            return "unknown", "", None
         role, sub, turn, self.s1 = s1_classify(self, path, body)
         return role, sub, turn
 
