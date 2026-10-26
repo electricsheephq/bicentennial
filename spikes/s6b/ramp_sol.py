@@ -26,7 +26,6 @@ from types import SimpleNamespace
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "s6a"))
 from ramp import run_level
-
 from sol_director import EFFORT, MODEL, Director, marker_state
 
 KEEP = ("status", "ok", "category", "t_ms", "served_model", "n_events", "limit_headers", "body_shape", "error_obj",

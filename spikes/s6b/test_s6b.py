@@ -415,5 +415,82 @@ class Ramp(Base):
         self.assertNotIn(ACCT, (self.tmp / "ledger" / "ledger.jsonl").read_text())
 
 
+class Soak(Base):
+    QUOTA = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached"}}).encode()
+
+    def source(self, d):  # a finished run's ledger: forwarded write-turn and compaction blobs, plus noise
+        led = sd.Ledger(self.tmp / "src" / "ledger", d.guard)
+        bodies = [dict(self.turn(d, k), input=sd.typed(self.turn(d, k)["input"] + [sd.SUFFIX_ITEM]), tools=[MEM])
+                  for k in range(3)]  # as the director stores a forwarded body: typed parts
+        comp = {"model": sd.MODEL, "instructions": "You are Hermes.", "stream": True, "store": False,
+                "reasoning": {"effort": "medium"}, "input": [{"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": sd.SUMMARY_SIG + " the turns so far"}]}]}
+        ups = [{"kind": "write_turn", "ok": True, "req": led.blob(b), "t_ms": 40} for b in bodies]
+        ups += [{"kind": "summariser", "ok": True, "req": led.blob(comp), "t_ms": 200},
+                {"kind": "aux", "ok": True, "req": led.blob(AUX), "t_ms": 10},  # not a soak payload
+                {"kind": "write_turn", "ok": False, "req": led.blob({"x": 1}), "t_ms": 5}]  # a failed call: skipped
+        for u in ups:
+            led.append({"type": "request", "upstream": [u]})
+        return self.tmp / "src", bodies + [comp]
+
+    def test_holds_inflight_for_the_window_with_the_source_mix(self):
+        import soak_sol
+        d = self.make(write_turns=False, budget_cap=2000, run="soak")
+        src, bodies = self.source(d)
+        pays = soak_sol.payloads(src)
+        self.assertEqual(([p["kind"] for p in pays], [p["body"] for p in pays]),
+                         (["write_turn"] * 3 + ["summariser"], bodies))
+        res = soak_sol.soak(d, pays, inflight=4, duration=1.0, ceiling=1000, sample_s=0.1)
+        self.assertEqual((res["ended_by"], res["refused"], res["sustained"], res["inflight_max"]), ("duration", 0, True, 4))
+        self.assertGreaterEqual(res["inflight_min"], 3)  # a slot is refilled as soon as its call returns
+        self.assertEqual((res["sent"], len(Upstream.seen)), (res["ok"], res["ok"]))
+        self.assertGreater(res["sent"], 8)
+        self.assertEqual(sum(m["ok"] for m in res["per_minute"]), res["ok"])
+        self.assertEqual(sum(m["input_tokens"] for m in res["per_minute"]), 7 * res["ok"])  # the fake usage
+        self.assertEqual(res["by_kind"]["write_turn"]["output_tokens"] + res["by_kind"]["summariser"]["output_tokens"],
+                         3 * res["ok"])
+        self.assertEqual(res["effort_is_pin"], res["sent"])
+        self.assertEqual(res["quota_headers_last"]["x-codex-primary-used-percent"], "42")
+        for _, wire in Upstream.seen:  # every send is a source body, unchanged
+            self.assertIn(wire, bodies)
+        self.assertEqual({c["n"] % 4 for c in res["calls"]}, {0, 1, 2, 3})  # round robin over the mix
+        self.assertEqual(len(self.records("soak")), res["sent"])
+        text = (self.tmp / "ledger" / "ledger.jsonl").read_text()
+        self.assertNotIn(ACCT, text)
+        self.assertNotIn("authorization", text.lower())
+
+    def test_three_quota_refusals_stop_before_the_next_send(self):
+        import soak_sol
+        d = self.make(write_turns=False, budget_cap=2000, run="soak")
+        pays = soak_sol.payloads(self.source(d)[0])
+        Upstream.script = [(429, self.QUOTA)] * 40
+        res = soak_sol.soak(d, pays, inflight=4, duration=5.0, ceiling=1000, pause=1.0, sample_s=0.1)
+        self.assertEqual((res["ended_by"], res["sustained"]), ("quota_3_in_a_row", False))
+        self.assertTrue(3 <= res["sent"] <= 4 and res["sent"] == len(Upstream.seen) == res["n429"])
+        self.assertLess(res["wall_s"], 3)  # stopped at once, not at the window's end
+        shape = json.loads(res["refusal_shapes"][0])
+        self.assertEqual((shape["status"], shape["category"], shape["body_shape"]["error"]["type"]),
+                         (429, "quota", "usage_limit_reached"))
+        self.assertEqual(res["per_minute"][0]["n429"], res["sent"])
+
+    def test_call_ceiling_and_plan(self):
+        import soak_sol
+        d = self.make(write_turns=False, budget_cap=2000, run="soak")
+        pays = soak_sol.payloads(self.source(d)[0])
+        res = soak_sol.soak(d, pays, inflight=4, duration=5.0, ceiling=10, sample_s=0.1)
+        self.assertEqual((res["ended_by"], res["sent"], len(Upstream.seen)), ("call_ceiling", 10, 10))
+        self.assertFalse(res["sustained"])
+        pl = soak_sol.plan(pays, inflight=24, duration=180, ceiling=500)  # mean 0.08 s, floored at 0.1 s
+        self.assertEqual((pl["fits"], pl["est_calls"], pl["max_fitting_duration_s"]), (False, 43200, 2))
+        self.assertTrue(soak_sol.plan([dict(p, t_ms=7000) for p in pays], 24, 180, 700)["fits"])  # ~617 calls
+        b = self.tmp / "budget.json"
+        b.write_text(json.dumps({"total": 600, "by_run": {}, "by_kind": {}}))
+        self.assertEqual(soak_sol.ceiling_for(b, 1400, 700, 50), 700)
+        b.write_text(json.dumps({"total": 900, "by_run": {}, "by_kind": {}}))
+        self.assertEqual(soak_sol.ceiling_for(b, 1400, 700, 50), 450)
+        with self.assertRaises(SystemExit):  # no compaction body in the source: refuse, never a write-only soak
+            soak_sol.payloads(self.source(d)[0], kinds=("write_turn", "probe"))
+
+
 if __name__ == "__main__":
     unittest.main()
