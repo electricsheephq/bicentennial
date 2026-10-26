@@ -158,6 +158,19 @@ class Director(s6.Director):
                     cost_usd=cost, cost_estimated=estimated, zero_cost_refusal=refused,
                     t_ms=round((time.monotonic() - t0) * 1000))
 
+    def upstream_retry(self, body, kind, rec):
+        """S6a's retry with a configurable hold schedule (--hold-schedule, seconds); each try is counted and the
+        held seconds are recorded. The default, 5,15, is S6a's own."""
+        held = 0
+        for wait in [*self.a.hold_schedule, None]:
+            up = self.upstream(body, kind)
+            rec["upstream"].append(self._strip(up))
+            if up["ok"] or up["category"] not in ("overload", "concurrency", "rate") or wait is None or self.stopped:
+                rec["held_s"] = rec.get("held_s", 0) + held
+                return up
+            time.sleep(wait)
+            held += wait
+
     def write_turn(self, body, turn, rec):
         # S6a readback receives the exact declared additions in its expected harness body.
         out = super().write_turn(body | self.adapt, turn, rec)
@@ -182,6 +195,8 @@ def parser():
     p.add_argument('--chars-per-token', type=float, default=4.0)
     p.add_argument('--model', default=MODEL)
     p.add_argument('--provider-only', default='deepseek', help='the router endpoint slug every request is pinned to')
+    p.add_argument('--hold-schedule', type=lambda v: [int(x) for x in v.split(',') if x], default=[5, 15],
+                   help='seconds to hold before each retry of a refused director-originated call (S6a: 5,15)')
     p.add_argument('--served-provider', default='DeepSeek', help='the provider name every response must report')
     p.add_argument('--mode', choices=['stub', 'live'], default='stub')
     return p

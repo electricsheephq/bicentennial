@@ -91,6 +91,42 @@ class TestS4b(unittest.TestCase):
                 self.assertTrue(d.upstream({'messages': []}, 'aux')['unsent'])
                 self.assertEqual(len(seen), 1)
 
+    def test_endpoint_pin_flag(self):
+        flags = ('--provider-only', 'deepinfra/fp8', '--served-provider', 'DeepInfra')
+        for served, ok in (('DeepInfra', True), ('DeepSeek', False)):
+            with self.subTest(served=served):
+                d, seen = self.live(self.response(provider=served))
+                d = self.make('--mode', 'live', *flags)
+                body = {'messages': [{'role': 'user', 'content': d.expected[0]['user']}], 'reasoning_effort': 'medium',
+                        'tools': [{'function': {'name': 'memory'}}]}
+                rec = {'upstream': []}
+                d.write_turn(body, d.expected[0], rec)
+                self.assertTrue(rec['write_turn_readback'])  # the forwarded body is right either way
+                self.assertEqual(rec['upstream'][0]['category'], '' if ok else 'pin_failure')
+                self.assertEqual(d.stopped, not ok)
+                self.assertTrue(seen and all(b['provider'] == {'only': ['deepinfra/fp8'], 'allow_fallbacks': False}
+                                             for b in seen))
+
+    def test_hold_schedule(self):
+        d = self.make('--hold-schedule', '5,15,45')
+        replies = iter([{'ok': False, 'category': 'overload'}] * 3 + [{'ok': True, 'category': ''}])
+        d.upstream = lambda body, kind: next(replies)
+        with patch.object(lane.time, 'sleep') as sleep:
+            rec = {'upstream': []}
+            self.assertTrue(d.upstream_retry({}, 'write_turn', rec)['ok'])
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [5, 15, 45])
+        self.assertEqual((len(rec['upstream']), rec['held_s']), (4, 65))
+        d = self.make()  # the default is S6a's own 5, 15; a fourth refusal is returned, never slept on
+        d.upstream = lambda body, kind: {'ok': False, 'category': 'rate'}
+        with patch.object(lane.time, 'sleep') as sleep:
+            rec = {'upstream': []}
+            self.assertEqual(d.upstream_retry({}, 'aux', rec)['category'], 'rate')
+        self.assertEqual(([c.args[0] for c in sleep.call_args_list], len(rec['upstream']), rec['held_s']), ([5, 15], 3, 20))
+        d.upstream = lambda body, kind: {'ok': False, 'category': 'auth'}
+        with patch.object(lane.time, 'sleep') as sleep:
+            d.upstream_retry({}, 'aux', {'upstream': []})
+        sleep.assert_not_called()
+
     def test_reserve_settle_and_refuse_before_send(self):
         d, seen = self.live(self.response(usage={'cost': 0.002}))
         self.assertEqual(d.upstream({'messages': []}, 'aux')['cost_usd'], 0.002)

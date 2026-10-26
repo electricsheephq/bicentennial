@@ -11,5 +11,6 @@ Reserve estimated prompt tokens plus max_tokens (default 32768) at peak input/ou
 before sending. Share the locked spend file across director and ramp; default cap $4, maximum $5.
 Settle router cost, else peak-price token cost; uncertain responses keep the full reserved charge.
 No GLM pause; retain per-session marker gating, nice 19 and taskpolicy background priority.
+Director-originated retries of overload, concurrency and rate refusals hold per `--hold-schedule` (default S6a's 5,15; the run of record uses 5,15,45,120,300), recording the seconds held.
 Done: both focused suites, zero-network stub life and ramp through 32, ruff and diff checks.
 Stub replay simulates tool results; only the orchestrator's real Hermes run proves memory execution.

@@ -141,7 +141,8 @@ if __name__ == '__main__':
     out = Path(a.out)
     extra = ['--spend-file', a.spend_file, '--spend-cap-usd', str(a.spend_cap_usd),
              '--input-usd', str(a.input_usd), '--output-usd', str(a.output_usd), '--model', a.model,
-             '--provider-only', a.provider_only, '--served-provider', a.served_provider]
+             '--provider-only', a.provider_only, '--served-provider', a.served_provider,
+             '--hold-schedule', ','.join(map(str, a.hold_schedule))]
     if op == 'replay':
         replay(a, extra, [*rest, '--run', a.run])
     elif op == 'analyse':
