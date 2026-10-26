@@ -10,7 +10,7 @@
 | Decision record | `docs/DECISIONS-v2.md`, DV1-DV46 (DV42 reserved: the pinned family's model lane, set after spike S6b) |
 | Tag | `prereg-v0.2`, on the commit that adds this record's final text; the commit SHA is posted on lcm-x #1964 |
 | Approved by | the owner, on 2026-10-26 (design v2.0 and this freeze). The benchmark session froze it under the owner's grant. |
-| Owner co-sign | requested on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964); its link is added here once given |
+| Owner co-sign | not required. On 2026-10-26 the owner made the benchmark session the product and release owner, deciding freezes on data-backed alignment without co-signs. PREREG-v0.2 binds from its freeze. |
 | Completion record | pending: slots C-1 to C-15, in `prereg/PREREG-v0-completion.md`, committed before any real memory system's first pilot run |
 | External scoring veto | to be recruited before PREREG-v1 |
 
