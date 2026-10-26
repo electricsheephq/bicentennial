@@ -186,6 +186,30 @@ def test_logical_reload_in_one_child(tmp_path):
     assert result.stdout == "60.0\n"
 
 
+def test_long_lived_child_sees_each_tick_without_waiting(tmp_path):
+    # The director ticks, then answers at once; the child's next read must see the tick.
+    clock = SimClock(tmp_path / "clock.json", int(SIM), 60)
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "BICENTENNIAL_CLOCK_FILE")}
+    env.update({"PYTHONPATH": str(SHIM_DIR), "BICENTENNIAL_CLOCK_FILE": str(clock.path)})
+    child = subprocess.Popen(
+        [CHILD_PYTHON, "-c", "import sys, time\nfor _ in sys.stdin:\n    print(int(time.time()), flush=True)\n"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env,
+    )
+    seen = []
+    try:
+        for _ in range(4):
+            for tick in (False, True):
+                if tick:
+                    clock.tick()
+                child.stdin.write("read\n")
+                child.stdin.flush()
+                seen.append(int(child.stdout.readline()) - int(SIM))
+    finally:
+        child.stdin.close()
+        child.wait(timeout=10)
+    assert seen == [0, 60, 60, 120, 120, 180, 180, 240]
+
+
 def test_writer_is_canonical_and_ticks(tmp_path, monkeypatch):
     monkeypatch.setattr(clock_module.time, "time", lambda: 2_000_000_000.75)
     clock = SimClock(tmp_path / "clock.json", int(SIM), 17)

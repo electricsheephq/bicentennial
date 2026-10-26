@@ -49,29 +49,32 @@ _RealDate = _dt_mod.date
 class _Clock:
     def __init__(self, path):
         self.path = path
-        self.mtime_ns = None
+        self.ident = None
         self.state = (0.0, 0.0, 1.0)  # (sim_start, wall_anchor, rate)
         self.next_check = 0.0
         self.load()
 
     def load(self):
-        st = _os.stat(self.path)
         with open(self.path, encoding="utf-8") as fh:
+            st = _os.fstat(fh.fileno())
             data = _json.load(fh)
         state = (float(data["sim_start"]), float(data["wall_anchor"]), float(data.get("rate", 1.0)))
         # One attribute store: a concurrent now() sees the old or the new reading, never a mix,
         # and a bad file leaves the old reading intact.
         self.state = state
-        self.mtime_ns = st.st_mtime_ns
+        self.ident = (st.st_ino, st.st_mtime_ns)
 
     def refresh(self):
         # Re-read when the director rewrites the file (a long-lived process may span a jump).
+        # Logical mode (rate 0) checks on every read, so a tick is seen by the first read after
+        # the writer's os.replace (a new inode); a throttle would tie it to wall timing.
         mono = _real_monotonic()
-        if mono < self.next_check:
+        if self.state[2] != 0 and mono < self.next_check:
             return
         self.next_check = mono + _RECHECK_SECONDS
         try:
-            if _os.stat(self.path).st_mtime_ns != self.mtime_ns:
+            st = _os.stat(self.path)
+            if (st.st_ino, st.st_mtime_ns) != self.ident:
                 self.load()
         except (OSError, ValueError, KeyError, TypeError):
             pass  # keep the last good reading; startup already proved the file valid
