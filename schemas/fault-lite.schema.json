@@ -1,0 +1,1 @@
+{"items":{"additionalProperties":false,"properties":{"kind":{"enum":["restart","kill","compaction","swap"]},"session":{"minimum":1,"type":"integer"},"turn":{"minimum":1,"type":["integer","null"]}},"required":["kind","session","turn"],"type":"object"},"type":"array"}
