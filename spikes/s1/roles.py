@@ -10,15 +10,17 @@ in two pure steps, so a test can run on minimized shapes that hold no harness te
     classify_shape(shape, ctx) -> (role, method, evidence)
 
 The rule, in order (DESIGN §6.2, job 6):
-  1. cursor       in the main frame (no marker of an auxiliary role): a trailing tool result that answers a
-                  call id the director issued or forwarded; or the last user message carries the scripted
+  1. cursor       in the main frame (no marker of an auxiliary role): trailing tool results that all answer
+                  call ids the director issued or forwarded, all of one role. An unmatched result fails closed
+                  unless it answers a sibling call in the same call message as an issued id (a harness
+                  split); a matching call alone never counts. Or the last user message carries the scripted
                   turn at the cursor, or the current turn again (a retry), or a harness continuation marker
                   on the current turn, with tools offered
   2. model_alias  a declared auxiliary alias: a per-task base-URL prefix or a model name. A marker may refine
                   the role within the alias's allowed set; a marker outside it is a conflict
   3. shape        exactly one marker role (a prefix hash of one text field), or a body-less endpoint shape
                   (count_tokens, a remote compaction endpoint, model-catalog and local-server probes)
-  4. unknown      anything else, and any conflict between steps. The caller must refuse to serve it.
+  4. unknown      anything else, any conflict between steps, and a wire that disagrees with method and path. The caller must refuse to serve it.
 
 Markers are stored as (field, prefix length, sha256 prefix), so no harness text is kept in this repository.
 """
@@ -92,10 +94,11 @@ def _parts(m: dict) -> list:
     return m["content"] if isinstance(m.get("content"), list) else []
 
 
-def _items(wire: str, body: dict) -> tuple[str, list[str], list[list[str]], list[str]]:
-    """(role tokens, trailing tool ids, user text-block lists in order, system blocks) for one wire.
+def _items(wire: str, body: dict) -> tuple[str, tuple[list, list], list[list[str]], list[str]]:
+    """(role tokens, (trailing tool-result ids, ids of the calls they answer), user text-block lists in order,
+    system blocks) for one wire.
     Tokens: s system/developer, u user text, a assistant, c tool call, t tool result, r reasoning, x other."""
-    toks, users, system, tail = [], [], [], []
+    toks, users, system, tail, calls = [], [], [], [], []
     if wire == "openai_chat":
         msgs = [m for m in body.get("messages") or [] if isinstance(m, dict)]
         for m in msgs:
@@ -108,12 +111,11 @@ def _items(wire: str, body: dict) -> tuple[str, list[str], list[list[str]], list
                 users.append(_blocks(m.get("content")))
             else:
                 toks.append({"assistant": "c" if m.get("tool_calls") else "a", "tool": "t"}.get(r, "x"))
-        if msgs and msgs[-1].get("role") == "tool":
-            for m in reversed(msgs):
-                if m.get("role") != "tool":
-                    tail += [tc.get("id") or "" for tc in m.get("tool_calls") or []] if m.get("role") == "assistant" else []
-                    break
-                tail.append(m.get("tool_call_id") or "")
+        for m in reversed(msgs):
+            if m.get("role") != "tool":
+                calls = [tc.get("id") or "" for tc in m.get("tool_calls") or []] if tail and m.get("role") == "assistant" else []
+                break
+            tail.append(m.get("tool_call_id") or "")
     elif wire == "openai_responses":
         items = body.get("input") or []
         items = [{"type": "message", "role": "user", "content": items}] if isinstance(items, str) else items
@@ -131,7 +133,7 @@ def _items(wire: str, body: dict) -> tuple[str, list[str], list[list[str]], list
             for it in reversed(items):
                 if not str(it.get("type", "")).endswith(("_output", "_call")):
                     break
-                tail.append(it.get("call_id") or "")
+                (tail if str(it.get("type")).endswith("_output") else calls).append(it.get("call_id") or "")
     elif wire == "anthropic":
         system += _blocks(body.get("system"))
         convo = []
@@ -149,8 +151,8 @@ def _items(wire: str, body: dict) -> tuple[str, list[str], list[list[str]], list
                 toks.append("c" if "tool_use" in kinds else "a" if m.get("role") == "assistant" else "x")
         if [t for t in toks if t != "s"][-1:] == ["t"]:
             tail = [p.get("tool_use_id") or "" for p in _parts(convo[-1]) if p.get("type") == "tool_result"]
-            tail += [p.get("id") or "" for p in _parts(convo[-2]) if p.get("type") == "tool_use"] if len(convo) > 1 else []
-    return "".join(toks), tail, users, system
+            calls = [p.get("id") or "" for p in _parts(convo[-2]) if p.get("type") == "tool_use"] if len(convo) > 1 else []
+    return "".join(toks), (tail, calls), users, system
 
 
 def markers(fields: dict[str, list[str]], signatures=SIGNATURES) -> list[str]:
@@ -168,7 +170,7 @@ def shape(req: dict, signatures=SIGNATURES) -> dict:
     final = toks.rstrip("s")[-1:]  # trailing system context is not a turn
     fields = {"system": system, "first_user": users[0] if users else [], "last_user": last}
     return {"wire": wire, "method": method, "path": path, "keys": sorted(body), "model": body.get("model"),
-            "seq": toks, "n_tools": len(body.get("tools") or []), "tail_ids": tail,
+            "seq": toks, "n_tools": len(body.get("tools") or []), "tail_ids": tail[0], "tail_calls": tail[1],
             "last_is": {"u": "user_text", "t": "tool_result"}.get(final, "other"),
             "user_hashes": sorted({h16(whole)} | {h16(b.strip()) for b in last if b.strip()}) if whole else [],
             "len": {"system": sum(map(len, system)), "last_user": len(whole)},
@@ -213,15 +215,22 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
             return "unknown", "unknown", {**ev, **more, "conflict": f"{method}:{role} vs {sorted(stray)}"}
         return role, method, {**ev, **more}
 
+    if s["wire"] != wire_of(s["method"], s["path"]):  # supplied wire metadata must agree with method and path
+        return "unknown", "unknown", {"reason": "wire, method and path disagree"}
     if s["wire"] not in BODY_WIRES.values():  # body-less endpoint shapes
         for m, rx, wire, role in ENDPOINTS:
             if s["method"] == m and re.search(rx, s["path"].rstrip("/")):
                 return role, "shape", {"endpoint": wire}
         return "unknown", "unknown", {"reason": "unrecognised wire or path"}
     if mroles <= MAIN_ROLES:  # 1. cursor, in the main frame only
-        for cid in s["tail_ids"]:
-            if cid in ctx.issued:
-                return done(ctx.issued[cid], "cursor", call_id=cid)
+        if s["tail_ids"]:  # the results answered here: matched by their own ids, never by the calls alone
+            got = {ctx.issued[cid] for cid in s["tail_ids"] if cid in ctx.issued}
+            # a result with an unissued id passes only as a sibling the harness added to a call message that
+            # also carries an issued id (Hermes splits one forwarded call into two); any other fails closed
+            stray = [cid for cid in s["tail_ids"] if cid not in ctx.issued and cid not in s["tail_calls"]]
+            if len(got) != 1 or stray:
+                return "unknown", "unknown", {**ev, "reason": "tool result for an unissued call id or mixed roles"}
+            return done(got.pop(), "cursor", call_id=next(c for c in s["tail_ids"] if c in ctx.issued))
         if s["last_is"] == "user_text" and s["n_tools"] > 0:
             if ctx.cursor < len(ctx.expected) and ctx.expected[ctx.cursor]["hash"] in s["user_hashes"]:
                 return done(_turn_role(ctx.expected[ctx.cursor]), "cursor", turn=ctx.cursor)
@@ -232,6 +241,8 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
     mroles.discard(CONTINUATION)  # outside a scripted turn a continuation marker decides nothing
     hits = [v for k, v in ctx.path_aliases.items() if s["path"].startswith(k)]  # 2. model alias
     hits += [ctx.aliases[s["model"]]] if s["model"] in ctx.aliases else []
+    if hits and not s["seq"]:  # an alias on a body with no messages or input decides nothing
+        return "unknown", "unknown", {"reason": "alias on an empty body", "alias": s["model"]}
     if hits:
         allowed = frozenset.intersection(*(a for _, a in hits))
         defaults = {d for d, _ in hits}

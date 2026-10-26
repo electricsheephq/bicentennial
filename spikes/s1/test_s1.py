@@ -160,3 +160,58 @@ def test_shape_keeps_no_text():
     s = roles.shape(chat({"role": "system", "content": "secret system text"}, {"role": "user", "content": "hello"}))
     assert "secret" not in json.dumps(s) and "hello" not in json.dumps(s)
     assert s["seq"] == "su" and s["len"] == {"system": 18, "last_user": 5}
+
+
+# ---- review 1 regressions: a result is matched by its own id; wire metadata must agree with method and path ----
+def _f1_requests(result_ids, call_ids):
+    chat_ = {"method": "POST", "path": "/v1/chat/completions", "body": {"model": "unseen", "tools": TOOLS, "messages": [
+        {"role": "user", "content": "unscripted synthetic turn"},
+        {"role": "assistant", "tool_calls": [{"id": c} for c in call_ids]},
+        *({"role": "tool", "tool_call_id": r, "content": "synthetic result"} for r in result_ids)]}}
+    resp = {"method": "POST", "path": "/v1/responses", "body": {"model": "unseen", "tools": TOOLS, "input": [
+        *({"type": "function_call", "call_id": c} for c in call_ids),
+        *({"type": "function_call_output", "call_id": r, "output": "synthetic result"} for r in result_ids)]}}
+    anth = {"method": "POST", "path": "/v1/messages", "body": {"model": "unseen", "tools": TOOLS, "messages": [
+        {"role": "assistant", "content": [{"type": "tool_use", "id": c} for c in call_ids]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": r, "content": "synthetic result"}
+                                     for r in result_ids]}]}}
+    return [chat_, resp, anth]
+
+
+@pytest.mark.parametrize("wire", range(3))
+@pytest.mark.parametrize("results,calls,want", [
+    (["never-issued"], ["issued-call"], "unknown"),  # the review's F1: only the answered call was issued
+    (["sibling"], ["issued-call", "sibling"], "unknown"),  # no result answers an issued id
+    (["issued-call", "never-issued"], ["issued-call"], "unknown"),  # one result answers no call in the message
+    (["issued-call", "other-role"], ["issued-call", "other-role"], "unknown"),  # results of two roles
+    (["issued-call", "sibling"], ["issued-call", "sibling"], "probe_main"),  # a harness split (recorded on Hermes)
+    (["issued-call"], ["issued-call"], "probe_main"),
+])
+def test_tool_results_match_by_their_own_ids(wire, results, calls, want):
+    c = roles.Context(issued={"issued-call": "probe_main", "other-role": "write_turn"})
+    assert roles.classify(_f1_requests(results, calls)[wire], c)[0] == want
+
+
+@pytest.mark.parametrize("wire,method,path", [
+    ("openai_chat", "POST", "/v1/unseen-wire"),  # the review's F2
+    ("openai_chat", "DELETE", "/v1/chat/completions"),
+    ("openai_responses", "POST", "/v1/messages"),
+    ("openai_responses", "GET", "/v1/responses"),
+    ("anthropic", "POST", "/v1/chat/completions"),
+    ("anthropic", "PUT", "/v1/messages"),
+    ("metadata", "POST", "/v1/models"),
+])
+def test_supplied_wire_must_agree_with_method_and_path(wire, method, path):
+    c = roles.Context(expected=[{"kind": "replay", "hash": roles.h16("synthetic turn")}])
+    body = {"model": "m", "tools": TOOLS, "messages": [{"role": "user", "content": "synthetic turn"}],
+            "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "synthetic turn"}]}]}
+    req = {"wire": wire, "method": method, "path": path, "body": body}
+    assert roles.classify(req, c)[:2] == ("unknown", "unknown")
+    assert roles.classify(dict(req, wire=None), c)[0] in ("unknown", "replay_main", "aux")  # derived wire is consistent
+
+
+@pytest.mark.parametrize("body", [{"model": "summ"}, {"model": "summ", "messages": []}, {"model": "summ", "input": []}])
+def test_alias_on_an_empty_body_is_unknown(body):
+    c = roles.Context(aliases={"summ": roles.alias("compaction")})
+    for path in ("/v1/chat/completions", "/v1/responses", "/v1/messages"):
+        assert roles.classify({"method": "POST", "path": path, "body": body}, c)[0] == "unknown"
