@@ -119,8 +119,9 @@ def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling:
             c["unsent"] = up["category"] == "budget_or_stop"
             with lock:
                 state["inflight"] -= 1
-                state["quota_streak"] = state["quota_streak"] + 1 if c.get("category") == "quota" else 0
-                state["quota_stop"] |= state["quota_streak"] >= 3
+                if not c["unsent"]:  # a call refused before the upstream neither extends nor breaks the streak
+                    state["quota_streak"] = state["quota_streak"] + 1 if c.get("category") == "quota" else 0
+                    state["quota_stop"] |= state["quota_streak"] >= 3
                 calls.append(c)
             if not c["unsent"]:
                 d.ledger.append({"type": "soak", "run": d.a.run, "t": time.time(), **c})

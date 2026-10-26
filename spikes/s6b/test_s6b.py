@@ -503,6 +503,15 @@ class Ramp(Base):
         self.assertEqual((up["ok"], up["category"]), (False, "overload"))
         self.assertIn(up["category"], sd.RETRYABLE)
 
+    def test_an_unsent_call_does_not_break_the_quota_streak(self):  # the race behind the intermittent stop
+        from ramp import run_level
+        seq = iter([{"category": "quota"}, {"category": "quota"}, {"category": "budget_or_stop", "unsent": True},
+                    {"category": "quota"}])
+        state = {"quota_streak": 0, "quota_stop": False}
+        for _ in range(2):  # level 1 twice, one worker each: a fixed arrival order; the streak spans levels
+            run_level(1, lambda i: next(seq), lambda: True, state)
+        self.assertEqual((state["quota_streak"], state["quota_stop"]), (3, True))
+
     def test_ramp_never_retries_and_stops_on_quota(self):
         import ramp_sol
         quota = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached"}}).encode()
