@@ -3,10 +3,10 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## PREREG-v0.4, FREEZE_DATE: frozen (supersedes v0.3)
-- **DV47, the run-time rule,** at the owner's direction: locked, resumable segments replace the contiguous 24-hour window. Every life finishes within 24 h, and each system's work, times 1.25 for pauses, fits 96 h on every lane (§11).
-- **Validity controls** for segments: the run lock, keyed randomness, the served-identity check, the drift canary (new slot C-16), pause rules with a store-hash proof, attempts, and life-major interleaving of the arms after the controls (§6, §11). The card discloses the segments (§10).
+- **DV47, the run-time rule,** at the owner's direction, for the full-tier runs: locked, resumable segments replace the contiguous 24-hour window. Every (arm, life) finishes within 24 h, and each system's lane work, times 1.25 for pauses, fits 96 h on every lane, for each of its board, study and Image board runs. A system's lane work and a run's lane occupancy are projected separately. The pilot's runs of record stay contiguous, within wall-time ceilings (§11).
+- **Validity controls** (§6, §11): blocks of one life, in seed order; the run lock, with the served identities recorded beside it, and keyed randomness; the served-identity check, and the drift canary as an early tripwire (new slot C-16, filled in PREREG-v1); the end-of-run control check, the validity check for drift; pauses at session boundaries, with a hash proof of every agent-visible surface, holds inside sessions, and spike S9; attempts per (arm, life); the study inside its board's run; publication of runs that end early, and a restart of the stopped run only. The card discloses the segments (§10). Bar 5 reads the run-time rule (§8). §7 computes each c_l within its block and reports a first-half and second-half sensitivity.
 - **DV42's fit corrected:** the swap model's lane is counted, and C-2 pins the swap model's effort.
-- **The paid-lane ceiling** is $100 per board run and per study run, down from $300 (§11).
+- **The paid-lane ceiling** is $100 per full-tier run, all systems together, down from $300 per system, checked at every block start with a spend pause. Plan and paid lanes are defined, and embedding spend and the blind panel's third family are placed (§11, C-3).
 
 ## PREREG-v0.3, 2026-10-26: frozen (supersedes v0.2)
 - **DV42 decided after spike S6b:** the pinned agent family is OpenAI (gpt-6.1-sol at medium effort, on dedicated benchmark accounts); GLM is the replication family and the swap model.
