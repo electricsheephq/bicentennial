@@ -2,6 +2,8 @@
 
 import copy
 import json
+import subprocess
+import sys
 from hashlib import sha256
 from pathlib import Path
 
@@ -352,3 +354,14 @@ def test_run_value_masks_name_known_values_only():
     masks = [{"name": "m", "kind": "run_value", "target": "home_dir", "placeholder": "{X}"}]
     with pytest.raises(ValueError, match="run value"):
         validate("masks", masks)
+
+
+def test_validate_loads_every_registering_module_itself():
+    # A caller that imports only run must still get every sibling module's checks.
+    script = ("import sys\nfrom bicentennial.contracts import run\n"
+              "assert 'bicentennial.contracts.surfaces' not in sys.modules\n"
+              "run.validate('lock', __import__('json').loads(sys.argv[1]))\n"
+              "print(sorted(m for m in sys.modules if m.startswith('bicentennial.contracts.')))")
+    out = subprocess.run([sys.executable, "-c", script, json.dumps(fixture("lock"))],
+                         capture_output=True, text=True, check=True, timeout=10).stdout
+    assert "bicentennial.contracts.surfaces" in out
