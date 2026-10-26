@@ -1,0 +1,835 @@
+{
+ "claude_version": "2.1.306 (Claude Code)",
+ "upstream_model": "glm-5.3",
+ "harness_alias": "bicentennial-cc-main",
+ "steps": [
+  {
+   "step": "t1",
+   "mode": "new",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 16.6,
+   "expected_tool": "Bash",
+   "check": "file",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 3,
+   "tool_calls": [
+    {
+     "name": "ToolSearch",
+     "result_is_error": false
+    },
+    {
+     "name": "Bash",
+     "result_is_error": false
+    }
+   ],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1,
+    "thinking_tokens": 175
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 2,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 448,
+      "input_tokens": 3513,
+      "output_tokens": 196
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "ToolSearch"
+     ],
+     "stripped": [],
+     "t_ms": 12189,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 2,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 4,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 3904,
+      "input_tokens": 1041,
+      "output_tokens": 47
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "Bash"
+     ],
+     "stripped": [],
+     "t_ms": 2072,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 3,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 6,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 4928,
+      "input_tokens": 71,
+      "output_tokens": 8
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 1865,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "t2",
+   "mode": "continue",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 7.9,
+   "expected_tool": "Read",
+   "check": "answer",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 3,
+   "tool_calls": [
+    {
+     "name": "ToolSearch",
+     "result_is_error": false
+    },
+    {
+     "name": "Read",
+     "result_is_error": false
+    }
+   ],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1,
+    "thinking_tokens": 21
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 8,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 3904,
+      "input_tokens": 952,
+      "output_tokens": 42
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "ToolSearch"
+     ],
+     "stripped": [],
+     "t_ms": 4269,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 2,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 10,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 4992,
+      "input_tokens": 613,
+      "output_tokens": 52
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "Read"
+     ],
+     "stripped": [],
+     "t_ms": 1573,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 3,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 12,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 5568,
+      "input_tokens": 106,
+      "output_tokens": 5
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 1695,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "t3",
+   "mode": "continue",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 17.8,
+   "expected_tool": "Edit",
+   "check": "file",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 3,
+   "tool_calls": [
+    {
+     "name": "ToolSearch",
+     "result_is_error": false
+    },
+    {
+     "name": "Edit",
+     "result_is_error": false
+    }
+   ],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1,
+    "api_retry": 1
+   },
+   "api_retry": [
+    {
+     "subtype": "api_retry",
+     "attempt": 1,
+     "max_retries": 10,
+     "retry_delay_ms": 3000,
+     "error_status": 429,
+     "error": "rate_limit"
+    }
+   ],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 429,
+     "stream": true,
+     "n_messages": 14,
+     "n_tools": 12,
+     "usage": null,
+     "stop_reason": null,
+     "tool_use": null,
+     "stripped": null,
+     "t_ms": 1,
+     "injected_429": true,
+     "upstream_status": [],
+     "role": "main_turn"
+    },
+    {
+     "seq": 2,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 14,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 4800,
+      "input_tokens": 711,
+      "output_tokens": 21
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "ToolSearch"
+     ],
+     "stripped": [],
+     "t_ms": 1412,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 3,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 16,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 5632,
+      "input_tokens": 352,
+      "output_tokens": 70
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "Edit"
+     ],
+     "stripped": [],
+     "t_ms": 9993,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 4,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 18,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 5952,
+      "input_tokens": 178,
+      "output_tokens": 3
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 2989,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "t4",
+   "mode": "continue",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 11.3,
+   "expected_tool": "mcp__fixture__fixture_lookup",
+   "check": "answer",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 3,
+   "tool_calls": [
+    {
+     "name": "ToolSearch",
+     "result_is_error": false
+    },
+    {
+     "name": "mcp__fixture__fixture_lookup",
+     "result_is_error": false
+    }
+   ],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 20,
+     "n_tools": 12,
+     "usage": {
+      "cache_read_input_tokens": 5504,
+      "input_tokens": 457,
+      "output_tokens": 26
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "ToolSearch"
+     ],
+     "stripped": [],
+     "t_ms": 1384,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 2,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 22,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 6080,
+      "input_tokens": 184,
+      "output_tokens": 17
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "mcp__fixture__fixture_lookup"
+     ],
+     "stripped": [],
+     "t_ms": 4793,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 3,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 24,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 6208,
+      "input_tokens": 84,
+      "output_tokens": 21
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 4741,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "t5",
+   "mode": "continue",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 9.5,
+   "expected_tool": "Bash",
+   "check": "answer",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 2,
+   "tool_calls": [
+    {
+     "name": "Bash",
+     "result_is_error": false
+    }
+   ],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 26,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 5952,
+      "input_tokens": 187,
+      "output_tokens": 24
+     },
+     "stop_reason": "tool_use",
+     "tool_use": [
+      "Bash"
+     ],
+     "stripped": [],
+     "t_ms": 4461,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    },
+    {
+     "seq": 2,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 28,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 6272,
+      "input_tokens": 98,
+      "output_tokens": 5
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 4627,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "resume",
+   "mode": "resume",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 7.2,
+   "expected_tool": null,
+   "check": "answer",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 1,
+   "tool_calls": [],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1,
+    "thinking_tokens": 37
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 30,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 6080,
+      "input_tokens": 118,
+      "output_tokens": 56
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 6904,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "fork",
+   "mode": "fork",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 5.4,
+   "expected_tool": null,
+   "check": "answer",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "new",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 1,
+   "tool_calls": [],
+   "fork_has_new_session_id": true,
+   "system_event_counts": {
+    "init": 1
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 32,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 6144,
+      "input_tokens": 92,
+      "output_tokens": 30
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 5089,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  },
+  {
+   "step": "compact",
+   "mode": "resume",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 41.1,
+   "expected_tool": null,
+   "check": "compact",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [
+    {
+     "trigger": "manual",
+     "pre_tokens": 6268,
+     "post_tokens": 4116,
+     "duration_ms": 40786
+    }
+   ],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 0,
+   "tool_calls": [],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "status": 3,
+    "init": 1,
+    "compact_boundary": 1
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 30,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 6144,
+      "input_tokens": 1347,
+      "output_tokens": 2863
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 40710,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "compaction"
+    }
+   ]
+  },
+  {
+   "step": "post_compact",
+   "mode": "resume",
+   "marker_exit": 10,
+   "exit": 0,
+   "wall_s": 7.0,
+   "expected_tool": null,
+   "check": "answer",
+   "check_ok": true,
+   "expected_tool_ok": true,
+   "valid": true,
+   "session": "same",
+   "non_loopback_endpoints": 0,
+   "context_window": {
+    "bicentennial-cc-main": 200000
+   },
+   "compact_boundaries": [],
+   "mcp_servers": {
+    "fixture": "connected"
+   },
+   "num_turns": 1,
+   "tool_calls": [],
+   "fork_has_new_session_id": null,
+   "system_event_counts": {
+    "init": 1,
+    "thinking_tokens": 45
+   },
+   "api_retry": [],
+   "requests": [
+    {
+     "seq": 1,
+     "method": "POST",
+     "path": "/v1/messages",
+     "status": 200,
+     "stream": true,
+     "n_messages": 4,
+     "n_tools": 13,
+     "usage": {
+      "cache_read_input_tokens": 1728,
+      "input_tokens": 4146,
+      "output_tokens": 54
+     },
+     "stop_reason": "end_turn",
+     "tool_use": [],
+     "stripped": [],
+     "t_ms": 6713,
+     "injected_429": null,
+     "upstream_status": [
+      200
+     ],
+     "role": "main_turn"
+    }
+   ]
+  }
+ ],
+ "valid_steps": 9,
+ "n_steps": 9,
+ "requests": 19,
+ "upstream_calls": 18,
+ "statuses": {
+  "200": 18,
+  "429": 1
+ },
+ "paths": {
+  "/v1/messages": 19
+ },
+ "credential_classes": {
+  "placeholder": 19
+ },
+ "dropped_header_names": [
+  "anthropic-beta",
+  "anthropic-dangerous-direct-browser-access",
+  "anthropic-version",
+  "x-api-key"
+ ],
+ "body_keys": [
+  "context_management",
+  "max_tokens",
+  "messages",
+  "metadata",
+  "model",
+  "output_config",
+  "stream",
+  "system",
+  "thinking",
+  "tools"
+ ],
+ "query_keys": [
+  "beta"
+ ],
+ "stripped_fields": [],
+ "served_models": [
+  "glm-5.3"
+ ],
+ "non_loopback_endpoints": 0,
+ "injected_429": {
+  "step": "t3",
+  "next_request_after_s": 3.01,
+  "next_status": 200
+ }
+}
