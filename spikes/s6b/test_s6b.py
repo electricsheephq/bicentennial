@@ -2116,6 +2116,16 @@ class FixRound1(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text())["fake-run"]["pin"], "fake-other-account-pin")
         self.assertEqual(self.calls, [])
 
+    def test_cx1_null_run_entry_refuses_without_writing(self):
+        path = self.tmp / "director-pin.json"
+        path.write_text('{"fake-run": null}\n')
+        with self.assertRaisesRegex(sd.Stop, "^pin_file_unreadable$"):
+            sd.Director(self.args())
+        self._close_holders()
+        self.assertEqual(path.read_text(), '{"fake-run": null}\n')
+        self.assertFalse((self.tmp / "ledger" / "summary.json").exists())
+        self.assertEqual(self.calls, [])
+
     def test_cx2_pin_write_error_is_class_only(self):
         real = sd.tempfile.mkstemp
 

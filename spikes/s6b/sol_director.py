@@ -551,7 +551,7 @@ class Director:
                 except (OSError, ValueError, TypeError):
                     raise Stop("pin_file_unreadable") from None
                 entry, mine = pins.get(a.run), {"lease_id": lease_id(self.login.path), "pin": self.login.pin}
-                if entry is not None:  # a run name stays bound to its first account and lease; never rebound
+                if a.run in pins:  # a run name stays bound to its first account and lease; never rebound
                     if not isinstance(entry, dict) or not {"lease_id", "pin"} <= entry.keys():
                         raise Stop("pin_file_unreadable")
                     if {k: entry[k] for k in mine} != mine:
