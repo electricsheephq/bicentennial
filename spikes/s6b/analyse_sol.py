@@ -165,7 +165,7 @@ def quota(path: Path, r7_calls: int, soak: dict | None, board_calls: dict) -> di
 def compare(r7: dict) -> list[dict]:
     """r7 (Sol) against S6a's r6 (GLM, parameters forwarded) and r3 (GLM, parameters stripped)."""
     out = []
-    for name, m in (("r7 Sol", r7), ("r6 GLM forwarded", S6A["runs"]["write"]), ("r3 GLM stripped", S6A["runs"]["compare"])):
+    for name, m in (("r7b Sol", r7), ("r6 GLM forwarded", S6A["runs"]["write"]), ("r3 GLM stripped", S6A["runs"]["compare"])):
         w = m["write_turn"]
         out.append({"run": name, "write_turn_latency_s": w["latency_s"], "prompt_tokens": w["prompt_tokens"],
                     "completion_tokens": w["completion_tokens"], "memory_calls": w["memory_tool_calls"],
