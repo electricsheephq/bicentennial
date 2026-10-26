@@ -1,0 +1,1 @@
+{"items":{"additionalProperties":false,"properties":{"kind":{"enum":["jsonpath","literal"]},"name":{"pattern":"^.+$","type":"string"},"placeholder":{"pattern":"^.+$","type":"string"},"target":{"pattern":"^.+$","type":"string"}},"required":["name","kind","target","placeholder"],"type":"object"},"type":"array"}
