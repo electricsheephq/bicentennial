@@ -109,7 +109,8 @@ def _spike_functions(wire):
     # Execute only the frozen codec definitions, never director/auth/server setup.
     source = ROOT / "spikes" / ("s6a/director.py" if wire == "chat" else "s6b/sol_director.py")
     names = {"sse_chunks"} if wire == "chat" else {
-        "typed", "parse_sse", "sse_bytes", "error_objects", "_error_text", "sse_auth_error"}
+        "typed", "parse_sse", "sse_bytes", "error_objects", "_error_text", "sse_auth_error",
+        "sol_category"}
     nodes = [node for node in ast.parse(source.read_text()).body if
              isinstance(node, ast.FunctionDef) and node.name in names or
              isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and
@@ -141,9 +142,14 @@ def test_typed_strings_roles_and_opaque_items():
     ({"status_code": 403, "message": "PROVIDER-SENTINEL"}, "auth_sse"),
     ({"message": "quota PROVIDER-SENTINEL"}, "quota"),
     ({"message": "concurrent PROVIDER-SENTINEL"}, "concurrency"),
-    ({"status": 429, "message": "PROVIDER-SENTINEL"}, "rate"),
-    ({"status": 503, "message": "PROVIDER-SENTINEL"}, "overload"),
-    ({"status": 500, "message": "PROVIDER-SENTINEL"}, "server"),
+    ({"code": "rate_limit_exceeded", "message": "PROVIDER-SENTINEL"}, "rate"),
+    ({"message": "overloaded PROVIDER-SENTINEL"}, "overload"),
+    # In-stream errors have no HTTP status: S6b never labels them by number.
+    ({"status": 429, "message": "PROVIDER-SENTINEL"}, "other"),
+    ({"status": 503, "message": "PROVIDER-SENTINEL"}, "other"),
+    ({"status": 500, "message": "PROVIDER-SENTINEL"}, "other"),
+    ({"code": "invalid_value", "message": "item 15029 PROVIDER-SENTINEL"}, "other"),
+    ({"message": "max_output_tokens must be <= 512 PROVIDER-SENTINEL"}, "other"),
     ({"message": "PROVIDER-SENTINEL"}, "other"),
 ])
 def test_error_extraction_returns_only_categories(error, category):
@@ -153,7 +159,10 @@ def test_error_extraction_returns_only_categories(error, category):
         auth = responses.sse_auth_error([event])
         assert auth == (category == "auth_sse")
         assert "PROVIDER-SENTINEL" not in json.dumps([extracted, auth])
-        assert auth == _spike_functions("responses")["sse_auth_error"]([event])
+        spike = _spike_functions("responses")
+        assert auth == spike["sse_auth_error"]([event])
+        basis = [{k: o[k] for k in spike["ERROR_FIELDS"] if k in o} for o in spike["error_objects"](event)]
+        assert category == ("auth_sse" if auth else spike["sol_category"](0, json.dumps(basis)))
 
 
 def test_errors_ignore_model_output_and_handle_scalar_errors():
@@ -189,6 +198,15 @@ def test_readback_requires_keys_types_and_accepts_only_declared_typing():
     sent["input"][0]["content"][0]["text"] = "changed"
     assert not writeturn.readback(sent, expected)
     assert not writeturn.readback({"input": [{"content": "x"}]}, {"input": [{"content": []}]})
+    # Only typed()'s role-appropriate part, with no extra keys, matches an untyped item.
+    part = sent["input"][0]["content"][0]
+    part["text"] = "x"
+    assert writeturn.readback(sent, expected)
+    for wrong in ({"type": "output_text"}, {"extra": 1}):
+        assert not writeturn.readback(sent | {"input": [{**sent["input"][0], "content": [part | wrong]}]},
+                                      expected)
+    nan = json.loads('{"model": "m", "temperature": NaN}')
+    assert writeturn.readback(nan, json.loads('{"model": "m", "temperature": NaN}'))  # as S7 A1
     with pytest.raises(ValueError, match="unsupported_write_wire"):
         writeturn.expected_write_body(CHAT, "anthropic", "m", "suffix")
 

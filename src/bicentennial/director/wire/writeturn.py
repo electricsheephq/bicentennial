@@ -25,18 +25,14 @@ def expected_write_body(trigger_body: dict, wire: Literal["chat", "responses"], 
 def _exact(a, b) -> bool:
     # S7 compares JSON bytes: bool/int/float coercion is never equality here.
     def encode(value):
-        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)  # NaN as S7
     return encode(a) == encode(b)
 
 
 def _untyped_eq(w, b) -> bool:
-    if isinstance(b, dict) and isinstance(b.get("content"), str) and isinstance(w, dict):
-        part = w.get("content")
-        return (isinstance(part, list) and len(part) == 1 and isinstance(part[0], dict)
-                and part[0].get("type") in ("input_text", "output_text")
-                and _exact(part[0].get("text"), b["content"])
-                and _exact({**w, "content": None}, {**b, "content": None}))
-    return _exact(w, b)
+    # Tighter than S6b's _untyped_eq: only typed()'s own adaptation of b, with its role's part
+    # type and no extra keys, matches an untyped expected item.
+    return _exact(w, b) or _exact(w, typed([b])[0])
 
 
 def readback(forwarded: dict, expected: dict) -> bool:

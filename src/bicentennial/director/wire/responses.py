@@ -65,20 +65,22 @@ def _is_auth(o: dict, etype) -> bool:
                 for k in ("code", "status", "status_code")))
 
 
+def _category(o: dict) -> str:
+    # S6b's sol_category(0, json.dumps(basis)): an in-stream error carries no HTTP status, so
+    # status-only labels (rate on 429, overload on 5xx, server) never apply and digits never match.
+    text = json.dumps({k: o[k] for k in _FIELDS if k in o}).lower()
+    for label, pattern in (("quota", r"usage[ _]limit|quota|insufficient|exceeded your|billing"),
+                           ("concurrency", r"concurren"), ("rate", r"rate.?limit|too many"),
+                           ("overload", r"overload|capacity")):
+        if re.search(pattern, text):
+            return label
+    return "other"
+
+
 def error_objects(event: dict) -> list[dict]:
     """Same S6b error-object discovery, returning only fixed category labels."""
-    out = []
-    for o in _provider_errors(event):
-        text = _error_text(o, event.get("type")).lower()
-        category = "other"
-        for label, pattern in (("quota", r"usage[ _]limit|quota|insufficient|exceeded your|billing"),
-                               ("concurrency", r"concurren"), ("rate", r"rate.?limit|too many|429"),
-                               ("overload", r"overload|capacity|502|503|529"), ("server", r"\b5\d\d\b")):
-            if re.search(pattern, text):
-                category = label
-                break
-        out.append({"category": "auth_sse" if _is_auth(o, event.get("type")) else category})
-    return out
+    return [{"category": "auth_sse" if _is_auth(o, event.get("type")) else _category(o)}
+            for o in _provider_errors(event)]
 
 
 def sse_auth_error(events: list[dict]) -> bool:
