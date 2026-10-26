@@ -238,6 +238,8 @@ def test_summary_of_a_run_stopped_before_the_injected_429(tmp_path):
     (tmp_path / "director-ledger.jsonl").write_text(json.dumps(dict(rec, injected_429=True, status=429)) + "\n")
     assert summarise.summary(tmp_path)["injected_429"] == {"step": "t1", "next_request_after_s": None,
                                                            "next_status": None}
+    (tmp_path / "director-ledger.jsonl").unlink()  # no request reached the director
+    assert summarise.summary(tmp_path)["requests"] == 0
 
 
 def test_metadata_user_id_dropped_unless_kept(up, tmp_path):

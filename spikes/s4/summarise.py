@@ -35,7 +35,8 @@ BOARD = {"n_L": 48, "n_keep": 12, "f": 0.5, "b": 150, "sessions": 200, "turns_pe
 
 def summary(ev: Path) -> dict:
     run = json.loads((ev / "run.json").read_text())
-    led = [json.loads(x) for x in (ev / "director-ledger.jsonl").read_text().splitlines()]
+    lp = ev / "director-ledger.jsonl"  # absent when no request reached the director
+    led = [json.loads(x) for x in lp.read_text().splitlines()] if lp.exists() else []
     steps = []
     for s in run["steps"]:
         recs = [r for r in led if r["run"] == s["step"]]
