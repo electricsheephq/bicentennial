@@ -1,6 +1,6 @@
-# Bicentennial: a benchmark of memory for long-lived agents — design v2.0
+# Bicentennial: a benchmark of memory for long-lived agents — design v2.1
 
-Status: design v2.0, 2026-10-26, approved by the owner the same day. It restructures v1.4 into a capability map, at the owner's direction of 2026-10-26. Its decisions, DV1-DV46 (DV42 reserved), are recorded in `docs/DECISIONS-v2.md`, published in public form after the owner's review. DV1-DV24 were checked by an adversarial review, a statistics check of the certification rule, and an enumeration of every passage they change; DV25-DV33 settle a closure check of that review and a consistency review of the drafts, DV34-DV41 close a second round of that consistency review, and DV43-DV46 close a final closure check and a third consistency round. Each is summarised under "What changed in v2.0" below.
+Status: design v2.1, 2026-10-26. It amends design v2.0, which the owner approved the same day, with one decision: DV42, the pinned agent family, decided after spike S6b by the benchmark session under the owner's grant, and its consequences (§5.2, §6.2c, §13). Design v2.0 restructures v1.4 into a capability map, at the owner's direction of 2026-10-26. Its decisions, DV1-DV46 (DV42 decided in v2.1), are recorded in `docs/DECISIONS-v2.md`, published in public form after the owner's review. DV1-DV24 were checked by an adversarial review, a statistics check of the certification rule, and an enumeration of every passage they change; DV25-DV33 settle a closure check of that review and a consistency review of the drafts, DV34-DV41 close a second round of that consistency review, and DV43-DV46 close a final closure check and a third consistency round. Each is summarised under "What changed in v2.0" below.
 
 Earlier versions were revised after three adversarial review rounds and a closure check. Every finding has a recorded disposition in `docs/REVIEW-SUMMARY.md`:
 - **Round 1:** two independent reviewers, 98 findings.
@@ -9,17 +9,21 @@ Earlier versions were revised after three adversarial review rounds and a closur
 - **v1.3:** a first-principles cost review at the owner's request (`docs/REVIEW-SUMMARY.md`, decisions D-01 to D-21). It split developer tiers from the runs of record, and the core board from a seasonal robustness study.
 - **v1.4:** the **24-hour rule**, at the owner's direction. The hardest run (the full board for one system) finishes within 24 h of wall-clock time. A benchmark that takes days is rarely run, so it cannot drive improvement (PREREG §11).
 - **v2.0:** results become a capability map of track rows × evaluation profiles, certified on the Act stage within a declared profile. The developer loop gains rings and rungs, the Image profile enters through spike S8, and World profiles become a roadmap.
+- **v2.1:** DV42 pins the agent family: OpenAI's gpt-6.1-sol, on dedicated benchmark accounts, with GLM as the replication family. The blind panel, the capacity slot and the tuning disclosure follow (PREREG-v0.3).
 
-PREREG-v0.1 was frozen on 2026-10-26 by the benchmark session. PREREG-v0.2 carries v2.0's rules. It was frozen on 2026-10-26, after the owner approved design v2.0, and the owner co-signs its hash on #1964 (§16).
+PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16).
 
-**Precedence:** `prereg/PREREG-v0.2.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
+**Precedence:** `prereg/PREREG-v0.3.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
 
 The numbers marked *(pre-reg)* freeze twice:
-- in `PREREG-v0.2`, before the first real-system pilot run;
+- in `PREREG-v0.3`, before the first real-system pilot run;
 - in `PREREG-v1`, before any system's first full-tier run.
 
 
 A memory system can score well on a quiz and still delete the thing that mattered most. Bicentennial is built to catch that.
+
+## What changed in v2.1
+- **DV42, the pinned agent family** (§5.2, §6.2c, §13): OpenAI's gpt-6.1-sol at medium effort is pinned, on dedicated benchmark accounts, because spike S6b found it fits the 24-hour rule (uncut on two accounts) and the GLM lane does not. GLM becomes the replication family and the swap model. The blind panel becomes Anthropic, Zhipu and one paid third family. Capacity is read per account, as concurrency or a paced request rate.
 
 ## What changed in v2.0
 One line per decision. Where a decision changes how a binding requirement (`docs/REQUIREMENTS.md`) is met, the section it lands in carries a **requirement note**, and the pre-registration records it.
@@ -41,13 +45,13 @@ One line per decision. Where a decision changes how a binding requirement (`docs
 - **DV15, World profiles** (§11.3): a roadmap after v1, starting with an E1 robot-vacuum candidate. Hands is scored inside admitted World profiles.
 - **DV16, the community path** (§10): executable templates over synthetic worlds, admitted on validity evidence and never on any system failing.
 - **DV17, positioning** (§2): other memory leaderboards are competitors. No claim of firstness, multimodal novelty or superiority before results.
-- **DV18, the 24-hour rule** (§13, §15): sized by measured concurrency. Token ceilings become report-only.
+- **DV18, the 24-hour rule** (§13, §15): sized by measured capacity (concurrency or a paced request rate per account; DV42). Token ceilings become report-only.
 - **DV19, the five amendments** (§7.1a, §7.4, §9.2, §12, §15): long sprints by count, the Wake claim contract, per-item accuracy for the launch figure, added turn latency, and G1 task completion.
 - **DV20, names** (throughout): Remember, Survive and Act; E1+; T0-T3; K100 and K10; B0/B1; n_L; the research tier; the raw-archive marker; the pinned reader; the evaluation profile; fault points.
 - **DV21, difficulty and honest zeros** (§12): difficulty frozen from controls only, valid zeros published, and certification stability printed.
 - **DV22, horizon, streams and the north star** (§3, §9.2, §11.3): a long-horizon run size and a continuous-stream item in the research tier. Wake keeps its row, and Flatten's row reads "not yet built".
 - **DV23, purpose order and the firewall** (§14): LCM-X improves only through outputs every registered system gets on equal terms.
-- **DV24, process** (§12, §14, §16): PREREG-v0.2 freezes the rules, not per-season contents. DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1.
+- **DV24, process** (§12, §14, §16): PREREG, from v0.2 on, freezes the rules, not per-season contents. DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1.
 - **DV25, scales** (§7.1, §7.7): gates and cell admission are computed on the raw penalised scale, −100 to +100; the normalised 0-100 scale is for display only. A cell is admitted when the lower bound of (raw ceiling − raw floor) is at least 30 raw points.
 - **DV26, provisional certification numbers** (§7.7, §12, §13): n_L ≥ 24, b = 150 and the SE bound are planning values; an operating-characteristic simulation on the penalised scale sets the final ones. A season below the powered size issues no certificate, and its results are still published.
 - **DV27, the Ring 2 bit** (§10): it reads "transfer gap detected" or "no gap detected", and neither is called CLEAR or FAIL.
@@ -345,7 +349,7 @@ Gold is compiled against what the agent could have known at the time, and the au
    - Overlap is otherwise stratified and reported, not filtered on.
    - Retrieval rank is never a filter, because a rank filter would make the RAG controls fail by construction.
 2. **Blind pass.** At least 2 of a 3-family blind panel *pass the bundle*: they pass both items without the evidence, in a single-call form, where abstaining counts as failing.
-   - The panel is Anthropic, OpenAI and one paid third family.
+   - The panel is Anthropic, Zhipu and one paid third family (DV42).
    - The pinned agent family is never on the panel.
    - Blind-pass rates before filtering are reported per family and track.
    - Common item IDs and filters are frozen once. Crossover rows (§6.9) use the same items; nothing is refiltered per model, and each reader's own blind-pass and direct-evidence performance is published.
@@ -497,7 +501,7 @@ For every system and life segment, the route table fixes four things:
 
 **Model swaps.** A model swap moves the probe model, the summariser and the alias from model A to the **swap model**. It does not move the vision provider, which is pinned separately. Every full-tier life contains one. Its **whole-life swap-model comparator**, which runs the swap model throughout, including past turns in its voice, belongs to the seasonal robustness study. The swap model is named at the v0 freeze, after S4. The served model identity is recorded from every provider response.
 
-**Agent families.** The **pinned family** (v1.4's family A) runs every tier, and the card discloses that LCM-X's thresholds were tuned on it. The **replication family** (v1.4's family B) runs in the seasonal robustness study, on its 8 lives (§6.10). An LCM-X version that the season's study did not cover is labelled "pinned family only".
+**Agent families.** The **pinned family** (v1.4's family A; OpenAI under DV42) runs every tier. The card discloses the family that LCM-X's public release notes say its thresholds were tuned on, and whether it is the pinned family. The **replication family** (v1.4's family B; GLM under DV42) runs in the seasonal robustness study, on its 8 lives (§6.10). An LCM-X version that the season's study did not cover is labelled "pinned family only".
 - **Replication estimand.** It is computed for both families on those 8 lives, over the included tracks, with Keep at K100 only. The replication family has no capped branches.
 - **The flag.** A confirmatory pair is flagged family-dependent when its replication-family difference reverses sign against the matched pinned-family difference, with a CI excluding 0.
 - **Scope.** The row never replicates Keep's board score, and it is never pooled into the headline (PREREG §7).
@@ -1281,8 +1285,8 @@ Every assigned bundle ends in exactly one class:
 - A headline rank is valid only with at least 95% coverage and no more than 5% infrastructure exclusions.
 - **For certification,** a required cell whose coverage falls below 95% through the system blocks it. A shortfall caused by infrastructure reads BLOCKED, and a BLOCKED required cell defers it (§7.7).
 
-**Pre-registration.** PREREG-v0.2, then PREREG-v1, is the normative record. Both freezes are committed with a timestamp, and each hash is posted on #1964. Later changes are versioned and disclosed (§14).
-- PREREG-v0.2 freezes the **rules**, not per-season contents such as the census (§11.2) and community templates (§10).
+**Pre-registration.** PREREG-v0.3, then PREREG-v1, is the normative record. Both freezes are committed with a timestamp, and each hash is posted on #1964. Later changes are versioned and disclosed (§14).
+- PREREG, from v0.2 on, freezes the **rules**, not per-season contents such as the census (§11.2) and community templates (§10).
 - **Requirement note** (addendum G, pre-registration): the rules are pre-registered as before. Per-season contents are met differently: they are versioned and disclosed each season, outside the pre-registration.
 
 ## 13. Cost model (formulas; spike S6 measures the inputs)
@@ -1332,7 +1336,7 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 
 | | v1.2 | Now |
 |---|---|---|
-| Per system on the board | about 4,600-6,700 sequential h | about 360-430 sequential h: ≤ 24 h at the concurrency S6a measures (C-11; v1.4 assumed about 16-20 concurrent jobs), with about 5 assistant turns per scripted session so each life's write-turn chain stays near 3 h |
+| Per system on the board | about 4,600-6,700 sequential h | about 360-430 sequential h: ≤ 24 h at the capacity S6a and S6b measure (C-11; v1.4 assumed about 16-20 concurrent jobs), with about 5 assistant turns per scripted session so each life's write-turn chain stays near 3 h |
 | First board of a season, 5 real systems plus controls | about 171 machine-days | about 19 machine-days at 8 jobs |
 | A delta board, with the previous version re-run alongside | — | about 3-4 machine-days |
 | An extraction competitor on its vendor's models, per board | about $2-5K | about $0.1-0.3K |
@@ -1344,7 +1348,7 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 - **S6** replays one full-scale life (about 200 sessions) on Hermes native and on one extraction competitor, once uncapped and once at the K10 cap. It runs at the PREREG A1 size (about 1M tokens plus at least 8 long sprints of at least 1.25 W), measures the 24-hour rule there, and measures every term by role, Learn chains and image cells included.
 - **Replication-family terms** are measured on one life, or taken as the pinned family's costs × the price ratio.
 
-**The 24-hour rule is sized by measured concurrency:** the sustained concurrency of the pinned agent family's model lane, as the spike on that lane measures it (S6a or S6b; completion slot C-11), with GLM-plan use paused while the busy marker's `glm` field is true. There is no credits slot.
+**The 24-hour rule is sized by measured capacity:** the sustainable capacity per account of the pinned agent family's model lane (its sustained concurrency, or its paced request rate where a request rate binds), with the number of accounts, as the spike on that lane measures it (S6a or S6b; completion slot C-11). The director paces each account, so a run never relies on rate-limit retries. GLM-plan use is paused while the busy marker's `glm` field is true. There is no credits slot.
 
 **Ceilings and cuts** are in PREREG §11:
 - the board and the robustness study: **≤ 24 h wall clock** (the 24-hour rule) and ≤ $300 per system each. Token counts (v1.4's ≤ 3B input and ≤ 100M output) are reported, never ceilings;
@@ -1353,7 +1357,7 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 - the bar-2 run: ≤ 8 h per real system;
 - the calibration set: ≤ 24 h.
 
-**Go / no-go** is pilot bar 5: the projection "fits the 24-hour rule at measured concurrency", and the paid-lane spend and wall-time ceilings above hold. It is evaluated at the end of S6 with n_L = 48 for the board and re-checked once n_L is known. The cuts apply in this order:
+**Go / no-go** is pilot bar 5: the projection "fits the 24-hour rule at the measured sustainable capacity", and the paid-lane spend and wall-time ceilings above hold. It is evaluated at the end of S6 with n_L = 48 for the board and re-checked once n_L is known. The cuts apply in this order:
 1. bundles per board life, down to 100;
 2. the robustness study, down to 4 lives;
 3. n_L, down to 24.
@@ -1381,7 +1385,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 - **Equal terms.** Every system, LCM-X included, is driven only through its public surfaces and documented configuration, pinned to a released artifact, within the same configuration budget.
 - **Private data stays private.** LCM-X developers and lanes never see private seeds, private templates or per-item private results (§10).
 - **Freeze before data.**
-  - PREREG-v0.2 is frozen and hashed before the first real-system pilot run. It includes the code that computes every [pilot] value and the write-turn package.
+  - PREREG-v0.3 is frozen and hashed before the first real-system pilot run. It includes the code that computes every [pilot] value and the write-turn package.
   - PREREG-v1 is frozen before **any** system's first full-tier run.
 - **Blinding.** Pilot analysis runs on blinded system codes until the [pilot] values are committed.
 - **LCM-X never sets the test.**
@@ -1395,7 +1399,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
   - LCM-X improves only through outputs every registered system gets on equal terms: public packs, Ring 1 results, Ring 2 bits per organisation, and published cards (§9.1, §10).
   - The benchmark session runs nothing on LCM-X beyond the scheduled runs every system gets, and never advises on its internals.
   - The acceptance bar (§9.3) is shown on the benchmark team's own baseline, never on LCM-X.
-- **Approval and veto.** The benchmark session approves the design and each PREREG freeze, and the owner co-signs each freeze hash (§16).
+- **Approval and veto.** The benchmark session approves the design and each PREREG freeze, and each freeze hash is posted on #1964 (§16).
   - An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. Until one exists, every adversarial review of this design must test for self-serving construction.
   - The capability map's stages (DV1), the verdicts and non-results (DV4), and the gates and certification rule (DV5) go to that reviewer before PREREG-v1.
 - **Production agents.** Bicentennial never runs against any live production agent. Any later test of one is an offline replay of a copy, with owner approval at that time.
@@ -1406,7 +1410,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 
 | Phase | Content | Done when |
 |---|---|---|
-| 0 (by about 2026-11-09) | survey, taxonomy, threat model, this design, three review rounds (Astra and an independent Opus red-team in round 1; targeted readbacks in rounds 2 and 3), a closure check, the first-principles cost review, and the v2.0 decisions with their reviews | design v2.0 and PREREG-v0.2 approved, with the owner's co-sign of the v0.2 hash; any overrun posted on #1964, with the cuts |
+| 0 (by about 2026-11-09) | survey, taxonomy, threat model, this design, three review rounds (Astra and an independent Opus red-team in round 1; targeted readbacks in rounds 2 and 3), a closure check, the first-principles cost review, and the v2.0 decisions with their reviews | design v2.0 and PREREG-v0.2 approved and frozen, then design v2.1 and PREREG-v0.3 with DV42; any overrun posted on #1964, with the cuts |
 | Spikes | S1 role classification; S2 clocks; S3 clones, including parallel per-worker sandbox roots; S4 Claude Code against the director, which also names the swap model; S5 surfaces and entrypoints, extended by the capability census; **S6a one 10-session micro-life**; **S6 one full-scale life**, at the PREREG A1 size, uncapped and at K10; **S7 write turns**, plus the passive-pacing check; **S8 images**, an image rendered from world state routed through the director in both Hermes vision modes, with its direct-evidence control | S6a and S6 measurements in hand for bar 5; S7 shows agent-curated memory working in replay, with the write-turn boundary confirmed by readback; S8 passes, or the Image profile stays pending |
 | Pilot (timebox re-planned after S6 and S8, from the first plan's 3 weeks from approval; posted on #1964) | Developer tiers T0 and T1 first, then T2, T3 and the fault finder, as the Ring 0 packs with their rungs. The Image profile in Ring 0 once S8 admits it; Learn chains as a diagnostic. The calibration set, then the bar-1 and bar-2 runs of record. G1 and G2, both evaluations. The roster: both LCM-X releases, Hermes native, ≥ 2 external self-hosted competitors, and every §8 control. Wake, Drift, Tuesday, Rachael and Keep. Flatten is not in the pilot; its map row reads "not yet built" | the bars below |
 | Pre-registration | PREREG-v1 approved and committed | before any full-tier run |
@@ -1430,7 +1434,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
    - the template census passes, and the pilot instance audit (75 per track, clustered bound) is at most 10%;
    - check error rates are each ≤ 2%;
    - verifier recall is ≥ 0.90 per class, with a Wilson lower bound ≥ 0.80.
-5. **Cost.** The S6a and S6 projection fits the 24-hour rule at measured concurrency, and the paid-lane spend and wall-time ceilings hold (§13). Token counts are reported, never a bar. The developer-tier targets are not bars; any that are missed are disclosed.
+5. **Cost.** The S6a and S6 projection fits the 24-hour rule at the measured sustainable capacity, and the paid-lane spend and wall-time ceilings hold (§13). Token counts are reported, never a bar. The developer-tier targets are not bars; any that are missed are disclosed.
 6. **Correlation.** API mode vs system is measured per comparable pair, with no bar. Proxy status needs the §6.1 criterion.
 
 **Labelling.** If no human grader pool exists by pilot time, the pilot is labelled a **feasibility pilot**, and it cannot claim the binding gate.
@@ -1477,7 +1481,7 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 
 ## 16. Approval and channels
 - **Ownership.** The benchmark session owns this design.
-- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. The owner co-signs each freeze hash on #1964. PREREG-v0.1 was frozen on 2026-10-26. PREREG-v0.2 carries v2.0's rules; it was frozen on 2026-10-26, after the owner approved design v2.0, and the owner co-signs its hash; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
+- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
 - **External veto.** An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. PREREG-v1 is not frozen without one unless the owner waives that in writing. DV1, DV4 and DV5 go to that reviewer first (§14).
 - **Channel.** #1964 is the status channel, not an approval point.
 

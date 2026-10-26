@@ -7,9 +7,9 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 **The claim Bicentennial has to earn with results:** memory measured inside a real agent harness across a life, judged on actions, covering governance (forgetting, consent, standing rules), with a fast diagnostic loop for developers. It claims no firstness, no multimodal novelty, and no superiority for any system before the results exist.
 
 > **Status: pre-pilot.**
-> - Design v2.0 is done.
-> - **PREREG-v0.2 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.2.md`](prereg/FREEZE-v0.2.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.1.
-> - **The 24-hour rule:** the hardest run, the full board for one system, finishes within a day, sized by the measured concurrency of the model lane. The Image board, when it runs, is a separate run per system under the same rule.
+> - Design v2.1 is done.
+> - **PREREG-v0.3 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.3.md`](prereg/FREEZE-v0.3.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.2, adding DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
+> - **The 24-hour rule:** the hardest run, the full board for one system, finishes within a day, sized by the measured capacity of the model lane, per account. The Image board, when it runs, is a separate run per system under the same rule.
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
 > - There is no benchmark code and there are no results yet.
 
@@ -79,9 +79,9 @@ Every failure is attributed to the stage that broke: perceived (for media), stor
 - a seasonal robustness study: fault reruns, the storage-budget curve, a model-swap comparator, and a second agent family (the replication family), with the Learn chains and erasure probes as terminal forks.
 
 ## Documents
-- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.0).
-- [`prereg/PREREG-v0.2.md`](prereg/PREREG-v0.2.md): the pre-registration (the superseded v0 and v0.1 are kept beside it). It is the only normative source for frozen quantities.
-- [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0, which the other documents cite as DV1-DV46 (DV42 reserved).
+- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.1).
+- [`prereg/PREREG-v0.3.md`](prereg/PREREG-v0.3.md): the pre-registration (the superseded v0, v0.1 and v0.2 are kept beside it). It is the only normative source for frozen quantities.
+- [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0 and v2.1, which the other documents cite as DV1-DV46 (DV42 decided in v2.1).
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to, with how v2.0 meets each changed one.
 - [`docs/REVIEW-SUMMARY.md`](docs/REVIEW-SUMMARY.md): the adversarial reviews and what they changed.
 - [`docs/genres/`](docs/genres/): the life generators, G1 software partner and G2 personal assistant.

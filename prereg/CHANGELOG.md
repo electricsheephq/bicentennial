@@ -2,6 +2,13 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## PREREG-v0.3, 2026-10-26: frozen (supersedes v0.2)
+- **DV42 decided after spike S6b:** the pinned agent family is OpenAI (gpt-6.1-sol at medium effort, on dedicated benchmark accounts); GLM is the replication family and the swap model.
+- **The blind panel** becomes Anthropic, Zhipu and one paid third family (§4, C-3).
+- **C-11** becomes the lane's sustainable capacity per account (concurrency, or a paced request rate), with the account count; the fit rule and director pacing are stated (§11).
+- **The tuning disclosure** is generic (§10).
+- **The owner co-sign** is removed, as recorded in the process note below.
+
 ## Process note, 2026-10-26: no owner co-sign
 The owner made the benchmark session the product and release owner. Freezes bind on its own data-backed approval, with no owner co-sign. Text that mentions a co-sign in PREREG-v0.2 and design v2.0 is left unchanged so their hashes hold. It is corrected in the next version.
 
