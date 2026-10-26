@@ -54,6 +54,9 @@ REFRESH_SKEW_S = 300
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
+IDENTITY_NAMES = {"authorization", "chatgpt-account-id", "x-openai-internal-codex-residency"}  # never persisted
+SSE_AUTH = re.compile(r"invalid_api_key|invalid_token|token_(expired|invalid|revoked)|unauthori[sz]ed|"
+                      r"authentication|permission_denied|forbidden|account_deactivated|\b40[13]\b", re.IGNORECASE)
 
 
 class Stop(Exception):
@@ -106,22 +109,34 @@ def _post_form(url: str, fields: dict) -> tuple[int, dict]:
 class Login:
     """The bench login store. The director is its only reader and its only refresher (refresh tokens are
     single-use). Refresh runs under a process lock and a file lock; the rotated pair is written back
-    atomically, in the file's own format, before the new access token is used."""
+    atomically, in the file's own format, before the new access token is used. Any failure under the lock
+    (a refused or failed refresh, a failed write-back) is latched: every later caller gets the same Stop and
+    no caller reaches the token endpoint again, so a consumed refresh token is never sent twice."""
     def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None):
         self.path, self.token_url, self.client_id, self.post = Path(path), token_url, client_id, post
         self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), {}, []
+        self.dead = ""  # the latched failure
 
     def token(self) -> str:
         with self.lock, os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR,
                                           0o600)) as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
-            raw = self.path.read_text()
-            store = json.loads(raw)
-            at = store["tokens"]["access_token"]
-            self._learn(store)
-            if jwt_claims(at).get("exp", 0) - time.time() > REFRESH_SKEW_S:
-                return at
-            return self._refresh(raw, store)
+            if self.dead:
+                raise Stop(self.dead)
+            try:
+                raw = self.path.read_text()
+                store = json.loads(raw)
+                at = store["tokens"]["access_token"]
+                self._learn(store)
+                if jwt_claims(at).get("exp", 0) - time.time() > REFRESH_SKEW_S:
+                    return at
+                return self._refresh(raw, store)  # persisted before it returns
+            except Stop as e:
+                self.dead = str(e)
+                raise
+            except (OSError, ValueError, LookupError, TypeError, AttributeError) as e:  # e.g. a failed write-back
+                self.dead = f"login_error:{type(e).__name__}"
+                raise Stop(self.dead) from None
 
     def _refresh(self, raw: str, store: dict) -> str:
         old = store["tokens"]["refresh_token"]
@@ -247,8 +262,8 @@ def _untyped_eq(w, b) -> bool:
 
 
 def parse_sse(raw: bytes) -> list[dict]:
-    events = []
-    for block in raw.decode("utf-8", "replace").split("\n\n"):
+    events = []  # CRLF, CR and LF line endings are all valid SSE
+    for block in raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n").split("\n\n"):
         data = "\n".join(line[5:].lstrip() for line in block.splitlines() if line.startswith("data:"))
         if data and data != "[DONE]":
             try:
@@ -272,6 +287,19 @@ def sse_bytes(items: list[dict], usage: dict, model: str) -> bytes:
                                                            "model": model, "output": [], "usage": usage}})
     return b"".join(f"event: {e['type']}\ndata: {json.dumps(dict(e, sequence_number=n))}\n\n".encode()
                     for n, e in enumerate(evs))
+
+
+def sse_auth_error(events: list[dict]) -> bool:
+    """An in-stream auth failure inside an HTTP 200: an error event, or a failed response, whose code, type
+    or status names an auth refusal (top level or nested under error, as Hermes reads it)."""
+    for e in events:
+        if e.get("type") not in ("error", "response.failed"):
+            continue
+        for o in (e, e.get("error"), (e.get("response") or {}).get("error")):
+            if isinstance(o, dict) and any(SSE_AUTH.search(str(o.get(k))) for k in (
+                    "code", "type", "status", "status_code") if o.get(k) is not None and o.get(k) != e["type"]):
+                return True
+    return False
 
 
 def sol_category(status: int, text: str) -> str:
@@ -392,6 +420,9 @@ class Director:
         resp = done.get("response") or {}
         ok = done.get("type") == "response.completed"
         cat = None if ok else sol_category(0, json.dumps(done)[:2000])  # an in-stream failure in an HTTP 200
+        if sse_auth_error(events):  # never replayed: Hermes would rotate its credential on the auth text
+            ok, cat = False, "auth_sse"
+            self.stop("upstream_sse_auth")
         self._streak(cat or "ok")
         sub.update(status=status, ok=ok, category=cat, t_ms=round((time.monotonic() - t0) * 1000),
                    resp=self.ledger.blob({"sse": raw.decode("utf-8", "replace")}), usage=resp.get("usage"),
@@ -478,7 +509,8 @@ class Director:
             return 200, sse_bytes([msg], self._usage(body, [msg]), body.get("model")), rec
         kind = {"summariser": "summariser", "probe_main": "probe"}.get(role, "aux")  # live roles
         up = self.upstream_retry(body, kind, rec, fwd)
-        if not up["ok"] and (up["status"] in (0, -1, 401, 403, 429) or up["category"] in ("quota", "rate") + RETRYABLE):
+        if not up["ok"] and (up["status"] in (0, -1, 401, 403, 429) or up["category"] in ("quota", "rate", "auth_sse")
+                             + RETRYABLE):
             rec["served"] = "neutral_503"  # never a 429 or 401: Hermes would sideline or refresh its credential
             return 503, json.dumps(NEUTRAL_503).encode(), rec
         if not up["ok"] and up["status"] != 200:
@@ -591,7 +623,7 @@ def make_handler(d: Director):
                 return self._meta("path_refused", 404, {"error": {"message": "director: unknown path (fail closed)"}},
                                   "unknown")
             t0, d.inflight = time.time(), d.inflight + 1
-            names = sorted({k.lower() for k in self.headers})  # header NAMES only, never values
+            names = sorted({k.lower() for k in self.headers} - IDENTITY_NAMES)  # names only; no identity header
             fwd = {k: self.headers[k] for k in PASS_HEADERS if self.headers.get(k)}
             try:
                 if self.headers.get("Content-Encoding"):
