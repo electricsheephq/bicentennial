@@ -10,7 +10,7 @@ Earlier versions were revised after three adversarial review rounds and a closur
 - **v1.4:** the **24-hour rule**, at the owner's direction. The hardest run (the full board for one system) finishes within 24 h of wall-clock time. A benchmark that takes days is rarely run, so it cannot drive improvement (PREREG §11).
 - **v2.0:** results become a capability map of track rows × evaluation profiles, certified on the Act stage within a declared profile. The developer loop gains rings and rungs, the Image profile enters through spike S8, and World profiles become a roadmap.
 
-PREREG-v0.1 was frozen on 2026-10-26 by the benchmark session. PREREG-v0.2 carries v2.0's rules; it is frozen only after the owner co-signs its hash (§16).
+PREREG-v0.1 was frozen on 2026-10-26 by the benchmark session. PREREG-v0.2 carries v2.0's rules. It was frozen on 2026-10-26, after the owner approved design v2.0, and the owner co-signs its hash on #1964 (§16).
 
 **Precedence:** `prereg/PREREG-v0.2.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
 
@@ -1477,7 +1477,7 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 
 ## 16. Approval and channels
 - **Ownership.** The benchmark session owns this design.
-- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. The owner co-signs each freeze hash on #1964. PREREG-v0.1 was frozen on 2026-10-26. PREREG-v0.2 carries v2.0's rules and is frozen only after the owner co-signs its hash; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
+- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. The owner co-signs each freeze hash on #1964. PREREG-v0.1 was frozen on 2026-10-26. PREREG-v0.2 carries v2.0's rules; it was frozen on 2026-10-26, after the owner approved design v2.0, and the owner co-signs its hash; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
 - **External veto.** An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. PREREG-v1 is not frozen without one unless the owner waives that in writing. DV1, DV4 and DV5 go to that reviewer first (§14).
 - **Channel.** #1964 is the status channel, not an approval point.
 

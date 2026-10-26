@@ -25,7 +25,7 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
    1. a vision model available on the GLM Coding Plan, if one exists. Probe the coding endpoint for a vision model such as a GLM-4.xV id with one image request; the text models already rejected image parts;
    2. otherwise, one paid flash-class vision model.
 
-   The spend cap is $10 for the whole spike, reported per call. The chosen model is the candidate **pinned vision reader**, the vision slot that the design adds to the route table and completion slot C-1; the spike records it, and does not freeze it. The vision provider is pinned separately from the main model, so a model swap does not move it.
+   The spend cap is $10 for the whole spike. Before each paid call, its maximum charge is reserved against the remaining budget. When the next call's reservation would exceed it, the spike makes a recorded, controlled stop. Spend is reported per call and in total. The chosen model is the candidate **pinned vision reader**, the vision slot that the design adds to the route table and completion slot C-1; the spike records it, and does not freeze it. The vision provider is pinned separately from the main model, so a model swap does not move it.
 5. **The observation and assistance contract,** which holds for every memory comparison in the spike:
    - every arm gets the same image bytes per item, the same perception service, the same access timing and the same logical budget;
    - **the caption cache:** the director caches a description only by an identical authorised call (the same image bytes, sent to the same pinned provider with the same prompt, by an arm entitled to make that call). A cache hit returns what that call would have returned and never grants an arm evidence it did not receive. Cache hits are recorded per arm;
@@ -52,7 +52,7 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 - The fidelity checks: manifest verifier results and the human-key legibility sample.
 
 ## Done when
-`spikes/s8/REPORT.md` gives each measurement with its sample size, and both modes route at least one image through the director with the ledger showing every request classified and none unknown. The Image profile is admitted to Ring 0 when both modes route, direct evidence clears the no-memory floor, and shuffled history does not.
+`spikes/s8/REPORT.md` gives each measurement with its sample size, and every mode × channel pair (user attachment, `screen` tool observation, workspace file) routes its image through the director with the ledger showing every request classified and none unknown. The Image profile is admitted to Ring 0 when every mode × channel pair routes, direct evidence clears the no-memory floor, and shuffled history does not.
 
 ## Does not prove
 - Anything about any memory system's quality.

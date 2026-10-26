@@ -1,6 +1,6 @@
 # Bicentennial pre-registration — PREREG-v0.2 (pilot)
 
-**Status:** PREREG-v0.2, frozen 2026-10-26 by the benchmark session after the owner approved design v2.0. It supersedes PREREG-v0.1, which was frozen earlier the same day and never co-signed, by carrying design v2.0: the capability map with three stages, evaluation profiles, cell verdicts and certification on Act, the developer rings, and five amendments to v0.1 (long sprints by count, the Wake claim contract, per-item accuracy reported, added turn latency, G1 task completion). Its changelog is at the end. It follows an adversarial review of the v2.0 decisions, a statistics check of the certification rule and a passage-by-passage enumeration of every consumer of the changed decisions. The resulting decisions are recorded in `docs/DECISIONS-v2.md`. Its sha256, commit and time are in `prereg/FREEZE-v0.2.md` and posted on lcm-x #1964 for the owner's co-sign, which is recorded there once given.
+**Status:** PREREG-v0.2, frozen 2026-10-26 by the benchmark session after the owner approved design v2.0. It supersedes PREREG-v0.1, which was frozen earlier the same day and never co-signed, by carrying design v2.0: the capability map with three stages, evaluation profiles, cell verdicts and certification on Act, the developer rings, and five amendments to v0.1 (long sprints by count, the Wake claim contract, per-item accuracy reported, added turn latency, G1 task completion). Its changelog is at the end. It follows an adversarial review of the v2.0 decisions, a statistics check of the certification rule and a passage-by-passage enumeration of every consumer of the changed decisions. The resulting decisions are recorded in `docs/DECISIONS-v2.md`. Its sha256 and time are in `prereg/FREEZE-v0.2.md`. The commit and the tag `prereg-v0.2` are posted on lcm-x #1964 for the owner's co-sign, which is recorded in the freeze record once given.
 
 **Precedence.** This document is the **only normative source** for every frozen quantity: constants, rules, thresholds, rosters, sample sizes, tests and ceilings. DESIGN-v2.0 (`docs/DESIGN.md`) explains and motivates. Where the two differ on a frozen quantity, this document governs, and the difference is logged as an erratum to DESIGN. "The addendum" means the binding requirements summarised in `docs/REQUIREMENTS.md`.
 
@@ -78,7 +78,7 @@
 The subscript k always indexes a cell (a_k, g_k, m_k), and K counts the cells. Fault reruns are counted by q and contrasts by M, so neither shares a letter with a cell symbol.
 
 ## 1. Identity
-- **This document:** PREREG-v0.2, frozen 2026-10-26. Its sha256, commit and time are in `prereg/FREEZE-v0.2.md` and posted on lcm-x #1964.
+- **This document:** PREREG-v0.2, frozen 2026-10-26. Its sha256 and time are in `prereg/FREEZE-v0.2.md`; the commit and the tag `prereg-v0.2` are posted on lcm-x #1964.
 - **Design:** DESIGN-v2.0. Its hash is recorded at freeze.
 - **Generator:** the version is recorded at freeze.
 - **Genres:** G1 software partner and G2 personal assistant, in text and code.
@@ -588,7 +588,7 @@ The bars keep their own statistics, defined below, independent of the capability
   - LCM-X (its plug-in release artifact);
   - LCM-X at its last release before the public generator;
   - Hermes native memory;
-  - at least 2 external self-hosted systems.
+  - at least 2 external self-hosted systems in the pilot. The Phase 1 roster needs at least 3 (§7).
 - **Selecting external competitors.** Open-source and self-hostable, with a Hermes memory-provider plug-in or a documented ingest and query API. Ranked by a public adoption metric fixed on the v0 completion date (C-9).
 - **One results table with full stack identity.**
   - **Each row** declares memory × harness × model, plus the vision provider and spend.
@@ -706,7 +706,7 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 | bar-2 run, per real system | ≤ 8 h | ≤ $25 | input |
 | calibration set, all controls | ≤ 24 h | ≤ $25 | input |
 
-**Paid rows.** The pinned vision reader is a labelled paid row, at about $50 a season [OWNER: the vision budget, set at the v0.2 co-sign].
+**Paid rows.** The pinned vision reader is a labelled paid row, at about $50 a season, the budget the owner approved on 2026-10-26.
 
 **Instantiation.** The board and the study use n_L = 48 at the end of S6, and the computed n_L afterwards. The runs of record use S6a's and S6's measured cumulative costs through sessions 10 and 20.
 

@@ -384,6 +384,6 @@ Spatial memory waits for E1 (DV15).
 
 **DV46. Who fills the remaining placeholders.** The benchmark maintainers name S8's vision-capable main model in S8, write E1's done-when after v1, and fill the README's freeze status, date and link at the v0.2 freeze. The owner's review releases this record for publication.
 
-## Owner decisions still open
-- The vision budget, about $50 a season (DV9), at the PREREG-v0.2 co-sign.
-- The 24-hour decision of PREREG §11, once S6a's measurement is in.
+## Owner decisions
+- **Approved on 2026-10-26:** design v2.0, and the vision budget of about $50 a season (DV9).
+- **Still open:** the 24-hour decision of PREREG §11. It comes once S6a's and S6b's measurements are in and DV42 sets the pinned lane.
