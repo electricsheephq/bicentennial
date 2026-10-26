@@ -31,13 +31,15 @@ def _checkpoint(adapter):
     return adapter.checkpoint()
 
 
-def _check(name, a):
+def _check(name, a, factory):
     a.reset()
     a.ingest(_event(1, "quartz"))
     if name == "reset_empty":
+        _query(a, "quartz")  # A query cache that survives reset must not answer the next one.
         a.reset()
         assert _query(a, "quartz")["citations"] == []
     elif name == "duplicate_id_idempotent":
+        a.ingest(_event(2, "quartz"))  # A competing match: a re-ranked duplicate shows up here.
         before = _checkpoint(a), _query(a, "quartz", ["e1"])
         a.ingest(_event(1, "quartz"))
         assert before == (_checkpoint(a), _query(a, "quartz", ["e1"]))
@@ -46,33 +48,46 @@ def _check(name, a):
         for text in ("quartz", "topaz", "absent", ""):
             assert set(_query(a, text, ["e1", "e2"])["citations"]) <= {"e1", "e2"}
     elif name == "checkpoint_restore":
-        before, data = _query(a, "quartz", ["e1"]), _checkpoint(a)
+        a.ingest(_event(2, "topaz"))
+        a.ingest(_event(3, "garnet"))
+        probes = (("quartz", "e1"), ("topaz", "e2"), ("garnet", "e3"))
+        before, data = [_query(a, t, [i]) for t, i in probes], _checkpoint(a)
         a.reset()
         a.restore(data)
-        assert _query(a, "quartz", ["e1"]) == before
+        fresh = factory()  # A restore that ignores its bytes, or keeps only part, fails here.
+        fresh.restore(data)
+        for restored in (a, fresh):
+            assert [_query(restored, t, [i]) for t, i in probes] == before
     elif name == "maintain_lossless":
-        for i, text in enumerate(("topaz", "garnet", "zircon"), 2):
+        texts = ["quartz"] + [f"gem{i:02d}" for i in range(2, 51)]  # More than any small cap.
+        for i, text in enumerate(texts[1:], 2):
             a.ingest(_event(i, text))
         a.maintain()
-        for i, text in enumerate(("quartz", "topaz", "garnet", "zircon"), 1):
+        for i, text in enumerate(texts, 1):
             result = _query(a, text)
             assert result["output"] == text and result["citations"] == [f"e{i}"]
     elif name == "tool_grouping":
         a.ingest(_event(2, "dispatch", "tool_call"))
         a.ingest(_event(3, "delivered", "tool_result", call_id="e2"))
+        a.maintain()  # Compaction must not orphan a tool result.
         for text, event_id in (("delivered", "e3"), ("dispatch", "e2")):
             result = _query(a, text)
             assert result["output"] == text and result["citations"] == [event_id]
     elif name == "forget_removes":
         a.ingest(_event(2, "ERASE_SECRET_SENTINEL"))
         a.forget(dict(event_ids=["e2"]))
-        assert b"ERASE_SECRET_SENTINEL" not in _checkpoint(a)
+        data = _checkpoint(a)  # Casefolded copies, as an index vocabulary keeps them, count too.
+        assert b"ERASE_SECRET_SENTINEL" not in data and b"erase_secret_sentinel" not in data
         for text in ("ERASE_SECRET_SENTINEL", "e2", "quartz", ""):
             assert "e2" not in _query(a, text)["citations"]
     elif name == "supersession_current":
-        a.ingest(_event(3, "current azure"))
-        a.ingest(_event(2, "former azure"))  # Arrival order cannot stand in for t_sim.
-        assert _query(a, "azure")["citations"] == ["e3"]
+        # The later t_sim wins against both id order and arrival order, in either direction.
+        for word, newer, older in (("azure", ("e7", 3), ("e8", 2)), ("amber", ("e6", 5), ("e5", 4))):
+            first, last = (newer, older) if word == "azure" else (older, newer)
+            for event_id, t_sim in (first, last):
+                a.ingest(dict(event_id=event_id, t_sim=t_sim, kind="message", actor="fixture",
+                              text=f"{'current' if (event_id, t_sim) == newer else 'former'} {word}"))
+            assert _query(a, word)["citations"] == [newer[0]]
     elif name == "settle_returns":
         assert a.settle(5) is True
 
@@ -83,7 +98,7 @@ def run(adapter_factory) -> dict[str, bool]:
         try:
             adapter = adapter_factory()
             if name not in EXEMPTIONS.get(type(adapter), ()):
-                _check(name, adapter)
+                _check(name, adapter, adapter_factory)
             results[name] = True
         except Exception:
             results[name] = False
