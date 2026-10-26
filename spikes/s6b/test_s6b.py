@@ -1977,6 +1977,23 @@ class FixRound1(unittest.TestCase):
             os.fstat(opened[0])
         self.assertNotIn((self.tmp / "holder.lock").resolve(), sd.HOME_HOLDERS)
 
+    def test_a5_auth_lock_error_is_class_only_and_posts_nothing(self):
+        store(self.tmp, exp_in=60)
+        login, real_open = self.login(), sd.os.open
+
+        def deny(path, *a, **kw):
+            if Path(path).name == self.p.name + ".lock":
+                raise PermissionError(f"fake denial: {path}")
+            return real_open(path, *a, **kw)
+
+        with mock.patch.object(sd.os, "open", side_effect=deny), \
+                self.assertRaisesRegex(sd.Stop, "^home_unusable:PermissionError$") as caught:
+            login.token()
+        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(login.sentinel.exists())
+        self.assertFalse(login.dead)  # refused before the file lock, with no POST: nothing to latch
+
     def test_a5_all_entrypoints_refuse_unusable_home_cleanly(self):
         import ramp_sol
         import soak_sol

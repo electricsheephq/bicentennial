@@ -259,9 +259,14 @@ class Login:
         replace = self.sentinel.exists() and json.loads(self.sentinel.read_text()).get("reason") == "refresh_in_flight"
         durable_write(self.sentinel, json.dumps({"reason": reason, "t": utc()}) + "\n", link=not replace)
 
+    def _auth_lock(self):
+        try:
+            return os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR, 0o600))
+        except OSError as e:  # the class only: a path-bearing traceback never reaches a log
+            raise Stop(f"home_unusable:{type(e).__name__}") from None
+
     def token(self) -> str:
-        with self.lock, os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR,
-                                          0o600)) as lf:
+        with self.lock, self._auth_lock() as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             if self.dead:
                 raise Stop(self.dead)
