@@ -69,16 +69,17 @@ Run of record: 2026-10-26, Claude Code `2.1.306`, upstream model `glm-5.3` (serv
 - **The study comparator** is costed only when the swap model is not from the replication family: 8 study lives × [R(1+f) + 2P_W], with P_W = 0.1P.
 - **Not counted:** title calls, whose tokens S6a did not record. Probe completions are proxied by write-turn completions.
 
-At S6a's prompt sizes, every paid candidate fits the $300 board paid ceiling. At full-window prompts, only off-peak DeepSeek stays under $500, and none stays under $300. The paid costs scale linearly with the swap share and with prompt size.
+At S6a's prompt sizes, every paid candidate fits the $300 board paid ceiling. At full-window prompts, off-peak DeepSeek ($484) and MiniMax ($342) stay under $500, and none stays under $300. The paid costs scale linearly with the swap share and with prompt size.
 
-**The GLM lane.** GLM costs $0, but the swap share loads the GLM lane. S6a's board needs 676 lane-hours at ×1 latency, and the swap share is 338 lane-hours. At GLM's measured concurrency of 8 that takes about 42 h, which misses the 24-hour rule. The share fits if one of these holds:
+**The GLM lane.** GLM costs $0, but the swap share loads the GLM lane. S6a's board needs 676 lane-hours at ×1 latency, and the swap share is 338 lane-hours. At GLM's measured concurrency of 8 that takes about 42 h, which misses the 24-hour rule. The share fits if either of these holds:
 - the GLM lane sustains a concurrency of at least 15 (about 14.1 needed), for example two plan accounts at 8;
 - the swap's share of the life is at most 0.28, a swap at about session 144 or later;
-- the board's swap share runs in a 24-hour window of its own.
+
+Running the share in a window of its own does not help: 338 lane-hours at a concurrency of 8 still take about 42 h, and PREREG-v0.3 §11 times the full core board per system. A change to the 24-hour rule itself is a design decision outside this spike.
 
 S6b's projection, behind DV42, puts the whole board on the pinned lane and does not model the swap, so moving the share to GLM lightens the Sol lane by the same amount. The GLM share also pauses whenever the busy marker's `glm` field is true.
 
-**Proposal.** GLM (`glm-5.3` through z.ai's Anthropic-compatible endpoint) is **proposed for C-2**. This run shows it servable to Claude Code through the director with no field stripped. It is the replication family, so δ_W = 0 and the comparator shares lives (PREREG §10, §11), and its marginal cost is $0. The condition is that the 24-hour projection includes the swap share's lane time on GLM and meets one of the three fits above. If none can be met, off-peak `deepseek-v4-pro` or `MiniMax-M3` would serve the share within the paid ceiling at S6a's prompt sizes, but not at full-window sizes.
+**Proposal.** GLM (`glm-5.3` through z.ai's Anthropic-compatible endpoint) is **proposed for C-2**. This run shows it servable to Claude Code through the director with no field stripped. It is the replication family, so δ_W = 0 and the comparator shares lives (PREREG §10, §11), and its marginal cost is $0. The condition is that the 24-hour projection includes the swap share's lane time on GLM and meets one of the two fits above. If none can be met, off-peak `deepseek-v4-pro` or `MiniMax-M3` would serve the share within the paid ceiling at S6a's prompt sizes, but not at full-window sizes.
 
 ## Open items
 - **The real window.** Claude Code assumes 200K for the alias. If GLM-5.3's served window is smaller than Claude Code's auto-compaction point (about 171K in S1), long sprints would hit upstream refusals before Claude Code compacts. Check the served window before the sub-row runs, and set the alias or the compaction window to match.
