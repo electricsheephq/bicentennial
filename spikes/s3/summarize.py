@@ -37,7 +37,7 @@ def summarize(receipt, destination):
         records.append(record)
     destination.mkdir(parents=True, exist_ok=True)
     with (destination / "aggregate.csv").open("w") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(records[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(records[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(records)
     lines = [
