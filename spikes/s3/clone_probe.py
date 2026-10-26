@@ -13,6 +13,8 @@ import json
 import math
 import os
 from pathlib import Path
+import platform
+import plistlib
 import shlex
 import shutil
 import sqlite3
@@ -141,7 +143,7 @@ def verify(source, first, fresh, baseline, nonce, written, expected_rows=256):
                             written, valid]))
 
 
-def context(workers, busy_command, require_marker=True):
+def context(workers, busy_command, require_marker=True, scratch=None):
     if busy_command:
         result = subprocess.run(shlex.split(busy_command), capture_output=True,
                                 text=True, check=False)
@@ -157,7 +159,7 @@ def context(workers, busy_command, require_marker=True):
         raise RuntimeError("a busy command is required for measurements")
     else:
         state = {"exit": None, "state": "test"}
-    free = shutil.disk_usage(Path.cwd()).free
+    free = shutil.disk_usage(scratch if scratch is not None else Path.cwd()).free
     if require_marker and free < 150 * 1024**3:
         raise RuntimeError("free disk below required floor")
     load = subprocess.check_output(["sysctl", "-n", "vm.loadavg"], text=True)
@@ -171,12 +173,12 @@ def probe(source, sandbox, baseline, index, busy_command, workers,
     first, fresh = sandbox / "a", sandbox / "b"
     nonce = "probe-nonce-" + uuid.uuid4().hex
     try:
-        before = context(workers, busy_command, require_marker)
+        before = context(workers, busy_command, require_marker, sandbox)
         start = time.perf_counter()
         clone(source, first, hardlink)
         first_seconds = time.perf_counter() - start
         written = mutate(first, nonce)
-        second_context = context(workers, busy_command, require_marker)
+        second_context = context(workers, busy_command, require_marker, sandbox)
         start = time.perf_counter()
         clone(source, fresh, hardlink)
         fresh_seconds = time.perf_counter() - start
@@ -190,8 +192,8 @@ def probe(source, sandbox, baseline, index, busy_command, workers,
 
 
 def measure(source, roots, workers, probes, busy_command, expected_rows=256):
+    start_context = context(workers, busy_command, scratch=source)
     baseline = tree_hash(source)
-    start_context = context(workers, busy_command)
     start = time.perf_counter()
 
     def worker(worker_id):
@@ -218,21 +220,67 @@ def percentile(values, quantile):
     return ordered[max(0, math.ceil(len(ordered) * quantile) - 1)]
 
 
+def validate_cell(cell):
+    if cell["probes"] <= 0 or len(cell["rows"]) != cell["probes"]:
+        raise ValueError("row count differs from positive probe count")
+    if any(len(row["clones"]) != 2 for row in cell["rows"]):
+        raise ValueError("each probe requires two clone samples")
+    if not all(row["checks"][key] for row in cell["rows"] for key in CHECKS):
+        raise ValueError("isolation failed")
+    if cell["store"] == "uncheckpointed" and not cell["sidecars_present"]:
+        raise ValueError("WAL control invalid: sidecars absent")
+
+
+def wal_control(source, roots, probes, busy_command):
+    keeper = generate(source, "plugin", 1, wal=True)
+    try:
+        db, _ = layout(source)
+        sidecars = all(Path(str(db) + suffix).exists() for suffix in ("-wal", "-shm"))
+        if not sidecars:
+            raise ValueError("WAL control invalid: sidecars absent")
+        control = measure(source, roots, 1, probes, busy_command, expected_rows=257)
+        control.update(store="uncheckpointed", sidecars_present=sidecars,
+                       source_bytes=sum(p.stat().st_size for p in files(source)))
+        validate_cell(control)
+        return control
+    finally:
+        keeper.close()
+        shutil.rmtree(source)
+
+
+def environment(scratch):
+    # diskutil accepts a device or mount point, not an arbitrary directory.
+    mount = subprocess.check_output(["df", "-P", str(scratch)], text=True)
+    mount = mount.splitlines()[-1].split(None, 5)[5]
+    disk = plistlib.loads(subprocess.check_output(["diskutil", "info", "-plist", mount]))
+    return {"architecture": platform.machine(), "system": platform.system(),
+            "filesystem": disk["FilesystemType"], "cpu_cores": os.cpu_count(),
+            "python": platform.python_version(), "sqlite": sqlite3.sqlite_version}
+
+
 def run(args):
+    disk_plan = {"fixture_payload_mb": 420,
+                 "retained_payload_mb": args.retained_payload_mb,
+                 "clone_write_allowance_mb": max(args.workers) * 2 * 2,
+                 "metadata_test_allowance_mb": 16}
+    if sum(disk_plan.values()) >= 500:
+        raise ValueError("planned extra disk reaches the 0.5 GB limit")
     args.scratch.mkdir(parents=True, exist_ok=True)
     args.output.mkdir(parents=True, exist_ok=True)
+    context(1, args.busy_command, scratch=args.scratch)
+    runtime_environment = environment(args.scratch)
     cells = []
     deferred = []
     shapes = [("home", 10), ("plugin", 10), ("home", 100),
               ("plugin", 100), ("home", 400)]
     for shape, size in shapes:
-        context(1, args.busy_command)
+        context(1, args.busy_command, scratch=args.scratch)
         source = args.scratch / f"{shape}-{size}"
         generate(source, shape, size)
         try:
             for workers in args.workers:
                 try:
-                    context(workers, args.busy_command)
+                    context(workers, args.busy_command, scratch=args.scratch)
                 except RuntimeError:
                     if workers <= 2:
                         raise
@@ -243,28 +291,19 @@ def run(args):
                                args.probes, args.busy_command)
                 cell.update(store=source.name, shape=shape, size_mb=size,
                             source_bytes=sum(p.stat().st_size for p in files(source)))
+                validate_cell(cell)
                 cells.append(cell)
                 (args.output / "measurements.json").write_text(json.dumps(cells, indent=2))
-                if not all(all(row["checks"].values()) for row in cell["rows"]):
-                    raise RuntimeError("isolation failed")
                 print(f"{source.name} workers={workers}: {args.probes} probes PASS", flush=True)
         finally:
             if size > 10:
                 shutil.rmtree(source)
     # Quiet, open connection keeps WAL/SHM present; this is a separate control,
     # not a claim about an actively writing process or a daemon.
-    source = args.scratch / "wal-control"
-    keeper = generate(source, "plugin", 1, wal=True)
-    try:
-        db, _ = layout(source)
-        sidecars = all(Path(str(db) + suffix).exists() for suffix in ("-wal", "-shm"))
-        control = measure(source, args.scratch / "wal-roots", 1,
-                          args.probes, args.busy_command, expected_rows=257)
-        control.update(store="uncheckpointed", sidecars_present=sidecars)
-        cells.append(control)
-    finally:
-        keeper.close()
-        shutil.rmtree(source)
+    context(1, args.busy_command, scratch=args.scratch)
+    cells.append(wal_control(args.scratch / "wal-control", args.scratch / "wal-roots",
+                             args.probes, args.busy_command))
+    context(1, args.busy_command, scratch=args.scratch)
     source = args.scratch / "negative-control"
     generate(source, "plugin", 1)
     try:
@@ -276,7 +315,8 @@ def run(args):
             raise RuntimeError("hardlink negative control was not caught")
     finally:
         shutil.rmtree(source)
-    output = {"cells": cells, "deferred": deferred,
+    output = {"cells": cells, "deferred": deferred, "environment": runtime_environment,
+              "requested_workers": args.workers, "planned_disk_mb": disk_plan,
               "negative_control": {"caught": caught, **negative}}
     (args.output / "measurements.json").write_text(json.dumps(output, indent=2) + "\n")
     print("WAL control: PASS; hardlink nonce leak: DETECTED", flush=True)
@@ -288,5 +328,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, nargs="+", choices=[1, 2, 4, 8], default=[1, 2])
     parser.add_argument("--probes", type=int, default=20)
+    parser.add_argument("--retained-payload-mb", type=int, default=0)
     parser.add_argument("--busy-command", default=os.environ.get("BICENTENNIAL_BUSY_CMD"))
     run(parser.parse_args())
