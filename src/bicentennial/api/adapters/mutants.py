@@ -42,3 +42,17 @@ class forget_cached_output(ReferenceStore):
         words = set(tokens(task["prompt"]))
         leaked = [text for text in getattr(self, "cached", ()) if words & set(tokens(text))]
         return dict(result, output=leaked[0]) if leaked and not result["citations"] else result
+
+
+class reset_cached_output(ReferenceStore):
+    """Clears its events on reset but answers from the previous run's texts, uncited."""
+
+    def reset(self):
+        self.stale = [e["text"] for e in getattr(self, "events", {}).values()]
+        super().reset()
+
+    def query(self, task, now):
+        result = super().query(task, now)
+        words = set(tokens(task["prompt"]))
+        leaked = [text for text in self.stale if words & set(tokens(text))]
+        return dict(result, output=leaked[0]) if leaked and not result["citations"] else result

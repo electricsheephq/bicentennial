@@ -12,6 +12,7 @@ from bicentennial.api.adapters.mutants import (
     forget_cached_output,
     forget_ignored,
     orphan_tool_result,
+    reset_cached_output,
     stale_wins,
     truncate_after_compaction,
     wipe_on_restart,
@@ -23,11 +24,12 @@ from bicentennial.api.conformance import CHECKS, EXEMPTIONS, run
 
 ADAPTERS = (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,
             truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
-            forget_cached_output)
+            forget_cached_output, reset_cached_output)
 FAILURES = {wipe_on_restart: "checkpoint_restore",
             truncate_after_compaction: "maintain_lossless",
             orphan_tool_result: "tool_grouping", forget_ignored: "forget_removes",
-            stale_wins: "supersession_current", forget_cached_output: "forget_removes"}
+            stale_wins: "supersession_current", forget_cached_output: "forget_removes",
+            reset_cached_output: "reset_empty"}
 
 
 def event(i, text, t_sim=None, kind="message", **extra):
@@ -107,13 +109,13 @@ from bicentennial.api.adapters.nomemory import NoMemory
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.api.adapters.mutants import (
     wipe_on_restart, truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
-    forget_cached_output)
+    forget_cached_output, reset_cached_output)
 from bicentennial.api.conformance import run
 from bicentennial.canon import canon
 rows = {}
 for factory in (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,
                 truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
-                forget_cached_output):
+                forget_cached_output, reset_cached_output):
     a = factory()
     for i, text in enumerate(('quartz old', 'quartz new', 'topaz')):
         a.ingest(dict(event_id=str(i), t_sim=i, kind='message', actor='fixture', text=text))
@@ -142,7 +144,8 @@ from bicentennial.api.adapters import mutants
 from bicentennial.api.adapters.reference_store import ReferenceStore
 from bicentennial.api.conformance import run
 names = ("ReferenceStore", "wipe_on_restart", "truncate_after_compaction",
-         "orphan_tool_result", "forget_ignored", "stale_wins", "forget_cached_output")
+         "orphan_tool_result", "forget_ignored", "stale_wins", "forget_cached_output",
+         "reset_cached_output")
 factories = [ReferenceStore] + [getattr(mutants, name) for name in names[1:]]
 print(json.dumps({f.__name__: sorted(c for c, ok in run(f).items() if not ok) for f in factories}))
 """

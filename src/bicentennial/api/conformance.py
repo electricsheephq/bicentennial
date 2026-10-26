@@ -48,7 +48,8 @@ def _check(name, a, factory):
     if name == "reset_empty":
         _query(a, "quartz")  # A query cache that survives reset must not answer the next one.
         a.reset()
-        _require(_query(a, "quartz")["citations"] == [])
+        result = _query(a, "quartz")  # Neither cited nor as uncited output text.
+        _require(result["citations"] == [] and "quartz" not in result["output"].casefold())
     elif name == "duplicate_id_idempotent":
         a.ingest(_event(2, "quartz"))  # A competing match: a re-ranked duplicate shows up here.
         before = _checkpoint(a), _query(a, "quartz", ["e1"])
