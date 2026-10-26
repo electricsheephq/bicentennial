@@ -73,6 +73,16 @@ def hermes_config(port: int, a) -> dict:
         "model": {"default": "bicentennial-main", "provider": "custom", "base_url": f"{base}/main/v1",
                   "api_key": PLACEHOLDER_KEY, "context_length": a.context_length},
         "auxiliary": aux,
+    } if a.lane == "glm" else {  # S6b credential model C': the native provider; the director holds the login
+        "model": {"default": "gpt-6.1-sol", "provider": "openai-codex", "context_length": a.context_length},
+        "agent": {"reasoning_effort": "medium"},  # the pin; aux tasks stay on auto (the main provider)
+        # the aux pin: auxiliary.<task>.reasoning_effort (agent/auxiliary_client.py _get_task_extra_body). A declared
+        # limitation: title generation passes reasoning_config={"enabled": False}, which Hermes ranks above the pin,
+        # so the title request carries no reasoning field (the upstream default applies)
+        "auxiliary": {t: {"timeout": 900, "no_progress_timeout": 900, "reasoning_effort": "medium"}
+                      for t in ("compression", "title_generation")},
+    }
+    cfg |= {
         "memory": {"memory_enabled": True, "user_profile_enabled": True, "provider": ""},
         "telemetry": {"shared_metrics": {"enabled": False, "send": False}},
         "updates": {"check": False},
@@ -188,7 +198,11 @@ def main():
     p.add_argument("--chars-per-token", type=float, default=4.0)
     p.add_argument("--budget-cap", type=int, default=400)
     p.add_argument("--seed-home", default="", help="start from a copy of this earlier run's final home")
+    p.add_argument("--lane", choices=["glm", "sol"], default="glm", help="sol: S6b's director and credential model C'")
+    p.add_argument("--max-turns", type=int, default=0, help="play at most this many turns per session (0: all)")
     a = p.parse_args()
+    if a.lane == "sol" and (a.measure_overhead or a.lane_rewrite):  # before any run directory exists
+        p.error("--lane sol does not support --measure-overhead or --lane-rewrite (the S6b director has neither)")
 
     scratch, evid = env("S6A_SCRATCH"), env("S6A_EVIDENCE")
     home, work, out = scratch / "homes" / a.run, scratch / "work" / a.run, evid / a.run
@@ -208,10 +222,21 @@ def main():
     life = json.loads(Path(a.life).read_text())
     life["sessions"] = [s for s in life["sessions"] if lo <= s["index"] <= hi]
     life["probes"] = life.get("probes", []) if a.probes else []
+    for s in life["sessions"] + life["probes"]:  # the director's plan and the replay play the same turns
+        s["turns"] = s["turns"][:a.max_turns or None]
     (work / "life.json").write_text(json.dumps(life))
     (home / "config.yaml").write_text(json.dumps(hermes_config(a.port, a), indent=1))
+    script = HERE / "director.py"
+    if a.lane == "sol":  # placeholder token, empty CODEX_HOME, base URL in the process env and in $HERMES_HOME/.env
+        sys.path.insert(0, str(HERE.parent / "s6b"))
+        from sol_director import placeholder_auth
+        script, codex_home = HERE.parent / "s6b" / "sol_director.py", home / "codex-home"
+        codex_home.mkdir(exist_ok=True)
+        os.environ.update(CODEX_HOME=str(codex_home), HERMES_CODEX_BASE_URL=f"http://127.0.0.1:{a.port}/backend-api/codex")
+        (home / ".env").write_text(f"HERMES_CODEX_BASE_URL={os.environ['HERMES_CODEX_BASE_URL']}\n")
+        (home / "auth.json").write_text(json.dumps(placeholder_auth(), indent=1))
 
-    dcmd = NICE + [sys.executable, str(HERE / "director.py"), "--port", str(a.port), "--life", str(work / "life.json"),
+    dcmd = NICE + [sys.executable, str(script), "--port", str(a.port), "--life", str(work / "life.json"),
                    "--ledger-dir", str(out / "ledger"), "--budget-file", str(evid / "budget.json"),
                    "--budget-cap", str(a.budget_cap), "--run", a.run, "--mode", a.mode,
                    "--chars-per-token", str(a.chars_per_token), "--context-length", str(a.context_length)]
@@ -246,6 +271,8 @@ def main():
                     raise RuntimeError(f"turn failed: {kind} {sess['index']}.{i}")
                 if a.write_turns and kind == "life" and control(a.port).get("write_failures"):
                     raise RuntimeError(f"write turn failed at {sess['index']}.{i}: run invalid, stopping")
+                if control(a.port).get("stop_reason"):
+                    raise RuntimeError(f"director stopped ({control(a.port)['stop_reason']}) at {sess['index']}.{i}")
                 if sess.get("restart_after_turn") == i:  # restart wake: SIGKILL at a turn boundary
                     w.kill()
                     t_k = time.monotonic()
