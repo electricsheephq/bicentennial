@@ -48,7 +48,7 @@
 | Codex (Responses) | fresh capture | 12 | 12 | 3 → 3 | 0 | 0 | 0 |
 
 - **Confusion by role** (labelled → classified):
-  - **Hermes on the GLM lane:** replay_main 120 → 120, write_turn 169 → 169, probe_main 12 → 11 + 1 title, title 24 → 24, compaction 5 → 5, and aux 58 → 58 (metadata probes).
+  - **Hermes on the GLM lane:** replay_main 120 → 120, write_turn 169 → 169, probe_main 13 → 12 + 1 title, title 24 → 24, compaction 5 → 5, and aux 58 → 58 (metadata probes).
   - **Hermes on the Sol lane:** replay_main 61, write_turn 748, probe_main 11, title 16, compaction 16 and aux 102, each classified as labelled.
   - **Claude Code:** replay_main 34 (one of them a background-task continuation), compaction 2, and aux 1 (the subagent).
   - **Codex:** replay_main 9 and compaction 3.
@@ -59,20 +59,24 @@
   - Codex: cursor 9, shape 3.
 - **Compaction confirmed from the harnesses' own markers.**
   - **Hermes:** one `Compression summary call dispatched` log line per compaction request: r6 2, r7c 2 and the fresh capture 3. The fresh capture logged 4 compression attempts, but one made no progress and sent no request.
-  - **Claude Code:** 2 `compact_boundary` events, one `auto` at turn 30 (171,150 reported pre-tokens) and one `manual` (`/compact`). Each matches one compaction request.
+  - **Claude Code:** 2 `compact_boundary` events, one `auto` at turn 28 (171,146 reported pre-tokens) and one `manual` (`/compact`). Each matches one compaction request.
   - **Codex:** 3 `compacted` rollout items, each with a replacement history, matching its 3 compaction requests.
 - **The one disagreement** is r6 request 128, which the S6a director labelled `probe_main/retry` and forwarded to the probe model. S1 classifies it as `title`, by shape. Hermes' log shows its title call to the title base URL timed out after 30 s, and Hermes fell back to the main client. The fallback request carries the probe's opening message, which matched the S6a director's retry rule, so the director mis-served a title call as a probe turn. S1's cursor applies only in the main frame: it requires tools and no auxiliary marker, and a title request has neither. The fixture expects `title` and records the director's label beside it.
 - **Codex compacts remotely.** Each of the 3 compactions is an ordinary `/responses` request to the provider (the stub): no tools, with the compaction prompt as the last user message. It never calls the `/responses/compact` endpoint. The next request opens with Codex's bridge summary, and the rollout gains a `compacted` item. That is the behaviour with a custom provider on 0.164.0; Codex's built-in provider (which needs a login) was not tested. The `/responses/compact` endpoint shape is classified as compaction, but only synthetic requests have exercised it.
 - **Claude Code's small-fast alias.** In `-p` mode with non-essential traffic off, 2.1.306 made no small-fast or title call. The Explore subagent ran on the main alias and is classified by its system-prompt marker. So the alias rule (`ANTHROPIC_DEFAULT_HAIKU_MODEL` declared as aux, with title allowed) is exercised only by synthetic shapes. The subagent ran in the background, and Claude Code resumed the turn with a notification as a new user message; S1 classifies that as a continuation of the current scripted turn.
 - **Other shapes seen.** Claude Code 2.1.306 sends `system`-role messages inside `messages` (environment and deferred-tool notes); S1 treats them as system context, not turns. Its auto-compaction request carries the scripted turn's text in the same user message as the compaction instruction; the compaction marker takes it out of the main frame, so it is not a cursor match.
-- **Egress.** No capture of record reached a non-loopback endpoint. A first Codex capture with the default feature set connected to a public code-hosting address on 3 of 8 runs. It made no model call and used no login. The capture of record turns off Codex's plugin, app and tool-suggestion features, and no such connection recurred.
+- **Egress.** No capture of record reached a non-loopback endpoint. A first Codex capture with the default feature set connected to a public code-hosting address on 3 of 8 runs. It made no model call and used no login. The capture of record turns off Codex's plugin, app and tool-suggestion features, and no such connection recurred. To identify that address, the lane also ran `strings` once on the installed Codex binary. No file-open audit was captured, so the claim that no configuration, auth or session file was read rests on the lane's statement, not on a measurement.
 
 ## Shape test
-`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 28 tests, all passing.
+`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 56 tests, all passing.
 - The fixtures, `fixtures/shapes.json`, are minimized shapes: no harness or life text, only paths, key sets, model aliases, role sequences, marker names, lengths and hashes. A test asserts that no fixture string can hold text.
 - Every recorded request must classify to its expected role. Where a source records the harness's own compaction count, the classified compactions must equal it.
 - Unseen shapes must be `unknown`: an unscripted main turn, the scripted turn with no tools, an unissued call id, an unknown wire, an unknown GET, and fresh Responses and Anthropic shapes.
 - Conflicting evidence (two marker roles, or a marker outside an alias's allowed set) must fail closed.
+- **Fail-closed rules added after the first review.** Each has regressions on all three wires, and each fails on the reviewed head.
+  - A trailing tool result must answer a call id the director issued or forwarded. There is one exception. Hermes can add a call of its own beside a forwarded call, in the same assistant message (r6 request 136 and r7c request 165). A result answering that call is accepted only when the same message holds an issued call and its result is also present. Otherwise any unmatched result is `unknown`.
+  - A supplied wire must agree with the request's method and path.
+  - An alias match on a body with no messages or input is `unknown`.
 - Each wire's cursor, retry, issued-id, alias and endpoint rules are tested on synthetic bodies.
 - The repository has no CI workflow. The test is ready for one: `python -m pytest spikes/s1 -q`.
 
