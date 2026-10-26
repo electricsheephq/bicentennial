@@ -45,7 +45,8 @@ from compression import zstd
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "s6a"))
-from director import REVIEW_PREFIX, WRITE_SUFFIX, WRITE_TOOLS, Budget, Ledger, _text, canon, marker_state, redact
+from director import REVIEW_PREFIX as REVIEW_PREFIX  # noqa: PLC0414 - retained legacy marker export
+from director import WRITE_SUFFIX, WRITE_TOOLS, Budget, Ledger, canon, marker_state, redact, roles, s1_classify
 
 MODEL, EFFORT = "gpt-6.1-sol", "medium"  # the pin (Hermes sends agent.reasoning_effort; recorded per call)
 MOUNT = "/backend-api/codex"
@@ -550,6 +551,11 @@ def shape(obj, key=""):
 
 
 class Director:
+    cursor = property(lambda self: self.ctx.cursor, lambda self, v: setattr(self.ctx, "cursor", v))
+    current = property(lambda self: self.expected[self.cursor - 1] if self.ctx.current else None,
+                       lambda self, t: setattr(self.ctx, "current", None if t is None else {
+                           "kind": t["kind"], "hash": roles.h16(t["user"].strip())}))
+
     def __init__(self, a, login: Login | None = None, urlopen=urllib.request.urlopen, clock=time.monotonic, sleep=None):
         if login is None and a.mode == "live":
             hold_home(os.environ["BICENTENNIAL_SOL_AUTH"])
@@ -616,7 +622,8 @@ class Director:
                          for s in life["sessions"] for i, t in enumerate(s["turns"], 1)]
         self.expected += [{"kind": "probe", "session": p["index"], "turn": i, **t}
                           for p in life.get("probes", []) for i, t in enumerate(p["turns"], 1)]
-        self.cursor, self.current = 0, None
+        self.ctx = roles.Context(expected=[{"kind": t["kind"], "hash": roles.h16(t["user"].strip())}
+                                           for t in self.expected])
         self.id_roles: dict[str, tuple[str, str]] = {}  # call_id -> (role, subrole)
         self.pending: dict[str, dict] = {}  # director-issued write call_ids -> scripted turn
         self.lock, self.inflight, self.n_ids = threading.Lock(), 0, 0
@@ -835,45 +842,29 @@ class Director:
         return sse_bytes([item], {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "stub")
 
     # ---- classification ---------------------------------------------------------------------------
-    def classify(self, body: dict) -> tuple[str, str, dict | None]:
-        items = typed(body.get("input"))
-        last = items[-1] if items else {}
-        if last.get("type") == "function_call_output":  # 1. cursor: a call_id this director issued or forwarded
-            ids = []
-            for it in reversed(items):
-                if it.get("type") not in ("function_call_output", "function_call"):
-                    break
-                ids.append(it.get("call_id", ""))
-            for cid in ids:
-                if cid in self.id_roles:
-                    return self.id_roles[cid][0], self.id_roles[cid][1], self.pending.get(cid)
-        users = [it for it in items if it.get("type", "message") == "message" and it.get("role") == "user"]
-        first = _text(users[0].get("content")) if users else ""
-        if (body.get("instructions") or "").startswith(TITLE_SIG):  # 2. shape signatures (before the cursor:
-            return "aux", "title_generation", None  # a title request carries the opening user turn)
-        if first.startswith(SUMMARY_SIG) or (body.get("instructions") or "").startswith(SUMMARY_SIG):
-            return "summariser", "compression", None
-        text = _text(last.get("content")) if last.get("role") == "user" else ""
-        if text and self.cursor < len(self.expected) and self.expected[self.cursor]["user"] in text:  # 3. cursor
-            turn = self.expected[self.cursor]
-            return ("replay_main" if turn["kind"] == "replay" else "probe_main"), "cursor", turn
-        if text and self.current and self.current["user"] in text:  # the harness re-sent the current turn
-            return ("replay_main" if self.current["kind"] == "replay" else "probe_main"), "retry", self.current
-        if text.startswith(REVIEW_PREFIX):
-            return "aux", "background_review", None
-        return "unknown", "", None
+    def classify(self, body: dict, path=MOUNT + "/responses") -> tuple[str, str, dict | None]:
+        role, sub, turn, self.s1 = s1_classify(self, path, body)
+        return role, sub, turn
 
     # ---- serving ----------------------------------------------------------------------------------
     def handle(self, body: dict, fwd: dict) -> tuple[int, bytes, dict]:
         """Returns (status, SSE or JSON bytes, record). Nothing is sent before the caller appends the record."""
         with self.lock:
             role, sub, turn = self.classify(body)
-            if role in ("replay_main", "probe_main") and sub == "cursor":
-                self.cursor, self.current = self.cursor + 1, turn
+            try:
+                if role != "unknown":
+                    roles.advance(self.ctx, self.s1)
+            except Exception as e:  # noqa: BLE001 - advance must fail closed; log only the class
+                role, sub, turn, self.s1_error = "unknown", "", None, type(e).__name__
+            s1, s1_error = self.s1, self.s1_error
+        body = body if isinstance(body, dict) else {}
         rec = {"role": role, "subrole": sub, "cursor": turn and {"session": turn["session"], "turn": turn["turn"]},
                "model_in": body.get("model"), "reasoning_in": body.get("reasoning"),
-               "n_items": len(body.get("input") or []), "n_tools": len(body.get("tools") or []),
+               "n_items": len(body.get("input")) if isinstance(body.get("input"), (list, str)) else 0, "n_tools": len(body.get("tools")) if isinstance(body.get("tools"), (list, str)) else 0,
                "req_chars": len(canon(body)), "upstream": []}
+        rec["s1"] = {"role": s1[0], "method": s1[1]}
+        if s1_error:
+            rec["s1_error"] = s1_error
         if role == "unknown":
             return 400, b'{"error": {"message": "director: unclassified request refused (fail closed)"}}', rec
         if role in ("replay_main", "write_turn"):
@@ -890,10 +881,12 @@ class Director:
         if not up["forward"]:  # any failure, of any status or shape: Hermes would act on its status or text
             rec["served"] = "neutral_503"
             return 503, json.dumps(NEUTRAL_503).encode(), rec
-        for e in up["events"]:
-            it = e.get("item") or {}
-            if e.get("type") == "response.output_item.done" and it.get("type") == "function_call":
-                self.id_roles[it.get("call_id", "")] = (role, "tool_results" if sub in ("cursor", "retry") else sub)
+        with self.lock:
+            for e in up["events"]:
+                it = e.get("item") or {}
+                if e.get("type") == "response.output_item.done" and it.get("type") == "function_call":
+                    self.id_roles[it.get("call_id", "")] = (role, "tool_results" if sub in ("cursor", "retry") else sub)
+                    self.ctx.issued.setdefault(it.get("call_id", ""), s1[0])
         rec["served"] = "forward"
         return 200, up["raw"], rec
 
@@ -918,6 +911,7 @@ class Director:
                 self.n_ids += 1
                 cid = f"bcw{self.n_ids:05d}"
                 self.id_roles[cid], self.pending[cid] = ("write_turn", "tool_results"), turn
+                self.ctx.issued.setdefault(cid, "write_turn")
                 out.append({"type": "function_call", "call_id": cid, "name": c["name"],
                             "arguments": c.get("arguments") or "{}", "status": "completed"})
         rec["served"] = "write_tool_calls" if out else None

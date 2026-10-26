@@ -31,6 +31,10 @@ from compression import zstd
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "s1"))
+import roles
+from replay import AUX_TASKS
+
 ROLES = ("replay_main", "write_turn", "summariser", "probe_main", "aux", "unknown")
 WRITE_TOOLS = {"memory"}  # Hermes native memory's declared write tool (provisional until C-6)
 # PROVISIONAL write-turn suffix (PREREG §10); the frozen text is completion slot C-6.
@@ -161,7 +165,52 @@ def redact(text: str) -> str:
     return text[:600]
 
 
+def s1_classify(ctx, path, body):
+    """Translate S1's role into the directors' existing ledger and routing vocabulary."""
+    s1 = ("unknown", "unknown", {})
+    ctx.s1_error = None
+    try:
+        s1 = roles.classify({"method": "POST", "path": path, "body": body}, ctx.ctx)
+        role, method, ev = s1
+        ctx.s1_error = ev.get("error")
+        if role in ("replay_main", "probe_main", "write_turn"):
+            if ev.get("call_id"):
+                turn = ctx.pending.get(ev["call_id"])
+                if role == "probe_main" or turn is not None:
+                    return role, "tool_results", turn, s1
+            elif method == "cursor" and role != "write_turn":
+                n = ev.get("turn")
+                if isinstance(n, int):
+                    return role, "cursor", ctx.expected[n], s1
+                if n in ("retry", "continuation") and ctx.ctx.current and 0 < ctx.cursor <= len(ctx.expected):
+                    turn = ctx.expected[ctx.cursor - 1]
+                    role = "replay_main" if turn["kind"] == "replay" else "probe_main"
+                    return role, "retry", turn, s1
+        elif role == "compaction":
+            return "summariser", "compression", None, s1
+        elif role == "title":
+            return "aux", "title_generation", None, s1
+        elif role in ("summariser", "extraction"):
+            return "aux", role, None, s1
+        elif role == "aux":
+            task = next((p.split("/")[2] for p in ctx.ctx.path_aliases if path.startswith(p)), None)
+            task = ctx.id_roles.get(ev.get("call_id"), ("", ""))[1] or task
+            model = body.get("model") or ""
+            if not task and model in ctx.ctx.aliases:
+                task = model.removeprefix("bicentennial-aux-")
+            marker = next(iter(ev.get("markers") or []), "metadata").removeprefix("hermes_")
+            return "aux", task or marker, None, s1
+    except Exception as e:  # noqa: BLE001 - the seam must fail closed; log only the class
+        ctx.s1_error = type(e).__name__
+    return "unknown", "", None, s1
+
+
 class Director:
+    cursor = property(lambda self: self.ctx.cursor, lambda self, v: setattr(self.ctx, "cursor", v))
+    current = property(lambda self: self.expected[self.cursor - 1] if self.ctx.current else None,
+                       lambda self, t: setattr(self.ctx, "current", None if t is None else {
+                           "kind": t["kind"], "hash": roles.h16(t["user"].strip())}))
+
     def __init__(self, a):
         self.a, self.guard = a, Guard()
         self.ledger = Ledger(Path(a.ledger_dir), self.guard)
@@ -171,7 +220,12 @@ class Director:
                          for s in life["sessions"] for i, t in enumerate(s["turns"], 1)]
         self.expected += [{"kind": "probe", "session": p["index"], "turn": i, **t}
                           for p in life.get("probes", []) for i, t in enumerate(p["turns"], 1)]
-        self.cursor, self.current = 0, None
+        self.ctx = roles.Context(expected=[{"kind": t["kind"], "hash": roles.h16(t["user"].strip())}
+                                           for t in self.expected])
+        for task in AUX_TASKS:
+            value = roles.alias({"compression": "compaction", "title_generation": "title"}.get(task, "aux"))
+            self.ctx.path_aliases[f"/aux/{task}/"] = value
+            self.ctx.aliases["bicentennial-summariser" if task == "compression" else f"bicentennial-aux-{task}"] = value
         self.id_roles: dict[str, tuple[str, str]] = {}  # tool_call_id -> (role, subrole)
         self.pending: dict[str, dict] = {}  # director-issued write ids -> scripted turn
         self.lock, self.inflight, self.n_ids = threading.Lock(), 0, 0
@@ -266,42 +320,29 @@ class Director:
 
     # ---- classification ---------------------------------------------------------------------------
     def classify(self, path: str, body: dict) -> tuple[str, str, dict | None]:
-        msgs = body.get("messages") or []
-        last = msgs[-1] if msgs else {}
-        if last.get("role") == "tool":  # 1. cursor: a tool-call id this director issued or forwarded
-            ids = []  # the trailing tool results and the calls they answer (the harness may split one call)
-            for msg in reversed(msgs):
-                if msg.get("role") == "tool":
-                    ids.append(msg.get("tool_call_id", ""))
-                    continue
-                if msg.get("role") == "assistant":
-                    ids += [tc.get("id", "") for tc in msg.get("tool_calls") or []]
-                break
-            for tid in ids:
-                if tid in self.id_roles:
-                    return self.id_roles[tid][0], self.id_roles[tid][1], self.pending.get(tid)
-        m = re.match(r"^/aux/([a-z_]+)/", path)  # 2. alias: the per-task base URL and model name
-        if m:
-            return ("summariser", "compression", None) if m.group(1) == "compression" else ("aux", m.group(1), None)
-        text = _text(last.get("content")) if last.get("role") == "user" else ""
-        if text and self.cursor < len(self.expected) and self.expected[self.cursor]["user"] in text:  # 1. cursor
-            turn = self.expected[self.cursor]
-            return ("replay_main" if turn["kind"] == "replay" else "probe_main"), "cursor", turn
-        if text and self.current and self.current["user"] in text:  # the harness re-sent the current turn
-            return ("replay_main" if self.current["kind"] == "replay" else "probe_main"), "retry", self.current
-        if text.startswith(REVIEW_PREFIX):  # 3. shape signature
-            return "aux", "background_review", None
-        return "unknown", "", None
+        if not path.endswith("/chat/completions"):
+            self.s1, self.s1_error = ("unknown", "unknown", {}), None
+            return "unknown", "", None
+        role, sub, turn, self.s1 = s1_classify(self, path, body)
+        return role, sub, turn
 
     # ---- serving ----------------------------------------------------------------------------------
     def handle(self, path: str, body: dict) -> tuple[int, dict | None, dict]:
         with self.lock:
             role, sub, turn = self.classify(path, body)
-            if role in ("replay_main", "probe_main") and sub == "cursor":
-                self.cursor, self.current = self.cursor + 1, turn
+            try:
+                if role != "unknown":
+                    roles.advance(self.ctx, self.s1)
+            except Exception as e:  # noqa: BLE001 - advance must fail closed; log only the class
+                role, sub, turn, self.s1_error = "unknown", "", None, type(e).__name__
+            s1, s1_error = self.s1, self.s1_error
+        body = body if isinstance(body, dict) else {}
         rec = {"role": role, "subrole": sub, "cursor": turn and {"session": turn["session"], "turn": turn["turn"]},
-               "model_in": body.get("model"), "n_messages": len(body.get("messages") or []),
-               "n_tools": len(body.get("tools") or []), "req_chars": len(canon(body)), "upstream": []}
+               "model_in": body.get("model"), "n_messages": len(body.get("messages")) if isinstance(body.get("messages"), (list, str)) else 0,
+               "n_tools": len(body.get("tools")) if isinstance(body.get("tools"), (list, str)) else 0, "req_chars": len(canon(body)), "upstream": []}
+        rec["s1"] = {"role": s1[0], "method": s1[1]}
+        if s1_error:
+            rec["s1_error"] = s1_error
         if role == "unknown":
             return 400, {"error": {"message": "director: unclassified request refused (fail closed)"}}, rec
         if role == "replay_main" and sub == "retry":  # served from the script; no second write turn
@@ -332,8 +373,10 @@ class Director:
             code = up["status"] if up["status"] > 0 else 503
             return code, {"error": {"message": f"director: upstream refused ({up['category']})"}}, rec
         resp = up["body"]
-        for tc in (resp["choices"][0]["message"].get("tool_calls") or []):
-            self.id_roles[tc["id"]] = (role, "tool_results" if sub in ("cursor", "retry") else sub)
+        with self.lock:
+            for tc in (resp["choices"][0]["message"].get("tool_calls") or []):
+                self.id_roles[tc["id"]] = (role, "tool_results" if sub in ("cursor", "retry") else sub)
+                self.ctx.issued.setdefault(tc["id"], s1[0])
         rec["served"] = "forward"
         return 200, self._stream_or_json(body, resp), rec
 
@@ -365,6 +408,7 @@ class Director:
                 self.n_ids += 1
                 tid = f"bcw{self.n_ids:05d}"
                 self.id_roles[tid], self.pending[tid] = ("write_turn", "tool_results"), turn
+                self.ctx.issued.setdefault(tid, "write_turn")
                 out.append({"id": tid, "type": "function", "function": tc["function"]})
         rec["served"] = "write_tool_calls"
         return {"role": "assistant", "content": "", "tool_calls": out}
