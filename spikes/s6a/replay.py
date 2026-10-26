@@ -52,12 +52,12 @@ def marker() -> dict:
         return {"exit": r.returncode, "glm": None}
 
 
-def wait_for_machine(log):
+def wait_for_machine(log, min_free_gb: float = 150):
     """Exit 11 means no CPU-heavy work: wait. Exit 10 is fine here (1-2 light Hermes processes)."""
     while True:
         m = marker()
-        if shutil.disk_usage("/").free < 150e9:
-            sys.exit("disk below 150 GB free: stopping")
+        if shutil.disk_usage("/").free < min_free_gb * 1e9:
+            sys.exit(f"disk below {min_free_gb:g} GB free: stopping")
         if m["exit"] != 11:
             return m
         log(f"marker exit 11; waiting 60 s ({m})")
@@ -200,6 +200,7 @@ def main():
     p.add_argument("--seed-home", default="", help="start from a copy of this earlier run's final home")
     p.add_argument("--lane", choices=["glm", "sol"], default="glm", help="sol: S6b's director and credential model C'")
     p.add_argument("--max-turns", type=int, default=0, help="play at most this many turns per session (0: all)")
+    p.add_argument("--min-free-gb", type=float, default=150, help="stop before a session below this much free disk")
     a = p.parse_args()
     if a.lane == "sol" and (a.measure_overhead or a.lane_rewrite):  # before any run directory exists
         p.error("--lane sol does not support --measure-overhead or --lane-rewrite (the S6b director has neither)")
@@ -253,7 +254,7 @@ def main():
     plan = [("life", s) for s in life["sessions"]] + [("probe", s) for s in life["probes"]]
     try:
         for kind, sess in plan:
-            m = wait_for_machine(log)
+            m = wait_for_machine(log, a.min_free_gb)
             t_s = time.monotonic()
             w = Worker(a, home, a.port, egress, out / "hermes.log")
             opened = w.call(op="open", session_id=None, cwd=str(home / "workspace"))

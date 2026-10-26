@@ -167,11 +167,11 @@ def projection(m: dict, lat: float = 1.0, C: float = 8, b: int = 150, L: int = 4
     return out
 
 
-def grid(inputs: dict, rss_gib: float) -> list[dict]:
+def grid(inputs: dict, rss_gib: float, Cs=(8, 16, 24)) -> list[dict]:
     """Board size x §11 cuts 1-2 x lane concurrency x latency x write cadence, both readings."""
     rows = []
     for L, (cut, kw), C, lat, cad in itertools.product((24, 32, 48), (("none", {}), ("cuts 1-2", {"b": 100, "L_rob": 4})),
-                                                     (8, 16, 24), (0.5, 1.0, 1.5), CADENCES):
+                                                     Cs, (0.5, 1.0, 1.5), CADENCES):
         pr = projection(inputs, lat=lat, C=C, L=L, cadence=cad, **kw)
         rows.append({"L": L, "cuts": cut, "C": C, "latency_x": lat, "cadence": cad, "cp_h": round(pr["critical_path_h"], 2)}
                     | {run: {"job_h": round(q["wall_h"], 1), "job_fits": q["fits_24h"], "lane_h": round(q["lane_wall_h"], 1),

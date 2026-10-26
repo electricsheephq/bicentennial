@@ -54,6 +54,8 @@ def run_level(n: int, call, take, state: dict) -> list[dict]:
         if not take():
             return {"i": i, "sent": False, "reason": "budget"}
         c = {"i": i, "sent": True, **call(i)}
+        if c.get("unsent"):  # refused before it reached the upstream: it neither extends nor breaks the streak
+            return c
         with lock:
             state["quota_streak"] = state["quota_streak"] + 1 if c.get("category") == "quota" else 0
             state["quota_stop"] |= state["quota_streak"] >= 3

@@ -517,6 +517,177 @@ class Ramp(Base):
         self.assertEqual((up["ok"], up["category"]), (False, "overload"))
         self.assertIn(up["category"], sd.RETRYABLE)
 
+    def test_an_unsent_call_does_not_break_the_quota_streak(self):  # the race behind the intermittent stop
+        from ramp import run_level
+        seq = iter([{"category": "quota"}, {"category": "quota"}, {"category": "budget_or_stop", "unsent": True},
+                    {"category": "quota"}])
+        state = {"quota_streak": 0, "quota_stop": False}
+        for _ in range(2):  # level 1 twice, one worker each: a fixed arrival order; the streak spans levels
+            run_level(1, lambda i: next(seq), lambda: True, state)
+        self.assertEqual((state["quota_streak"], state["quota_stop"]), (3, True))
+
+    def test_ramp_never_retries_and_stops_on_quota(self):
+        import ramp_sol
+        quota = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached"}}).encode()
+        d, state = self.make(), {"quota_streak": 0, "quota_stop": False}
+        Upstream.script = [(429, b'{"error": {"code": "rate_limit_exceeded", "message": "Rate limit reached"}}')]
+        lv = ramp_sol.level(d, 4, state)  # one 429 among 8: complete but not sustained, and never retried
+        self.assertEqual((lv["sent"], lv["n429"], lv["sustained"], len(Upstream.seen)), (8, 1, False, 8))
+        self.assertEqual(lv["quota_headers_last"]["x-codex-primary-used-percent"], "42")
+        Upstream.script = [(429, quota)] * 8
+        lv = ramp_sol.level(d, 4, state)  # 3 quota refusals in a row stop the calls not yet started (the ramp's
+        # own stop: the director's breaker guards the Hermes path, upstream_retry, which the ramp does not use)
+        self.assertTrue(state["quota_stop"] and 3 <= lv["sent"] < 8)
+        self.assertEqual((len(Upstream.seen), len(self.records("ramp"))), (8 + lv["sent"], 8 + lv["sent"]))
+        self.assertNotIn(ACCT, (self.tmp / "ledger" / "ledger.jsonl").read_text())
+
+
+class Soak(Base):
+    QUOTA = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached"}}).encode()
+
+    def source(self, d):  # a finished run's ledger: forwarded write-turn and compaction blobs, plus noise
+        led = sd.Ledger(self.tmp / "src" / "ledger", d.guard)
+        bodies = [dict(self.turn(d, k), input=sd.typed(self.turn(d, k)["input"] + [sd.SUFFIX_ITEM]), tools=[MEM])
+                  for k in range(3)]  # as the director stores a forwarded body: typed parts
+        comp = {"model": sd.MODEL, "instructions": "You are Hermes.", "stream": True, "store": False,
+                "reasoning": {"effort": "medium"}, "input": [{"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": sd.SUMMARY_SIG + " the turns so far"}]}]}
+        ups = [{"kind": "write_turn", "ok": True, "req": led.blob(b), "t_ms": 40} for b in bodies]
+        ups += [{"kind": "summariser", "ok": True, "req": led.blob(comp), "t_ms": 200},
+                {"kind": "aux", "ok": True, "req": led.blob(AUX), "t_ms": 10},  # not a soak payload
+                {"kind": "write_turn", "ok": False, "req": led.blob({"x": 1}), "t_ms": 5}]  # a failed call: skipped
+        for u in ups:
+            led.append({"type": "request", "upstream": [u]})
+        return self.tmp / "src", bodies + [comp]
+
+    def test_holds_inflight_for_the_window_with_the_source_mix(self):
+        import soak_sol
+        d = self.make(write_turns=False, budget_cap=2000, run="soak")
+        src, bodies = self.source(d)
+        pays = soak_sol.payloads(src)
+        real = d.upstream  # a call of 0.3 s, so a slot's ledger write is short against its call
+        d.upstream = lambda *a: (time.sleep(0.3), real(*a))[1]
+        self.assertEqual(([p["kind"] for p in pays], [p["body"] for p in pays]),
+                         (["write_turn"] * 3 + ["summariser"], bodies))
+        res = soak_sol.soak(d, pays, inflight=4, duration=1.5, ceiling=1000, sample_s=0.1)
+        self.assertEqual((res["ended_by"], res["refused"], res["sustained"], res["inflight_max"]), ("duration", 0, True, 4))
+        self.assertGreaterEqual(res["inflight_mean"], 3)  # a slot is refilled as soon as its call returns
+        self.assertEqual((res["server_overloaded"], res["n429"]), (0, 0))
+        self.assertLessEqual(res["latency_ok"]["p50_s"], res["latency_ok"]["p95_s"])
+        self.assertEqual((res["sent"], len(Upstream.seen)), (res["ok"], res["ok"]))
+        self.assertGreater(res["sent"], 8)
+        self.assertEqual(sum(m["ok"] for m in res["per_minute"]), res["ok"])
+        self.assertEqual(sum(m["input_tokens"] for m in res["per_minute"]), 7 * res["ok"])  # the fake usage
+        self.assertEqual(res["by_kind"]["write_turn"]["output_tokens"] + res["by_kind"]["summariser"]["output_tokens"],
+                         3 * res["ok"])
+        self.assertEqual(res["effort_is_pin"], res["sent"])
+        self.assertEqual(res["quota_headers_last"]["x-codex-primary-used-percent"], "42")
+        for _, wire in Upstream.seen:  # every send is a source body, unchanged
+            self.assertIn(wire, bodies)
+        self.assertEqual({c["n"] % 4 for c in res["calls"]}, {0, 1, 2, 3})  # round robin over the mix
+        self.assertEqual(len(self.records("soak")), res["sent"])
+        text = (self.tmp / "ledger" / "ledger.jsonl").read_text()
+        self.assertNotIn(ACCT, text)
+        self.assertNotIn("authorization", text.lower())
+
+    def test_three_quota_refusals_stop_before_the_next_send(self):
+        import soak_sol
+        d = self.make(write_turns=False, budget_cap=2000, run="soak")
+        pays = soak_sol.payloads(self.source(d)[0])
+        Upstream.script = [(429, self.QUOTA)] * 40
+        res = soak_sol.soak(d, pays, inflight=4, duration=5.0, ceiling=1000, pause=1.0, sample_s=0.1)
+        self.assertEqual((res["ended_by"], res["sustained"]), ("quota_3_in_a_row", False))
+        self.assertTrue(3 <= res["sent"] <= 4 and res["sent"] == len(Upstream.seen) == res["n429"])
+        self.assertLess(res["wall_s"], 3)  # stopped at once, not at the window's end
+        shape = json.loads(res["refusal_shapes"][0])
+        self.assertEqual((shape["status"], shape["category"], shape["body_shape"]["error"]["type"]),
+                         (429, "quota", "usage_limit_reached"))
+        self.assertEqual(res["per_minute"][0]["n429"], res["sent"])
+        self.assertTrue(soak_sol.overloaded({"ok": False, "category": "rate", "error_obj": {"code": "server_overloaded"}}))
+        self.assertFalse(soak_sol.overloaded({"ok": False, "category": "quota", "error_obj": {"type": "usage_limit"}}))
+
+    def test_call_ceiling_and_plan(self):
+        import soak_sol
+        d = self.make(write_turns=False, budget_cap=2000, run="soak")
+        pays = soak_sol.payloads(self.source(d)[0])
+        res = soak_sol.soak(d, pays, inflight=4, duration=5.0, ceiling=10, sample_s=0.1)
+        self.assertEqual((res["ended_by"], res["sent"], len(Upstream.seen)), ("call_ceiling", 10, 10))
+        self.assertFalse(res["sustained"])
+        pl = soak_sol.plan(pays, inflight=24, duration=180, ceiling=500)  # mean 0.08 s, floored at 0.1 s
+        self.assertEqual((pl["fits"], pl["est_calls"], pl["max_fitting_duration_s"]), (False, 43200, 2))
+        self.assertTrue(soak_sol.plan([dict(p, t_ms=7000) for p in pays], 24, 180, 700)["fits"])  # ~617 calls
+        b = self.tmp / "budget.json"
+        b.write_text(json.dumps({"total": 600, "by_run": {}, "by_kind": {}}))
+        self.assertEqual(soak_sol.ceiling_for(b, 1400, 700, 50), 700)
+        b.write_text(json.dumps({"total": 900, "by_run": {}, "by_kind": {}}))
+        self.assertEqual(soak_sol.ceiling_for(b, 1400, 700, 50), 450)
+        with self.assertRaises(SystemExit):  # no compaction body in the source: refuse, never a write-only soak
+            soak_sol.payloads(self.source(d)[0], kinds=("write_turn", "probe"))
+
+
+class RateBound(unittest.TestCase):
+    def test_request_counts_and_rate_verdict(self):
+        import analyse_sol as an
+        up = lambda k, ok=True: {"kind": k, "ok": ok, "t_ms": 1000}
+        led = [{"type": "request", "role": "replay_main", "subrole": "cursor", "upstream": [up("write_turn", False),
+                                                                                           up("write_turn")]},
+               {"type": "request", "role": "replay_main", "subrole": "cursor", "upstream": [up("write_turn")]},
+               {"type": "request", "role": "summariser", "upstream": [up("summariser", False), up("summariser")]},
+               {"type": "request", "role": "aux", "upstream": [up("aux"), up("aux")]},
+               {"type": "request", "role": "probe_main", "subrole": "cursor", "upstream": [up("probe")] * 3}]
+        rows = [{"phase": "life", "session": "1", "what": "turn", "turn": "6"}, {"phase": "probe", "session": "1"}]
+        inputs = {"turn_ex_comp_s": 10, "upstream_turn_s": 6, "summariser_s": 90, "session_fixed_s": 29,
+                  "comp_per_sprint": 2, "probe_turn_s": 30, "probe_upstream_s": 20, "probe_fixed_s": 26,
+                  "aux_per_session_s": 5, "plain_turn_s": 2}
+        q, ri = an.requests(rows, led, inputs)
+        self.assertEqual((q["write_per_turn"], q["compaction_per_compaction"], q["aux_per_session"],
+                          q["probe_per_probe_turn"], q["scripted_per_turn"]), (1.5, 2.0, 1.0, 3.0, 0.0))
+        self.assertEqual(ri["comp_per_sprint"], 1.0)  # one logical compaction: its retry is counted once, in q
+        pr = an.projection(ri, C=1, L=48)  # S = 200, 5 turns, 80 compactions, b = 150 probes doubled by controls
+        R, P = 1000 * 1.5 + 40 * 2.0 + 200 * 1.0, 150 * (3.0 + 1.0) * 2  # 40 compactions of 2 attempts each
+        self.assertAlmostEqual(pr["R_lane_h"] * 3600, R)
+        self.assertAlmostEqual(pr["P_lane_h"] * 3600, P)
+        rows = an.rate_grid(an.grid(inputs, 0.2, Cs=(24,)), ri)
+        cell = next(r for r in rows if (r["L"], r["cuts"], r["latency_x"], r["cadence"]) == (48, "none", 1.0, "every turn"))
+        b = cell["board"]
+        self.assertEqual(b["N_req"], round(60 * (R * 1.5 + 2 * P)))  # (L + L_keep) lives, f = 0.5
+        one, two = b["rate"].values()
+        self.assertEqual((one["rate_h"], two["rate_h"]), (round(b["N_req"] / 180 / 60, 1), round(b["N_req"] / 360 / 60, 1)))
+        self.assertEqual(one["fits"], b["lane_fits"] and b["N_req"] / 180 / 60 <= 24)
+        edge = an.rate_grid([{"L": 48, "cuts": "none", "cadence": "every turn", "board": {"lane_h": 24.0, "lane_fits": False},
+                              "robustness": {"lane_h": 1.0, "lane_fits": True}}], ri)[0]["board"]  # 24.04 h shown as 24.0
+        self.assertFalse(any(v["fits"] for v in edge["rate"].values()))
+
+
+    def test_lane_time_at_the_workload_c_k_equals_the_rate_bound(self):
+        import analyse_sol as an
+        inputs = {"turn_ex_comp_s": 10, "upstream_turn_s": 6, "summariser_s": 60, "session_fixed_s": 29,
+                  "comp_per_sprint": 2, "probe_turn_s": 30, "probe_upstream_s": 12, "probe_fixed_s": 26,
+                  "aux_per_session_s": 5, "plain_turn_s": 2}
+        ri = dict(inputs, upstream_turn_s=1.0, summariser_s=1.0, aux_per_session_s=1.25, probe_upstream_s=3.0)
+        capped = set()
+        for k, kw in ((1, {}), (2, an.CUTS_12)):
+            c = an.achievable(inputs, ri, k, **kw)
+            lane = an.projection(inputs, C=1, **kw)["board"]["lane_work_h"]
+            n = an.projection(ri, C=1, **kw)["board"]["lane_work_h"] * 3600
+            self.assertAlmostEqual(c["mean_request_s"], lane * 3600 / n, places=3)  # the workload's own mix
+            if c["capped"]:  # the machine binds: C stops at its cap and lane time exceeds the rate bound
+                self.assertEqual((round(c["C"], 2), c["J"]), (c["C_machine"], c["J_max"]))
+                self.assertGreater(c["lane_h"], c["rate_h"])
+            else:
+                self.assertAlmostEqual(c["lane_h"], c["rate_h"], places=2)  # Little's law at C_k
+                self.assertEqual(c["fits"], n / (k * 180) / 60 <= 24)
+            capped.add(c["capped"])
+        self.assertEqual(capped, {False, True})
+
+    def test_no_positive_concurrency_refuses_to_project(self):
+        import analyse_sol as an
+        self.assertEqual(an.measured_C({"C_effective": 20.58}, {"sustained_concurrency": 48}), 20)
+        for lvl, ramp in (({"C_effective": 0.0}, {"sustained_concurrency": 48}), ({"C_effective": 0.4}, {}),
+                          (None, {"sustained_concurrency": 0}), (None, {})):
+            with self.assertRaises(SystemExit) as e:
+                an.measured_C(lvl, ramp)
+            self.assertIn("no positive concurrency", str(e.exception.code))
 
 class Failures(Base):
     """Round 3: only a clean completed or incomplete stream is replayed; every other result is a neutral 503."""
