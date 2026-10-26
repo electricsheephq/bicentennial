@@ -27,7 +27,7 @@ from types import SimpleNamespace
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "s6a"))
 from ramp import run_level
-from sol_director import EFFORT, MODEL, Director, marker_state
+from sol_director import EFFORT, MODEL, Director, Stop, marker_state
 
 KEEP = ("status", "ok", "category", "t_ms", "served_model", "n_events", "limit_headers", "body_shape", "error_obj",
         "scrubbed", "req", "resp", "pace_wait_ms")
@@ -88,9 +88,12 @@ def main():
     a = p.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    d = Director(SimpleNamespace(budget_file=a.budget_file, budget_cap=a.budget_cap, mode="live", run=a.run,
-                                 ledger_dir=str(out / "ledger"), life=str(HERE.parent / "s6a" / "micro_life.json"),
-                                 model=MODEL, write_turns=False, rate_per_min=0, timeout=a.timeout, chars_per_token=4.0))
+    try:
+        d = Director(SimpleNamespace(budget_file=a.budget_file, budget_cap=a.budget_cap, mode="live", run=a.run,
+                                     ledger_dir=str(out / "ledger"), life=str(HERE.parent / "s6a" / "micro_life.json"),
+                                     model=MODEL, write_turns=False, rate_per_min=0, timeout=a.timeout, chars_per_token=4.0))
+    except Stop as e:
+        sys.exit("home_busy: another process holds this login home" if str(e) == "home_busy" else str(e))
     state, levels, used = {"quota_streak": 0, "quota_stop": False}, [], 0
     for n in (4, 8, 16, 24, 32, 48):
         if n == 48 and not (levels and levels[-1]["level"] == 32 and levels[-1]["refused"] == 0):

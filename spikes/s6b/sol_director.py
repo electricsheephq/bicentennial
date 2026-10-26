@@ -23,6 +23,7 @@ import argparse
 import base64
 import contextlib
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -32,6 +33,7 @@ import signal
 import socket
 import statistics
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -57,6 +59,7 @@ PASS_HEADERS = ("session_id", "x-client-request-id")  # forwarded verbatim; ever
 IDENTITY = {"originator": "hermes-agent", "User-Agent": "HermesAgent/0.22.2"}  # Hermes' own at the official host
 REFRESH_SKEW_S = 300
 READ_GRACE_S = 1.0  # a post-wait token read longer than this blocked on a refresh, so the request is admitted again
+SNAPSHOT_WAIT_S = 30.0  # a snapshot waits this long for a shared auth lock behind a writer, then refuses
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
@@ -108,12 +111,90 @@ class Stop(Exception):
     """A stop condition: the director makes no further upstream or token-endpoint call."""
 
 
+HOME_HOLDERS = {}  # process-lifetime descriptors; never close or replace a held lock file
+
+
+def hold_home(auth_path) -> int:
+    fd = None
+    try:
+        path = Path(auth_path).with_name("holder.lock").resolve()
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as e:
+        if fd is not None:
+            os.close(fd)
+        raise Stop("home_busy" if isinstance(e, BlockingIOError) else f"home_unusable:{type(e).__name__}") from None
+    HOME_HOLDERS[path] = fd
+    return fd
+
+
+def full_sync(fd):
+    fcntl.fcntl(fd, fcntl.F_FULLFSYNC) if hasattr(fcntl, "F_FULLFSYNC") else os.fsync(fd)
+
+
+def sync_folder(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.fcntl(fd, fcntl.F_FULLFSYNC) if hasattr(fcntl, "F_FULLFSYNC") else os.fsync(fd)  # the entry leaves the drive cache too
+    finally:
+        os.close(fd)
+
+
+def durable_write(path, data, link=False, keep_on_error=False):
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp", dir=path.parent)  # 0600, same filesystem
+    complete = False
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+            f.flush()
+            full_sync(f.fileno())
+        (os.link if link else os.replace)(tmp, path)
+        sync_folder(path.parent)
+        complete = True
+    finally:
+        if complete or not keep_on_error:  # a failed store write may hold the only successor chain
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
+
+
+def utc():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
+
+
+def release(budget, run, kind):
+    """Return one unsent reservation to the shared budget, under its lock."""
+    with open(budget.path, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        b = json.load(f)
+        b["total"] -= 1
+        b["by_run"][run] -= 1
+        b["by_kind"][kind] -= 1
+        f.seek(0), f.truncate(), json.dump(b, f)
+
+
+def lease_id(path):
+    try:
+        return json.loads(path.with_name("lease.json").read_text()).get("lease_id")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def jwt_claims(token) -> dict:
     try:
         part = token.split(".")[1]
         return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
     except Exception:
         return {}
+
+
+def account_pin(token) -> str:
+    c = jwt_claims(token)
+    c = c if isinstance(c, dict) else {}
+    a = c.get(AUTH_CLAIM)
+    a = a if isinstance(a, dict) else {}
+    account, *users = [v if isinstance(v, str) else "" for v in (
+        a.get("chatgpt_account_id"), a.get("chatgpt_user_id"), a.get("user_id"), c.get("sub"))]
+    return hashlib.sha256(b"bicentennial-pin\0" + account.encode() + b"\0" + next(filter(None, users), "").encode()).hexdigest()
 
 
 def account_headers(token: str) -> dict:
@@ -160,40 +241,59 @@ class Login:
     A stop after a token POST, or a refused credential, is also persisted as a sentinel beside the store (the
     reason and a UTC time, never a token), so a later process refuses too, until the owner has looked and
     removed it. The stops that write it: token_endpoint_401/403, refresh_failed_<status>,
-    refresh_no_new_refresh_token, refresh_error:<class> and login_error:<class> once the POST was sent, and the
-    director's upstream_401/403 and upstream_sse_auth. A stop before any POST (refresh_budget, an unreadable
+    refresh_no_new_refresh_token, account_changed after write-back, refresh_error:<class> and login_error:<class>
+    once the POST was sent, and the
+    director's upstream_401/403 and upstream_sse_auth; refresh_in_flight spans each POST until durable write-back.
+    A stop before any POST (refresh_budget, refresh_sentinel_failed, account_changed, an unreadable
     store) latches in this process only: the refresh token was never sent."""
-    def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None):
+    def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None, on_unsent=None):
         self.path, self.token_url, self.client_id, self.post = Path(path), token_url, client_id, post
-        self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), {}, []
+        self.on_refresh, self.on_unsent, self.lock, self.secrets, self.log = on_refresh, on_unsent, threading.Lock(), {}, []
         self.dead, self.posted = "", False  # the latched failure; whether this refresh reached the token endpoint
+        self.pin = None
         self.sentinel = self.path.with_name(self.path.name + ".stopped")
 
     def latch(self, reason: str, persist: bool = True):
         """Latch a login stop in this process and, if persist, on disk; the first reason is kept. The sentinel
         is written complete to a 0600 temporary file, then linked into place (atomic, and never replacing an
-        earlier first stop). Never raises: if the sentinel cannot be written, the in-process latch still holds."""
+        earlier stop except refresh_in_flight). Never raises: if the sentinel cannot be written, the
+        in-process latch still holds."""
         self.dead = self.dead or reason
-        tmp = self.sentinel.with_name(f".{self.sentinel.name}.tmp{os.getpid()}.{threading.get_ident()}")
         try:
             if persist:
-                with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-                    f.write(json.dumps({"reason": reason, "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-                            + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.link(tmp, self.sentinel)
+                self._sentinel(reason)
         except FileExistsError:  # already latched on disk
             pass
         except Exception as e:  # noqa: BLE001 - not writable: recorded by class; the in-process latch holds
             self.log.append({"type": "sentinel_error", "error": type(e).__name__, "t": time.time()})
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
+
+    def _sentinel(self, reason):
+        replace = self.sentinel.exists() and json.loads(self.sentinel.read_text()).get("reason") == "refresh_in_flight"
+        durable_write(self.sentinel, json.dumps({"reason": reason, "t": utc()}) + "\n", link=not replace)
+
+    def _auth_lock(self):
+        try:
+            fd = os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError as e:  # the class only: a path-bearing traceback never reaches a log
+            raise Stop(f"home_unusable:{type(e).__name__}") from None
+        return os.fdopen(fd)
+
+    def snapshot(self):
+        """One store and lease read under a shared auth lock; never refreshes, learns or latches."""
+        with self._auth_lock() as lf:
+            deadline = time.monotonic() + SNAPSHOT_WAIT_S
+            while True:  # bounded, so a reader never hangs behind a writer or refresher
+                try:
+                    fcntl.flock(lf, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise Stop("auth_lock_busy") from None
+                    time.sleep(0.1)
+            return json.loads(self.path.read_text()), lease_id(self.path)
 
     def token(self) -> str:
-        with self.lock, os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR,
-                                          0o600)) as lf:
+        with self.lock, self._auth_lock() as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             if self.dead:
                 raise Stop(self.dead)
@@ -204,6 +304,10 @@ class Login:
                 raw = self.path.read_text()
                 store = json.loads(raw)
                 at = store["tokens"]["access_token"]
+                pin = account_pin(at)
+                if self.pin is not None and pin != self.pin:
+                    raise Stop("account_changed")
+                self.pin = pin
                 self._learn(store)
                 if jwt_claims(at).get("exp", 0) - time.time() > REFRESH_SKEW_S:
                     return at
@@ -219,6 +323,13 @@ class Login:
         old = store["tokens"]["refresh_token"]
         if self.on_refresh and not self.on_refresh():
             raise Stop("refresh_budget")
+        try:
+            self._sentinel("refresh_in_flight")
+        except Exception as e:  # noqa: BLE001 - fail closed before sending; log only the class
+            self.log.append({"type": "sentinel_error", "error": type(e).__name__, "t": time.time()})
+            if self.on_refresh and self.on_unsent:  # no POST went out: release the charged refresh
+                self.on_unsent()
+            raise Stop("refresh_sentinel_failed") from None
         self.posted = True
         try:
             status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
@@ -244,13 +355,12 @@ class Login:
         lines = raw.splitlines()
         indent = len(lines[1]) - len(lines[1].lstrip()) if len(lines) > 1 else None
         data = json.dumps(store, indent=indent or None) + ("\n" if raw.endswith("\n") else "")
-        tmp = self.path.with_name(f".{self.path.name}.tmp{os.getpid()}")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        durable_write(self.path, data, keep_on_error=True)
+        if account_pin(store["tokens"]["access_token"]) != self.pin:
+            raise Stop("account_changed")
+        if json.loads(self.sentinel.read_text()).get("reason") == "refresh_in_flight":
+            self.sentinel.unlink()
+            sync_folder(self.path.parent)
         return store["tokens"]["access_token"]
 
     def _learn(self, store: dict):
@@ -264,9 +374,9 @@ class Login:
                         if isinstance(vv, str) and re.search(r"account|user|email|org|^sub$", kk):
                             self.secrets.setdefault(vv, f"claim.{kk}")
 
-    def learn_only(self) -> dict:
-        """Read-only (no lock, no refresh): the needles, for --scan."""
-        self._learn(json.loads(self.path.read_text()))
+    def learn_only(self, store=None) -> dict:
+        """No refresh: the needles, for --scan, from the store snapshot its pin check read."""
+        self._learn(json.loads(self.path.read_text()) if store is None else store)
         return self.secrets
 
 
@@ -298,9 +408,28 @@ def _where(data: bytes, s: str):
         return "non-json"
 
 
-def scan(login: Login, paths: list[str]) -> dict:
+def scan(login: Login, paths: list[str], run=None) -> dict:
     """Counts of credential, account and email needles in files (zstd blobs decompressed); never a value."""
-    needles, files, hits = login.learn_only(), 0, {}
+    store, lid = login.snapshot()  # the pin is checked on the store the needles come from
+    if run is not None:
+        try:
+            pins = json.loads(login.path.with_name("director-pin.json").read_text())
+        except FileNotFoundError:
+            pins = {}
+        except (OSError, ValueError):  # present but unreadable or unparseable
+            raise Stop("pin_file_invalid") from None
+        if not isinstance(pins, dict):
+            raise Stop("pin_file_invalid")
+        if run not in pins:
+            raise Stop("no_run_pin")
+        entry = pins[run]
+        if not isinstance(entry, dict) or "pin" not in entry or "lease_id" not in entry:
+            raise Stop("pin_file_invalid")
+        if entry["lease_id"] != lid:
+            raise Stop("lease_changed")
+        if account_pin(store["tokens"]["access_token"]) != entry["pin"]:
+            raise Stop("account_changed")
+    needles, files, hits = login.learn_only(store), 0, {}
     for f in [q for p in map(Path, paths) for q in ([p] if p.is_file() else p.rglob("*")) if q.is_file()]:
         files += 1
         data = f.read_bytes()
@@ -422,6 +551,8 @@ def shape(obj, key=""):
 
 class Director:
     def __init__(self, a, login: Login | None = None, urlopen=urllib.request.urlopen, clock=time.monotonic, sleep=None):
+        if login is None and a.mode == "live":
+            hold_home(os.environ["BICENTENNIAL_SOL_AUTH"])
         self.stop_event, self.metrics_lock, self.tries, self.retry_counts = threading.Event(), threading.Lock(), [], Counter()
         self.unparsed_streak, self.pace_wait_ms = 0, 0
         self.pacing_cv, self.pacing_now = threading.Condition(), 0
@@ -431,15 +562,52 @@ class Director:
         self.budget = Budget(Path(a.budget_file), a.budget_cap)
         self.login = login if login is not None or a.mode == "stub" else Login(
             os.environ["BICENTENNIAL_SOL_AUTH"], os.environ["BICENTENNIAL_SOL_TOKEN_URL"],
-            os.environ["BICENTENNIAL_SOL_CLIENT_ID"], on_refresh=lambda: self.budget.take(a.run, "refresh"))
+            os.environ["BICENTENNIAL_SOL_CLIENT_ID"], on_refresh=lambda: self.budget.take(a.run, "refresh"),
+            on_unsent=lambda: release(self.budget, a.run, "refresh"))
         self.failure_streak, self.stopped, self.stop_reason, self.write_failures = 0, False, "", 0
         self.streak_lock = threading.Lock()
         self.guard = Guard(self.login)
         self.ledger = Ledger(Path(a.ledger_dir), self.guard)
-        try:  # learn the needles before any ledger write (this refreshes only if the token is expiring)
+        if login is None and self.login:
+            self.ledger.append({"type": "holder", "lease": self.login.path.with_name("lease.json").exists()})
+        try:  # learn needles before credential-bearing records (refresh only if the token is expiring)
+            new_pin = None
+            if login is None and self.login:  # the run binding is checked on a snapshot before any refresh
+                try:
+                    store, lid = self.login.snapshot()
+                    self.login.pin = account_pin(store["tokens"]["access_token"])  # token() refuses another account
+                except Stop:
+                    raise
+                except Exception as e:  # noqa: BLE001 - the class only, never a path or message
+                    raise Stop(f"login_error:{type(e).__name__}") from None
+                path = self.login.path.with_name("director-pin.json")
+                try:
+                    pins = json.loads(path.read_text()) if path.exists() else {}
+                    if not isinstance(pins, dict):
+                        raise TypeError
+                except (OSError, ValueError, TypeError):
+                    raise Stop("pin_file_unreadable") from None
+                entry, mine = pins.get(a.run), {"lease_id": lid, "pin": self.login.pin}
+                if a.run in pins:  # a run name stays bound to its first account and lease; never rebound
+                    if not isinstance(entry, dict) or not {"lease_id", "pin"} <= entry.keys():
+                        raise Stop("pin_file_unreadable")
+                    if {k: entry[k] for k in mine} != mine:
+                        raise Stop("run_pin_conflict")
+                else:
+                    new_pin = pins | {a.run: mine | {"t": utc()}}
             self.login and self.login.token()
+            if new_pin is not None:  # a new run is bound once its login has been read under the full check
+                try:
+                    durable_write(path, json.dumps(new_pin) + "\n")
+                except OSError as e:  # the class only: a path-bearing traceback never reaches a log
+                    raise Stop(f"home_unusable:{type(e).__name__}") from None
         except Stop as e:
+            self._drain()  # a refused startup still records any refresh it sent, so the budget reconciles
+            if str(e) in ("pin_file_unreadable", "run_pin_conflict"):
+                raise
             self.stop(str(e))
+            if str(e).startswith("home_unusable:"):  # a startup refusal, like home_busy: the entry points exit
+                raise
         self._drain()
         self.ledger.append({"type": "pacing", "run": a.run, "rate_per_min": self.pacer.rate * 60,
                             "burst": self.pacer.burst, "enabled": bool(self.pacer.rate) and a.mode != "stub"})
@@ -459,7 +627,8 @@ class Director:
         self.stopped, self.stop_reason = True, self.stop_reason or reason
         self.stop_event.set()
         if login and self.login:  # the credential was refused: a re-login is an owner step, so no later run uses it
-            self.login.latch(reason)
+            with self.login.lock:
+                self.login.latch(reason)
         self.summary()
 
     def summary(self):
@@ -577,13 +746,7 @@ class Director:
                     wait, readmitted = self.pacer.acquire(), True
                 sub["pace_wait_ms"] = wait if wait is not None and not readmitted else (self.pacer.clock() - pace_start) * 1000
                 if wait is None or self.stopped:
-                    with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
-                        fcntl.flock(f, fcntl.LOCK_EX)
-                        b = json.load(f)
-                        b["total"] -= 1
-                        b["by_run"][self.a.run] -= 1
-                        b["by_kind"][kind] -= 1
-                        f.seek(0), f.truncate(), json.dump(b, f)
+                    release(self.budget, self.a.run, kind)  # this reservation was never sent
                     return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
             finally:
                 with self.pacing_cv:
@@ -873,9 +1036,16 @@ def make_handler(d: Director):
 
 def main():
     p = argparse.ArgumentParser()
-    if sys.argv[1:2] == ["--scan"]:  # under the local helper: python3.14 sol_director.py --scan <dir-or-file>...
+    if sys.argv[1:2] == ["--scan"]:  # python3.14 sol_director.py --scan --run RUN <dir-or-file>...
+        p.add_argument("--run", required=True)
+        p.add_argument("paths", nargs="+")
+        a = p.parse_args(sys.argv[2:])
         login = Login(os.environ["BICENTENNIAL_SOL_AUTH"], "", "")
-        return print(json.dumps(scan(login, sys.argv[2:])))
+        try:
+            return print(json.dumps(scan(login, a.paths, a.run)))
+        except Stop as e:
+            print(json.dumps({"refused": str(e)}))
+            sys.exit(1)
     p.add_argument("--port", type=int, required=True)
     p.add_argument("--life", required=True)
     p.add_argument("--ledger-dir", required=True)
@@ -894,7 +1064,10 @@ def main():
     a = p.parse_args()
     if a.mode == "live" and not os.environ.get("BICENTENNIAL_SOL_AUTH"):
         sys.exit("live mode needs the Sol environment (run under the local helper)")
-    d = Director(a)
+    try:
+        d = Director(a)
+    except Stop as e:
+        sys.exit("home_busy: another process holds this login home" if str(e) == "home_busy" else str(e))
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(d))
     print(f"director ready on 127.0.0.1:{a.port} run={a.run} mode={a.mode} model={a.model}", flush=True)
