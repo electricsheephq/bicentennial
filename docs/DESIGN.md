@@ -23,7 +23,7 @@ The numbers marked *(pre-reg)* freeze twice:
 A memory system can score well on a quiz and still delete the thing that mattered most. Bicentennial is built to catch that.
 
 ## What changed in v2.1
-- **DV42, the pinned agent family** (§5.2, §6.2c, §13): OpenAI's gpt-6.1-sol at medium effort is pinned, on dedicated benchmark accounts, because spike S6b found it fits the 24-hour rule (uncut on two accounts) and the GLM lane does not. GLM becomes the replication family and the swap model. The blind panel becomes Anthropic, Zhipu and one paid third family. Capacity is read per account, as concurrency or a paced request rate.
+- **DV42, the pinned agent family** (§5.2, §6.2c, §13): OpenAI's gpt-6.1-sol at medium effort is pinned, on dedicated benchmark accounts, because spike S6b projects that it fits the 24-hour rule (uncut on two accounts), subject to DV42's before-pilot checks, and the GLM lane does not. GLM becomes the replication family and the swap model. The blind panel becomes Anthropic, Zhipu and one paid third family. Capacity is read per account, as concurrency or a paced request rate.
 
 ## What changed in v2.0
 One line per decision. Where a decision changes how a binding requirement (`docs/REQUIREMENTS.md`) is met, the section it lands in carries a **requirement note**, and the pre-registration records it.
@@ -707,7 +707,7 @@ Partial completion earns no headline credit in v1; it is reported as a diagnosti
 - The base verdicts are PASS, FAIL_MEMORY, FAIL_TASK, OMISSION and HARMFUL_EXTRA.
 - FAIL_MEMORY and HARMFUL_EXTRA take precedence over FAIL_TASK.
 - A FAIL_TASK never becomes a confident false memory.
-- **Per-item action accuracy** (§7.7) is the share of action items whose decision-table outcome is the correct action, without the twin minimum or the penalty. A late Tuesday action, partial credit or a confident wrong action all count as incorrect; benign extras don't change it. PREREG-v0.2 §3 is normative.
+- **Per-item action accuracy** (§7.7) is the share of action items whose decision-table outcome is the correct action, without the twin minimum or the penalty. A late Tuesday action, partial credit or a confident wrong action all count as incorrect; benign extras don't change it. PREREG-v0.3 §3 is normative.
   - **The unit** is one action item: each base item and each twin item counts on its own, since accuracy takes no twin minimum.
   - **Eligible items** are the assigned action items in the system's required Act cells of the declared profile. The launch figure uses the Text profile.
   - **Outside the denominator,** with their counts disclosed: N/A (outside the profile, so never assigned), N/A_READER (Image profile only, so never in the Text launch figure) and BLOCKED (benchmark infrastructure failed, §12a), plus N/A_EXPOSURE and N/A_CLOCK exactly as they leave the penalised score (§12a).
@@ -1329,7 +1329,7 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 
 - R includes the board's inline fault and the swap. n_rob = 8 (4 after the cut), q = 3, n_curve = min(n_rob, n_keep), and δ_W = 0 when the swap model is from the replication family.
 - L_img = 8 and b_img = 40 are planning values (§11.1). The vision-provider spend is within the owner's seasonal vision budget.
-- **The 24-hour projection** counts every term that runs on the agent's model lane in the same window as a board: the board and study terms, plus the shared and recurring terms scheduled in that window, at the measured concurrency (C-11). The Image board is its own 24-hour run per system, and the crossover panel has its own window (§6.9), so neither is counted inside a system's board window.
+- **The 24-hour projection** counts every term that runs on the agent's model lane in the same window as a board: the board and study terms, plus the shared and recurring terms scheduled in that window, at the measured sustainable capacity per account, with the declared account count (C-11). The Image board is its own 24-hour run per system, and the crossover panel has its own window (§6.9), so neither is counted inside a system's board window.
 - The runs of record (bar 1, bar 2) and the calibration set have formulas of their own in PREREG §11.
 
 **Projection, mid band** (estimates from the first-principles review's assumption bands; S6a and S6 replace them):

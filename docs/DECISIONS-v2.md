@@ -371,14 +371,14 @@ Spatial memory waits for E1 (DV15).
 - **README's freeze status, date and link:** filled by the benchmark maintainers at the v0.2 freeze.
 - **This record:** published after the owner's review on 2026-10-26 (DV33).
 
-**DV42. The pinned agent family is OpenAI: gpt-6.1-sol at reasoning effort medium** (decided 2026-10-26, after spike S6b, by a rule written before the deciding data).
+**DV42. The pinned agent family is OpenAI: gpt-6.1-sol at reasoning effort medium** (decided 2026-10-26 after spike S6b: the selection rule preceded the deciding soak; its capacity interpretation was revised after the soak exposed a request-rate limit, and before the latency comparison and board projection).
 - **Lane:** the Codex Responses wire through the director, on dedicated benchmark accounts. Outside runners use the public Responses API with the same model and effort.
 - **The evidence** (spike S6b):
   - **End to end:** a 64-turn write run through the director completed every turn, with no auth failure, rate refusal or overload.
   - **Capacity:** the binding limit is a per-account request rate, not concurrency. Rate refusals came after 200 requests within a fixed 60 s window (an inference from the soak's timing). The sustainable rate R_s is 180 requests per minute per account, a planning value that a paced soak confirms before the pilot.
-  - **The 24-hour fit** (PREREG §11): on two accounts, the full core board at n_L = 48 fits uncut. On one account it fits only with cuts 1-2, and that verdict is sensitive to the probe cost per turn. The GLM lane, at its measured concurrency of 8, fits no tested board even with cuts.
+  - **The projected 24-hour fit** (PREREG §11): on two accounts, the full core board at n_L = 48 fits uncut. On one account it fits only with cuts 1-2, and that verdict is sensitive to the probe cost per turn. The two-account projection remains conditional on the two-account paced soak. The present probe-cost estimate rests on four probe turns, and probes account for about 58% of projected requests. The GLM lane, at its measured concurrency of 8, fits no tested board even with cuts.
   - **Latency:** on matched write turns, Sol's median was 3.7 s, against 6.1 s on the GLM lane.
-  - **Quota:** no measurable burn at the account's 1% reporting resolution over about 690 requests. A quota monitor stops a run at 80% of the weekly window.
+  - **Quota:** no measurable burn at the account's 1% reporting resolution over about 690 requests. These readings do not establish that a board fits one weekly quota window. The original quota-sufficiency criterion was not demonstrated; the decision accepts that limitation with an 80% weekly stop and spare dedicated accounts.
 - **The §11 24-hour decision:** the plan of record is n_L = 48, uncut, on two benchmark accounts. The fallback is n_L = 48 with cuts 1-2 on one account. Under PREREG §11, a cut that leaves a season below the certification rule's powered size (§7) issues no certificate that season.
 - **GLM (Zhipu)** becomes the replication family and the swap model (C-2). The Claude Code harness sub-row runs on GLM through the Anthropic-compatible endpoint, labelled "replication family", and stays outside the headline.
 - **Consequences, carried by PREREG-v0.3:**
@@ -386,7 +386,7 @@ Spatial memory waits for E1 (DV15).
   - C-11 becomes the lane's sustainable capacity per account (its sustained concurrency, or its paced request rate where a request rate binds), with the number of accounts;
   - the judge rule is unchanged (DESIGN §7: two pinned judges from different families, neither used by any tested agent), and now gives Anthropic plus one family no tested agent uses;
   - the tuning disclosure becomes generic: the card states the family that LCM-X's public release notes say its thresholds were tuned on, and whether it is the pinned family.
-- **Required before the pilot:** the director paces each account at R_s; a paced soak of at least 10 minutes with no rate refusal; the quota monitor; and the director never forwards upstream error text to the agent, so a harness cannot sideline its own credential.
+- **Required before the pilot:** the director paces each account at R_s; a paced soak of at least 10 minutes with no rate refusal on the account count the plan uses (two for the uncut plan), also measuring probe cost at scale before the projection is confirmed; the quota monitor; and the director never forwards upstream error text to the agent, so a harness cannot sideline its own credential.
 - **The firewall holds:** every input is a spike measurement of cost, timing or capacity. No slot is filled from any real system's score.
 
 **DV43. Failure attribution follows cause, not reporter.**

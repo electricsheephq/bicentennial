@@ -2,7 +2,7 @@
 
 **Status:** PREREG-v0.3, frozen 2026-10-26 by the benchmark session, the product and release owner under the owner's grant of 2026-10-26. It supersedes PREREG-v0.2 by carrying design v2.1, which adds one decision: DV42, the pinned agent family, set after spike S6b. Its consequences change the blind panel, the capacity slot C-11 and the tuning disclosure. v0.3 also removes the owner co-sign, which the owner retired on 2026-10-26. Every other rule, constant and threshold is PREREG-v0.2's, which carried design v2.0 (the capability map with three stages, evaluation profiles, cell verdicts and certification on Act, the developer rings, and five amendments to v0.1). Its changelog is at the end. The decisions are recorded in `docs/DECISIONS-v2.md`. Its sha256 and time are in `prereg/FREEZE-v0.3.md`, and the commit and the tag `prereg-v0.3` are posted on lcm-x #1964.
 
-**Precedence.** This document is the **only normative source** for every frozen quantity: constants, rules, thresholds, rosters, sample sizes, tests and ceilings. DESIGN-v2.0 (`docs/DESIGN.md`) explains and motivates. Where the two differ on a frozen quantity, this document governs, and the difference is logged as an erratum to DESIGN. "The addendum" means the binding requirements summarised in `docs/REQUIREMENTS.md`.
+**Precedence.** This document is the **only normative source** for every frozen quantity: constants, rules, thresholds, rosters, sample sizes, tests and ceilings. DESIGN-v2.1 (`docs/DESIGN.md`) explains and motivates. Where the two differ on a frozen quantity, this document governs, and the difference is logged as an erratum to DESIGN. "The addendum" means the binding requirements summarised in `docs/REQUIREMENTS.md`.
 
 **Freezes:**
 - **PREREG-v0.3, this text,** covers everything below except the values marked [pilot] and the completion slots. It freezes the **rules**, not per-season contents: the capability census and community templates change each season under the rules below.
@@ -79,7 +79,7 @@ The subscript k always indexes a cell (a_k, g_k, m_k), and K counts the cells. F
 
 ## 1. Identity
 - **This document:** PREREG-v0.3, frozen 2026-10-26. Its sha256 and time are in `prereg/FREEZE-v0.3.md`; the commit and the tag `prereg-v0.3` are posted on lcm-x #1964.
-- **Design:** DESIGN-v2.0. Its hash is recorded at freeze.
+- **Design:** DESIGN-v2.1. Its hash is recorded at freeze.
 - **Generator:** the version is recorded at freeze.
 - **Genres:** G1 software partner and G2 personal assistant, in text and code.
 - **Evaluation profiles:** Text, the core profile. Image, **pending** until spike S8 admits it (§2). World profiles, E1 onward, after v1.
@@ -691,8 +691,8 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 **Sustainable capacity** (completion slot C-11):
 - **The value** is the sustainable capacity per account of the agent's model lane, as measured by the spike on that lane (S6a, or S6b), with the number of accounts a run uses.
   - Where concurrency binds, it is the sustained concurrency.
-  - Where a request rate binds, it is the paced rate R_s, set below the observed refusal threshold. Before the pilot, a paced soak of at least 10 minutes with no rate refusal confirms it; if the soak is refused, R_s drops to the largest clean rate.
-- **The fit:** a run fits when max(lane time at the planning concurrency, N_req ÷ (R_s × accounts)) ≤ 24 h. N_req is the run's upstream request count, scaled from the spike's requests per session. Where only concurrency binds, the second term is dropped.
+  - Where a request rate binds, it is the paced rate R_s, set below the observed refusal threshold. Before the pilot, a paced soak of at least 10 minutes with no rate refusal, on the account count the run uses, confirms it and measures probe cost at scale; if the soak is refused, R_s drops to the largest clean rate.
+- **The fit:** a run fits when max(lane time at the planning concurrency, N_req ÷ (R_s × accounts)) ≤ 24 h. N_req is the run's upstream request count: replay, probes, auxiliary calls and every other workload sharing that account's lane in the run window (the load sharing the lane, above), from the declared workload counts and the spike's requests per session. Where only concurrency binds, the second term is dropped.
 - **Pacing:** the director paces each account at R_s, so a run never relies on rate-limit retries.
 - **Throttling** follows the gauntlet's busy marker:
   - exit 10 means light work only (nice 19, at most 2 cores, no local-embedding ingest);
