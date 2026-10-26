@@ -3,6 +3,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -71,6 +72,7 @@ def test_exit_11_refuses_before_any_child_starts(tmp_path, monkeypatch):
 @pytest.mark.parametrize("body", [
     "print('not json')", "print('[]')", "print('{}'); raise SystemExit(1)",
     "print('{\"glm\":\"false\"}')", "print('{\"state\":1}')", "pass",
+    "print('[' * 200000 + ']' * 200000)",
 ])
 def test_unreadable_marker_fails_closed(tmp_path, monkeypatch, body):
     marker_command(tmp_path, monkeypatch, body)
@@ -81,9 +83,12 @@ def test_unreadable_marker_fails_closed(tmp_path, monkeypatch, body):
 
 
 def test_marker_timeout_fails_closed(tmp_path, monkeypatch):
-    marker_command(tmp_path, monkeypatch, "import time; time.sleep(2)")
+    # The marker would answer idle after the sleep, so only the timeout makes it unreadable.
+    marker_command(tmp_path, monkeypatch, "import time; time.sleep(2); print('{\"state\":\"idle\"}')")
     monkeypatch.setattr(guard, "_MARKER_TIMEOUT", 0.05)
+    started = time.monotonic()
     marker = read_marker()
+    assert time.monotonic() - started < 1.5
     assert marker == Marker(None, None, "unreadable")
     assert not admit(marker, heavy=False, roots=1).admitted
     assert glm_paused(marker)
@@ -123,6 +128,27 @@ def test_reexec_command_and_loop_guard(monkeypatch, platform):
     assert execute.call_count == 1
 
 
+@pytest.mark.parametrize("start,increment", [(5, "14"), (19, "0"), (-5, "24")])
+def test_reexec_sets_niceness_to_19_not_plus_19(monkeypatch, start, increment):
+    monkeypatch.setattr(guard.sys, "platform", "darwin")
+    monkeypatch.delenv(guard._NICED_FLAG, raising=False)
+    monkeypatch.setattr(guard.os, "getpriority", lambda which, who: 0 if which == 4 else start)
+    monkeypatch.setattr(guard.shutil, "which", lambda name: name)
+    execute = Mock()
+    monkeypatch.setattr(guard.os, "execvpe", execute)
+    guard.reexec_niced(["script.py"])
+    assert execute.call_args.args[1][:5] == ["nice", "-n", increment, "taskpolicy", "-b"]
+
+
+def test_niceness_above_19_fails(monkeypatch):
+    monkeypatch.setattr(guard.sys, "platform", "darwin")
+    monkeypatch.delenv(guard._NICED_FLAG, raising=False)
+    monkeypatch.setattr(guard.os, "getpriority", lambda which, who: 0 if which == 4 else 20)
+    monkeypatch.setattr(guard.os, "execvpe", Mock())
+    with pytest.raises(RuntimeError, match="above 19"):
+        guard.reexec_niced(["script.py"])
+
+
 def test_already_background_and_niced_does_not_reexec(monkeypatch):
     monkeypatch.setattr(guard.sys, "platform", "darwin")
     monkeypatch.setattr(guard.os, "getpriority", lambda which, who: 1 if which == 4 else 19)
@@ -143,7 +169,14 @@ def test_missing_priority_tool_fails(monkeypatch, missing):
         guard.reexec_niced(["script.py"])
 
 
-def test_real_reexec_and_second_call_no_loop(tmp_path):
+@pytest.mark.parametrize("start", [0, 5, 19])
+def test_real_reexec_and_second_call_no_loop(tmp_path, start):
+    if os.getpriority(os.PRIO_PROCESS, 0) != 0 or (
+        sys.platform == "darwin" and os.getpriority(4, 0) != 0
+    ):
+        pytest.skip("the test process is already niced or in the background band")
+    if start == 19 and sys.platform != "darwin":
+        pytest.skip("niceness 19 is already compliant where there is no QoS band")
     script = tmp_path / "niced.py"
     script.write_text(
         "import json, os, sys\n"
@@ -151,17 +184,19 @@ def test_real_reexec_and_second_call_no_loop(tmp_path):
         "reexec_niced(sys.argv)\n"
         "reexec_niced(sys.argv)\n"
         "print(json.dumps({'niceness': os.getpriority(os.PRIO_PROCESS, 0), "
-        "'background': os.getpriority(4, 0) if sys.platform == 'darwin' else None}))\n"
+        "'background': os.getpriority(4, 0) if sys.platform == 'darwin' else None, "
+        "'flag': os.environ.get('BICENTENNIAL_NICED')}))\n"
     )
     env = os.environ.copy()
     env.pop(guard._NICED_FLAG, None)
-    result = subprocess.run([sys.executable, str(script)], env=env,
+    result = subprocess.run(["nice", "-n", str(start), sys.executable, str(script)], env=env,
                             capture_output=True, text=True, timeout=10)
     if result.returncode and "Operation not permitted" in result.stderr:
         pytest.skip(f"host sandbox denies priority change: {result.stderr.strip()}")
     assert result.returncode == 0, result.stderr
     observed = json.loads(result.stdout)
     assert observed["niceness"] == 19
+    assert observed["flag"] == "1"
     if sys.platform == "darwin":
         assert observed["background"] == 1
 

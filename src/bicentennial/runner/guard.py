@@ -44,7 +44,7 @@ def read_marker() -> Marker:
         ):
             raise ValueError("invalid marker fields")
         return Marker(result.returncode, glm, state)
-    except (OSError, subprocess.SubprocessError, ValueError, UnicodeError):
+    except (OSError, subprocess.SubprocessError, ValueError, UnicodeError, RecursionError):
         return Marker(None, None, "unreadable")
 
 
@@ -74,13 +74,17 @@ def reexec_niced(argv) -> None:
     """argv is the Python argument vector (e.g. sys.argv or ['-m', module])."""
     # getpriority(PRIO_DARWIN_PROCESS) reads 1 in the background band, not PRIO_DARWIN_BG
     background = sys.platform != "darwin" or os.getpriority(4, 0) == 1
-    if os.getpriority(os.PRIO_PROCESS, 0) == 19 and background:
+    niceness = os.getpriority(os.PRIO_PROCESS, 0)
+    if niceness == 19 and background:
         return
     if os.environ.get(_NICED_FLAG):
         raise RuntimeError("background re-exec did not establish niceness 19 and QoS")
+    if niceness > 19:
+        raise RuntimeError(f"niceness {niceness} is above 19 and cannot be lowered")
     if shutil.which("nice") is None:
         raise RuntimeError("nice is required")
-    command = ["nice", "-n", "19"]
+    # nice -n adds to the current niceness, and macOS allows 20: add only the gap to 19
+    command = ["nice", "-n", str(19 - niceness)]
     if sys.platform == "darwin":
         if shutil.which("taskpolicy") is None:
             raise RuntimeError("taskpolicy is required on macOS")
