@@ -271,6 +271,84 @@ class Readback(unittest.TestCase):
         self.assertEqual(result["gaps"], [])
         self.assertEqual([r["operations"][0]["superseded_by"] for r in result["calls"][:2]], [["bcw00003:1"]] * 2)
 
+    def test_scripted_response_with_a_tool_call(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, _ = data
+                scripted = blobs[rows[1]["resp"]]
+                if wire == "chat":
+                    scripted["choices"][0]["message"]["tool_calls"] = [
+                        {"id": "x1", "type": "function", "function": {"name": "other", "arguments": "{}"}}]
+                else:
+                    item = {"type": "function_call", "call_id": "x1", "name": "other", "arguments": "{}"}
+                    scripted["sse"] = scripted["sse"].replace("data: [DONE]", "data: " + json.dumps(
+                        {"type": "response.output_item.done", "item": item}) + "\n\ndata: [DONE]")
+                result = self.audit(data, wire)
+                self.assertEqual(result["A5"]["script_failures"], [2])
+                self.assertIn({"record": 2, "kind": "scripted_tool_call"}, result["A3"]["failures"])
+
+    def test_results_split_across_continuations(self):
+        second = json.dumps({"target": "memory", "action": "add", "content": "second note"})
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, stores = data
+                stores["memory"] = "saved note\nsecond note"
+                key = "messages" if wire == "chat" else "input"
+                follow = blobs[rows[1]["req"]]
+                if wire == "chat":
+                    blobs[rows[0]["resp"]]["choices"][0]["message"]["tool_calls"].append(
+                        {"id": "bcw00002", "type": "function", "function": {"name": "memory", "arguments": second}})
+                    up = blobs[rows[0]["upstream"][0]["resp"]]["choices"][0]["message"]["tool_calls"]
+                    up.append({"id": "upstream-2", "type": "function", "function": {"name": "memory", "arguments": second}})
+                    follow[key][-2]["tool_calls"].append(copy.deepcopy(up[-1]) | {"id": "bcw00002"})
+                    tail = {"role": "tool", "tool_call_id": "bcw00002", "content": '{"success":true}'}
+                else:
+                    extra = lambda cid: "data: " + json.dumps({"type": "response.output_item.done", "item": {
+                        "type": "function_call", "call_id": cid, "name": "memory", "arguments": second}}) + "\n\n"
+                    for blob, cid in ((blobs[rows[0]["resp"]], "bcw00002"), (blobs[rows[0]["upstream"][0]["resp"]], "upstream-2")):
+                        blob["sse"] = blob["sse"].replace("data: [DONE]", extra(cid) + "data: [DONE]")
+                    follow[key].insert(-1, {"type": "function_call", "call_id": "bcw00002", "name": "memory",
+                                            "arguments": second})
+                    tail = {"type": "function_call_output", "call_id": "bcw00002", "output": '{"success":true}'}
+                later = copy.deepcopy(follow)
+                later[key].append(tail)
+                rows.insert(2, dict(rows[1], seq=2.5, req=str(len(blobs))))
+                blobs[str(len(blobs))] = later
+                result = self.audit(data, wire)
+                self.assertEqual((result["A3"]["executed"], result["A3"]["failures"]), (2, []))
+                self.assertEqual(result["A4"]["executed"], 2)
+
+    def test_refused_malformed_write_is_reported(self):
+        def call(args, result):
+            return [{"record": 1, "session": 1, "id": "bcw00001", "arguments": args, "result": result}]
+        reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "empty"})]
+        refusal = '{"success":false,"error":"content required"}'
+        for args in (json.dumps({"action": "add"}), json.dumps({"action": "rename", "content": "x"}), "not json"):
+            with self.subTest(args=args):
+                out = rb.effects(call(args, refusal), reqs, {"memory": ""}, "responses")
+                self.assertEqual((out["executed"], out["refused"], out["gaps"]), (1, 1, []))
+                self.assertEqual(out["calls"][0]["operations"][0]["reasons"], ["hermes_refused", "malformed_operation"])
+        with self.assertRaisesRegex(ValueError, "empty_memory_content"):
+            rb.effects(call(json.dumps({"action": "add"}), '{"success":true}'), reqs, {"memory": ""}, "responses")
+
+    def test_streamed_text_disagreeing_with_items(self):
+        data = fixture("responses")
+        rows, blobs, _, _ = data
+        delta = "data: " + json.dumps({"type": "response.output_text.delta", "output_index": 0, "content_index": 0,
+                                       "delta": "discarded draft"}) + "\n\n"
+        honest = "data: " + json.dumps({"type": "response.output_text.delta", "output_index": 0, "content_index": 0,
+                                        "delta": "first script"}) + "\n\n"
+        scripted = blobs[rows[1]["resp"]]
+        scripted["sse"] = honest + scripted["sse"]
+        self.assertEqual(self.audit(data, "responses")["A5"]["script_failures"], [])
+        scripted["sse"] = delta + scripted["sse"].replace(honest, "")
+        result = self.audit(data, "responses")["A5"]
+        self.assertEqual(result["script_failures"], [2])
+        blobs[rows[0]["resp"]]["sse"] = delta + blobs[rows[0]["resp"]]["sse"]
+        self.assertEqual(self.audit(data, "responses")["A5"]["served_write_text"], [1])
+
     def test_staged_and_unparseable_results(self):
         def call(result):
             return [{"record": 1, "session": 1, "id": "bcw00001", "result": result,

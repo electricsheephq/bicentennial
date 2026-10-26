@@ -88,12 +88,17 @@ def output(obj, wire):
             if data and data != "[DONE]":
                 events.append(json.loads(data))
         items = [e["item"] for e in events if e.get("type") == "response.output_item.done"]
+        streamed = {}  # the text a client renders from the deltas, per output item
+        for e in events:
+            if e.get("type") == "response.output_text.delta":
+                key = (e.get("item_id"), e.get("output_index"))
+                streamed[key] = streamed.get(key, "") + str(e.get("delta", ""))
         calls = [{"id": it["call_id"], "name": it["name"], "arguments": it["arguments"]}
                  for it in items if it.get("type") == "function_call"]
         texts = ["".join(strings(it.get("content", []) if isinstance(it.get("content"), str) else
                                [p.get("text", "") for p in it.get("content", [])]))
                  for it in items if it.get("type") == "message"]
-        return calls, texts
+        return calls, texts + [t for t in streamed.values() if t and t not in texts]  # a disagreeing stream is kept
     if "__sse__" in obj:
         deltas = [c["choices"][0]["delta"] for c in obj["__sse__"] if c.get("choices")]
         msg = {"content": "".join(d.get("content", "") for d in deltas),
@@ -155,10 +160,16 @@ def ids(obj, path="life"):
     return found
 
 
+ACTIONS = {"add", "patch", "replace", "remove"}
+
+
 def effects(calls, requests, stores, wire):
     ops, reports = [], []
     for call in calls:
-        args = json.loads(call["arguments"])
+        try:
+            args = json.loads(call["arguments"])
+        except (TypeError, ValueError):
+            args = None
         try:
             result = json.loads(call["result"])
         except (TypeError, ValueError):
@@ -167,25 +178,36 @@ def effects(calls, requests, stores, wire):
         applied = (False if staged else result.get("success")) if isinstance(result, dict) else None
         report = {"record": call["record"], "call": call["id"], "applied": applied, "staged": staged, "operations": []}
         reports.append(report)
-        for i, op in enumerate(args.get("operations", [args])):
-            ops.append(dict(op, target=args.get("target", "memory"), record=call["record"], session=call["session"],
-                            applied=applied, report=report, id=f"{call['id']}:{i + 1}"))
-    for i, op in enumerate(ops):
+        args = args if isinstance(args, dict) else {}
+        listed = args.get("operations", [args])
+        for i, op in enumerate(listed if isinstance(listed, list) else [{}]):
+            ops.append(dict(op if isinstance(op, dict) else {}, target=args.get("target", "memory"),
+                            record=call["record"], session=call["session"], applied=applied, report=report,
+                            id=f"{call['id']}:{i + 1}"))
+    for op in ops:
         action = op.get("action")
-        if action not in {"add", "patch", "replace", "remove"}:
+        raw = op.get("old_text", "") if action == "remove" else op.get("content", op.get("new_text", ""))
+        op["needle"] = norm(raw) if isinstance(raw, str) and isinstance(op.get("old_text", ""), str) else ""
+        if op["applied"] and action not in ACTIONS:  # a write Hermes applied must be one this audit can check
             raise ValueError(f"unknown_memory_action:{op['record']}")
-        needle = norm(op.get("old_text", "") if action == "remove" else op.get("content", op.get("new_text", "")))
-        if not needle:
+        if op["applied"] and not op["needle"]:
             raise ValueError(f"empty_memory_content:{op['record']}")
+    for i, op in enumerate(ops):
+        action, needle = op.get("action"), op["needle"]
+        if action not in ACTIONS or not needle:  # a malformed call Hermes refused, staged or left unclassified
+            op["report"]["operations"].append({"id": op["id"], "action": action, "reasons": [
+                "staged_not_applied" if op["report"]["staged"] else "hermes_refused" if op["applied"] is False
+                else "unclassified_result", "malformed_operation"]})
+            continue
         nxt = next(((r, b) for r, b in requests if r["seq"] > op["record"] and r.get("cursor") and
                     r["cursor"]["session"] != op["session"] and r["cursor"]["turn"] == 1 and
                     r.get("role") in {"replay_main", "probe_main"}), None)
         def state(until, i=i, op=op, needle=needle):
             value, changed = needle, []
             for later in ops[i + 1:]:
-                old = norm(later.get("old_text", ""))
                 if later["record"] >= until or not later["applied"] or later["target"] != op["target"]:
                     continue
+                old = norm(later.get("old_text", ""))
                 if old and old in value and later.get("action") in {"patch", "replace", "remove"}:
                     value = "" if later["action"] == "remove" else value.replace(
                         old, norm(later.get("content", later.get("new_text", ""))))
@@ -262,7 +284,13 @@ def audit(rows, blobs, life, stores, wire):
             if following is None:
                 following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
                                   rr.get("role") in {"replay_main", "write_turn", "probe_main"}), None)
-            new_results = results(following[1], wire) if following else {}
+            new_results = {}  # the harness may return one turn's results over several continuation requests
+            for rr, bb in requests:
+                if rr["seq"] > seq and rr.get("cursor") == cursor:
+                    for tid, out in results(bb, wire).items():
+                        new_results.setdefault(tid, out)
+            if not new_results and following:
+                new_results = results(following[1], wire)
             for tid in new_results.keys() - results(body, wire).keys() - {tc["id"] for tc in served}:
                 a3["failures"].append({"record": seq, "kind": "unissued_execution", "call": tid})
             for n, u in enumerate(attempts, 1):
@@ -325,10 +353,12 @@ def audit(rows, blobs, life, stores, wire):
                     a3["executed"] += 1
                     calls.append(dict(tc, record=seq, session=cursor["session"], result=new_results[tc["id"]]))
         if r.get("served") in {"script", "script_retry"}:
-            _, texts = output(blobs[r["resp"]], wire)
+            script_calls, texts = output(blobs[r["resp"]], wire)
             script = next(t["assistant"] for s, i, t in turns if cursor == {"session": s, "turn": i})
             a5["scripted"] += 1
-            ok = texts == [script]
+            ok = texts == [script] and not script_calls
+            if script_calls:  # a scripted reply is text only: a call on it would bypass the write-turn checks
+                a3["failures"].append({"record": seq, "kind": "scripted_tool_call"})
             a5["matches"] += ok
             if not ok:
                 a5["script_failures"].append(seq)

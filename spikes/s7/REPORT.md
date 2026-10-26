@@ -46,8 +46,9 @@ silently relaxed to obtain zero.
 
 A3 pairs upstream memory arguments with returned calls in order, checks the
 exact monotonic `bcw` ids used by both recorded directors, and finds tool results
-in the following harness request. Newly appearing unissued result ids fail the
-check. A non-write attempt counts as blocked only when no served call has its
+in the harness requests that follow under the same cursor, which may split one
+turn's results. Newly appearing unissued result ids fail the check, and so does
+a tool call on a scripted reply. A non-write attempt counts as blocked only when no served call has its
 name, the following request has no new history call with its id or name, and
 no later request carries its id as a call or result that was not already in the
 triggering request. Both runs attempted only memory
@@ -60,7 +61,9 @@ or Responses instructions of the first main request of the next session. The
 last r6 call is checked against the first probe session (record 125). Refusals
 are separate from applications. A result staged for approval is its own class,
 neither applied nor refused. A result that is not a JSON object is unclassified,
-and an unclassified result is a gap. A remove must
+and an unclassified result is a gap. A malformed call that Hermes did not apply
+is reported as such and is not checked for effects; one it applied stops the
+audit. A remove must
 be absent, and patch operations propagate the earlier span through later
 successful calls in the same target, including a later patch whose old span
 encompasses the earlier content, which then becomes that patch's new text.
@@ -76,7 +79,8 @@ uses `patch`, including `new_text` and atomic `operations` forms; these are
 reported as such, rather than relabelled as unobserved replace calls. Neither
 recorded run exercises remove or refusal.
 
-A5 checks scripted response contents, checks that a response serving write calls
+A5 checks scripted response contents (in Responses streams, the text deltas as
+well as the completed items), checks that a response serving write calls
 to the harness carries no assistant text (0 in both runs), and scans every
 string of every later
 request for write-response substrings (exact, case-sensitive, no minimum length),
@@ -117,7 +121,7 @@ already inherited priority again; the effective priority was verified as 10.
 
 | Validation | Observed result |
 |---|---|
-| `python3.14 -m unittest` in S7 | 18 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text served beside write calls, discard in conversation, tool channels and other fields, and integrity |
+| `python3.14 -m unittest` in S7 | 22 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text served beside write calls, a tool call on a scripted reply, results split across continuation requests, a refused malformed write, streamed text disagreeing with its items, discard in conversation, tool channels and other fields, and integrity |
 | `python3.14 -m unittest` in S6a | 9 tests, OK |
 | `python3.14 -m unittest` in S6b | 76 tests, OK; one existing HTTPError resource warning |
 | `python3.14 -m pytest spikes/s1 -q` with installed pytest on `PYTHONPATH`, plugin autoload disabled, scratch basetemp | 97 passed |
