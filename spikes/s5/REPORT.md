@@ -2,7 +2,7 @@
 
 ## Claim
 
-**Claim class: `advisory`.** 27 candidate memory systems are surveyed from public sources on 2026-10-26. Every row of [`candidates.csv`](candidates.csv) cites its sources and says what an adapter would need. 18 rows still carry at least one field marked `unverified`. No system was installed, run, timed or scored.
+**Claim class: `advisory`.** 27 candidate memory systems are surveyed from public sources on 2026-10-26. Every row of [`candidates.csv`](candidates.csv) cites its sources and says what an adapter would need. AML Add/Search compatibility is `unverified` in all 27 rows; besides that column, 18 rows carry at least one field marked `unverified`. No system was installed, run, timed or scored.
 
 ## Method
 
@@ -14,17 +14,18 @@
   - The 2 memory providers bundled in pinned Hermes.
   - The vendor-maintained memory providers in the pinned catalog.
   - The open-source systems named in the dispatch, each checked against its own repository.
-  - Agent Memory Leaderboard (AML) entrants. The AML site returned HTTP 522 on 2026-10-26, so entrant names and repository links come from the data file in the AML Hugging Face Space (revision `d01a321`, last modified 2026-08-18).
+  - Agent Memory Leaderboard (AML) entrants. The AML site returned HTTP 522 on 2026-10-26, so entrant names and repository links come from the data file in the AML Hugging Face Space (revision `d01a321`, last modified 2026-08-18). At closeout the site answered, and its [API guide](https://agentmemoryleaderboard.ai/api-guide) was read for the Add and Search contract.
 - **Survey cut for AML entrants.** The survey covers open-source entrants whose repository resolved and had at least 1,000 GitHub stars: 7 repositories, one of them Mem0. It also covers the open-source projects behind commercial-track entries (MemPalace, claude-mem). This cut only bounds the survey. It is not the C-9 adoption metric, and no row is ranked.
 - **Field rules:**
   - A claim with no primary source is marked `unverified`.
   - Write tools come from vendor documentation (plugin READMEs, MCP references), as C-6 requires. The read tools are listed for contrast.
   - State paths use `$HERMES_HOME` and `$HOME`.
+  - AML is two columns. `aml_entrant` is leaderboard membership, from the data files at revision `d01a321`. `aml_add_search_compatible` is `yes` only where the system's own docs describe Add and Search endpoints of the request and response shape the AML API guide fixes, and the cell cites that doc; otherwise it is `unverified`.
 - **Adoption.** Taken on 2026-10-26:
   - GitHub `stargazers_count` from the REST API.
   - PyPI last-month downloads from pypistats, only for package names the project's own README names.
   - npm last-month downloads from the npm downloads API, for the window 2026-09-23 to 2026-10-22.
-- **Checker.** [`check_candidates.py`](check_candidates.py) (standard library only) checks the header, at least 12 rows, no empty cell, https-only sources and the adoption date, and prints the counts used below. `python3 spikes/s5/check_candidates.py` exits 0.
+- **Checker.** [`check_candidates.py`](check_candidates.py) (standard library only) checks the header, at least 12 rows, no empty cell, https-only sources and the adoption date, and the allowed values of the two AML columns, and prints the counts used below. `python3 spikes/s5/check_candidates.py` exits 0.
 
 ## Results
 
@@ -103,7 +104,8 @@ What an adapter would need, per row. "Settle" marks a row whose writes become se
 | Hermes surface | 1 built in (native) · 2 bundled (ByteRover, RetainDB) · 9 plugins: 8 in the pinned catalog (LCM-X as a context engine, Honcho, Mem0, Hindsight, OpenViking, Holographic, Supermemory, Cognee) and MemOS's own installer · 1 third-party catalog provider (Memobase) · 1 model-API proxy (TencentDB Agent Memory) · 13 none |
 | MCP server | 17 yes · 1 hosted only (Mem0) · 1 not a memory surface (Letta) · 8 none |
 | Ingest and query API | 14 REST or SDK · 5 library only · 3 CLI · 1 local worker HTTP (claude-mem) · 4 none |
-| AML entrant | 13 |
+| AML entrant (data files, revision `d01a321`) | 13 yes · 14 no |
+| AML Add/Search compatible | 27 unverified: no row's own docs describe endpoints of the AML contract's shape |
 | Write tools documented | 20 rows name at least one write path (Letta Code's are unnamed file tools) · 7 document none for the agent (LCM-X, MemOS's Hermes adapter, Memobase's Hermes provider, claude-mem, TencentDB Agent Memory, A-MEM, MemoryBear) |
 | Own model calls in the default path | 22 · 1 only with an LLM key (Cognee) · 3 none by default (Holographic, Basic Memory, MemPalace raw mode) · 1 unverified (RetainDB) |
 | Local embeddings by default | 10 · 3 optional (including LCM-X v0.28.1, whose unreleased main enables FastEmbed by default) · 3 none · 11 unverified or configuration-dependent |
@@ -122,7 +124,8 @@ What an adapter would need, per row. "Settle" marks a row whose writes become se
 - Across both tracks, the open-source entries link 51 distinct repository URLs:
   - 45 resolve and 6 do not (some look truncated in the data file);
   - 7 of the 45 have at least 1,000 stars.
-- 13 rows of this survey are AML entrants. They are the natural first users of the v1.x AML-compatible adapter in the roadmap.
+- **The contract.** The API guide fixes both schemas. Add is a POST of `request_id`, `messages`, `user_id` and `session_id`. It returns HTTP 200 with `success: true` and the three IDs echoed, and only once the write is searchable. Search is a POST of `query`, `user_id` and `top_k` (100 in formal runs). It returns a `data` array of items with `id` and `content`.
+- 13 rows of this survey are AML entrants. Entry is leaderboard membership. It does not show that the surveyed system's own release serves endpoints of that shape. None of the 27 rows' own docs describe such endpoints, and a GitHub code search of the 13 entrants' repositories for the leaderboard's name found no AML adapter. So compatibility is `unverified` in every row, and no row is yet known to run the v1.x AML-compatible adapter in the roadmap without new code.
 
 ### Gap patterns
 
@@ -169,12 +172,14 @@ Across the 27 rows, the adapter needs reduce to these additions to the Phase 1 b
 - **Machine gating** for the 10 local-embedding rows (pattern 4) and for LCM-X if FastEmbed is enabled. Pinned local models where a row ships them.
 - **Pinned releases and servers.** Every row must be pinned to a released artifact. Rows with a server, daemon or datastore (for example Honcho, Hindsight, OpenViking, Memobase, Graphiti, MemoryBear, MemMachine, MemOS's bridge, Cognee's detached server) need one instance per clone and a start order before the harness.
 - **Telemetry switches** where a row documents one: Mem0, Supermemory and Cognee.
+- **An AML shim** for any row the v1.x AML-compatible adapter should cover, until a row's own docs show endpoints of the AML shape. No row does yet.
 - **Declared write tools at action level** (pattern 6). 7 rows document no agent write tool, so under §10 they get no write turns.
 
 ## What is deferred
 
 - **S5b,** the p50 latency of each surface. It needs installs, and marker exit 0 for the 10 local-embedding rows (and LCM-X if FastEmbed is enabled).
-- **The `unverified` fields in 18 rows.** The main ones:
+- **AML Add/Search compatibility in all 27 rows.** Each system's add and search schemas still have to be checked against the AML contract.
+- **The other `unverified` fields, in 18 rows.** The main ones:
   - local-embedding defaults for 9 rows;
   - RetainDB's model calls, and whether the bundled plugin works against RetainDB Local;
   - TencentDB Agent Memory's state paths;
