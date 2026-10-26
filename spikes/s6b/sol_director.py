@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import fcntl
 import json
 import math
@@ -54,16 +55,14 @@ REFRESH_SKEW_S = 300
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
-IDENTITY_NAMES = {"authorization", "chatgpt-account-id", "x-openai-internal-codex-residency"}  # never persisted
-IDENTITY_NAME_RE = re.compile("|".join(map(re.escape, sorted(IDENTITY_NAMES))), re.IGNORECASE)
-# underscore codes, and the pinned Hermes' spaced auth phrases (agent/error_classifier.py _AUTH_PATTERNS)
+IDENTITY_NAMES = {"authorization", "chatgpt-account-id", "x-openai-internal-codex-residency"}  # not in in_headers
+# underscore codes, and the pinned Hermes' spaced auth phrases (agent/error_classifier.py _AUTH_PATTERNS). This
+# decides only when to stop: a failed stream is never replayed, and the failure breaker catches a false negative
 SSE_AUTH = re.compile(r"invalid[ _]api[ _]key|invalid[ _]token|token[ _](expired|invalid|revoked)|unauthori[sz]ed|"
                       r"authentication|permission_denied|forbidden|account_deactivated|access[ _]denied|"
                       r"gateway_auth_failed|failed to extract accountid from token", re.IGNORECASE)
-# Hermes matches overload, billing and rate limits before auth: such an error is never an auth stop
-SSE_NOT_AUTH = re.compile(r"overload|capacity|usage[ _]limit|quota|billing|credit|rate[ _]?limit|too many requests",
-                          re.IGNORECASE)
 ERROR_FIELDS = ("code", "type", "status", "status_code", "message", "detail")  # provider-authored; never output
+TERMINAL = ("response.completed", "response.failed", "response.incomplete", "error")
 
 
 class Stop(Exception):
@@ -118,24 +117,40 @@ class Login:
     single-use). Refresh runs under a process lock and a file lock; the rotated pair is written back
     atomically, in the file's own format, before the new access token is used. Any failure under the lock
     (a refused or failed refresh, a failed write-back) is latched: every later caller gets the same Stop and
-    no caller reaches the token endpoint again, so a consumed refresh token is never sent twice. The latch
-    is also persisted as a sentinel beside the store (the reason and a UTC time, never a token), so a later
-    process refuses too, until the owner has looked and removed it."""
+    no caller reaches the token endpoint again, so a consumed refresh token is never sent twice.
+    A stop after a token POST, or a refused credential, is also persisted as a sentinel beside the store (the
+    reason and a UTC time, never a token), so a later process refuses too, until the owner has looked and
+    removed it. The stops that write it: token_endpoint_401/403, refresh_failed_<status>,
+    refresh_no_new_refresh_token, refresh_error:<class> and login_error:<class> once the POST was sent, and the
+    director's upstream_401/403 and upstream_sse_auth. A stop before any POST (refresh_budget, an unreadable
+    store) latches in this process only: the refresh token was never sent."""
     def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None):
         self.path, self.token_url, self.client_id, self.post = Path(path), token_url, client_id, post
         self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), {}, []
-        self.dead = ""  # the latched failure
+        self.dead, self.posted = "", False  # the latched failure; whether this refresh reached the token endpoint
         self.sentinel = self.path.with_name(self.path.name + ".stopped")
 
-    def latch(self, reason: str):
-        """Latch a login stop in this process and on disk; the first reason is kept."""
+    def latch(self, reason: str, persist: bool = True):
+        """Latch a login stop in this process and, if persist, on disk; the first reason is kept. The sentinel
+        is written complete to a 0600 temporary file, then linked into place (atomic, and never replacing an
+        earlier first stop). Never raises: if the sentinel cannot be written, the in-process latch still holds."""
         self.dead = self.dead or reason
+        tmp = self.sentinel.with_name(f".{self.sentinel.name}.tmp{os.getpid()}.{threading.get_ident()}")
         try:
-            fd = os.open(self.sentinel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except OSError:  # already latched on disk, or not writable: the in-process latch still holds
-            return
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps({"reason": reason, "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
+            if persist:
+                with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+                    f.write(json.dumps({"reason": reason, "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                            + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.link(tmp, self.sentinel)
+        except FileExistsError:  # already latched on disk
+            pass
+        except Exception as e:  # noqa: BLE001 - not writable: recorded by class; the in-process latch holds
+            self.log.append({"type": "sentinel_error", "error": type(e).__name__, "t": time.time()})
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
 
     def token(self) -> str:
         with self.lock, os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR,
@@ -144,6 +159,7 @@ class Login:
             if self.dead:
                 raise Stop(self.dead)
             try:
+                self.posted = False
                 if self.sentinel.exists():  # an earlier process latched a login stop: no POST, ever
                     raise Stop(f"login_latched:{json.loads(self.sentinel.read_text()).get('reason', '')}")
                 raw = self.path.read_text()
@@ -154,16 +170,17 @@ class Login:
                     return at
                 return self._refresh(raw, store)  # persisted before it returns
             except Stop as e:
-                self.latch(str(e))
+                self.latch(str(e), persist=self.posted)
                 raise
             except Exception as e:  # noqa: BLE001 - any failure after a POST may have consumed the refresh token
-                self.latch(f"login_error:{type(e).__name__}")  # the class only: a message can carry a value
+                self.latch(f"login_error:{type(e).__name__}", persist=self.posted)  # the class only, never a message
                 raise Stop(self.dead) from None
 
     def _refresh(self, raw: str, store: dict) -> str:
         old = store["tokens"]["refresh_token"]
         if self.on_refresh and not self.on_refresh():
             raise Stop("refresh_budget")
+        self.posted = True
         status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
                                                   "client_id": self.client_id})
         c = jwt_claims(body.get("access_token"))
@@ -192,38 +209,20 @@ class Login:
         return store["tokens"]["access_token"]
 
     def _learn(self, store: dict):
-        """Every token, and every account, user, email or residency value in their claims, becomes a guard
-        needle (value -> a label naming only the field). Residency feeds a rebuilt identity header."""
+        """Every token, and every account, user or email value in their claims, becomes a guard needle
+        (value -> a label naming only the field)."""
         for name, tok in store["tokens"].items():
             if isinstance(tok, str):
                 self.secrets[tok] = f"tokens.{name}"
                 for k, v in jwt_claims(tok).items():  # top-level claims and the namespaced auth/profile claims
                     for kk, vv in (v.items() if isinstance(v, dict) else [(k, v)]):
-                        if isinstance(vv, str) and re.search(r"account|user|email|org|residency|^sub$", kk):
+                        if isinstance(vv, str) and re.search(r"account|user|email|org|^sub$", kk):
                             self.secrets.setdefault(vv, f"claim.{kk}")
 
     def learn_only(self) -> dict:
         """Read-only (no lock, no refresh): the needles, for --scan."""
         self._learn(json.loads(self.path.read_text()))
         return self.secrets
-
-
-class NamelessLedger(Ledger):
-    """S6a's ledger, with the identity-name rule applied at the point of persistence: an identity header
-    name in any record or blob (an upstream refusal can echo one) becomes a placeholder, before hashing."""
-    def blob(self, obj) -> str:
-        return super().blob(_nameless(obj))
-
-    def append(self, rec: dict) -> dict:
-        return super().append(_nameless(rec))
-
-
-def _nameless(o):
-    if isinstance(o, str):
-        return IDENTITY_NAME_RE.sub("redacted-header-name", o)
-    if isinstance(o, dict):
-        return {_nameless(k): _nameless(v) for k, v in o.items()}
-    return [_nameless(v) for v in o] if isinstance(o, list | tuple) else o
 
 
 class Guard:
@@ -330,13 +329,11 @@ def sse_bytes(items: list[dict], usage: dict, model: str) -> bytes:
 
 
 def error_objects(e: dict) -> list[dict]:
-    """The provider-authored error objects of one event, as Hermes reads them: an error event itself, its
-    nested error, a failed or incomplete response's response.error, and the truthy top-level error of any
-    event. Never model output (output text deltas, response.output, function-call arguments)."""
+    """The provider-authored error objects of one event: an error event itself, and the truthy error or
+    response.error of any event. Never model output (output text deltas, response.output, call arguments)."""
     objs = [e] if e.get("type") == "error" else []
-    if e.get("type") in ("response.failed", "response.incomplete"):
-        objs.append((e.get("response") or {}).get("error"))
-    objs.append(e.get("error"))
+    resp = e.get("response") if isinstance(e.get("response"), dict) else {}
+    objs += [resp.get("error"), e.get("error")]
     return [o if isinstance(o, dict) else {"message": o} for o in objs if o]
 
 
@@ -345,16 +342,10 @@ def _error_text(o: dict, etype) -> str:
 
 
 def sse_auth_error(events: list[dict]) -> bool:
-    """An in-stream auth failure inside an HTTP 200: an error object (above) whose code, type, status, message
-    or detail names an auth refusal. An overload, quota or rate-limit error is never auth (Hermes' order)."""
-    for e in events:
-        for o in error_objects(e):
-            text = _error_text(o, e.get("type"))
-            if SSE_NOT_AUTH.search(text):
-                continue
-            if SSE_AUTH.search(text) or any(str(o.get(k)) in ("401", "403") for k in ("code", "status", "status_code")):
-                return True
-    return False
+    """An in-stream auth failure inside an HTTP 200: an error object (above) of any frame whose code, type,
+    status, message or detail names an auth refusal. It only latches the stop; the stream is never replayed."""
+    return any(SSE_AUTH.search(_error_text(o, e.get("type"))) or any(str(o.get(k)) in ("401", "403") for k in (
+        "code", "status", "status_code")) for e in events for o in error_objects(e))
 
 
 def sol_category(status: int, text: str) -> str:
@@ -390,14 +381,14 @@ class Director:
         self.login = login if login is not None or a.mode == "stub" else Login(
             os.environ["BICENTENNIAL_SOL_AUTH"], os.environ["BICENTENNIAL_SOL_TOKEN_URL"],
             os.environ["BICENTENNIAL_SOL_CLIENT_ID"], on_refresh=lambda: self.budget.take(a.run, "refresh"))
-        self.quota_streak, self.stopped, self.stop_reason, self.write_failures = 0, False, "", 0
+        self.failure_streak, self.stopped, self.stop_reason, self.write_failures = 0, False, "", 0
         self.streak_lock = threading.Lock()
         self.guard = Guard(self.login)
         try:  # learn the needles before any ledger write (this refreshes only if the token is expiring)
             self.login and self.login.token()
         except Stop as e:
             self.stop(str(e))
-        self.ledger = NamelessLedger(Path(a.ledger_dir), self.guard)
+        self.ledger = Ledger(Path(a.ledger_dir), self.guard)
         life = json.loads(Path(a.life).read_text())
         self.expected = [{"kind": "replay", "session": s["index"], "turn": i, **t}
                          for s in life["sessions"] for i, t in enumerate(s["turns"], 1)]
@@ -418,13 +409,19 @@ class Director:
     # ---- upstream ------------------------------------------------------------------------------
     def upstream_retry(self, body: dict, kind: str, rec: dict, fwd: dict) -> dict:
         """Upstream 429s and overloads are absorbed here with backoff (5, 15, 45 s); each try is counted.
-        Hermes never sees a 429."""
+        Hermes never sees a 429. Three results in a row that still fail after their retries (any class) stop
+        the director; a retry that recovers never counts, and a call never sent is not a result."""
         for wait in (5, 15, 45, None):
             up = self.upstream(body, kind, fwd)
-            retry = not (up["ok"] or up["category"] not in RETRYABLE or wait is None)
+            retry = not (up["forward"] or up["category"] not in RETRYABLE or wait is None)
             rec["upstream"].append({k: v for k, v in up.items() if k not in ("raw", "events", "wire")}
                                    | {"t_end": time.time(), "retry_wait_s": wait if retry else 0})
             if not retry:
+                with self.streak_lock:  # concurrent upstream calls (two Hermes processes)
+                    if up["category"] != "budget_or_stop":
+                        self.failure_streak = 0 if up["forward"] else self.failure_streak + 1
+                    if self.failure_streak >= 3:
+                        self.stop("upstream_failures_3_in_a_row")
                 return up
             time.sleep(wait)
 
@@ -436,7 +433,7 @@ class Director:
             "reasoning") or {}).get("effort") == EFFORT, "marker": marker_state(),
                "load": os.getloadavg(), "typed_parts": sum(isinstance(it, dict) and isinstance(it.get("content"), str)
                                                           for it in body.get("input") or [])}
-        sub["req"], sub["wire"] = self.ledger.blob(json.loads(data)), json.loads(data)
+        sub["req"], sub["wire"], sub["forward"] = self.ledger.blob(json.loads(data)), json.loads(data), False
         token = ""
         try:
             token = self.login.token() if self.login and not self.stopped else ""
@@ -462,7 +459,6 @@ class Director:
                 cat = sol_category(e.code, text)
                 if e.code in (401, 403):
                     self.stop(f"upstream_{e.code}", login=True)
-                self._streak(cat)
                 try:
                     body_shape = shape(json.loads(text))
                 except ValueError:
@@ -475,18 +471,20 @@ class Director:
                         "t_ms": round((time.monotonic() - t0) * 1000)}
         raw = self._scrub(raw, sub)
         events = parse_sse(raw)
-        done = next((e for e in reversed(events) if e.get("type") in (
-            "response.completed", "response.failed", "response.incomplete", "error")), {})
+        types = [e.get("type") for e in events]
+        errs = [o for e in events for o in error_objects(e)]
+        done = next((e for e in reversed(events) if e.get("type") in TERMINAL), {})
         resp = done.get("response") or {}
-        ok = done.get("type") == "response.completed"
-        basis = {"error": [{k: o[k] for k in ERROR_FIELDS if k in o} for o in error_objects(done)], "status": resp.get(
-            "status"), "incomplete_details": resp.get("incomplete_details")}  # never the event: it carries model text
-        cat = None if ok else sol_category(0, json.dumps(basis)[:2000])  # an in-stream failure in an HTTP 200
-        if sse_auth_error(events):  # never replayed: Hermes would rotate its credential on the auth text
-            ok, cat = False, "auth_sse"
+        clean = not errs and "response.failed" not in types  # no error object and no failed frame, anywhere
+        ok = clean and done.get("type") == "response.completed"
+        forward = ok or clean and done.get("type") == "response.incomplete"  # e.g. max_output_tokens
+        basis = [{k: o[k] for k in ERROR_FIELDS if k in o} for o in errs]  # error objects only, never model text
+        cat = None if ok else sol_category(0, json.dumps(basis)[:2000])  # for stats and retries, never forwarding
+        if sse_auth_error(events):
+            cat = "auth_sse"
             self.stop("upstream_sse_auth", login=True)
-        self._streak(cat or "ok")
-        sub.update(status=status, ok=ok, category=cat, t_ms=round((time.monotonic() - t0) * 1000),
+        sub.update(status=status, ok=ok, forward=forward, category=cat, t_ms=round((time.monotonic() - t0) * 1000),
+                   frame_types=[t for i, t in enumerate(types) if not i or t != types[i - 1]],
                    resp=self.ledger.blob({"sse": raw.decode("utf-8", "replace")}), usage=resp.get("usage"),
                    served_model=resp.get("model"), n_events=len(events), limit_headers=_limit_headers(hdrs),
                    raw=raw, events=events)
@@ -497,17 +495,11 @@ class Director:
     def _scrub(self, data: bytes, sub: dict) -> bytes:
         """The upstream echoes account-identifying values (observed: response.safety_identifier carries the
         user id). Each one is replaced by a fixed placeholder before the stream is stored or replayed."""
-        for s in (self.login.secrets if self.login else ()):
+        for s in sorted(list(self.login.secrets) if self.login else (), key=len, reverse=True):  # a refresh can add
             if len(s) >= 8 and s.encode() in data:
                 sub["scrubbed"] = sub.get("scrubbed", 0) + data.count(s.encode())
                 data = data.replace(s.encode(), b"redacted-by-director")
         return data
-
-    def _streak(self, cat: str):
-        with self.streak_lock:  # concurrent upstream calls (ramp, soak, two Hermes processes)
-            self.quota_streak = self.quota_streak + 1 if cat == "quota" else 0
-            if self.quota_streak >= 3:
-                self.stop("quota_3_in_a_row")
 
     def _stub(self, wire: dict, kind: str) -> bytes:  # development only: no network; never a measurement
         names = [t.get("name") for t in wire.get("tools") or []]
@@ -572,13 +564,9 @@ class Director:
             return 200, sse_bytes([msg], self._usage(body, [msg]), body.get("model")), rec
         kind = {"summariser": "summariser", "probe_main": "probe"}.get(role, "aux")  # live roles
         up = self.upstream_retry(body, kind, rec, fwd)
-        if not up["ok"] and (up["status"] in (0, -1, 401, 403, 429) or up["category"] in ("quota", "rate", "auth_sse")
-                             + RETRYABLE):
-            rec["served"] = "neutral_503"  # never a 429 or 401: Hermes would sideline or refresh its credential
+        if not up["forward"]:  # any failure, of any status or shape: Hermes would act on its status or text
+            rec["served"] = "neutral_503"
             return 503, json.dumps(NEUTRAL_503).encode(), rec
-        if not up["ok"] and up["status"] != 200:
-            rec["served"] = "upstream_error"
-            return up["status"], json.dumps({"error": up["error_obj"]}).encode(), rec
         for e in up["events"]:
             it = e.get("item") or {}
             if e.get("type") == "response.output_item.done" and it.get("type") == "function_call":
@@ -669,7 +657,7 @@ def make_handler(d: Director):
             if path == "/_control":
                 return self._send(200, json.dumps({
                     "inflight": d.inflight, "cursor": d.cursor, "stopped": d.stopped, "stop_reason": d.stop_reason,
-                    "write_failures": d.write_failures, "quota_streak": d.quota_streak}).encode())
+                    "write_failures": d.write_failures, "failure_streak": d.failure_streak}).encode())
             if path == MOUNT + "/models":
                 return self._meta("catalog", 200, catalog(d.a))
             if path == USAGE_PATH:
@@ -685,7 +673,9 @@ def make_handler(d: Director):
             if urllib.parse.urlparse(self.path).path.rstrip("/") != MOUNT + "/responses":
                 return self._meta("path_refused", 404, {"error": {"message": "director: unknown path (fail closed)"}},
                                   "unknown")
-            t0, d.inflight = time.time(), d.inflight + 1
+            t0 = time.time()
+            with d.lock:  # concurrent request threads
+                d.inflight += 1
             names = sorted({k.lower() for k in self.headers} - IDENTITY_NAMES)  # names only; no identity header
             fwd = {k: self.headers[k] for k in PASS_HEADERS if self.headers.get(k)}
             try:
@@ -714,7 +704,8 @@ def make_handler(d: Director):
                 d.ledger.append({"type": "send_error", "run": d.a.run, "request_seq": led["seq"],
                                  "client_disconnected": True, "error": type(e).__name__, "t": time.time()})
             finally:
-                d.inflight -= 1
+                with d.lock:
+                    d.inflight -= 1
 
     return H
 
