@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import socket
 import sys
 import threading
 import urllib.error
@@ -168,6 +169,20 @@ def test_key_in_a_stripped_field_name_never_reaches_the_strip_file(up, tmp_path,
     with pytest.raises(Fatal):
         d.serve("POST", "/v1/messages", HDRS, msg(**{UP_KEY: 1}))
     assert not (tmp_path / "strip.json").exists()
+
+
+@pytest.mark.parametrize("line", [f"{UP_KEY} /v1/messages HTTP/1.1", f"POST /v1/messages {UP_KEY}"])
+def test_stdlib_error_replies_echo_no_request_text(up, tmp_path, line):
+    d = director(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), ad.make_handler(d))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    with socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=10) as c:
+        c.sendall(f"{line}\r\nHost: x\r\nx-api-key: placeholder\r\nContent-Length: 0\r\n\r\n".encode())
+        reply = b""
+        while chunk := c.recv(65536):
+            reply += chunk
+    srv.shutdown()
+    assert reply.split(b" ")[1] in (b"400", b"501") and UP_KEY.encode() not in reply and up.calls == []
 
 
 def test_metadata_user_id_dropped_unless_kept(up, tmp_path):

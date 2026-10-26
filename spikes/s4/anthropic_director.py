@@ -275,6 +275,9 @@ def make_handler(d: Director):
         def log_message(self, *a):  # the ledger is the log
             pass
 
+        def send_error(self, code, message=None, explain=None):  # the stdlib's own replies echo request text
+            super().send_error(code, None, None)
+
         def _do(self):
             raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             status, ctype, data, extra = d.serve(self.command, self.path, self.headers.items(), raw)
