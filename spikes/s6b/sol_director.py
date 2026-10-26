@@ -59,7 +59,7 @@ PASS_HEADERS = ("session_id", "x-client-request-id")  # forwarded verbatim; ever
 IDENTITY = {"originator": "hermes-agent", "User-Agent": "HermesAgent/0.22.2"}  # Hermes' own at the official host
 REFRESH_SKEW_S = 300
 READ_GRACE_S = 1.0  # a post-wait token read longer than this blocked on a refresh, so the request is admitted again
-SCAN_LOCK_WAIT_S = 30.0  # scan waits this long for a shared auth lock behind a refresher, then refuses
+SNAPSHOT_WAIT_S = 30.0  # a snapshot waits this long for a shared auth lock behind a writer, then refuses
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
@@ -278,6 +278,20 @@ class Login:
             raise Stop(f"home_unusable:{type(e).__name__}") from None
         return os.fdopen(fd)
 
+    def snapshot(self):
+        """One store and lease read under a shared auth lock; never refreshes, learns or latches."""
+        with self._auth_lock() as lf:
+            deadline = time.monotonic() + SNAPSHOT_WAIT_S
+            while True:  # bounded, so a reader never hangs behind a writer or refresher
+                try:
+                    fcntl.flock(lf, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise Stop("auth_lock_busy") from None
+                    time.sleep(0.1)
+            return json.loads(self.path.read_text()), lease_id(self.path)
+
     def token(self) -> str:
         with self.lock, self._auth_lock() as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
@@ -396,17 +410,7 @@ def _where(data: bytes, s: str):
 
 def scan(login: Login, paths: list[str], run=None) -> dict:
     """Counts of credential, account and email needles in files (zstd blobs decompressed); never a value."""
-    with login._auth_lock() as lf:  # one snapshot of store and lease: the pin is checked on the store the needles come from
-        deadline = time.monotonic() + SCAN_LOCK_WAIT_S
-        while True:  # shared: a writer or refresher holds it exclusively; bounded, so scan never hangs behind one
-            try:
-                fcntl.flock(lf, fcntl.LOCK_SH | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise Stop("auth_lock_busy") from None
-                time.sleep(0.1)
-        store, lid = json.loads(login.path.read_text()), lease_id(login.path)
+    store, lid = login.snapshot()  # the pin is checked on the store the needles come from
     if run is not None:
         try:
             pins = json.loads(login.path.with_name("director-pin.json").read_text())
@@ -567,8 +571,15 @@ class Director:
         if login is None and self.login:
             self.ledger.append({"type": "holder", "lease": self.login.path.with_name("lease.json").exists()})
         try:  # learn needles before credential-bearing records (refresh only if the token is expiring)
-            self.login and self.login.token()
-            if login is None and self.login:
+            new_pin = None
+            if login is None and self.login:  # the run binding is checked on a snapshot before any refresh
+                try:
+                    store, lid = self.login.snapshot()
+                    self.login.pin = account_pin(store["tokens"]["access_token"])  # token() refuses another account
+                except Stop:
+                    raise
+                except Exception as e:  # noqa: BLE001 - the class only, never a path or message
+                    raise Stop(f"login_error:{type(e).__name__}") from None
                 path = self.login.path.with_name("director-pin.json")
                 try:
                     pins = json.loads(path.read_text()) if path.exists() else {}
@@ -576,18 +587,20 @@ class Director:
                         raise TypeError
                 except (OSError, ValueError, TypeError):
                     raise Stop("pin_file_unreadable") from None
-                entry, mine = pins.get(a.run), {"lease_id": lease_id(self.login.path), "pin": self.login.pin}
+                entry, mine = pins.get(a.run), {"lease_id": lid, "pin": self.login.pin}
                 if a.run in pins:  # a run name stays bound to its first account and lease; never rebound
                     if not isinstance(entry, dict) or not {"lease_id", "pin"} <= entry.keys():
                         raise Stop("pin_file_unreadable")
                     if {k: entry[k] for k in mine} != mine:
                         raise Stop("run_pin_conflict")
                 else:
-                    pins[a.run] = mine | {"t": utc()}
-                    try:
-                        durable_write(path, json.dumps(pins) + "\n")
-                    except OSError as e:  # the class only: a path-bearing traceback never reaches a log
-                        raise Stop(f"home_unusable:{type(e).__name__}") from None
+                    new_pin = pins | {a.run: mine | {"t": utc()}}
+            self.login and self.login.token()
+            if new_pin is not None:  # a new run is bound once its login has been read under the full check
+                try:
+                    durable_write(path, json.dumps(new_pin) + "\n")
+                except OSError as e:  # the class only: a path-bearing traceback never reaches a log
+                    raise Stop(f"home_unusable:{type(e).__name__}") from None
         except Stop as e:
             if str(e) in ("pin_file_unreadable", "run_pin_conflict"):
                 raise

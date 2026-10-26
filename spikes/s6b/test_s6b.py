@@ -2116,6 +2116,25 @@ class FixRound1(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text())["fake-run"]["pin"], "fake-other-account-pin")
         self.assertEqual(self.calls, [])
 
+    def test_cx9_a_refused_startup_never_refreshes(self):
+        path = self.tmp / "director-pin.json"
+        sd.Director(self.args())
+        self._close_holders()
+        entry = json.loads(path.read_text())["fake-run"]
+        for pins, reason in ((json.dumps({"fake-run": entry | {"pin": "fake-other-account-pin"}}), "run_pin_conflict"),
+                             ('{"fake-run": null}', "pin_file_unreadable"), ("not json", "pin_file_unreadable")):
+            with self.subTest(reason=reason, pins=pins[:12]):
+                store(self.tmp, exp_in=60)  # expiring: refreshing before the binding check would POST and charge
+                path.write_text(pins)
+                before = len(self.calls)
+                with self.assertRaisesRegex(sd.Stop, f"^{reason}$"):
+                    sd.Director(self.args())
+                self._close_holders()
+                self.assertEqual(len(self.calls), before)
+                self.assertEqual(path.read_text(), pins)
+                budget = json.loads((self.tmp / "budget.json").read_text()) if (self.tmp / "budget.json").exists() else {}
+                self.assertEqual(budget.get("by_kind", {}).get("refresh", 0), 0)
+
     def test_cx1_null_run_entry_refuses_without_writing(self):
         path = self.tmp / "director-pin.json"
         path.write_text('{"fake-run": null}\n')
@@ -2182,7 +2201,7 @@ class FixRound1(unittest.TestCase):
         lf = open(self.p.with_name(self.p.name + ".lock"), "a+")
         self.addCleanup(lf.close)
         fcntl.flock(lf, fcntl.LOCK_EX)  # a refresher holds the auth lock: scan refuses after its bounded wait
-        with mock.patch.object(sd, "SCAN_LOCK_WAIT_S", 0.3, create=True):  # create: the test also runs on the base
+        with mock.patch.object(sd, "SNAPSHOT_WAIT_S", 0.3, create=True):  # create: the test also runs on the base
             self.scan_main("auth_lock_busy")
         real, reads, released = Path.read_text, [], []
 
