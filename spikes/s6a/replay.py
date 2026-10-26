@@ -201,6 +201,8 @@ def main():
     p.add_argument("--lane", choices=["glm", "sol"], default="glm", help="sol: S6b's director and credential model C'")
     p.add_argument("--max-turns", type=int, default=0, help="play at most this many turns per session (0: all)")
     a = p.parse_args()
+    if a.lane == "sol" and (a.measure_overhead or a.lane_rewrite):  # before any run directory exists
+        p.error("--lane sol does not support --measure-overhead or --lane-rewrite (the S6b director has neither)")
 
     scratch, evid = env("S6A_SCRATCH"), env("S6A_EVIDENCE")
     home, work, out = scratch / "homes" / a.run, scratch / "work" / a.run, evid / a.run

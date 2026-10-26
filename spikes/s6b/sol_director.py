@@ -306,9 +306,10 @@ def parse_sse(raw: bytes) -> list[dict]:
         data = "\n".join(line[5:].lstrip() for line in block.split("\n") if line.startswith("data:"))
         if data and data != "[DONE]":
             try:
-                events.append(json.loads(data))
+                ev = json.loads(data)
             except ValueError:
-                events.append({"type": "director.unparsed"})
+                ev = None
+            events.append(ev if isinstance(ev, dict) else {"type": "director.unparsed"})  # a non-object too
     return events
 
 
@@ -418,8 +419,10 @@ class Director:
                                    | {"t_end": time.time(), "retry_wait_s": wait if retry else 0})
             if not retry:
                 with self.streak_lock:  # concurrent upstream calls (two Hermes processes)
-                    if up["category"] != "budget_or_stop":
-                        self.failure_streak = 0 if up["forward"] else self.failure_streak + 1
+                    if up["forward"]:
+                        self.failure_streak = 0
+                    elif not (up["ok"] or up["category"] == "budget_or_stop"):  # served but unparsed: held
+                        self.failure_streak += 1
                     if self.failure_streak >= 3:
                         self.stop("upstream_failures_3_in_a_row")
                 return up
@@ -454,11 +457,16 @@ class Director:
                 with self.urlopen(req, timeout=self.a.timeout) as r:
                     raw, status, hdrs = r.read(), r.status, dict(r.headers)
             except urllib.error.HTTPError as e:
-                text, hdrs = self._scrub(e.read(), sub).decode("utf-8", "replace"), dict(e.headers or {})
-                e.close()
-                cat = sol_category(e.code, text)
-                if e.code in (401, 403):
+                if e.code in (401, 403):  # latched before the body read, which can fail or stall
                     self.stop(f"upstream_{e.code}", login=True)
+                try:
+                    text, hdrs = self._scrub(e.read(), sub).decode("utf-8", "replace"), dict(e.headers or {})
+                except Exception as x:  # noqa: BLE001 - a truncated or stalled body: the class only, status kept
+                    return {**sub, "status": e.code, "category": sol_category(e.code, ""), "ok": False,
+                            "body_read_error": type(x).__name__, "t_ms": round((time.monotonic() - t0) * 1000)}
+                finally:
+                    e.close()
+                cat = sol_category(e.code, text)
                 try:
                     body_shape = shape(json.loads(text))
                 except ValueError:
@@ -474,16 +482,17 @@ class Director:
         types = [e.get("type") for e in events]
         errs = [o for e in events for o in error_objects(e)]
         done = next((e for e in reversed(events) if e.get("type") in TERMINAL), {})
-        resp = done.get("response") or {}
-        clean = not errs and "response.failed" not in types  # no error object and no failed frame, anywhere
-        ok = clean and done.get("type") == "response.completed"
-        forward = ok or clean and done.get("type") == "response.incomplete"  # e.g. max_output_tokens
+        resp = done.get("response") if isinstance(done.get("response"), dict) else {}
+        clean = status == 200 and not errs and "response.failed" not in types  # no error object or failed frame
+        ok = clean and done.get("type") == "response.completed"  # served (the measurement tools count it)
+        n_unparsed = types.count("director.unparsed")
+        forward = (ok or clean and done.get("type") == "response.incomplete") and not n_unparsed  # max_output_tokens
         basis = [{k: o[k] for k in ERROR_FIELDS if k in o} for o in errs]  # error objects only, never model text
-        cat = None if ok else sol_category(0, json.dumps(basis)[:2000])  # for stats and retries, never forwarding
+        cat = None if ok else sol_category(0, json.dumps(basis))  # for stats and retries, never forwarding
         if sse_auth_error(events):
             cat = "auth_sse"
             self.stop("upstream_sse_auth", login=True)
-        sub.update(status=status, ok=ok, forward=forward, category=cat, t_ms=round((time.monotonic() - t0) * 1000),
+        sub.update(status=status, ok=ok, forward=forward, n_unparsed=n_unparsed, category=cat, t_ms=round((time.monotonic() - t0) * 1000),
                    frame_types=[t for i, t in enumerate(types) if not i or t != types[i - 1]],
                    resp=self.ledger.blob({"sse": raw.decode("utf-8", "replace")}), usage=resp.get("usage"),
                    served_model=resp.get("model"), n_events=len(events), limit_headers=_limit_headers(hdrs),
@@ -582,7 +591,7 @@ class Director:
         up = self.upstream_retry(dict(body, input=list(body.get("input") or []) + [SUFFIX_ITEM], tools=tools),
                                  "write_turn", rec, fwd)
         rec["write_turn_readback"] = readback(body, up.get("wire"), self.a.model)
-        if not up["ok"]:
+        if not up["ok"] or up.get("n_unparsed"):
             rec["write_turn_failed"] = up["category"]
             self.write_failures += 1  # the replay driver reads this and stops the run
             return None
@@ -601,7 +610,8 @@ class Director:
         return out
 
     def _usage(self, body: dict, items: list) -> dict:
-        it = math.ceil(len(canon(body.get("input")) + canon(body.get("tools") or [])) / self.a.chars_per_token)
+        it = math.ceil(len(canon(body.get("instructions") or "") + canon(body.get("input")) + canon(
+            body.get("tools") or [])) / self.a.chars_per_token)
         ot = math.ceil(len(canon(items)) / self.a.chars_per_token)
         return {"input_tokens": it, "output_tokens": ot, "total_tokens": it + ot, "estimated": True}
 

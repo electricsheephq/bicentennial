@@ -1,14 +1,17 @@
 """Offline tests for the S6b director (fake tokens, a loopback fake upstream). Run: python3.14 -m unittest test_s6b"""
 
 import base64
+import http.client
 import json
 import os
 import socket
 import stat
+import sys
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from compression import zstd
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -645,6 +648,99 @@ class Failures(Base):
             with self.assertRaisesRegex(sd.Stop, "^refresh_budget$"):
                 login.token()
         self.assertEqual((calls, login.sentinel.exists()), ([], False))  # the refresh token was never sent
+
+
+class Round4(Base):
+    """Round 4: the edge shapes of the round-3 failure path."""
+    COMPLETED = frames({"type": "response.completed", "response": {"status": "completed"}})
+
+    def test_an_unreadable_refusal_body_keeps_its_status_and_stops_on_auth(self):
+        class Body:
+            def read(self, *a):
+                raise http.client.IncompleteRead(b"")
+
+            def close(self):
+                pass
+        for code in (401, 403, 429, 503):
+            self.tmp = Path(tempfile.mkdtemp())
+            d, n = self.make(write_turns=False), []
+
+            def refuse(req, timeout, code=code, n=n):
+                n.append(1)
+                raise urllib.error.HTTPError("http://upstream.invalid", code, "refused", {}, Body())
+            d.urlopen = refuse
+            with mock.patch.object(sd.time, "sleep"):
+                status, out, rec = d.handle(AUX, {})
+                d.handle(AUX, {})
+            self.assertEqual((status, json.loads(out)), (503, sd.NEUTRAL_503), code)
+            u = rec["upstream"][0]
+            self.assertEqual((u["status"], u["body_read_error"], "t_ms" in u), (code, "IncompleteRead", True))
+            auth = code in (401, 403)
+            self.assertEqual((d.stopped, (self.tmp / "auth.json.stopped").exists()), (auth, auth))
+            self.assertEqual((len(n), len(rec["upstream"])), (1, 1) if auth else (8, 4))  # 429/503: retried
+
+    def test_a_non_object_json_frame_is_unparsed_not_a_crash(self):
+        for frame in (b"data: 123\n\n", b"data: [1]\n\n", b'data: "x"\n\n'):
+            d = self.make(write_turns=False)
+            d.urlopen = lambda req, timeout, f=frame: Resp(f + self.COMPLETED)
+            up = d.upstream(AUX, "aux", {})
+            self.assertEqual((up["ok"], up["forward"], up["n_unparsed"]), (True, False, 1), frame)
+
+    def test_an_unparsed_frame_is_served_but_never_replayed(self):
+        for raw in (b"data: {broken}\n\n" + self.COMPLETED, self.COMPLETED + b"data: {trunc"):
+            d, n = self.make(write_turns=False), []
+            d.urlopen = lambda req, timeout, raw=raw, n=n: (n.append(1), Resp(raw))[1]
+            d.failure_streak = 2
+            code, out, rec = d.handle(AUX, {})
+            u = rec["upstream"][0]
+            self.assertEqual((code, json.loads(out), u["ok"], u["n_unparsed"] >= 1), (503, sd.NEUTRAL_503, True, True))
+            self.assertEqual((d.failure_streak, d.stopped, len(n)), (2, False, 1))  # held, not counted
+            self.assertTrue(d.upstream(AUX, "aux", {})["ok"])
+        d = self.make(write_turns=False)
+        d.urlopen = lambda req, timeout: Resp(self.COMPLETED)
+        self.assertEqual(d.handle(AUX, {})[:2], (200, self.COMPLETED))  # a clean control: byte for byte
+
+    def test_a_long_first_error_does_not_hide_a_later_rate_limit(self):
+        raw = frames({"type": "error", "message": "x" * 2200},
+                     {"type": "error", "code": "rate_limit_exceeded", "message": "Rate limit reached"})
+        d, n = self.make(write_turns=False), []
+        d.urlopen = lambda req, timeout: (n.append(1), Resp(raw))[1]
+        with mock.patch.object(sd.time, "sleep"):
+            code, _, rec = d.handle(AUX, {})
+        self.assertEqual((code, rec["upstream"][0]["category"], len(n)), (503, "rate", 4))
+
+    def test_completed_under_another_2xx_is_not_served(self):
+        for status in (201, 202, 206):
+            d = self.make(write_turns=False)
+            resp = Resp(self.COMPLETED)
+            resp.status = status
+            d.urlopen = lambda req, timeout, r=resp: r
+            code, out, rec = d.handle(AUX, {})
+            self.assertEqual((code, json.loads(out), rec["upstream"][0]["ok"]), (503, sd.NEUTRAL_503, False), status)
+
+    def test_error_scope_is_top_level_and_response_level_only(self):
+        echo = frames({"type": "response.completed", "response": {"status": "completed", "tools": [{
+            "type": "function", "name": "report", "parameters": {"type": "object", "properties": {
+                "error": {"type": "string", "description": "the error to report"}}}}]}})
+        d = self.make(write_turns=False)
+        d.urlopen = lambda req, timeout: Resp(echo)
+        self.assertEqual(d.handle(AUX, {})[:2], (200, echo))  # an echoed tool schema is not an error object
+
+    def test_scripted_usage_counts_instructions(self):
+        d = self.make(mode="stub")
+        body = self.turn(d)
+        base = d._usage(body, [MSG])["input_tokens"]
+        more = d._usage(dict(body, instructions="i" * 40000), [MSG])["input_tokens"]
+        self.assertAlmostEqual(more - base, 10000, delta=10)
+
+    def test_replay_rejects_flags_the_sol_director_lacks(self):
+        import replay
+        for extra in (["--measure-overhead"], ["--lane-rewrite", "x"]):
+            argv = ["replay.py", "--run", "r", "--port", "1", "--lane", "sol", *extra]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(replay, "env", side_effect=AssertionError(
+                    "reached run setup")), mock.patch("sys.stderr"), self.assertRaises(SystemExit) as cm:
+                replay.main()
+            self.assertEqual(cm.exception.code, 2)
 
 
 if __name__ == "__main__":
