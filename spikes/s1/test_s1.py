@@ -225,6 +225,9 @@ def test_a_result_with_no_id_answers_nothing():
     assert roles.classify_shape(s, c)[0] == "probe_main"
     s |= {"tail_ids": ["issued", ""], "tail_calls": ["issued", ""]}
     assert roles.classify_shape(s, c)[:2] == ("unknown", "unknown")
+    items = [TURN, {"type": "function_call", "call_id": "issued"}, {"type": "function_call"},  # an id-less sibling call
+             {"type": "function_call_output", "call_id": "issued"}]
+    assert roles.classify(_wire_body("openai_responses", items), c)[:2] == ("unknown", "unknown")
 
 
 @pytest.mark.parametrize("wire", sorted(WIRE_PATH))

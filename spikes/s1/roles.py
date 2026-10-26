@@ -293,7 +293,7 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
             # one role. An unissued result then passes only as a sibling the harness added to that same message
             # (Hermes splits one forwarded call into two); anything else fails closed
             stray = [cid for cid in s["tail_ids"] if cid not in s["tail_calls"]]
-            if len(got) != 1 or stray or "" in s["tail_ids"]:  # a result with no id answers nothing
+            if len(got) != 1 or stray or "" in s["tail_ids"] + s["tail_calls"]:  # an id-less record matches nothing
                 return "unknown", "unknown", {**ev, "reason": "tool result for an unissued call id or mixed roles"}
             return done(got.pop(), "cursor", call_id=next(c for c in s["tail_ids"] if c in ctx.issued))
         if s["last_is"] == "user_text" and s["n_tools"] > 0:
