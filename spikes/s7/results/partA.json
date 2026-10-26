@@ -8,6 +8,7 @@
         "forwarded": 60,
         "matches": 60,
         "mismatches": [],
+        "missing_write_turns": [],
         "write_records": 60
       },
       "A2": {
@@ -2228,6 +2229,7 @@
         "forwarded": 60,
         "matches": 60,
         "mismatches": [],
+        "missing_write_turns": [],
         "write_records": 60
       },
       "A2": {

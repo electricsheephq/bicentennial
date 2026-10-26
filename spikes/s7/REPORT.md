@@ -57,7 +57,8 @@ calls, so the blocked and reached-harness paths are exercised by synthetic tests
 rather than by these runs.
 
 A4 reads Hermes' explicit success result, and compares content after whitespace
-normalisation only. It reads the final target file and only the system prompt
+normalisation only. A patch's replaced span must also be gone, unless its new text
+keeps it, and a later call that writes removed text again restores it. It reads the final target file and only the system prompt
 or Responses instructions of the first main request of the next session. The
 last r6 call is checked against the first probe session (record 125). Refusals
 are separate from applications. A result staged for approval is its own class,
@@ -80,7 +81,10 @@ uses `patch`, including `new_text` and atomic `operations` forms; these are
 reported as such, rather than relabelled as unobserved replace calls. Neither
 recorded run exercises remove or refusal.
 
-A5 checks scripted response contents (in Responses streams, the text deltas as
+A1 also lists every replay turn the director classified by its cursor that has
+no write turn (none in either run).
+
+A5 checks scripted response contents, with no calls or reasoning attached (in Responses streams, the text deltas as
 well as the completed items; a stream counts as its completed message only when
 it carries that message's item id or output index), checks that a response serving write calls
 to the harness carries no assistant or reasoning text (0 in both runs), and scans every
@@ -123,7 +127,7 @@ already inherited priority again; the effective priority was verified as 10.
 
 | Validation | Observed result |
 |---|---|
-| `python3.14 -m unittest` in S7 | 27 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text or reasoning served beside write calls, an inherited call with a new result, a tool call on a scripted reply, results split across continuation requests, a refused malformed write, streamed text disagreeing with its items or never completed, a later turn's results in a delayed continuation, a refused call with a non-string action, discard in conversation, tool channels and other fields, and integrity |
+| `python3.14 -m unittest` in S7 | 32 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text or reasoning served beside write calls, an inherited call with a new result, a tool call on a scripted reply, results split across continuation requests, a refused malformed write, streamed text disagreeing with its items or never completed, a later turn's results in a delayed continuation, a refused call with a non-string action, a replay turn without a write turn, a draft in a chat tool result, reasoning on a scripted reply, removed text added again, a patch leaving its old span, discard in conversation, tool channels and other fields, and integrity |
 | `python3.14 -m unittest` in S6a | 9 tests, OK |
 | `python3.14 -m unittest` in S6b | 76 tests, OK; one existing HTTPError resource warning |
 | `python3.14 -m pytest spikes/s1 -q` with installed pytest on `PYTHONPATH`, plugin autoload disabled, scratch basetemp | 97 passed |

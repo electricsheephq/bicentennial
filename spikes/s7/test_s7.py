@@ -459,6 +459,66 @@ class Readback(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unknown_memory_action"):
                     rb.effects(calls, reqs, {"memory": ""}, "responses")
 
+    def test_replay_turn_without_a_write_turn(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows = data[0]
+                rows[0]["subrole"] = rows[2]["subrole"] = "cursor"
+                self.assertEqual(self.audit(data, wire)["A1"]["missing_write_turns"], [3])
+                rows[2]["subrole"] = "retry"  # a re-sent turn is served from the script, with no second write turn
+                self.assertEqual(self.audit(data, wire)["A1"]["missing_write_turns"], [])
+
+    def test_draft_in_a_chat_tool_result(self):
+        data = fixture("chat")
+        rows, blobs, _, _ = data
+        blobs[rows[-1]["req"]]["messages"].append({"role": "tool", "tool_call_id": "bcw00001", "content": "discarded draft"})
+        a5 = self.audit(data, "chat")["A5"]
+        self.assertEqual((a5["text_hits"], a5["tool_channel_hits"]), ([], [{"record": 3, "write_record": 1}]))
+
+    def test_reasoning_on_a_scripted_reply(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, _ = data
+                scripted = blobs[rows[1]["resp"]]
+                if wire == "chat":
+                    scripted["choices"][0]["message"]["reasoning_content"] = "discarded draft"
+                else:
+                    item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": "discarded draft"}]}
+                    scripted["sse"] = scripted["sse"].replace("data: [DONE]", "data: " + json.dumps(
+                        {"type": "response.output_item.done", "item": item}) + "\n\ndata: [DONE]")
+                self.assertEqual(self.audit(data, wire)["A5"]["script_failures"], [2])
+
+    def test_effect_removed_then_added_again(self):
+        def call(rec, args):
+            return {"record": rec, "session": 1, "id": f"bcw{rec:05d}", "arguments": json.dumps(args),
+                    "result": '{"success":true}'}
+        calls = [call(1, {"target": "memory", "action": "add", "content": "saved note"}),
+                 call(2, {"target": "memory", "action": "remove", "old_text": "saved note"}),
+                 call(3, {"target": "memory", "action": "add", "content": "saved note"})]
+        reqs = [({"seq": 4, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "saved note"})]
+        result = rb.effects(calls, reqs, {"memory": "saved note"}, "responses")
+        self.assertEqual(result["gaps"], [])
+        self.assertEqual([r["operations"][0]["superseded_by"] for r in result["calls"]],
+                         [["bcw00002:1", "bcw00003:1"], ["bcw00003:1"], []])
+        result = rb.effects(calls[:2], reqs, {"memory": "saved note"}, "responses")  # without the re-addition
+        self.assertEqual(result["gaps"], ["bcw00001", "bcw00002"])
+        self.assertIn("remove_still_present", result["calls"][1]["operations"][0]["reasons"])
+
+    def test_effect_patch_leaves_its_old_span(self):
+        def run(old, new, store):
+            calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":true}', "arguments": json.dumps(
+                {"target": "memory", "action": "patch", "old_text": old, "new_text": new})}]
+            reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": store})]
+            return rb.effects(calls, reqs, {"memory": store}, "responses")
+        out = run("old note", "new note", "old note\nnew note")
+        self.assertEqual(out["gaps"], ["bcw00001"])
+        self.assertEqual(out["calls"][0]["operations"][0]["reasons"][-2:],
+                         ["replaced_span_still_present", "replaced_span_visible_next_session"])
+        self.assertEqual(run("old note", "new note", "new note")["gaps"], [])
+        self.assertEqual(run("note", "a new note", "a new note")["gaps"], [])  # the new text keeps the old span
+
     def test_staged_and_unparseable_results(self):
         def call(result):
             return [{"record": 1, "session": 1, "id": "bcw00001", "result": result,

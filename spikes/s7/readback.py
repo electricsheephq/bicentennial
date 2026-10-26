@@ -141,7 +141,7 @@ def reasoning(obj, wire):
 
 def conversation(body, wire):
     if wire == "chat":
-        return list(strings([m.get("content", "") for m in body.get("messages", [])]))
+        return list(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") != "tool"]))
     return list(strings([body.get("instructions", ""), [m.get("content", "") for m in body.get("input", [])
                         if m.get("type", "message") == "message"]]))
 
@@ -153,6 +153,7 @@ def channels(body, wire):
     items = body.get("messages" if wire == "chat" else "input", [])
     if wire == "chat":
         tool = [tc.get("function", {}).get("arguments", "") for m in items for tc in m.get("tool_calls") or []]
+        tool += [m.get("content", "") for m in items if m.get("role") == "tool"]
     else:
         tool = [it.get("arguments" if it.get("type") == "function_call" else "output", "") for it in items
                 if it.get("type") in {"function_call", "function_call_output"}]
@@ -237,34 +238,46 @@ def effects(calls, requests, stores, wire):
         nxt = next(((r, b) for r, b in requests if r["seq"] > op["record"] and r.get("cursor") and
                     r["cursor"]["session"] != op["session"] and r["cursor"]["turn"] == 1 and
                     r.get("role") in {"replay_main", "probe_main"}), None)
-        def state(until, i=i, op=op, needle=needle):
-            value, changed = needle, []
+        def state(until, start, i=i, op=op):
+            """The expected effect at `until`, through later applied calls on the same target: ("present", text)
+            or ("absent", text). A removal is undone by a later call whose new text carries the removed text."""
+            (kind, value), changed = start, []
             for later in ops[i + 1:]:
-                if later["record"] >= until or not later["applied"] or later["target"] != op["target"]:
+                act = later.get("action")
+                if (later["record"] >= until or not later["applied"] or later["target"] != op["target"]
+                        or not known(act)):
                     continue
-                old = norm(later.get("old_text", ""))
-                if old and old in value and later.get("action") in {"patch", "replace", "remove"}:
-                    value = "" if later["action"] == "remove" else value.replace(
-                        old, norm(later.get("content", later.get("new_text", ""))))
+                old = norm(later.get("old_text", "")) if act in {"patch", "replace", "remove"} else ""
+                new = "" if act == "remove" else norm(later.get("content", later.get("new_text", "")))
+                if kind == "present" and old and (old in value or value in old):
+                    # a span inside this content is replaced; a span that encompasses it replaces all of it
                     changed.append(later["id"])
-                elif old and value and value in old and later.get("action") in {"patch", "replace", "remove"}:
-                    # a later span that encompasses this content replaces all of it with the new text
-                    value = "" if later["action"] == "remove" else norm(later.get("content", later.get("new_text", "")))
+                    patched = "" if act == "remove" else value.replace(old, new) if old in value else new
+                    kind, value = ("present", patched) if patched else ("absent", value)
+                elif kind == "absent" and new and value in new:
+                    kind = "present"
                     changed.append(later["id"])
-            return value, changed
-        final, changed = state(float("inf"))
+            return (kind, value), changed
+        def holds(expect, text):
+            return (expect[1] in text) == (expect[0] == "present")
+        start = ("absent", needle) if action == "remove" else ("present", needle)
+        replaced = norm(op.get("old_text", "")) if action in {"patch", "replace"} else ""
+        replaced = replaced if replaced and replaced not in needle else ""  # a patch keeping its old span checks nothing
+        final, changed = state(float("inf"), start)
         store = norm(stores.get(op["target"], ""))
         present = needle in store
-        store_ok = (final in store if final else needle not in store) if action != "remove" else not present
-        visible, next_ok, next_changed = None, None, []
+        store_ok = holds(final, store)
+        side_ok = holds(state(float("inf"), ("absent", replaced))[0], store) if replaced else True
+        visible, next_ok, next_side_ok, next_changed, wanted = None, None, None, [], final
         if nxt:
             r, b = nxt
             system = b.get("instructions", "") if wire == "responses" else " ".join(
                 strings([m.get("content", "") for m in b.get("messages", []) if m.get("role") == "system"]))
             snapshot = norm(system)
-            wanted, next_changed = state(r["seq"])
+            wanted, next_changed = state(r["seq"], start)
             visible = needle in snapshot
-            next_ok = (wanted in snapshot if wanted else needle not in snapshot) if action != "remove" else not visible
+            next_ok = holds(wanted, snapshot)
+            next_side_ok = holds(state(r["seq"], ("absent", replaced))[0], snapshot) if replaced else True
         reasons = []
         if op["report"]["staged"]:
             reasons.append("staged_not_applied")
@@ -276,10 +289,16 @@ def effects(calls, requests, stores, wire):
             reasons.append("later_modified_or_removed")
         if nxt is None:
             reasons.append("no_next_session")
+        gone = "remove" if action == "remove" else "removed_content"  # the effect expected absent
         if op["applied"] and not store_ok:
-            reasons.append("absent_from_final_store" if action != "remove" else "remove_still_present")
+            reasons.append("absent_from_final_store" if final[0] == "present" else f"{gone}_still_present")
         if op["applied"] and next_ok is False:
-            reasons.append("absent_from_next_session" if action != "remove" else "remove_visible_next_session")
+            reasons.append("absent_from_next_session" if wanted[0] == "present" else f"{gone}_visible_next_session")
+        if op["applied"] and not side_ok:
+            reasons.append("replaced_span_still_present")
+        if op["applied"] and next_side_ok is False:
+            reasons.append("replaced_span_visible_next_session")
+        store_ok, next_ok = store_ok and side_ok, next_ok and next_side_ok if nxt else next_ok
         op["report"]["operations"].append({"id": op["id"], "action": action, "in_store": present,
             "visible_next_session": visible, "store_satisfied": store_ok, "next_session_satisfied": next_ok,
             "next_session_record": nxt[0]["seq"] if nxt else None, "superseded_by": changed,
@@ -298,7 +317,8 @@ def effects(calls, requests, stores, wire):
 def audit(rows, blobs, life, stores, wire):
     turns = [(s["index"], i, t) for s in life["sessions"] + life.get("probes", []) for i, t in enumerate(s["turns"], 1)]
     requests = [(r, blobs[r["req"]]) for r in rows if "req" in r]
-    a1 = {"write_records": 0, "forwarded": 0, "matches": 0, "mismatches": [], "flag_disagreements": []}
+    a1 = {"write_records": 0, "forwarded": 0, "matches": 0, "mismatches": [], "flag_disagreements": [],
+          "missing_write_turns": []}
     a2 = {"hits": [], "introduced": []}
     a3 = {"offered": 0, "executed": 0, "non_write_attempts": 0, "non_write_blocked": 0, "non_write_calls": [], "failures": []}
     a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "tool_channel_hits": [], "non_content_collisions": [], "served_write_text": []}
@@ -403,7 +423,7 @@ def audit(rows, blobs, life, stores, wire):
             script_calls, texts = output(blobs[r["resp"]], wire)
             script = next(t["assistant"] for s, i, t in turns if cursor == {"session": s, "turn": i})
             a5["scripted"] += 1
-            ok = texts == [script] and not script_calls
+            ok = texts == [script] and not script_calls and not reasoning(blobs[r["resp"]], wire)  # the script only
             if script_calls:  # a scripted reply is text only: a call on it would bypass the write-turn checks
                 a3["failures"].append({"record": seq, "kind": "scripted_tool_call"})
             a5["matches"] += ok
@@ -427,6 +447,12 @@ def audit(rows, blobs, life, stores, wire):
                 rr.get("cursor") == r["cursor"] and rr.get("served") in {"script", "script_retry"}
                 for rr in rows):
             a5["missing_scripts"].append(r["seq"])
+    attempted = {(r["cursor"]["session"], r["cursor"]["turn"]) for r, _ in requests
+                 if any(u.get("kind") == "write_turn" for u in r.get("upstream", []))}
+    for r, _ in requests:  # every replay turn the director classified by its cursor gets a write turn
+        if r.get("role") == "replay_main" and r.get("subrole") == "cursor" and r.get("cursor") and (
+                r["cursor"]["session"], r["cursor"]["turn"]) not in attempted:
+            a1["missing_write_turns"].append(r["seq"])
     a2.update(raw_hits=len(a2["hits"]), introduced_hits=len(a2["introduced"]))
     a5["write_texts_checked"] = len(drafts)
     return {"A1": a1, "A2": a2, "A3": a3, "A4": effects(calls, requests, stores, wire), "A5": a5}
