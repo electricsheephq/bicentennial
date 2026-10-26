@@ -15,115 +15,145 @@
   "2 accounts (hypothetical)": 360
  },
  "accounts": {
-  "J_max": 76,
-  "C_machine": 53,
+  "PROC_MIB": 218,
+  "J_max": 75,
+  "mean_request_s": {
+   "board uncut": 6.996,
+   "board cuts 1-2": 7.203,
+   "robustness uncut": 7.205,
+   "robustness cuts 1-2": 7.403
+  },
   "1_account": {
-   "C_eff": 18.1,
-   "C_achievable": 18,
    "hypothetical": false,
-   "L48 uncut at C=18": {
-    "C": 18,
-    "rate_per_min": 180,
-    "lane_h": 28.47,
-    "rate_h": 24.42,
-    "N_req": 263700,
-    "J": 26,
-    "fits": false
+   "L48 uncut": {
+    "at C_k": {
+     "mean_request_s": 6.996,
+     "C_k": 20.99,
+     "C_machine": 52.93,
+     "capped": false,
+     "J_max": 75,
+     "C": 20.98918771331058,
+     "rate_per_min": 180,
+     "lane_h": 24.42,
+     "rate_h": 24.42,
+     "N_req": 263700,
+     "J": 30,
+     "fits": false
+    },
+    "at C=20": {
+     "C": 20,
+     "rate_per_min": 180,
+     "lane_h": 25.62,
+     "rate_h": 24.42,
+     "N_req": 263700,
+     "J": 29,
+     "fits": false
+    }
    },
-   "L48 uncut at C=20": {
-    "C": 20,
-    "rate_per_min": 180,
-    "lane_h": 25.62,
-    "rate_h": 24.42,
-    "N_req": 263700,
-    "J": 29,
-    "fits": false
-   },
-   "L48 cuts 1-2 at C=18": {
-    "C": 18,
-    "rate_per_min": 180,
-    "lane_h": 23.98,
-    "rate_h": 19.97,
-    "N_req": 215700,
-    "J": 26,
-    "fits": true
-   },
-   "L48 cuts 1-2 at C=20": {
-    "C": 20,
-    "rate_per_min": 180,
-    "lane_h": 21.58,
-    "rate_h": 19.97,
-    "N_req": 215700,
-    "J": 29,
-    "fits": true
+   "L48 cuts 1-2": {
+    "at C_k": {
+     "mean_request_s": 7.203,
+     "C_k": 21.61,
+     "C_machine": 52.13,
+     "capped": false,
+     "J_max": 75,
+     "C": 21.60964673157163,
+     "rate_per_min": 180,
+     "lane_h": 19.97,
+     "rate_h": 19.97,
+     "N_req": 215700,
+     "J": 32,
+     "fits": true
+    },
+    "at C=20": {
+     "C": 20,
+     "rate_per_min": 180,
+     "lane_h": 21.58,
+     "rate_h": 19.97,
+     "N_req": 215700,
+     "J": 29,
+     "fits": true
+    }
    }
   },
   "2_account": {
-   "C_eff": 36.3,
-   "C_achievable": 36,
    "hypothetical": true,
-   "L48 uncut at C=20": {
-    "C": 20,
-    "rate_per_min": 360,
-    "lane_h": 25.62,
-    "rate_h": 12.21,
-    "N_req": 263700,
-    "J": 29,
-    "fits": false
+   "L48 uncut": {
+    "at C_k": {
+     "mean_request_s": 6.996,
+     "C_k": 41.98,
+     "C_machine": 52.93,
+     "capped": false,
+     "J_max": 75,
+     "C": 41.97837542662116,
+     "rate_per_min": 360,
+     "lane_h": 12.21,
+     "rate_h": 12.21,
+     "N_req": 263700,
+     "J": 60,
+     "fits": true
+    },
+    "at C=20": {
+     "C": 20,
+     "rate_per_min": 360,
+     "lane_h": 25.62,
+     "rate_h": 12.21,
+     "N_req": 263700,
+     "J": 29,
+     "fits": false
+    }
    },
-   "L48 uncut at C=36": {
-    "C": 36,
-    "rate_per_min": 360,
-    "lane_h": 14.24,
-    "rate_h": 12.21,
-    "N_req": 263700,
-    "J": 52,
-    "fits": true
-   },
-   "L48 cuts 1-2 at C=20": {
-    "C": 20,
-    "rate_per_min": 360,
-    "lane_h": 21.58,
-    "rate_h": 9.99,
-    "N_req": 215700,
-    "J": 29,
-    "fits": true
-   },
-   "L48 cuts 1-2 at C=36": {
-    "C": 36,
-    "rate_per_min": 360,
-    "lane_h": 11.99,
-    "rate_h": 9.99,
-    "N_req": 215700,
-    "J": 52,
-    "fits": true
+   "L48 cuts 1-2": {
+    "at C_k": {
+     "mean_request_s": 7.203,
+     "C_k": 43.22,
+     "C_machine": 52.13,
+     "capped": false,
+     "J_max": 75,
+     "C": 43.21929346314326,
+     "rate_per_min": 360,
+     "lane_h": 9.99,
+     "rate_h": 9.99,
+     "N_req": 215700,
+     "J": 63,
+     "fits": true
+    },
+    "at C=20": {
+     "C": 20,
+     "rate_per_min": 360,
+     "lane_h": 21.58,
+     "rate_h": 9.99,
+     "N_req": 215700,
+     "J": 29,
+     "fits": true
+    }
    }
   }
  },
  "flip_points": {
-  "1 account, L48 uncut, C=20": {
+  "1 account, L48 uncut, C_k": {
    "fits": false,
-   "probe_requests_per_turn": null,
+   "probe_requests_per_turn": 2.625,
    "compactions_per_sprint": 0.75,
    "compaction_call_s": null
   },
-  "1 account, L48 cuts 1-2, C=20": {
+  "1 account, L48 cuts 1-2, C_k": {
    "fits": true,
    "probe_requests_per_turn": 4.563,
-   "compactions_per_sprint": 2.717,
-   "compaction_call_s": 91.687
+   "compactions_per_sprint": null,
+   "compaction_call_s": null
   },
-  "2 accounts, L48 uncut, C=20": {
-   "fits": false,
-   "probe_requests_per_turn": null,
-   "compactions_per_sprint": 1.519,
-   "compaction_call_s": 51.24
-  },
-  "2 accounts, L48 uncut, C=36": {
+  "2 accounts, L48 uncut, C_k": {
    "fits": true,
    "probe_requests_per_turn": 9.825,
-   "compactions_per_sprint": 7.209,
-   "compaction_call_s": 243.24
+   "compactions_per_sprint": null,
+   "compaction_call_s": null
+  },
+  "2 accounts, L48 cuts 1-2, C_k": {
+   "fits": true,
+   "probe_requests_per_turn": null,
+   "compactions_per_sprint": null,
+   "compaction_call_s": null
   }
  },
  "request_sensitivity": {

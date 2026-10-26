@@ -1,6 +1,6 @@
 # S6b report: the Sol agent lane through the director
 
-**Claim** (`advisory`): Hermes v0.22.2 replays the 10-session micro-life with write turns and probes end to end on `gpt-6.1-sol` through the S6b director under credential model C′. r7c is the run of record: 64 of 64 turns ok, 0 unknown requests, 0 refusals. On Sol, a write turn takes 4.2 s on average, against 6.6 s on GLM with parameters forwarded (r6), and 49 of 60 matched turns ran faster than on r6 (sign test p = 7.6 × 10⁻⁷). A soak at 24 in flight hit a per-account request rate near 200 per minute (an inference from two 429 bursts). At the planning rate of 180 per minute, one account sustains about 18 requests in flight. On one account the full board at L = 48 does not fit in 24 h at any concurrency: its requests alone take 24.4 h, and its lane time is 25.6 h at C = 20. It fits on one account with cuts 1-2 (lane time 21.6 h at C = 20; requests 20.0 h) or at L = 32. Two accounts (hypothetical until S6c's two-account paced soak) fit the full board at their achievable C = 36 (lane time 14.2 h) but not at C = 20. Every verdict rests on one micro-life, with 2 compaction calls in its one long session and 4 probe turns. The flip points are given below.
+**Claim** (`advisory`): Hermes v0.22.2 replays the 10-session micro-life with write turns and probes end to end on `gpt-6.1-sol` through the S6b director under credential model C′. r7c is the run of record: 64 of 64 turns ok, 0 unknown requests, 0 refusals. On Sol, a write turn takes 4.2 s on average, against 6.6 s on GLM with parameters forwarded (r6), and 49 of 60 matched turns ran faster than on r6 (sign test p = 7.6 × 10⁻⁷). A soak at 24 in flight hit a per-account request rate near 200 per minute (an inference from two 429 bursts). At the planning rate of 180 per minute, one account sustains about 21 requests in flight on the board's own request mix. At that concurrency, lane time equals the rate bound by Little's law, so the rate decides. On one account, the full board at L = 48 does not fit in 24 h: its requests take 24.4 h, 0.4 h over. It fits on one account with cuts 1-2 (20.0 h, a margin of 4.0 h) or at L = 32. Two accounts (hypothetical until S6c's two-account paced soak) fit the full board at 12.2 h, at their achievable C of about 42. Every verdict rests on one micro-life, with 2 compaction calls in its one long session and 4 probe turns. The flip points are given below.
 
 ## Method
 - **Harness.** As S6a (`spikes/s6a/REPORT.md`): Hermes v0.22.2, unmodified, Python 3.14, a new `HERMES_HOME` per run, built-in memory, ACP toolsets `memory`, `session_search` and `todo`, driven in process by `hermes_worker.py`. r7c ran **one Hermes process at a time**, at the release manager's condition for the bench account. Hermes's background title request can still overlap a main-turn call inside that process.
@@ -115,7 +115,7 @@ At ×1, R = 4.56 h, P = 2.63 h and the critical path is 4.6 h.
 
 **Concurrency.** C = 20 is the soak's effective concurrency: the floor of 20.6, by Little's law with ok-call service time clipped to the send window. It was measured above the rate threshold. The ramp's burst level of 48 is not a sustained level and is not projected.
 
-**Achievable concurrency on k accounts.** At R_s per account, k accounts sustain about k × C_eff requests in flight, where C_eff = R_s × mean request latency. With R_s = 180 per minute and r7c's mean request of 6.04 s, C_eff is 18.1. Requests in flight beyond C_eff only queue behind the rate limit. The machine caps C too: J × 215 MiB ≤ 16 GiB allows J ≤ 76 Hermes processes, which is C ≤ 53 on the full board. (At r7c's peak of 218 MiB, J ≤ 75.) One account therefore reaches C = 18, and two accounts reach C = 36, with J = 52. Each verdict below is read at C = 20 and at the achievable C. The DV42 rule (DECISIONS §L.1) reads criterion 2 at C = 24. There, every one-account verdict is the same as at C = 20, and the two-account full board fits (lane time 21.4 h), as it does at C = 36.
+**Achievable concurrency on k accounts.** At R_s per account, k accounts sustain about C_k = k × R_s × W requests in flight, by Little's law. W is the projected workload's own mean request time: its upstream service seconds divided by its upstream requests. Requests in flight beyond C_k only queue behind the rate limit. The micro-life's own mean request (6.04 s) is not used here, because the board's mix holds more long requests: W is 7.00 s for the board (7.20 s after cuts 1-2), and 7.20 s for the study (7.40 s). So C_k is 21.0 on one account (21.6 after cuts) and 42.0 on two (43.2). At C_k, lane time equals N_req ÷ (k × R_s) by construction, so the verdict there is the rate bound alone. The machine caps C: J × 218 MiB (r7c's peak RSS) ≤ 16 GiB allows J ≤ 75 Hermes processes, which is C ≤ 52.9 on the full board (52.1 after cuts). No C_k reaches that cap. Sustaining C_k takes J = 30 processes on one account (32 after cuts) and J = 60 on two (63). The soak's C = 20 lies just below the one-account C_k, so lane time exceeds the rate bound there, and each row is also read at C = 20. The DV42 rule (DECISIONS §L.1) reads criterion 2 at C = 24. There, every one-account verdict is the same as at C_k, and the two-account full board fits.
 
 **Request-rate bound.** r7c's upstream requests per unit, retries included:
 - 1.0 per scripted turn (the write turn; the scripted turn itself is served from the script);
@@ -123,7 +123,7 @@ At ×1, R = 4.56 h, P = 2.63 h and the critical path is 4.6 h.
 - 1.25 aux per session;
 - 2.75 per probe turn (n = 4 probe turns, 11 calls).
 
-Scaled with the same §11 formulas, N_req at L = 48 is 263,700 for the board and 166,488 for the study (215,700 and 70,924 after cuts 1-2). The bound is N_req ÷ R_s, and a cell fits when max(lane time at C, N_req ÷ R_s) ≤ 24 h. At R_s = 180 per minute, C_eff is 18.1 at r7c's 6.04 s mean request (18.4 at the soak's 6.12 s). At 360 per minute it is 36.3 (36.7).
+Scaled with the same §11 formulas, N_req at L = 48 is 263,700 for the board and 166,488 for the study (215,700 and 70,924 after cuts 1-2). The bound is N_req ÷ R_s, and a cell fits when max(lane time at C, N_req ÷ R_s) ≤ 24 h. For comparison, R_s × the micro-life's own 6.04 s mean request gives 18.1 at 180 per minute, and the soak's 6.12 s gives 18.4. Those means are not the board's mix; the achievable C_k above uses the board's.
 
 The board's N_req fell from r7b's 282,600 although compaction calls doubled. Changing one input at a time from r7b's value to r7c's: compaction calls (1 → 2 per long sprint) add 3,600, aux (1.33 → 1.25 per session) removes 4,500, and probe requests (3.25 → 2.75 per probe turn) remove 18,000, for −18,900 net.
 
@@ -131,34 +131,38 @@ At ×1 latency, with a write turn before every turn (board; study). Each cell is
 
 | L, cuts | C = 16 | C = 20 | C = 24 | C = 32 | Rate bound, h (180 / 360) | Fits at 1 account |
 |---|---|---|---|---|---|---|
-| 48, none, board | 45.4 / 32.0 | 36.3 / 25.6 | 30.3 / 21.4✓ | 22.7✓ / 16.0✓ | 24.4 / 12.2✓ | **no, at any C** (rate 24.4 h, and lane-bound below C = 22; 2 accounts: from C = 24) |
+| 48, none, board | 45.4 / 32.0 | 36.3 / 25.6 | 30.3 / 21.4✓ | 22.7✓ / 16.0✓ | 24.4 / 12.2✓ | **no, at any C** (rate 24.4 h; 2 accounts: from C = 24) |
 | 48, none, study | 30.0 / 20.8✓ | 24.0✓ / 16.7✓ | 20.0✓ / 13.9✓ | 15.0✓ / 10.4✓ | 15.4✓ / 7.7✓ | from C = 16 |
-| 48, cuts 1-2, board | 38.8 / 27.0 | 31.0 / 21.6✓ | 25.9 / 18.0✓ | 19.4✓ / 13.5✓ | 20.0✓ / 10.0✓ | from C = 20 (and at the achievable C = 18, with lane time 23.98 h) |
+| 48, cuts 1-2, board | 38.8 / 27.0 | 31.0 / 21.6✓ | 25.9 / 18.0✓ | 19.4✓ / 13.5✓ | 20.0✓ / 10.0✓ | from C = 20 (and at the achievable C_k = 21.6, at 20.0 h) |
 | 48, cuts 1-2, study | 13.3✓ / 9.1✓ | 10.6✓ / 7.3✓ | 8.9✓ / 6.1✓ | 6.6✓ / 4.6✓ | 6.6✓ / 3.3✓ | from C = 8 |
 | 32, none, board | 30.3 / 21.4✓ | 24.2 / 17.1✓ | 20.2✓ / 14.2✓ | 15.1✓ / 10.7✓ | 16.3✓ / 8.1✓ | from C = 16 |
 | 32, cuts 1-2, board | 25.9 / 18.0✓ | 20.7✓ / 14.4✓ | 17.2✓ / 12.0✓ | 12.9✓ / 9.0✓ | 13.3✓ / 6.7✓ | from C = 16 |
 | 24, none, board | 22.7✓ / 16.0✓ | 18.2✓ / 12.8✓ | 15.1✓ / 10.7✓ | 11.3✓ / 8.0✓ | 12.2✓ / 6.1✓ | from C = 16 |
 | 24, cuts 1-2, board | 19.4✓ / 13.5✓ | 15.5✓ / 10.8✓ | 12.9✓ / 9.0✓ | 9.7✓ / 6.7✓ | 10.0✓ / 5.0✓ | from C = 16 |
 
-"From C = n" is the first fitting C in the sampled grid (8, 16, 20, 24, 32). One account reaches only about C = 18 (above), so a column above that is reachable only with more accounts. On two accounts, the L = 48 board's lane time needs C ≥ 22.
+"From C = n" is the first fitting C in the sampled grid (8, 16, 20, 24, 32). One account reaches only about C_k = 21 (above), so on one account a higher column is not reached, and the rate bound decides there. On two accounts, the L = 48 board's lane time needs C ≥ 22.
 
-**The two-account rows** (R_s = 360 per minute; hypothetical until S6c's two-account paced soak):
+**The k-account rows at L = 48** (lane / rate h, J; the two-account rows assume R_s = 360 per minute and are hypothetical until S6c's two-account paced soak):
 
-| L = 48 | C = 20: lane / rate h, J | Achievable C = 36: lane / rate h, J |
-|---|---|---|
-| Board, no cuts | 25.6 / 12.2, J 29: **does not fit** | 14.2✓ / 12.2✓, J 52: **fits** |
-| Board, cuts 1-2 | 21.6✓ / 10.0✓, J 29: fits | 12.0✓ / 10.0✓, J 52: fits |
+| Board | At C = 20 | At the achievable C_k | Margin at C_k |
+|---|---|---|---|
+| 1 account, no cuts | 25.6 / 24.4, J 29: **does not fit** | C_k 21.0: 24.4 / 24.4, J 30: **does not fit** | −0.4 h |
+| 1 account, cuts 1-2 | 21.6✓ / 20.0✓, J 29: fits | C_k 21.6: 20.0✓ / 20.0✓, J 32: **fits** | +4.0 h |
+| 2 accounts, no cuts | 25.6 / 12.2✓, J 29: does not fit | C_k 42.0: 12.2✓ / 12.2✓, J 60: **fits** | +11.8 h |
+| 2 accounts, cuts 1-2 | 21.6✓ / 10.0✓, J 29: fits | C_k 43.2: 10.0✓ / 10.0✓, J 63: **fits** | +14.0 h |
 
-**Probe sensitivity.** The probe live-turn calls carry 37.5% of the full board's N_req. The probe input is r7c's 2.75 requests per probe turn, from n = 4 probe turns. On requests alone, the one-account full board would fit at **2.63 or fewer** requests per probe turn. S6a measured 2.25 (r6) and 2.0 (r3) on GLM. Its lane time binds as well, though: 25.6 h at C = 20 and 28.5 h at the achievable C = 18, whatever the probe input. A lower probe input alone does not make it fit. The board's rate bound at probe requests ×1, ×1.5 and ×2 is 24.4, 29.0 and 33.6 h. A larger probe sample is needed before a pilot relies on these rows.
+**Probe sensitivity.** The probe live-turn calls carry 37.5% of the full board's N_req. The probe input is r7c's 2.75 requests per probe turn, from n = 4 probe turns. On requests alone, the one-account full board would fit at **2.63 or fewer** requests per probe turn. S6a measured 2.25 (r6) and 2.0 (r3) on GLM. At C_k the lane time equals the rate bound, so this is the one-account flip point. At C = 20 the lane time (25.6 h) binds as well, whatever the probe input. The board's rate bound at probe requests ×1, ×1.5 and ×2 is 24.4, 29.0 and 33.6 h. A larger probe sample is needed before a pilot relies on these rows.
 
-**Flip points.** Each flip point holds every other input fixed (`results/projection.json`, `flip_points`). "None" means no value of that input changes the verdict.
+**Flip points.** Each flip point is read at the cell's achievable C_k, recomputed for every trial value, because W and so C_k move with the mix. Every other input is held fixed (`results/projection.json`, `flip_points`). "None" means no value in the searched range changes the verdict: 0-10 probe requests per probe turn, 0-10 compaction calls per long sprint, and 0-600 s per compaction call.
 
-| Cell (L = 48) | Verdict | Probe requests per probe turn | Compaction calls per long sprint | Compaction call, s |
+| Cell (L = 48, at C_k) | Verdict | Probe requests per probe turn | Compaction calls per long sprint | Compaction call, s |
 |---|---|---|---|---|
-| 1 account, no cuts, C = 20 | no | none (lane-bound) | fits at ≤ 0.75 | none (the rate bound holds) |
-| 1 account, cuts 1-2, C = 20 | fits | fails above 4.56 | fails above 2.72 | fails above 91.7 |
-| 2 accounts, no cuts, C = 20 | no | none (lane-bound) | fits at ≤ 1.52 | fits at ≤ 51.2 |
-| 2 accounts, no cuts, C = 36 | fits | fails above 9.8 | fails above 7.2 | fails above 243 |
+| 1 account, no cuts | no | fits at ≤ 2.63 | fits at ≤ 0.75 | none (requests do not change) |
+| 1 account, cuts 1-2 | fits | fails above 4.56 | none | none |
+| 2 accounts, no cuts | fits | fails above 9.8 | none | none |
+| 2 accounts, cuts 1-2 | fits | none | none | none |
+
+A longer compaction call raises W and C_k with it, not the lane time at C_k. It changes a verdict only when C_k would pass the machine cap, which happens nowhere in the searched range.
 
 Measured: 2.75 probe requests per probe turn, 2 compaction calls per long sprint, and 67.5 s per compaction call.
 
@@ -176,7 +180,7 @@ The rate bound does not change with latency. At ×1.5, L = 48 with cuts 1-2 need
 
 **Cuts at C = 20, ×1** (board / study, job h): none 36.3 / 24.0; cut 1 31.0 / 21.3; cut 2 31.0 / 10.6; cut 3 15.5 / 10.6. By job time the board needs C = 31 (26 after cuts 1-2, 13 after all three). By lane time it needs C = 22 (18, 9).
 
-**Processes.** The lane reading at C = 20 needs J = 29 concurrent Hermes processes (29-30 with cuts 1-2). That is about 5.3-5.4 GiB at the mean RSS and 6.2-6.4 GiB at peak. At the two-account achievable C = 36 it needs J = 52: 9.4 GiB at the mean and 11.1 GiB at peak. Only one process at a time was tested. The full grid is in `results/projection.json`: ×0.5 and ×1.5 for every row, all three write cadences, both readings and both rates, plus the probe sensitivity, the flip points, the k-account rows and the break-even.
+**Processes.** The lane reading at C = 20 needs J = 29 concurrent Hermes processes (29-30 with cuts 1-2), which is about 5.3-5.4 GiB at the mean RSS and 6.2-6.4 GiB at peak. At the one-account C_k it needs J = 30 (32 after cuts): 5.4 (5.8) GiB at the mean and 6.4 (6.8) GiB at peak. At the two-account C_k it needs J = 60 (63): 10.9 (11.4) GiB at the mean and 12.8 (13.4) GiB at peak, under the cap of 75. Only one process at a time was tested. The full grid is in `results/projection.json`: ×0.5 and ×1.5 for every row, all three write cadences, both readings and both rates, plus the probe sensitivity, the flip points, the k-account rows and the break-even.
 
 **Quota extrapolation.** This is an upper bound only, from one account at one time of day, assuming burn is linear per served request. Neither window moved by one whole-percent step between 08:08:34 and 08:37:52 UTC. In that span the upstream served 694 requests: the soak's 598, the stopped r7b attempt's 6 and r7b's 90. Refused calls are not counted. That bounds the burn below 1/694 points per request (< 0.00145). The span is unchanged by r7c, whose 88 calls ran later; only the request counts below are r7c's.
 - **Weekly window.** A board makes 263,700 requests (215,700 after cuts 1-2), which is under 380 points (< 311). That does not show a board fits the weekly window: the readings are too coarse.
@@ -184,11 +188,11 @@ The rate bound does not change with latency. At ×1.5, L = 48 with cuts 1-2 need
 - **Rate.** Separately, the board's 183.1 requests per minute, averaged over 24 h, exceed the planning rate: the rate bound's verdict above.
 
 **Verdicts at r7c.** The change from r7b is given in brackets.
-- **One account, L = 48, no cuts: does not fit** [unchanged]. Its requests take 24.4 h at 180 per minute. Its lane time is 25.6 h at C = 20 and 28.5 h at the achievable C = 18. Under r7b it was bound by the rate limit only. It is now bound by lane time as well at C = 20 and at the achievable C = 18. It flips only if compaction calls fall to 0.75 per long sprint or below. The probe input alone cannot flip it.
-- **One account, L = 48, cuts 1-2: fits** [unchanged]. Lane time is 21.6 h at C = 20, and requests take 20.0 h. At the achievable C = 18, lane time is 23.98 h, a margin of about a minute. It is now lane-bound, and fits from C = 20 in the grid [r7b: from C = 16].
+- **One account, L = 48, no cuts: does not fit** [unchanged]. At its achievable C_k = 21.0, the lane time and the requests both take 24.4 h, 0.4 h over. It flips at 2.63 or fewer probe requests per probe turn (r7c: 2.75), or at 0.75 or fewer compaction calls per long sprint (r7c: 2). At C = 20 its lane time is 25.6 h.
+- **One account, L = 48, cuts 1-2: fits** [unchanged]. At C_k = 21.6 the board takes 20.0 h, a margin of 4.0 h, with J = 32. At C = 20 its lane time is 21.6 h. It fails above 4.56 probe requests per probe turn. In the grid it fits from C = 20 [r7b: from C = 16].
 - **One account, L = 32, no cuts: fits from C = 16** [unchanged].
 - **Robustness study, L = 48: fits from C = 16** [unchanged], while C_learn + C_erase stay under the break-even.
-- **Two accounts (hypothetical), L = 48, no cuts.** At C = 20 it **does not fit**, with lane time 25.6 h [changed: under r7b it fitted at 22.7 h]. At the achievable C = 36 it **fits**: lane time 14.2 h, requests 12.2 h, J = 52 ≤ 76 [a new reading].
+- **Two accounts (hypothetical), L = 48, no cuts: fits at C_k = 42.0** in 12.2 h, a margin of 11.8 h, with J = 60 ≤ 75 [a new reading]. At C = 20 it does not fit, with lane time 25.6 h [changed: under r7b it fitted there at 22.7 h].
 
 Per §11 the choice goes to the owner: a second account (to be validated by S6c's two-account paced soak), cuts 1-2, or L = 32.
 
@@ -210,11 +214,11 @@ An earlier run, r7-write, ran on the director before its review fixes. A machine
 - The account's quota windows, which are not published and can change without notice. One account at one time of day is measured, and the quota extrapolation is a coarse upper bound from that alone.
 - The rate-limit inference beyond this account and day: it rests on two bursts on one account at one time of day.
 - That the rate limit is per account, and so doubles with a second account on the same host. The two-account rows assume it. It is untested here, so those rows stay hypothetical until S6c's two-account paced soak.
-- That k accounts reach k × C_eff in flight. The achievable concurrency is derived from R_s and the mean request latency, not measured.
-- The verdicts beyond their inputs. Probe requests come from n = 4 probe turns (11 calls), and compaction from one long session (2 calls). The flip points are in the table above. The one-account fit with cuts 1-2 at the achievable C = 18 has a margin of about a minute.
+- That k accounts reach C_k = k × R_s × W in flight. The achievable concurrency is derived by Little's law from R_s and each workload's mean request time; it is not measured. That lane time equals the rate bound at C_k is a consequence of that derivation, not a separate finding.
+- The verdicts beyond their inputs. Probe requests come from n = 4 probe turns (11 calls), and compaction from one long session (2 calls). The flip points are in the table above. The one-account full board misses by 0.4 h at C_k.
 - The quota extrapolation's linearity: it assumes burn is linear per served request, and the readings are whole percentages.
 - Behaviour outside a provider-side shedding window. The upstream was shedding load model-wide all day from about 06:21 UTC (`server_overloaded`, and 429s at connect with retries of 60-240 s). As reported for the day, that was about 18 failures per 1,000 requests on `gpt-6.1-sol`. Every measurement here falls inside that window. The soak saw 2.9 in-stream overloads per 1,000, and r7b and r7c saw none.
 - The soak's prompt-cache share (83%) for a board: its bodies were each re-sent about 15 times.
-- Many Hermes processes at once. Only one was run, while the lane reading needs about 29 at C = 20 and 52 at the two-account achievable C = 36.
+- Many Hermes processes at once. Only one was run, while the lane reading needs about 29 at C = 20, 30-32 at the one-account C_k and 60-63 at the two-account C_k.
 - That one micro-life behaves like a board run, or that its 2 compaction calls in one long session are typical.
 - Latency on other machines, accounts or times of day.

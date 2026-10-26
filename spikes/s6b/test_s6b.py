@@ -659,6 +659,36 @@ class RateBound(unittest.TestCase):
         self.assertFalse(any(v["fits"] for v in edge["rate"].values()))
 
 
+    def test_lane_time_at_the_workload_c_k_equals_the_rate_bound(self):
+        import analyse_sol as an
+        inputs = {"turn_ex_comp_s": 10, "upstream_turn_s": 6, "summariser_s": 60, "session_fixed_s": 29,
+                  "comp_per_sprint": 2, "probe_turn_s": 30, "probe_upstream_s": 12, "probe_fixed_s": 26,
+                  "aux_per_session_s": 5, "plain_turn_s": 2}
+        ri = dict(inputs, upstream_turn_s=1.0, summariser_s=1.0, aux_per_session_s=1.25, probe_upstream_s=3.0)
+        capped = set()
+        for k, kw in ((1, {}), (2, an.CUTS_12)):
+            c = an.achievable(inputs, ri, k, **kw)
+            lane = an.projection(inputs, C=1, **kw)["board"]["lane_work_h"]
+            n = an.projection(ri, C=1, **kw)["board"]["lane_work_h"] * 3600
+            self.assertAlmostEqual(c["mean_request_s"], lane * 3600 / n, places=3)  # the workload's own mix
+            if c["capped"]:  # the machine binds: C stops at its cap and lane time exceeds the rate bound
+                self.assertEqual((round(c["C"], 2), c["J"]), (c["C_machine"], c["J_max"]))
+                self.assertGreater(c["lane_h"], c["rate_h"])
+            else:
+                self.assertAlmostEqual(c["lane_h"], c["rate_h"], places=2)  # Little's law at C_k
+                self.assertEqual(c["fits"], n / (k * 180) / 60 <= 24)
+            capped.add(c["capped"])
+        self.assertEqual(capped, {False, True})
+
+    def test_no_positive_concurrency_refuses_to_project(self):
+        import analyse_sol as an
+        self.assertEqual(an.measured_C({"C_effective": 20.58}, {"sustained_concurrency": 48}), 20)
+        for lvl, ramp in (({"C_effective": 0.0}, {"sustained_concurrency": 48}), ({"C_effective": 0.4}, {}),
+                          (None, {"sustained_concurrency": 0}), (None, {})):
+            with self.assertRaises(SystemExit) as e:
+                an.measured_C(lvl, ramp)
+            self.assertIn("no positive concurrency", str(e.exception.code))
+
 class Failures(Base):
     """Round 3: only a clean completed or incomplete stream is replayed; every other result is a neutral 503."""
     def run_raw(self, *raws, n=None, **kw):

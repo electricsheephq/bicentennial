@@ -157,7 +157,7 @@ def req_sensitivity(ri: dict, q_req: dict, rs: int = 180) -> dict:
     return out
 
 
-MACHINE_GIB, PROC_MIB = 16, 215  # the machine cap on Hermes processes: J x 215 MiB <= 16 GiB
+MACHINE_GIB, PROC_MIB = 16, 218  # the machine cap on Hermes processes: J x 218 MiB (r7c's peak RSS) <= 16 GiB
 
 
 def sign_test(a: dict, b: dict) -> dict:
@@ -191,38 +191,66 @@ def flip(fn, lo: float, hi: float) -> float | None:
     return round((lo + hi) / 2, 3)
 
 
-def accounts(inputs: dict, ri: dict, call_s: float, rs: int = 180) -> dict:
-    """Achievable concurrency on k accounts is about k x C_eff at R_s (Little's law: C_eff = R_s x mean request
-    latency), capped by the machine (J x 215 MiB <= 16 GiB). Each row is evaluated there and at C = 20."""
+CUTS_12 = {"b": 100, "L_rob": 4}
+
+
+def mean_request_s(inputs: dict, ri: dict, run: str = "board", **kw) -> float:
+    """A projected workload's own mean request time: its upstream service seconds over its upstream requests."""
+    return (projection(inputs, lat=1.0, C=1, **kw)[run]["lane_work_h"]
+            / projection(ri, lat=1.0, C=1, **kw)[run]["lane_work_h"])
+
+
+def achievable(inputs: dict, ri: dict, k: int, rs: int = 180, **kw) -> dict:
+    """The board's concurrency on k accounts at R_s each: C_k = k x R_s x its own mean request time (Little's law),
+    capped where J x PROC_MIB reaches the machine. Uncapped, lane time at C_k equals N_req / (k x R_s) by
+    construction, so the verdict there is the rate bound alone."""
     j_max = MACHINE_GIB * 1024 // PROC_MIB
-    c_machine = max(c for c in range(1, 200) if projection(inputs, C=c)["board"]["J_for_C"] <= j_max)
-    out = {"J_max": j_max, "C_machine": c_machine}
+    w = mean_request_s(inputs, ri, **kw)
+    c_k = k * rs / 60 * w
+    one = projection(inputs, lat=1.0, C=1, **kw)["board"]
+    c_cap = j_max * one["lane_work_h"] / one["work_h"]  # J_for_C = ceil(C x job work / lane work)
+    c = min(c_k, c_cap)
+    return {"mean_request_s": round(w, 3), "C_k": round(c_k, 2), "C_machine": round(c_cap, 2), "capped": c_k > c_cap,
+            "J_max": j_max, **cell(inputs, ri, c, k * rs, **kw)}
+
+
+def accounts(inputs: dict, ri: dict, rs: int = 180) -> dict:
+    """Each L = 48 board row on k = 1 and 2 accounts, at its achievable C_k and at the soak's C = 20, with the
+    mean request time of every projected workload (the board's and the study's, with and without cuts 1-2)."""
+    out = {"PROC_MIB": PROC_MIB, "J_max": MACHINE_GIB * 1024 // PROC_MIB,
+           "mean_request_s": {f"{run} {label}": round(mean_request_s(inputs, ri, run, **kw), 3)
+                              for run in ("board", "robustness") for label, kw in (("uncut", {}), ("cuts 1-2", CUTS_12))}}
     for k in (1, 2):
-        c_ach = min(math.floor(k * rs / 60 * call_s), c_machine)
-        out[f"{k}_account"] = {"C_eff": round(k * rs / 60 * call_s, 1), "C_achievable": c_ach,
-                               "hypothetical": k > 1, **{f"{label} at C={c}": cell(inputs, ri, c, k * rs, **kw)
-                                                         for label, kw in (("L48 uncut", {}),
-                                                                           ("L48 cuts 1-2", {"b": 100, "L_rob": 4}))
-                                                         for c in sorted({20, c_ach})}}
+        out[f"{k}_account"] = {"hypothetical": k > 1, **{
+            f"L48 {label}": {"at C_k": achievable(inputs, ri, k, rs, **kw), "at C=20": cell(inputs, ri, 20, k * rs, **kw)}
+            for label, kw in (("uncut", {}), ("cuts 1-2", CUTS_12))}}
     return out
 
 
-def flips(inputs: dict, ri: dict, q_req: dict, call_s: float, rs: int = 180) -> dict:
-    """Flip points of each headline verdict in the probe and compaction inputs (both readings move together)."""
-    c_ach2 = min(math.floor(2 * rs / 60 * call_s), accounts(inputs, ri, call_s, rs)["C_machine"])
-    cells = {"1 account, L48 uncut, C=20": (20, rs, {}), "1 account, L48 cuts 1-2, C=20": (20, rs, {"b": 100, "L_rob": 4}),
-             "2 accounts, L48 uncut, C=20": (20, 2 * rs, {}),
-             f"2 accounts, L48 uncut, C={c_ach2}": (c_ach2, 2 * rs, {})}
+def flips(inputs: dict, ri: dict, rs: int = 180) -> dict:
+    """Flip points of each headline verdict at its achievable C_k, recomputed for every trial input (C_k moves
+    with the mix), in the probe and compaction inputs (both readings move together)."""
     out = {}
-    for name, (c, rate, kw) in cells.items():
-        def fit(inp=inputs, r=ri, c=c, rate=rate, kw=kw):
-            return cell(inp, r, c, rate, **kw)["fits"]
-        out[name] = {"fits": fit(),
-                     "probe_requests_per_turn": flip(lambda x: fit(r=dict(ri, probe_upstream_s=x)), 0.0, 10.0),
-                     "compactions_per_sprint": flip(lambda x: fit(inp=dict(inputs, comp_per_sprint=x),
-                                                                  r=dict(ri, comp_per_sprint=x)), 0.0, 10.0),
-                     "compaction_call_s": flip(lambda x: fit(inp=dict(inputs, summariser_s=x)), 0.0, 600.0)}
+    for k in (1, 2):
+        for label, kw in (("uncut", {}), ("cuts 1-2", CUTS_12)):
+            def fit(inp=inputs, r=ri, k=k, kw=kw):
+                return achievable(inp, r, k, rs, **kw)["fits"]
+            out[f"{k} account{'s' if k > 1 else ''}, L48 {label}, C_k"] = {
+                "fits": fit(),
+                "probe_requests_per_turn": flip(lambda x: fit(r=dict(ri, probe_upstream_s=x)), 0.0, 10.0),
+                "compactions_per_sprint": flip(lambda x: fit(inp=dict(inputs, comp_per_sprint=x),
+                                                             r=dict(ri, comp_per_sprint=x)), 0.0, 10.0),
+                "compaction_call_s": flip(lambda x: fit(inp=dict(inputs, summariser_s=x)), 0.0, 600.0)}
     return out
+
+
+def measured_C(lvl: dict | None, ramp: dict) -> int:
+    """The projected C: the soak's effective level, else the ramp's burst level. No positive level, no projection."""
+    c = math.floor(lvl["C_effective"]) if lvl else int(ramp.get("sustained_concurrency") or 0)
+    if c < 1:
+        sys.exit(f"no positive concurrency was established (soak C_effective "
+                 f"{lvl['C_effective'] if lvl else 'n/a'}, ramp {ramp.get('sustained_concurrency')}); not projecting")
+    return c
 
 
 def soak_level(soak: dict) -> dict:
@@ -319,7 +347,7 @@ def main():
     rss_gib = w["rss_kib"]["mean"] / 2**20
     soak = json.loads((evid / a.soak).read_text()) if a.soak else None
     lvl = soak_level(soak) if soak else None
-    C = math.floor(lvl["C_effective"]) if lvl else ramp["sustained_concurrency"]
+    C = measured_C(lvl, ramp)
     C_label = (f"soak, effective (Little's law, ok service clipped to the send window; {soak['n429']} 429s at "
                f"{soak['inflight_target']} in flight)" if lvl
                else "burst, not sustained (ramp)")
@@ -358,8 +386,8 @@ def main():
     c_eff = {label: {"life_mean_call_s": round(rs / 60 * call_s, 1), **({"soak_mean_call_s": round(
         rs / 60 * lvl["mean_ok_call_s"], 1)} if lvl else {})} for label, rs in RATES.items()}
     (out / "projection.json").write_text(json.dumps({"requests_per_unit": q_req, "request_rates_per_min": RATES,
-                                                     "accounts": accounts(inputs, ri, call_s),
-                                                     "flip_points": flips(inputs, ri, q_req, call_s),
+                                                     "accounts": accounts(inputs, ri),
+                                                     "flip_points": flips(inputs, ri),
                                                      "request_sensitivity": req_sensitivity(ri, q_req),
                                                      "C_eff_at_rate": c_eff, "mean_request_s": round(call_s, 2),
         "inputs_s": inputs, "C_measured": C, "C_label": C_label, "C_burst": ramp["sustained_concurrency"],
