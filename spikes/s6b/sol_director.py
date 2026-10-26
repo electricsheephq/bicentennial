@@ -114,13 +114,15 @@ HOME_HOLDERS = {}  # process-lifetime descriptors; never close or replace a held
 
 
 def hold_home(auth_path) -> int:
-    path = Path(auth_path).with_name("holder.lock").resolve()
-    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+    fd = None
     try:
+        path = Path(auth_path).with_name("holder.lock").resolve()
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(fd)
-        raise Stop("home_busy") from None
+    except OSError as e:
+        if fd is not None:
+            os.close(fd)
+        raise Stop("home_busy" if isinstance(e, BlockingIOError) else f"home_unusable:{type(e).__name__}") from None
     HOME_HOLDERS[path] = fd
     return fd
 
@@ -137,8 +139,9 @@ def sync_folder(path):
         os.close(fd)
 
 
-def durable_write(path, data, link=False):
+def durable_write(path, data, link=False, keep_on_error=False):
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp", dir=path.parent)  # 0600, same filesystem
+    complete = False
     try:
         with os.fdopen(fd, "w") as f:
             f.write(data)
@@ -146,9 +149,11 @@ def durable_write(path, data, link=False):
             full_sync(f.fileno())
         (os.link if link else os.replace)(tmp, path)
         sync_folder(path.parent)
+        complete = True
     finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(tmp)
+        if complete or not keep_on_error:  # a failed store write may hold the only successor chain
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
 
 
 def utc():
@@ -172,9 +177,12 @@ def jwt_claims(token) -> dict:
 
 def account_pin(token) -> str:
     c = jwt_claims(token)
-    a = c.get(AUTH_CLAIM) or {}
-    return hashlib.sha256(b"bicentennial-pin\0" + a.get("chatgpt_account_id", "").encode() + b"\0" + (
-        a.get("chatgpt_user_id") or a.get("user_id") or c.get("sub") or "").encode()).hexdigest()
+    c = c if isinstance(c, dict) else {}
+    a = c.get(AUTH_CLAIM)
+    a = a if isinstance(a, dict) else {}
+    account, *users = [v if isinstance(v, str) else "" for v in (
+        a.get("chatgpt_account_id"), a.get("chatgpt_user_id"), a.get("user_id"), c.get("sub"))]
+    return hashlib.sha256(b"bicentennial-pin\0" + account.encode() + b"\0" + next(filter(None, users), "").encode()).hexdigest()
 
 
 def account_headers(token: str) -> dict:
@@ -313,7 +321,7 @@ class Login:
         lines = raw.splitlines()
         indent = len(lines[1]) - len(lines[1].lstrip()) if len(lines) > 1 else None
         data = json.dumps(store, indent=indent or None) + ("\n" if raw.endswith("\n") else "")
-        durable_write(self.path, data)
+        durable_write(self.path, data, keep_on_error=True)
         if account_pin(store["tokens"]["access_token"]) != self.pin:
             raise Stop("account_changed")
         if json.loads(self.sentinel.read_text()).get("reason") == "refresh_in_flight":
@@ -370,11 +378,18 @@ def scan(login: Login, paths: list[str], run=None) -> dict:
     """Counts of credential, account and email needles in files (zstd blobs decompressed); never a value."""
     if run is not None:
         try:
-            entry = json.loads(login.path.with_name("director-pin.json").read_text()).get(run)
-        except (OSError, ValueError):
-            entry = None
-        if not entry:
+            pins = json.loads(login.path.with_name("director-pin.json").read_text())
+        except OSError:
+            pins = {}
+        except ValueError:
+            raise Stop("pin_file_invalid") from None
+        if not isinstance(pins, dict):
+            raise Stop("pin_file_invalid")
+        if run not in pins:
             raise Stop("no_run_pin")
+        entry = pins[run]
+        if not isinstance(entry, dict) or "pin" not in entry or "lease_id" not in entry:
+            raise Stop("pin_file_invalid")
         if entry["lease_id"] != lease_id(login.path):
             raise Stop("lease_changed")
         if account_pin(json.loads(login.path.read_text())["tokens"]["access_token"]) != entry["pin"]:
@@ -523,10 +538,17 @@ class Director:
             self.login and self.login.token()
             if login is None and self.login:
                 path = self.login.path.with_name("director-pin.json")
-                pins = json.loads(path.read_text()) if path.exists() else {}
+                try:
+                    pins = json.loads(path.read_text()) if path.exists() else {}
+                    if not isinstance(pins, dict):
+                        raise TypeError
+                except (OSError, ValueError, TypeError):
+                    raise Stop("pin_file_unreadable") from None
                 pins[a.run] = {"lease_id": lease_id(self.login.path), "pin": self.login.pin, "t": utc()}
                 durable_write(path, json.dumps(pins) + "\n")
         except Stop as e:
+            if str(e) == "pin_file_unreadable":
+                raise
             self.stop(str(e))
         self._drain()
         self.ledger.append({"type": "pacing", "run": a.run, "rate_per_min": self.pacer.rate * 60,
