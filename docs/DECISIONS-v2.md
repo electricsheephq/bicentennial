@@ -70,7 +70,7 @@ Spatial memory waits for E1 (DV15).
 
 **DV5. Gates and certification.** Both are on the **penalised action score**: the twin minimum with the asymmetric penalty. Gates and cell admission are computed on its **raw scale**, −100 to +100; the normalised 0-100 scale, with the no-memory floor at 0 and oracle evidence at 100, is for display only (DV25).
 - **The cell gate:** g_k = floor_k + ½(ceiling_k − floor_k), in raw points.
-  - It is computed from **the board's own control arms** (no-memory, oracle evidence), run on the pinned reader and harness **before any real system**. The 4-life calibration set is not used.
+  - It is computed from **the board's own control arms** (no-memory, oracle evidence), run on the pinned reader and harness **before any real system** (amended by DV47: in a full-tier run, as arms of every block on the pinned reader with checkpoint-matched probes, with the gates computed after the last block). The 4-life calibration set is not used.
   - SE(g) is printed with every gate, in raw points. Bridge anchors link pack versions.
 - **Cell admission:** a cell is admitted only if the one-sided 95% LCB of (raw ceiling − raw floor) is at least **30 raw points**, and **naive RAG does not CLEAR it** (requirement J's pilot-acceptance test, applied per cell). A cell that naive RAG clears is redesigned.
 - **Certification on Act, per profile** (an intersection-union test with K required cells and margin m_k = a_k − g_k):
@@ -412,25 +412,26 @@ Spatial memory waits for E1 (DV15).
 - **What makes segments valid:**
   - the run lock, verified at every segment start. It holds the route table (every model by name and route) and the account pool; the served identities are recorded beside it at each model's first response, the controls' included;
   - keyed randomness, by (arm, life, branch, session); only run-time draws use the key;
-  - blocks of one life, run by every arm after the controls, starting in published seed order and free to overlap, so each life's contrasts sit in one block;
+  - blocks of one life, run by every arm, the control arms and naive RAG included, starting in published seed order and free to overlap, with a 24-hour start window, so each life's contrasts and its controls sit in one block. The controls stay on the pinned reader and never swap, and each checkpoint's control probes are dispatched when a keyed-random real arm reaches it. The gates and admission are computed after the last block, from the control arms alone, with per-life margins;
   - the seasonal robustness study inside its board's run (the season board's, or at a major release that GA's delta board's), with its work bound and cost term counted on their own;
-  - the served-identity check, and the drift canary (new slot C-16, filled in PREREG-v1) as an early tripwire at block starts and resumes, its threshold from the bar-2 A/A′ pairs at a 1% whole-run false-stop rate, its power reported;
-  - the end-of-run control check, the validity check: the control arms re-run on all the run's lives after the last block, against a joint sign-flip null at the 99th percentile, with the smallest detectable gate change reported;
+  - the served-identity check, and the first-half and second-half gates, each control cell's trend and a swap-route anchor, reported, never tested. Swap-route, write-turn and summariser drift are stated as uncovered;
   - pauses only at session boundaries, with one declared boundary behaviour per system and a hash proof of every agent-visible surface; holds inside sessions are not pauses;
   - attempts only for the failed (arm, life), from its last session-boundary snapshot, after a benchmark-attributed infrastructure failure, with no grafting; the last attempt is scored.
-- **Stops and publication:** a served-identity change, a canary stop or a failed control check ends the run. Only the stopped run restarts, on the same lives, under a new lock, controls first, sharing the stopped run's paid-lane ceiling. A run that ends early, or whose control check fails, is published as diagnostics: it sets no gate and issues no verdict or certificate.
+- **Stops and publication:** a served-identity change ends the run. Only the stopped run restarts, on the same lives, under a new lock, sharing the stopped run's paid-lane ceiling. A run that ends early is published as diagnostics: it sets no gate and issues no verdict or certificate.
 - **Considered and not chosen:**
   - keeping the window: valid, but it leaves the drift gap open and forces a late swap or more capacity;
   - per-system resumable segments without interleaving: valid within a system, but each pair is still confounded by run day;
+  - controls first, with an end-of-run control check and an early canary (this version's first draft): the check compares endpoints, so it misses excursions between them and drift on the swap route. Time-matched controls cost the same single control pass;
+  - route-matched controls through the swap: a coherent estimand, but it turns the pinned-reader gate into a two-model mixture and moves gates and admission by about the size of the decision margins. The gate keeps its meaning, and the swap route gets a report-only anchor;
   - a remote harness, each system hosting its own endpoints: it breaks the seal, the faults, the clones, the clock and the exposure ledger. It fits only the vendor self-run lane in API mode (DESIGN §10).
 - **DV42, re-read.** DV42's 24-hour fit put every request on the Sol lane and left the swap's lane uncounted (the correction posted on lcm-x #1964). Sol stays pinned on DV42's other grounds: write-turn latency (3.1 s against 6.1 s), frontier standing, and the owner's frontier direction. GLM stays the replication family and the swap model. C-2 now pins the swap model's reasoning effort, and its cost and run-time terms are measured at that effort.
-- **Paid lanes:** the paid-lane ceiling is $100 per full-tier run, all systems together, the owner's limit of 2026-10-26 of $100 per test, down from $300 per system. It is checked at every block start, with a spend pause. A plan lane (also called a subscription lane) adds no charge at the margin; any per-token or per-call charge makes a paid lane. Plan lanes have no spend ceiling; their tokens are reported.
+- **Paid lanes:** the paid-lane ceiling is $100 per full-tier run, all systems together, the owner's limit of 2026-10-26 of $100 per test, down from $300 per system. Each paid request is reserved at its largest billable cost before it is sent, and every block start counts the open reservations and the admitted blocks' remainders, with a spend pause. A plan lane (also called a subscription lane) adds no charge at the margin; any per-token or per-call charge makes a paid lane. Plan lanes have no spend ceiling; their tokens are reported.
   - A paid row projected over the ceiling goes to the owner. It moves to a plan lane only where that lane serves the same pinned model at its pinned effort, and cuts apply only if the owner picks them.
   - Embedding spend is a labelled paid row under the owner's standing embedding grant of up to $100 per run, outside the ceiling.
   - The blind panel's third family runs on a plan lane, or as its own capped run at ≤ $100 projected per release.
   - The Image board's vision spend sits outside its $100, within the season's vision budget.
 - **Before the first full-tier run:** spike S9 (pause invisibility, at $0 on public lives, never on LCM-X), with one pinned-lane session resumed after at least 24 h on a spare account. If S9 fails for service-backed systems, they pause only between lives; if the spare-account resume fails, each (arm, life) keeps one account.
-- **Before the pilot:** a code check for keyed randomness and a fully rendered, hashed history set. The canary's threshold is computed from the bar-2 run's control A/A′ pairs and filled in PREREG-v1.
+- **Before the pilot:** a code check for keyed randomness and a fully rendered, hashed history set.
 - **The firewall holds:** every input is a spike measurement of cost, timing or capacity, or a control. No slot is filled from any real system's score.
 
 ## Owner decisions

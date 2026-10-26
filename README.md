@@ -15,7 +15,7 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 
 ## The capability map
 
-A result is a map: **track rows × evaluation profiles**, with a verdict in each cell. A cell reads **CLEAR**, **UNRESOLVED** or **FAIL** against its gate, which sits halfway between the no-memory floor and the oracle-evidence ceiling, measured on the board's own control arms before any real system runs. Gates and cell admission are computed on the raw penalised scale (−100 to +100); the 0-100 scale is for display only.
+A result is a map: **track rows × evaluation profiles**, with a verdict in each cell. A cell reads **CLEAR**, **UNRESOLVED** or **FAIL** against its gate, which sits halfway between the no-memory floor and the oracle-evidence ceiling, measured on the board's own control arms, which run in the same blocks as the real systems. Gates and cell admission are computed on the raw penalised scale (−100 to +100); the 0-100 scale is for display only.
 
 The map has three stages. They are reported separately; none gates another, and there is no cumulative "level reached".
 

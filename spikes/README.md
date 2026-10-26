@@ -2,7 +2,7 @@
 
 The spikes de-risk the build before the pilot. They run at $0 on subscription lanes, under `nice`, and they never touch a production agent. The one allowed exception is S8's paid vision fallback, used only if no subscription-lane vision model exists, capped at $10 for the whole spike and reported per call. Each spike lives in its own directory with a `REPORT.md` that gives the claim, the evidence, and what the result does **not** prove.
 
-Spikes measure mechanics, cost, timing and harness overhead. None produces a score for any memory system, and no completion-record value (PREREG-v0.4, slots C-1 to C-16) is taken from any system's score. There is no credits slot: the measured capacity of the model lane per account (slot C-11) is the only lane input to the run-time rule.
+Spikes measure mechanics, cost, timing and harness overhead. None produces a score for any memory system, and no completion-record value (PREREG-v0.4, slots C-1 to C-15) is taken from any system's score. There is no credits slot: the measured capacity of the model lane per account (slot C-11) is the only lane input to the run-time rule.
 
 | Spike | Question | Done when | Status |
 |---|---|---|---|
