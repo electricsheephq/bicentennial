@@ -507,5 +507,35 @@ class Soak(Base):
             soak_sol.payloads(self.source(d)[0], kinds=("write_turn", "probe"))
 
 
+class RateBound(unittest.TestCase):
+    def test_request_counts_and_rate_verdict(self):
+        import analyse_sol as an
+        up = lambda k, ok=True: {"kind": k, "ok": ok, "t_ms": 1000}
+        led = [{"type": "request", "role": "replay_main", "subrole": "cursor", "upstream": [up("write_turn", False),
+                                                                                           up("write_turn")]},
+               {"type": "request", "role": "replay_main", "subrole": "cursor", "upstream": [up("write_turn")]},
+               {"type": "request", "role": "summariser", "upstream": [up("summariser")]},
+               {"type": "request", "role": "aux", "upstream": [up("aux"), up("aux")]},
+               {"type": "request", "role": "probe_main", "subrole": "cursor", "upstream": [up("probe")] * 3}]
+        rows = [{"phase": "life", "session": "1"}, {"phase": "probe", "session": "1"}]
+        inputs = {"turn_ex_comp_s": 10, "upstream_turn_s": 6, "summariser_s": 90, "session_fixed_s": 29,
+                  "comp_per_sprint": 2, "probe_turn_s": 30, "probe_upstream_s": 20, "probe_fixed_s": 26,
+                  "aux_per_session_s": 5, "plain_turn_s": 2}
+        q, ri = an.requests(rows, led, inputs)
+        self.assertEqual((q["write_per_turn"], q["compaction_per_compaction"], q["aux_per_session"],
+                          q["probe_per_probe_turn"], q["scripted_per_turn"]), (1.5, 1.0, 1.0, 3.0, 0.0))
+        pr = an.projection(ri, C=1, L=48)  # S = 200, 5 turns, 80 compactions, b = 150 probes doubled by controls
+        R, P = 1000 * 1.5 + 80 * 1.0 + 200 * 1.0, 150 * (3.0 + 1.0) * 2
+        self.assertAlmostEqual(pr["R_lane_h"] * 3600, R)
+        self.assertAlmostEqual(pr["P_lane_h"] * 3600, P)
+        rows = an.rate_grid(an.grid(inputs, 0.2, Cs=(24,)), ri)
+        cell = next(r for r in rows if (r["L"], r["cuts"], r["latency_x"], r["cadence"]) == (48, "none", 1.0, "every turn"))
+        b = cell["board"]
+        self.assertEqual(b["N_req"], round(60 * (R * 1.5 + 2 * P)))  # (L + L_keep) lives, f = 0.5
+        one, two = b["rate"].values()
+        self.assertEqual((one["rate_h"], two["rate_h"]), (round(b["N_req"] / 180 / 60, 1), round(b["N_req"] / 360 / 60, 1)))
+        self.assertEqual(one["fits"], max(b["lane_h"], one["rate_h"]) <= 24)
+
+
 if __name__ == "__main__":
     unittest.main()
