@@ -180,6 +180,41 @@ class Login(Base):
             d.login.token()
         self.assertEqual(calls, ["rt-fake-0"])
 
+    def test_any_exception_after_rotation_is_latched_by_class_only(self):
+        p, calls, real = store(self.tmp, exp_in=60), [], json.dumps
+        login = sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=lambda u, f: (calls.append(
+            f["refresh_token"]), (200, {"access_token": jwt(3600, 1), "refresh_token": "rt-fake-1"}))[1])
+
+        def dumps(obj, *a, **kw):  # an allocation failure while the rotated store is serialised
+            if isinstance(obj, dict) and "tokens" in obj:
+                raise MemoryError("rt-fake-1 would be in a message")
+            return real(obj, *a, **kw)
+        with mock.patch.object(sd.json, "dumps", side_effect=dumps):
+            for _ in range(2):
+                with self.assertRaisesRegex(sd.Stop, "^login_error:MemoryError$"):
+                    login.token()
+        self.assertEqual((calls, login.dead), (["rt-fake-0"], "login_error:MemoryError"))
+        self.assertEqual(json.loads(login.sentinel.read_text())["reason"], "login_error:MemoryError")
+
+    def test_a_login_stop_is_persisted_for_the_next_process(self):
+        p, calls = store(self.tmp, exp_in=60), []
+        post = lambda u, f: (calls.append(f["refresh_token"]), (401, {}))[1]
+        with self.assertRaisesRegex(sd.Stop, "token_endpoint_401"):
+            sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=post).token()
+        sentinel = p.with_name("auth.json.stopped")
+        saved = json.loads(sentinel.read_text())
+        self.assertEqual((sorted(saved), saved["reason"], stat.S_IMODE(sentinel.stat().st_mode)),
+                         (["reason", "t"], "token_endpoint_401", 0o600))
+        self.assertTrue(saved["t"].endswith("Z"))
+        self.assertNotIn("rt-fake", sentinel.read_text())
+        second = sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=post)  # a new process, same store
+        with self.assertRaisesRegex(sd.Stop, "^login_latched:token_endpoint_401$"):
+            second.token()
+        store(self.tmp, exp_in=3600)  # even with a fresh access token: no use until the owner clears it
+        with self.assertRaises(sd.Stop):
+            sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=post).token()
+        self.assertEqual(calls, ["rt-fake-0"])
+
 
 class Wire(Base):
     def test_header_rebuild_and_no_secret_anywhere(self):
@@ -239,6 +274,11 @@ class Wire(Base):
         for eol in (b"\r\n", b"\r"):
             self.assertEqual(sd.parse_sse(lf.replace(b"\n", eol)), sd.parse_sse(lf))
 
+    def test_a_raw_line_separator_inside_a_json_string(self):
+        ev = {"type": "response.output_item.done", "item": dict(CALL, arguments='{"content": "a\u2028b\u2029c\x85d"}')}
+        raw = f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()
+        self.assertEqual(sd.parse_sse(raw), [ev])
+
     def test_sse_auth_error_in_an_http_200_is_never_replayed(self):
         class Resp:  # an in-memory upstream stream: no socket
             status, headers = 200, {}
@@ -254,24 +294,75 @@ class Wire(Base):
 
             def __exit__(self, *a):
                 return False
+        words = "Unauthorized: invalid token, token expired, access denied, invalid_api_key 401 403"
+        model_text = [{"type": "response.output_text.delta", "delta": words},  # model output: never searched
+                      {"type": "response.function_call_arguments.delta", "delta": words},
+                      {"type": "response.output_item.done", "item": dict(CALL, arguments=json.dumps({"content": words}))},
+                      {"type": "response.completed", "response": {"status": "completed", "output": [dict(MSG, content=[
+                          {"type": "output_text", "text": words}])]}}]
         cases = [({"type": "error", "code": "invalid_api_key", "message": "Incorrect API key provided"}, True),
                  ({"type": "error", "error": {"code": "token_expired", "message": "Provided token is expired"}}, True),
                  ({"type": "error", "status": 403, "message": "Forbidden"}, True),
                  ({"type": "response.failed", "response": {"status": "failed", "error": {
                      "code": "invalid_api_key", "message": "Your authentication token is invalid"}}}, True),
-                 ({"type": "error", "code": "server_error", "message": "An error occurred"}, False)]
+                 ({"type": "error", "message": "Unauthorized"}, True),  # message only, as Hermes reads it
+                 ({"type": "error", "message": "Your authentication token is invalid"}, True),
+                 ({"type": "error", "error": {"message": "Unauthorized"}}, True),
+                 ({"type": "error", "code": "gateway_auth_failed", "message": "Access denied"}, True),
+                 ({"type": "error", "code": "invalid_request_error", "message": "Failed to extract accountid from token"},
+                  True),
+                 ({"type": "response.failed", "response": {"status": "failed", "error": {
+                     "code": "unknown_error", "message": "Invalid token: access denied"}}}, True),
+                 ({"type": "response.in_progress", "error": {"message": "Token revoked"}}, True),  # any truthy error
+                 ({"type": "error", "detail": "Failed to extract accountid from token"}, True),
+                 ({"type": "error", "code": "server_error", "message": "An error occurred"}, False),
+                 ({"type": "error", "code": "server_is_overloaded", "message": "Our servers are overloaded"}, False),
+                 ({"type": "response.failed", "response": {"status": "failed", "error": {
+                     "code": "server_is_overloaded", "message": "Unauthorized retries are overloaded"}}}, False),
+                 ({"type": "error", "code": "insufficient_quota", "message": "You exceeded your current quota"}, False),
+                 (model_text, False)]
         for ev, auth in cases:
             self.tmp = Path(tempfile.mkdtemp())
             d, n = self.make(), []
-            raw = f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n".encode()
+            raw = b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in (
+                ev if isinstance(ev, list) else [ev]))
             d.urlopen = lambda req, timeout, n=n, raw=raw: (n.append(1), Resp(raw))[1]
-            code, out, rec = d.handle(AUX, {})
+            with mock.patch.object(sd.time, "sleep"):
+                code, out, rec = d.handle(AUX, {})
             self.assertEqual((rec["upstream"][0]["category"] == "auth_sse", d.stopped), (auth, auth), ev)
+            self.assertEqual((self.tmp / "auth.json.stopped").exists(), auth)  # a later process refuses too
             if auth:
                 self.assertEqual((code, json.loads(out), d.stop_reason), (503, sd.NEUTRAL_503, "upstream_sse_auth"))
                 self.assertNotRegex(out.decode().lower(), r"api key|token|auth|401|403|forbidden")
                 d.handle(AUX, {})  # stopped: no further upstream call
                 self.assertEqual(len(n), 1)
+        self.assertEqual((code, out), (200, raw))  # model text: forwarded byte for byte
+
+    def test_an_incomplete_response_is_classified_without_its_output_text(self):
+        d = self.make(write_turns=False)
+        inc = {"type": "response.incomplete", "response": {"id": "r1", "status": "incomplete", "incomplete_details": {
+            "reason": "max_output_tokens"}, "output": [dict(MSG, content=[{"type": "output_text", "text":
+                                                               "they hit their quota and the billing limit"}])]}}
+        Upstream.script = [(200, f"event: {inc['type']}\ndata: {json.dumps(inc)}\n\n".encode())]
+        up = d.upstream(AUX, "aux", {})
+        self.assertEqual((up["ok"], up["category"], d.quota_streak, d.stopped), (False, "other", 0, False))
+
+    def test_a_refusal_echoing_identity_headers_persists_no_name_or_value(self):
+        d = self.make()
+        echo = json.dumps({"error": {"type": "invalid_request_error", "code": "missing_header", "param": "Authorization",
+                                     "message": f"Missing Authorization or ChatGPT-Account-ID header (account {ACCT}, "
+                                                f"X-OpenAI-Internal-Codex-Residency: {RES})"}}).encode()
+        Upstream.script = [(400, echo), (200, sse(MSG, echo=RES))]
+        title = dict(AUX, input=[{"type": "message", "role": "user", "content": "x"}])
+        self.assertEqual([self.http(d, "POST", sd.MOUNT + "/responses", title)[0] for _ in range(2)], [400, 200])
+        real = json.loads((self.tmp / "auth.json").read_text())["tokens"]["access_token"]
+        self.assertEqual(self.records("request")[0]["upstream"][0]["error_obj"]["param"], "redacted-header-name")
+        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, RES, USER)]
+        files = [f for f in (self.tmp / "ledger").rglob("*") if f.is_file()]
+        self.assertGreater(len(files), 3)
+        for f in files:
+            data = zstd.decompress(f.read_bytes()) if f.suffix == ".zst" else f.read_bytes()
+            self.assertFalse([n for n in needles if n in data] or sd.IDENTITY_NAME_RE.findall(data.decode()), f.name)
 
 
 class Roles(Base):
@@ -398,6 +489,8 @@ class Serving(Base):
         Upstream.script = [(401, b'{"error": {"message": "expired"}}')]
         code, out, rec = d2.handle(aux, {})
         self.assertEqual((code, d2.stop_reason, len(rec["upstream"])), (503, "upstream_401", 1))
+        with self.assertRaisesRegex(sd.Stop, "^login_latched:upstream_401$"):  # the next process refuses too
+            sd.Login(self.tmp / "auth.json", "http://127.0.0.1:9/never", "client-fake", post=self.no_post).token()
 
 
 class Ramp(Base):
