@@ -9,6 +9,7 @@ every probe/checkpoint; exceptions fail that check and do not abort the suite.
 
 from .adapters.nomemory import NoMemory
 from .adapters.oracle_evidence import OracleEvidence
+from .contract import shape
 
 CHECKS = ("reset_empty", "duplicate_id_idempotent", "citations_are_event_ids",
           "checkpoint_restore", "maintain_lossless", "tool_grouping", "forget_removes",
@@ -23,7 +24,11 @@ def _event(i, text, kind="message", **extra):
 
 def _query(adapter, text, ids=()):
     assert adapter.settle(5) is True
-    return adapter.query(dict(task_id="probe", prompt=text, oracle_evidence=list(ids)), 100)
+    result = adapter.query(dict(task_id="probe", prompt=text, oracle_evidence=list(ids)), 100)
+    # Every probe also checks the answer's shape: a float or extra field fails the check it is in.
+    shape(result, dict(output=str, citations=list, confidence_milli=int))
+    assert all(type(c) is str for c in result["citations"]) and 0 <= result["confidence_milli"] <= 1000
+    return result
 
 
 def _checkpoint(adapter):
@@ -90,6 +95,7 @@ def _check(name, a, factory):
             assert _query(a, word)["citations"] == [newer[0]]
     elif name == "settle_returns":
         assert a.settle(5) is True
+        shape(a.stats(), dict(tokens=int, latency_ms=int))  # Bytes are measured externally only.
 
 
 def run(adapter_factory) -> dict[str, bool]:
