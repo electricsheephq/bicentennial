@@ -1,0 +1,150 @@
+{
+ "result_id": "bicentennial-s6c-soak2",
+ "claim_class": "advisory capacity evidence (two accounts, one time of day); no memory-system score",
+ "commit": "c420eec5395ceea401c682aef565cadd173fdc46",
+ "run": "s6c-soak2",
+ "utc_start": "2026-10-26T17:35:55Z",
+ "utc_end": "2026-10-26T17:46:47Z",
+ "lane": "Sol (gpt-6.1-sol, effort medium, every call at the pinned effort)",
+ "accounts": 2,
+ "config": {
+  "rate_per_min": 180,
+  "burst": 10,
+  "inflight": 24,
+  "duration_s": 600,
+  "directors": 2,
+  "source": "r7c-write payloads (60 write turns, 2 compactions)",
+  "note": "one director per account, started together; each holds its account login under the holder lock of #12"
+ },
+ "results": {
+  "per_account": {
+   "a": {
+    "account": "the bench Sol login",
+    "run": "s6c-soak2-a",
+    "send_window": {
+     "admission_s": 600,
+     "last_send_s": 602.348,
+     "sent_before_600_s": 1809,
+     "sent_after_600_s": 8,
+     "wall_s": 651.07,
+     "drain_s": 48.72
+    },
+    "sent": 1817,
+    "ok": 1817,
+    "http_429": 0,
+    "in_stream_overloads": 0,
+    "other_failures": [],
+    "max_requests_any_60s_window_sliding": 189,
+    "requests_per_min_p50": 180.0,
+    "ok_per_min_over_wall": 167.4,
+    "latency_ok_s": {
+     "p50_s": 3.096,
+     "p90_s": 5.314,
+     "p95_s": 6.948,
+     "mean_s": 5.17
+    },
+    "stops": 0,
+    "ledger": {
+     "records": 1819,
+     "chain_breaks": 0,
+     "upstream_attempts": 1817,
+     "holder_lock_records": 1
+    },
+    "quota": {
+     "weekly_free_before": 99,
+     "weekly_free_after": 99,
+     "session_free_before": 99,
+     "session_free_after": 99
+    }
+   },
+   "b": {
+    "account": "leased spare account (lease 1)",
+    "run": "s6c-soak2-b",
+    "send_window": {
+     "admission_s": 600,
+     "last_send_s": 602.339,
+     "sent_before_600_s": 1809,
+     "sent_after_600_s": 8,
+     "wall_s": 652.88,
+     "drain_s": 50.54
+    },
+    "sent": 1817,
+    "ok": 1816,
+    "http_429": 0,
+    "in_stream_overloads": 0,
+    "other_failures": [
+     {
+      "status": 504,
+      "category": "server",
+      "count": 1
+     }
+    ],
+    "max_requests_any_60s_window_sliding": 189,
+    "requests_per_min_p50": 180.0,
+    "ok_per_min_over_wall": 166.9,
+    "latency_ok_s": {
+     "p50_s": 3.2135,
+     "p90_s": 5.69,
+     "p95_s": 7.576,
+     "mean_s": 5.33
+    },
+    "stops": 0,
+    "ledger": {
+     "records": 1819,
+     "chain_breaks": 0,
+     "upstream_attempts": 1817,
+     "holder_lock_records": 1
+    },
+    "quota": {
+     "weekly_free_before": 100,
+     "weekly_free_after": 100,
+     "session_free_before": 100,
+     "session_free_after": 100
+    }
+   }
+  },
+  "aggregate": {
+   "requests_per_min_p50": 360.0,
+   "sum_of_account_medians": 360.0,
+   "sent": 3634,
+   "ok": 3633,
+   "http_429": 0
+  },
+  "window_method": "send time = t_start_s + pace_wait_ms / 1000 (soak_sol.py:152); half-open 60 s windows; the median over windows on a 0.1 s grid inside the send window; the maximum over windows anchored at every send (soak 1 method)"
+ },
+ "pass_bar": {
+  "no_429_each_account": true,
+  "window_le_190_each_account": true,
+  "aggregate_paced_rate_ge_340": true,
+  "no_stop": true,
+  "ledgers_reconcile": true
+ },
+ "spend_usd": 0,
+ "machine": {
+  "busy_marker": "10 at start and end, glm false",
+  "load_start": [
+   2.69677734375,
+   4.00830078125,
+   5.8046875
+  ],
+  "load_end": [
+   2.58154296875,
+   3.7412109375,
+   4.98779296875
+  ]
+ },
+ "does_not_prove": [
+  "other times of day or quota windows",
+  "sustained rate beyond 10 minutes, or more than two accounts",
+  "that a full board fits its run-time rule on two accounts (S6 measures that)",
+  "probe cost at scale",
+  "any memory system's quality"
+ ],
+ "files": {
+  "a/soak.json": "0437360aca33d6839ef1c642574db42002e39d3ae768583d927da9b3eb8babf0",
+  "a/ledger/summary.json": "c3f3ba5702970845486d15014bc7d019af6eca4327baab74c9f33bd6e8e616e0",
+  "b/soak.json": "3ed8a93d9807593ce8352792802088f8cf73a2b979442f0b056496568e58c182",
+  "b/ledger/summary.json": "fb19b5f1a0e0769c07ad8d3c076896ec136ac0fb2a0d422de9ffe6384a24e4e7"
+ },
+ "verdict": "PASS"
+}
