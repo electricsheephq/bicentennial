@@ -108,6 +108,27 @@ def output(obj, wire):
     return [dict(id=tc["id"], **tc["function"]) for tc in msg.get("tool_calls", [])], [msg.get("content") or ""]
 
 
+def reasoning(obj, wire):
+    """Textual reasoning a stored response carries: Responses reasoning items and deltas, chat reasoning fields."""
+    if wire == "responses":
+        found = []
+        for block in obj["sse"].replace("\r\n", "\n").replace("\r", "\n").split("\n\n"):
+            data = "\n".join(line[5:].lstrip() for line in block.splitlines() if line.startswith("data:"))
+            if not data or data == "[DONE]":
+                continue
+            e = json.loads(data)
+            if e.get("type") in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
+                found.append(str(e.get("delta", "")))
+            item = e.get("item") or {}
+            if e.get("type") == "response.output_item.done" and item.get("type") == "reasoning":
+                found += [str(part.get("text", "")) for key in ("summary", "content") for part in item.get(key) or []
+                          if isinstance(part, dict)]
+        return [t for t in found if t]
+    msgs = [c["choices"][0]["delta"] for c in obj["__sse__"] if c.get("choices")] if "__sse__" in obj else [
+        obj["choices"][0]["message"]]
+    return [str(m[k]) for m in msgs for k in ("reasoning_content", "reasoning") if m.get(k)]
+
+
 def conversation(body, wire):
     if wire == "chat":
         return list(strings([m.get("content", "") for m in body.get("messages", [])]))
@@ -277,7 +298,8 @@ def audit(rows, blobs, life, stores, wire):
             want = expected(body, wire)
             verdicts = []
             served, served_texts = output(blobs[r["resp"]], wire)
-            if r.get("served") == "write_tool_calls" and any(served_texts):  # the harness gets the calls, no text
+            if r.get("served") == "write_tool_calls" and (any(served_texts) or reasoning(blobs[r["resp"]], wire)):
+                # the harness gets the calls only: no reply or reasoning text
                 a5["served_write_text"].append(seq)
             following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
                               rr.get("cursor") == cursor and results(bb, wire)), None)
@@ -322,10 +344,13 @@ def audit(rows, blobs, life, stores, wire):
                             continue
                         a3["non_write_attempts"] += 1
                         # reachability counts only calls and results new relative to the triggering request
-                        prior = {c for c, _ in calls_in(body, wire)} | results(body, wire).keys()
+                        prior_calls, prior_results = {c for c, _ in calls_in(body, wire)}, results(body, wire).keys()
                         new_calls = calls_in(following[1], wire) - calls_in(body, wire) if following else set()
-                        later = {i for rr, bb in requests if rr["seq"] > seq
-                                 for i in {c for c, _ in calls_in(bb, wire)} | results(bb, wire).keys()} - prior
+                        later = set()  # calls and results are new against their own kind: an old call, new result is new
+                        for rr, bb in requests:
+                            if rr["seq"] > seq:
+                                later |= {c for c, _ in calls_in(bb, wire)} - prior_calls
+                                later |= results(bb, wire).keys() - prior_results
                         blocked = (not any(c["name"] == tc["name"] for c in served) and tc["id"] not in later
                                    and not any(i == tc["id"] or n == tc["name"] for i, n in new_calls))
                         a3["non_write_blocked"] += blocked

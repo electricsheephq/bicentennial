@@ -245,6 +245,49 @@ class Readback(unittest.TestCase):
                     a3 = self.audit(data, wire)["A3"]
                     self.assertEqual((a3["non_write_attempts"], a3["non_write_blocked"], a3["failures"]), (1, 1, []))
 
+    def test_inherited_call_with_a_new_result(self):
+        for wire in rb.MODELS:
+            for where in (1, 2):  # the new result in the following request, or only in a later one
+                with self.subTest(wire=wire, where=where):
+                    data = fixture(wire)
+                    rows, blobs, _, _ = data
+                    if wire == "chat":
+                        old = {"role": "assistant", "content": "", "tool_calls": [{"id": "review-term", "type": "function",
+                               "function": {"name": "terminal", "arguments": "{}"}}]}
+                        new = {"role": "tool", "tool_call_id": "review-term", "content": "{}"}
+                    else:
+                        old = {"type": "function_call", "call_id": "review-term", "name": "terminal", "arguments": "{}"}
+                        new = {"type": "function_call_output", "call_id": "review-term", "output": "{}"}
+                    key = "messages" if wire == "chat" else "input"
+                    for row in rows:
+                        blobs[row["req"]][key].insert(1, copy.deepcopy(old))
+                    blobs[rows[0]["upstream"][0]["req"]][key].insert(1, copy.deepcopy(old))
+                    blobs[rows[where]["req"]][key].insert(2, new)
+                    up = blobs[rows[0]["upstream"][0]["resp"]]
+                    if wire == "chat":
+                        up["choices"][0]["message"]["tool_calls"].append(
+                            {"id": "review-term", "function": {"name": "terminal", "arguments": "{}"}})
+                    else:
+                        up["sse"] += "data: " + json.dumps({"type": "response.output_item.done", "item": old}) + "\n\n"
+                    a3 = self.audit(data, wire)["A3"]
+                    self.assertEqual((a3["non_write_attempts"], a3["non_write_blocked"]), (1, 0))
+                    self.assertIn({"record": 1, "kind": "non_write_reached_harness", "call": "review-term"}, a3["failures"])
+
+    def test_reasoning_served_beside_write_calls(self):
+        for wire in rb.MODELS:
+            for text, flagged in (("discarded draft", [1]), ("", [])):
+                with self.subTest(wire=wire, text=text):
+                    data = fixture(wire)
+                    rows, blobs, _, _ = data
+                    served = blobs[rows[0]["resp"]]
+                    if wire == "chat":
+                        served["choices"][0]["message"]["reasoning_content"] = text
+                    else:
+                        item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": text}] if text else []}
+                        served["sse"] = served["sse"].replace("data: [DONE]", "data: " + json.dumps(
+                            {"type": "response.output_item.done", "item": item}) + "\n\ndata: [DONE]")
+                    self.assertEqual(self.audit(data, wire)["A5"]["served_write_text"], flagged)
+
     def test_text_served_beside_write_calls(self):
         for wire in rb.MODELS:
             with self.subTest(wire=wire):
