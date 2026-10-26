@@ -1,6 +1,6 @@
 """Single-fault reference-store controls, isolated by fresh conformance fixtures."""
 
-from .reference_store import ReferenceStore
+from .reference_store import ReferenceStore, tokens
 
 
 class wipe_on_restart(ReferenceStore):
@@ -28,3 +28,17 @@ class forget_ignored(ReferenceStore):
 class stale_wins(ReferenceStore):
     def tie(self, event):
         return -event["t_sim"], event["event_id"]
+
+
+class forget_cached_output(ReferenceStore):
+    """Erases the stored event but answers from an in-memory copy, uncited."""
+
+    def forget(self, selector):
+        self.cached = [e["text"] for i, e in self.events.items() if i in selector["event_ids"]]
+        super().forget(selector)
+
+    def query(self, task, now):
+        result = super().query(task, now)
+        words = set(tokens(task["prompt"]))
+        leaked = [text for text in getattr(self, "cached", ()) if words & set(tokens(text))]
+        return dict(result, output=leaked[0]) if leaked and not result["citations"] else result

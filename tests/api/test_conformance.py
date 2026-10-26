@@ -9,6 +9,7 @@ import pytest
 from bicentennial.api import Adapter
 from bicentennial.api.adapters.bm25 import BM25, log_fixed
 from bicentennial.api.adapters.mutants import (
+    forget_cached_output,
     forget_ignored,
     orphan_tool_result,
     stale_wins,
@@ -21,11 +22,12 @@ from bicentennial.api.adapters.reference_store import ReferenceStore
 from bicentennial.api.conformance import CHECKS, EXEMPTIONS, run
 
 ADAPTERS = (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,
-            truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins)
+            truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
+            forget_cached_output)
 FAILURES = {wipe_on_restart: "checkpoint_restore",
             truncate_after_compaction: "maintain_lossless",
             orphan_tool_result: "tool_grouping", forget_ignored: "forget_removes",
-            stale_wins: "supersession_current"}
+            stale_wins: "supersession_current", forget_cached_output: "forget_removes"}
 
 
 def event(i, text, t_sim=None, kind="message", **extra):
@@ -104,12 +106,14 @@ from bicentennial.api.adapters.bm25 import BM25
 from bicentennial.api.adapters.nomemory import NoMemory
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.api.adapters.mutants import (
-    wipe_on_restart, truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins)
+    wipe_on_restart, truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
+    forget_cached_output)
 from bicentennial.api.conformance import run
 from bicentennial.canon import canon
 rows = {}
 for factory in (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,
-                truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins):
+                truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
+                forget_cached_output):
     a = factory()
     for i, text in enumerate(('quartz old', 'quartz new', 'topaz')):
         a.ingest(dict(event_id=str(i), t_sim=i, kind='message', actor='fixture', text=text))
@@ -123,6 +127,30 @@ print(canon(rows).decode())
                               check=True, timeout=10).stdout for _ in range(2)]
     assert outputs[0] == outputs[1]
     assert set(json.loads(outputs[0])) == {factory.__name__ for factory in ADAPTERS}
+
+
+def test_optimized_python_keeps_every_check():
+    script = """
+from bicentennial.api.adapters import mutants
+from bicentennial.api.adapters.reference_store import ReferenceStore
+from bicentennial.api.conformance import run
+assert False, "python -O must strip this line"
+"""
+    probe = """
+import json
+from bicentennial.api.adapters import mutants
+from bicentennial.api.adapters.reference_store import ReferenceStore
+from bicentennial.api.conformance import run
+names = ("ReferenceStore", "wipe_on_restart", "truncate_after_compaction",
+         "orphan_tool_result", "forget_ignored", "stale_wins", "forget_cached_output")
+factories = [ReferenceStore] + [getattr(mutants, name) for name in names[1:]]
+print(json.dumps({f.__name__: sorted(c for c, ok in run(f).items() if not ok) for f in factories}))
+"""
+    subprocess.run([sys.executable, "-O", "-c", script], check=True, timeout=10)  # -O is active
+    rows = json.loads(subprocess.run([sys.executable, "-O", "-c", probe], capture_output=True,
+                                     check=True, timeout=20).stdout)
+    assert rows == {factory.__name__: sorted({FAILURES[factory]} if factory in FAILURES else ())
+                    for factory in (ReferenceStore, *FAILURES)}
 
 
 @pytest.mark.parametrize("factory", (ReferenceStore, BM25))
