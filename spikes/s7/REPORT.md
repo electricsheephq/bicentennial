@@ -153,3 +153,9 @@ round's channel and absence checks.
 - Any memory-system quality: nothing is scored.
 - A live write execution, general remove/refusal coverage, or behaviour on any
   other system. These are offline observations from two recorded runs.
+- That the checker is a general auditor. A4 matches expected text as a substring
+  of the store and the snapshot, not as an entry, so a patch applied twice could
+  pass. An entry-level replay of every applied call reproduces both recorded
+  final stores exactly (r6: 10 memory entries and 1 user entry; r7c: 1 memory
+  entry), so the recorded results stand. Entry-level checks for other runs are
+  #24.
