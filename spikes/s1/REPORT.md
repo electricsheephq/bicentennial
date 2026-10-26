@@ -68,7 +68,7 @@
 - **Egress.** No capture of record reached a non-loopback endpoint. A first Codex capture with the default feature set connected to a public code-hosting address on 3 of 8 runs. It made no model call and used no login. The capture of record turns off Codex's plugin, app and tool-suggestion features, and no such connection recurred. To identify that address, the lane also ran `strings` once on the installed Codex binary. No file-open audit was captured, so the claim that no configuration, auth or session file was read rests on the lane's statement, not on a measurement.
 
 ## Shape test
-`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 56 tests, all passing.
+`test_s1.py` is offline, deterministic and stdlib-only beyond pytest, and runs in under 0.1 s: 61 tests, all passing.
 - The fixtures, `fixtures/shapes.json`, are minimized shapes: no harness or life text, only paths, key sets, model aliases, role sequences, marker names, lengths and hashes. A test asserts that no fixture string can hold text.
 - Every recorded request must classify to its expected role. Where a source records the harness's own compaction count, the classified compactions must equal it.
 - Unseen shapes must be `unknown`: an unscripted main turn, the scripted turn with no tools, an unissued call id, an unknown wire, an unknown GET, and fresh Responses and Anthropic shapes.
