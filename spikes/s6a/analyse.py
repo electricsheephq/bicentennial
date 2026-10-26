@@ -15,6 +15,7 @@ import itertools
 import json
 import math
 import statistics as st
+import sys
 from pathlib import Path
 
 import life as life_mod
@@ -73,7 +74,8 @@ def run_measures(rows, led, summ) -> dict:
         k = f"{r.get('role')}/{r.get('subrole')}"
         roles[k] = roles.get(k, 0) + 1
     return {
-        "roles": roles, "unknown": sum(1 for r in reqs if r.get("role") == "unknown"),
+        "roles": roles, "unknown": sum(1 for r in reqs if r.get("role") == "unknown"), "complete": not (summ.get("director") or {}).get("write_failures") and {
+            (r["phase"], r["session"]) for r in rows} == {(r["phase"], r["session"]) for r in rows if r["what"] == "session_total"},
         "egress_records": sum(1 for r in led if r.get("type") == "egress"),
         "egress_non_loopback_sockets": summ.get("egress_non_loopback", []), "egress_samples": summ.get("egress_samples"),
         "session_total_s": stats(sec(rows, "session_total")), "session_fixed_s": stats(fixed),
@@ -207,6 +209,8 @@ def main():
         runs["write"]["probe_from"] = a.probes
         runs["write"]["probe"] = runs["probes"]["probe"]
     sc = runs["scripted"]
+    if not (sc["complete"] and runs["write"]["complete"]):
+        sys.exit("a primary run has an unfinished session or a failed write turn; not projecting")
     for r, pm in par.items():  # parallel roots: the same scripted life, two at once, against the single run
         pm["vs_single"] = {k: round(pm[k]["mean"] / sc[k]["mean"], 3) for k in ("session_total_s", "turn_s", "open_s")}
         pm["vs_single"]["turn_p50"] = round(pm["turn_s"]["p50"] / sc["turn_s"]["p50"], 3)
