@@ -253,3 +253,5 @@ on exceptions, and ledger attempt reconciliation includes refresh, soak and ramp
 waits up to 2 s for woken pace waiters to release their reservations, so the budget equals the ledger.
 The >=10 minute paced soak with no 429 is **pending**, to be run by the orchestrator before the pilot;
 this offline implementation does not confirm the sustainable rate.
+
+The live director holds `holder.lock` for its process lifetime and records only lease presence in the ledger. Refresh links a durable `refresh_in_flight` sentinel after the budget check; durable rotated-store write-back clears only that reason, while credential refusals replace it under the login lock. Store, sentinel and home-local `director-pin.json` writes sync the file and parent folder. The account and user pin stays beside the store; `--scan --run RUN` refuses a missing run pin, a changed lease or a changed account before learning needles. These are offline implementation guarantees, not new measured run results.

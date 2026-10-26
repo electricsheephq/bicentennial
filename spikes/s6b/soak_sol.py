@@ -29,7 +29,7 @@ from types import SimpleNamespace
 
 from compression import zstd
 from ramp_sol import KEEP, QUOTA_HDRS
-from sol_director import EFFORT, MODEL, Director, marker_state
+from sol_director import EFFORT, MODEL, Director, Stop, marker_state
 
 HERE = Path(__file__).resolve().parent
 KINDS = ("write_turn", "summariser")  # the summariser kind is the compaction request
@@ -218,9 +218,12 @@ def main():
     while marker_state().get("exit") == 11:  # exit 11: no new load on the machine
         time.sleep(60)
     out.mkdir(parents=True, exist_ok=True)
-    d = Director(SimpleNamespace(budget_file=a.budget_file, budget_cap=a.budget_cap, mode="live", run=a.run,
-                                 ledger_dir=str(out / "ledger"), life=str(HERE.parent / "s6a" / "micro_life.json"),
-                                 model=MODEL, write_turns=False, rate_per_min=a.rate_per_min, burst=a.burst, timeout=a.timeout, chars_per_token=4.0))
+    try:
+        d = Director(SimpleNamespace(budget_file=a.budget_file, budget_cap=a.budget_cap, mode="live", run=a.run,
+                                     ledger_dir=str(out / "ledger"), life=str(HERE.parent / "s6a" / "micro_life.json"),
+                                     model=MODEL, write_turns=False, rate_per_min=a.rate_per_min, burst=a.burst, timeout=a.timeout, chars_per_token=4.0))
+    except Stop as e:
+        sys.exit("home_busy: another process holds this login home" if str(e) == "home_busy" else str(e))
     res = soak(d, pays, a.inflight, a.duration, pl["ceiling"], a.pause) | {"plan": pl, "source": Path(a.source).name}
     d.summary()
     (out / "soak.json").write_text(json.dumps(res, indent=1))

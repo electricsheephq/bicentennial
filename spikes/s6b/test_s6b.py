@@ -1,6 +1,7 @@
 """Offline tests for the S6b director (fake tokens, a loopback fake upstream). Run: python3.14 -m unittest test_s6b"""
 
 import base64
+import contextlib
 import http.client
 import io
 import json
@@ -1375,12 +1376,15 @@ class Failures(Base):
 
         def dumps(obj, *a, **kw):
             if isinstance(obj, dict) and "reason" in obj:
-                seen.append(p.with_name("auth.json.stopped").exists())  # while the content is serialised
+                sentinel = p.with_name("auth.json.stopped")
+                seen.append(sentinel.exists())  # while the content is serialised
+                if sentinel.exists():
+                    self.assertIsInstance(json.loads(sentinel.read_text()), dict)
             return real(obj, *a, **kw)
         login = sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=lambda u, f: (401, {}))
         with mock.patch.object(sd.json, "dumps", side_effect=dumps), self.assertRaises(sd.Stop):
             login.token()
-        self.assertEqual(seen, [False])
+        self.assertEqual(seen, [False, True])
         self.assertEqual((json.loads(login.sentinel.read_text())["reason"], stat.S_IMODE(login.sentinel.stat().st_mode)),
                          ("token_endpoint_401", 0o600))
         self.assertEqual(sorted(x.name for x in self.tmp.iterdir()), ["auth.json", "auth.json.lock", "auth.json.stopped"])
@@ -1398,10 +1402,10 @@ class Failures(Base):
         Upstream.script = [(401, b'{"error": {"message": "expired"}}')]
         with mock.patch.object(sd.json, "dumps", side_effect=dumps):
             for _ in range(2):  # the in-process latch holds
-                with self.assertRaisesRegex(sd.Stop, "^token_endpoint_401$"):
+                with self.assertRaisesRegex(sd.Stop, "^refresh_sentinel_failed$"):
                     login.token()
             code = d.handle(AUX, {})[0]
-        self.assertEqual((calls, code, d.login.dead, d.stop_reason), ([1], 503, "upstream_401", "upstream_401"))
+        self.assertEqual((calls, code, d.login.dead, d.stop_reason), ([], 503, "upstream_401", "upstream_401"))
         self.assertEqual((login.sentinel.exists(), [x["error"] for x in login.log + d.login.log
                                                     if x["type"] == "sentinel_error"]), (False, ["OSError"] * 2))
         with self.assertRaisesRegex(sd.Stop, "^upstream_401$"):
@@ -1512,6 +1516,386 @@ class Round4(Base):
                     "reached run setup")), mock.patch("sys.stderr"), self.assertRaises(SystemExit) as cm:
                 replay.main()
             self.assertEqual(cm.exception.code, 2)
+
+
+class HolderProtocol(unittest.TestCase):
+    """#12: only fake stores, injected wall time and in-memory endpoints."""
+    NOW = 1800000000
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(self._close_holders)
+        self.clock = mock.patch.object(sd.time, "time", return_value=self.NOW)
+        self.clock.start()
+        self.addCleanup(self.clock.stop)
+        self.p = store(self.tmp)
+        self.calls = []
+        self.env = mock.patch.dict(os.environ, {
+            "BICENTENNIAL_SOL_AUTH": str(self.p), "BICENTENNIAL_SOL_TOKEN_URL": "http://127.0.0.1:9/never",
+            "BICENTENNIAL_SOL_CLIENT_ID": "fake-client", "BICENTENNIAL_SOL_BASE_URL": "http://127.0.0.1:9/never"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def _close_holders(self):
+        for path in list(getattr(sd, "HOME_HOLDERS", {})):
+            if path.parent == self.tmp:
+                os.close(sd.HOME_HOLDERS.pop(path))  # tests only: production retains until process exit
+
+    def login(self, **kw):
+        return sd.Login(self.p, "http://127.0.0.1:9/never", "fake-client", post=kw.pop("post", self.post), **kw)
+
+    def post(self, url, fields):
+        self.calls.append(1)
+        return 200, {"access_token": jwt(3600, 1), "refresh_token": "rt-fake-rotated"}
+
+    def args(self):
+        return SimpleNamespace(life=str(LIFE), ledger_dir=str(self.tmp / "ledger"),
+                               budget_file=str(self.tmp / "budget.json"), budget_cap=50, run="fake-run",
+                               model=sd.MODEL, mode="live", write_turns=False, rate_per_min=0)
+
+    def argv(self):
+        a = self.args()
+        return ["sol_director.py", "--port", "0", "--life", a.life, "--ledger-dir", a.ledger_dir,
+                "--budget-file", a.budget_file, "--run", a.run]
+
+    def child(self, script):
+        return subprocess.Popen([sys.executable, "-B", "-c", textwrap.dedent(script), str(self.tmp),
+                                 str(Path(sd.__file__).parent), str(self.NOW)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def held_elsewhere(self):
+        proc = self.child('''
+            import fcntl, os, sys
+            from pathlib import Path
+            fd = os.open(Path(sys.argv[1]) / "holder.lock", os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            print("held", flush=True)
+            sys.stdin.read(1)
+        ''')
+        self.addCleanup(self.finish_child, proc)
+        self.assertEqual(proc.stdout.readline().strip(), "held")
+        return proc
+
+    @staticmethod
+    def finish_child(proc):
+        if proc.poll() is None:
+            proc.terminate()
+        proc.communicate(timeout=5)
+
+    def test_holder_exclusive_and_not_inheritable(self):
+        fd = sd.hold_home(self.p)
+        self.assertFalse(os.get_inheritable(fd))
+        self.assertEqual(stat.S_IMODE((self.tmp / "holder.lock").stat().st_mode), 0o600)
+        with self.assertRaisesRegex(sd.Stop, "^home_busy$"):
+            sd.hold_home(self.p)
+        self.assertEqual(sd.HOME_HOLDERS[(self.tmp / "holder.lock").resolve()], fd)
+
+    def test_busy_constructor_writes_nothing(self):
+        self.held_elsewhere()
+        with mock.patch.object(sd.Login, "token", side_effect=AssertionError("read while busy")), \
+                self.assertRaisesRegex(sd.Stop, "^home_busy$"):
+            sd.Director(self.args())
+        self.assertFalse((self.tmp / "ledger").exists())
+        self.assertFalse((self.tmp / "budget.json").exists())
+        self.assertFalse((self.tmp / "director-pin.json").exists())
+
+    def test_busy_main_exits_cleanly(self):
+        self.held_elsewhere()
+        # If the base misses the holder check, fail without binding a server or running forever.
+        with mock.patch.object(sys, "argv", self.argv()), mock.patch.object(
+                sd, "ThreadingHTTPServer", side_effect=AssertionError("busy home reached server")), \
+                self.assertRaisesRegex(SystemExit, "^home_busy: another process holds this login home$"):
+            sd.main()
+        self.assertFalse((self.tmp / "ledger").exists())
+
+    def test_busy_ramp_and_soak_exit_cleanly(self):
+        import ramp_sol
+        import soak_sol
+        self.held_elsewhere()
+        for module in (ramp_sol, soak_sol):
+            argv = [module.__name__, "--out", str(self.tmp / "out"), "--budget-file", self.args().budget_file]
+            if module is soak_sol:
+                argv += ["--source", str(self.tmp / "source")]
+            with self.subTest(entrypoint=module.__name__), mock.patch.object(sys, "argv", argv), mock.patch.object(
+                    module, "marker_state", return_value={}), mock.patch.object(module, "Director", wraps=sd.Director), \
+                    mock.patch.object(soak_sol, "payloads", return_value=[]), mock.patch.object(
+                        soak_sol, "plan", return_value={"fits": True, "ceiling": 10}), \
+                    mock.patch.object(module, "level" if module is ramp_sol else "soak",
+                                      side_effect=AssertionError("busy home reached run")), mock.patch("sys.stdout"), \
+                    self.assertRaisesRegex(SystemExit, "^home_busy: another process holds this login home$"):
+                module.main()
+        self.assertFalse((self.tmp / "out" / "ledger").exists())
+
+    def test_kill_after_post_before_store_replace_quarantines(self):
+        store(self.tmp, exp_in=60)
+        before = self.p.read_bytes()
+        proc = self.child('''
+            import os, sys
+            from pathlib import Path
+            sys.path.insert(0, sys.argv[2])
+            import sol_director as sd
+            import test_s6b as t
+            sd.time.time = lambda: int(sys.argv[3])
+            p, replace = Path(sys.argv[1]) / "auth.json", sd.os.replace
+            def die(src, dst):
+                if Path(dst) == p:
+                    os._exit(137)
+                return replace(src, dst)
+            sd.os.replace = die
+            sd.Login(p, "fake://token", "fake-client", post=lambda *a: (
+                200, {"access_token": t.jwt(3600, 1), "refresh_token": "rt-fake-next"})).token()
+        ''')
+        _, err = proc.communicate(timeout=5)
+        self.assertEqual(proc.returncode, 137, err)
+        self.assertEqual(self.p.read_bytes(), before)
+        login = self.login()
+        self.assertEqual(json.loads(login.sentinel.read_text())["reason"], "refresh_in_flight")
+        with self.assertRaisesRegex(sd.Stop, "^login_latched:refresh_in_flight$"):
+            login.token()
+        self.assertEqual(self.calls, [])
+
+    def test_successful_refresh_syncs_rotated_store_and_unlinks(self):
+        store(self.tmp, exp_in=60)
+        login, order = self.login(), []
+        real_full, real_folder = sd.full_sync, sd.sync_folder
+        def full(fd):
+            order.append("file")
+            return real_full(fd)
+        def folder(path):
+            order.append("folder")
+            return real_folder(path)
+        with mock.patch.object(sd, "full_sync", side_effect=full), mock.patch.object(sd, "sync_folder", side_effect=folder):
+            token = login.token()
+        self.assertEqual(order, ["file", "folder", "file", "folder", "folder"])
+        self.assertFalse(login.sentinel.exists())
+        self.assertEqual(json.loads(self.p.read_text())["tokens"]["access_token"], token)
+        self.assertEqual(json.loads(self.p.read_text())["tokens"]["refresh_token"], "rt-fake-rotated")
+        self.assertTrue(self.p.read_text().startswith('{\n  "'))
+        self.assertTrue(self.p.read_text().endswith("\n"))
+        self.assertEqual(stat.S_IMODE(self.p.stat().st_mode), 0o600)
+        with mock.patch.object(sd.fcntl, "F_FULLFSYNC", 999, create=True), mock.patch.object(sd.fcntl, "fcntl") as fs:
+            sd.full_sync(123)
+            fs.assert_called_once_with(123, 999)
+        with mock.patch.object(sd, "fcntl", SimpleNamespace()), mock.patch.object(sd.os, "fsync") as fs:
+            sd.full_sync(123)
+            fs.assert_called_once_with(123)
+
+    def test_refused_post_replaces_inflight_and_keeps_first_stop(self):
+        store(self.tmp, exp_in=60)
+        observed = []
+        def refuse(*a):
+            observed.append(json.loads(login.sentinel.read_text())["reason"])
+            return 401, {}
+        login = self.login(post=refuse)
+        with self.assertRaisesRegex(sd.Stop, "^token_endpoint_401$"):
+            login.token()
+        self.assertEqual(observed, ["refresh_in_flight"])
+        login.latch("upstream_403")
+        self.assertEqual(json.loads(login.sentinel.read_text())["reason"], "token_endpoint_401")
+
+    def test_budget_stop_never_writes_sentinel_or_posts(self):
+        store(self.tmp, exp_in=60)
+        login = self.login(on_refresh=lambda: False)
+        with mock.patch.object(sd, "durable_write", wraps=sd.durable_write) as write:
+            for _ in range(2):
+                with self.assertRaisesRegex(sd.Stop, "^refresh_budget$"):
+                    login.token()
+            write.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertFalse(login.sentinel.exists())
+
+    def test_startup_inflight_makes_no_post(self):
+        login = self.login()
+        # Use the same durable writer as refresh, without sending the chain.
+        sd.durable_write(login.sentinel, json.dumps({"reason": "refresh_in_flight", "t": "fake-utc"}))
+        with self.assertRaisesRegex(sd.Stop, "^login_latched:refresh_in_flight$"):
+            login.token()
+        self.assertEqual(self.calls, [])
+
+    def changed_token(self, field, value, exp_in=60):
+        c = sd.jwt_claims(jwt(exp_in))
+        if field == "sub":
+            c[field] = value
+        else:
+            c[sd.AUTH_CLAIM][field] = value
+        part = base64.urlsafe_b64encode(json.dumps(c).encode()).rstrip(b"=").decode()
+        return f"e30.{part}.fake-signature"
+
+    def switch_store(self, field):
+        login = self.login()
+        login.token()
+        raw = json.loads(self.p.read_text())
+        raw["tokens"]["access_token"] = self.changed_token(field, "different-fake-seat")
+        self.p.write_text(json.dumps(raw))
+        for _ in range(2):
+            with self.assertRaisesRegex(sd.Stop, "^account_changed$"):
+                login.token()
+        self.assertEqual(self.calls, [])
+        self.assertFalse(login.sentinel.exists())
+
+    def test_changed_account_before_refresh_makes_no_post(self):
+        self.switch_store("chatgpt_account_id")
+
+    def test_changed_user_before_refresh_makes_no_post(self):
+        self.switch_store("chatgpt_user_id")
+
+    def test_changed_account_after_refresh_is_durable_stop(self):
+        store(self.tmp, exp_in=60)
+        changed = self.changed_token("chatgpt_account_id", "different-fake-account", exp_in=3600)
+        login = self.login(post=lambda *a: (200, {"access_token": changed, "refresh_token": "rt-fake-next"}))
+        with self.assertRaisesRegex(sd.Stop, "^account_changed$"):
+            login.token()
+        self.assertTrue(login.posted)
+        self.assertEqual(json.loads(self.p.read_text())["tokens"]["access_token"], changed)
+        self.assertEqual(json.loads(login.sentinel.read_text())["reason"], "account_changed")
+        with self.assertRaisesRegex(sd.Stop, "^login_latched:account_changed$"):
+            self.login().token()
+        self.assertEqual(self.calls, [])
+
+    def test_pin_hash_and_user_fallbacks(self):
+        import hashlib
+        def token(auth, **claims):
+            part = base64.urlsafe_b64encode(json.dumps({sd.AUTH_CLAIM: auth, **claims}).encode()).rstrip(b"=").decode()
+            return f"e30.{part}.fake"
+        expected = hashlib.sha256(b"bicentennial-pin\0fake-account\0fake-user").hexdigest()
+        for auth, claims in (({"chatgpt_user_id": "fake-user", "user_id": "ignored"}, {"sub": "ignored"}),
+                             ({"user_id": "fake-user"}, {"sub": "ignored"}), ({}, {"sub": "fake-user"})):
+            self.assertTrue(sd.account_pin(token({"chatgpt_account_id": "fake-account", **auth}, **claims)) == expected)
+        self.assertTrue(sd.account_pin(token({})) == hashlib.sha256(b"bicentennial-pin\0\0").hexdigest())
+
+    def test_stop_waits_for_refresh_before_latching(self):
+        login = self.login()
+        d = sd.Director(self.args(), login=login)
+        store(self.tmp, exp_in=60)
+        entered, release, stop_waiting = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+        original = login.lock
+        class ObservedLock:
+            def __enter__(self):
+                if threading.current_thread().name == "stopper":
+                    stop_waiting.set()
+                original.acquire()
+            def __exit__(self, *a):
+                original.release()
+        login.lock = ObservedLock()
+        def post(*a):
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError("refresh not released")
+            return self.post(*a)
+        login.post = post
+        def refresh():
+            try:
+                login.token()
+            except Exception as e:  # noqa: BLE001 - collect thread failures by class
+                errors.append(type(e).__name__)
+        worker = threading.Thread(target=refresh)
+        stopper = threading.Thread(target=lambda: d.stop("upstream_401", login=True), name="stopper")
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            self.assertEqual(json.loads(login.sentinel.read_text())["reason"], "refresh_in_flight")
+            stopper.start()
+            self.assertTrue(stop_waiting.wait(2))
+            self.assertTrue(stopper.is_alive())
+        finally:
+            release.set()
+            worker.join(3)
+            if stopper.ident is not None:
+                stopper.join(3)
+        self.assertFalse(worker.is_alive() or stopper.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(json.loads(login.sentinel.read_text())["reason"], "upstream_401")
+        with self.assertRaisesRegex(sd.Stop, "^login_latched:upstream_401$"):
+            self.login().token()
+
+    def test_env_start_persists_run_pin_preserves_entries_and_hides_identity(self):
+        path = self.tmp / "director-pin.json"
+        path.write_text(json.dumps({"earlier": {"lease_id": None, "pin": "fake-earlier-pin", "t": "earlier"}}))
+        lease = {"version": 1, "lease_id": "fake-lease", "consumer": "fake-consumer", "leased_at": "fake-time"}
+        (self.tmp / "lease.json").write_text(json.dumps(lease))
+        with mock.patch.object(sd, "durable_write", wraps=sd.durable_write) as write:
+            d = sd.Director(self.args())
+        self.assertTrue(any(call.args[0] == path for call in write.call_args_list))
+        pins = json.loads(path.read_text())
+        self.assertEqual(pins["earlier"]["t"], "earlier")
+        entry = pins["fake-run"]
+        self.assertEqual((entry["lease_id"], entry["t"]), ("fake-lease", "2027-01-15T08:00:00Z"))
+        self.assertTrue(entry["pin"] == sd.account_pin(json.loads(self.p.read_text())["tokens"]["access_token"]))
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        records = [json.loads(line) for line in (self.tmp / "ledger" / "ledger.jsonl").read_text().splitlines()]
+        self.assertEqual({k: v for k, v in records[0].items() if k not in ("seq", "prev_hash", "hash")},
+                         {"type": "holder", "lease": True})
+        data = b"".join(f.read_bytes() for f in (self.tmp / "ledger").rglob("*") if f.is_file())
+        for secret in (entry["pin"], "fake-lease", ACCT, USER, str(self.p)):
+            self.assertFalse(secret.encode() in data)
+        self.assertFalse(d.stopped)
+
+    def scan_main(self, expected=None):
+        login = self.login()
+        out = io.StringIO()
+        learning = mock.patch.object(sd.Login, "_learn", side_effect=AssertionError("learned before refusal")) if expected else contextlib.nullcontext()
+        with mock.patch.object(sys, "argv", ["sol_director.py", "--scan", "--run", "fake-run", str(self.tmp / "scan")]), \
+                mock.patch("sys.stdout", out), learning:
+            if expected:
+                with self.assertRaises(SystemExit) as exc:
+                    sd.main()
+                self.assertNotEqual(exc.exception.code, 0)
+            else:
+                sd.main()
+        result = json.loads(out.getvalue())
+        if expected:
+            self.assertEqual(result, {"refused": expected})
+        self.assertEqual(login.secrets, {})
+        return result
+
+    def pin_entry(self):
+        login = self.login()
+        login.token()
+        path = self.tmp / "director-pin.json"
+        path.write_text(json.dumps({"fake-run": {"lease_id": None,
+                                                "pin": sd.account_pin(json.loads(self.p.read_text())["tokens"]["access_token"]),
+                                                "t": "fake-time"}}))
+
+    def test_scan_refuses_no_run_pin_before_learning(self):
+        self.scan_main("no_run_pin")
+
+    def test_scan_refuses_changed_lease_before_learning(self):
+        self.pin_entry()
+        (self.tmp / "lease.json").write_text(json.dumps({"lease_id": "fake-lease-changed"}))
+        self.scan_main("lease_changed")
+
+    def test_scan_refuses_changed_account_before_learning(self):
+        self.pin_entry()
+        raw = json.loads(self.p.read_text())
+        raw["tokens"]["access_token"] = self.changed_token("chatgpt_account_id", "fake-new-account", 3600)
+        self.p.write_text(json.dumps(raw))
+        self.scan_main("account_changed")
+
+    def test_scan_matching_run_and_null_or_unparseable_lease(self):
+        self.pin_entry()
+        target = self.tmp / "scan"
+        target.write_text("synthetic body " + ACCT)
+        for lease in (None, "bad json", json.dumps(["not-an-object"])):
+            if lease is not None:
+                (self.tmp / "lease.json").write_text(lease)
+            result = self.scan_main()
+            self.assertEqual(result["files_scanned"], 1)
+            self.assertEqual(result["hits"].get("tokens.account_id"), 1)
+
+    def test_fresh_home_main_starts_and_takes_holder_without_refresh(self):
+        class Server:
+            def serve_forever(self):
+                pass
+        with mock.patch.object(sys, "argv", self.argv()), mock.patch.object(sd, "ThreadingHTTPServer", return_value=Server()), \
+                mock.patch.object(sd.signal, "signal"), mock.patch("sys.stdout"), \
+                mock.patch.object(sd, "_post_form", side_effect=AssertionError("unexpected POST")):
+            sd.main()
+        self.assertTrue((self.tmp / "holder.lock").exists())
+        self.assertTrue((self.tmp / "director-pin.json").exists())
+        rows = (self.tmp / "ledger" / "ledger.jsonl").read_text().splitlines()
+        self.assertEqual(json.loads(rows[0])["type"], "holder")
+        self.assertFalse(json.loads(rows[0])["lease"])
 
 
 if __name__ == "__main__":
