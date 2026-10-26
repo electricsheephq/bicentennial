@@ -70,9 +70,9 @@ def test_clean_repo_passes(repo):
 
 
 def test_only_tracked_selected_paths_checked(repo):
-    track(repo, "bad.txt", "/home/" + "example/private\n")
+    track(repo, "bad.txt", "/" + "home/example/private\n")
     track(repo, "ok.txt", "Public text.\n")
-    (repo / "untracked.txt").write_text("/home/" + "example/private\n")
+    (repo / "untracked.txt").write_text("/" + "home/example/private\n")
     assert check(repo, "ok.txt").returncode == 0
     subprocess.run(["git", "-C", str(repo), "rm", "--cached", "bad.txt"], check=True)
     assert check(repo).returncode == 0
@@ -99,3 +99,15 @@ def test_deny_list_with_a_byte_order_mark(repo, tmp_path_factory):
     track(repo, "d.txt", "jane doe was here\n")
     result = check(repo, deny_list=deny)
     assert result.returncode == 1 and "d.txt" in result.stdout
+
+
+@pytest.mark.parametrize("text", ["see /" + "Users/example", "C:" + "\\" + "Users" + "\\example\\notes.txt",
+                                  "url file://" + "/" + "home/example/x"])
+def test_path_without_trailing_slash_or_on_windows_rejected(repo, text):
+    track(repo, "bad.txt", text + "\n")
+    assert check(repo, "bad.txt").returncode == 1
+
+
+def test_url_path_segment_is_not_a_local_path(repo):
+    track(repo, "ok.txt", "https://example.org/" + "home/page and https://example.org/" + "Users/list\n")
+    assert check(repo, "ok.txt").returncode == 0

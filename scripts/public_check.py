@@ -6,7 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
-PATHS = re.compile(r"/(?:Users|home)/[^/\s]+/|/(?:Volumes)/[^/\s]+")  # home dirs and mounted volumes
+# home dirs and mounted volumes, not URL paths; Windows home dirs too
+PATHS = re.compile(r"(?<![\w.:-])/(?:Users|home|Volumes)/[^/\s]+|\b[A-Za-z]:\\(?:Users)\\[^\\\s]+")
 GUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 DATA_ROOTS = ("packs/", "corpus/", "schemas/fixtures/")
 
