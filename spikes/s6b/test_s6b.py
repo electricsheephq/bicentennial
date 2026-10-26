@@ -2011,6 +2011,43 @@ class FixRound1(unittest.TestCase):
                         SystemExit, "^home_unusable:FileNotFoundError$"):
                 module.main()
 
+    def test_a5_auth_lock_fdopen_error_is_unchanged(self):
+        store(self.tmp, exp_in=60)
+        with mock.patch.object(sd.os, "fdopen", side_effect=OSError("fake fdopen failure")), \
+                self.assertRaises(OSError) as caught:
+            self.login().token()
+        self.assertNotIsInstance(caught.exception, sd.Stop)
+        self.assertEqual(self.calls, [])
+
+    def test_a5_all_entrypoints_refuse_an_auth_lock_denial_cleanly(self):
+        import ramp_sol
+        import soak_sol
+        real_open = sd.os.open
+
+        def deny(path, *a, **kw):
+            if Path(path).name == self.p.name + ".lock":
+                raise PermissionError(f"fake denial: {path}")
+            return real_open(path, *a, **kw)
+
+        for module in (sd, ramp_sol, soak_sol):
+            argv = self.argv() if module is sd else [module.__name__, "--out", str(self.tmp / "out"),
+                                                     "--budget-file", self.args().budget_file]
+            if module is soak_sol:
+                argv += ["--source", str(self.tmp / "source")]
+            (self.tmp / "holder.lock").touch()
+            with self.subTest(entrypoint=module.__name__), mock.patch.object(sys, "argv", argv), \
+                    mock.patch.dict(os.environ, {"BICENTENNIAL_SOL_AUTH": str(self.p)}), \
+                    mock.patch.object(sd.os, "open", side_effect=deny), \
+                    mock.patch.object(soak_sol, "marker_state", return_value={}), mock.patch.object(
+                        soak_sol, "payloads", return_value=[]), mock.patch.object(
+                            soak_sol, "plan", return_value={"fits": True, "ceiling": 10}), \
+                    mock.patch.object(sd, "ThreadingHTTPServer", side_effect=AssertionError("served while stopped")), \
+                    mock.patch("sys.stdout"), self.assertRaisesRegex(
+                        SystemExit, "^home_unusable:PermissionError$"):
+                module.main()
+            self._close_holders()
+            self.assertEqual(self.calls, [])
+
     @staticmethod
     def encoded_claims(claims):
         part = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()

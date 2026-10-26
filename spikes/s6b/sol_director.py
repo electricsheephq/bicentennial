@@ -261,9 +261,10 @@ class Login:
 
     def _auth_lock(self):
         try:
-            return os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR, 0o600))
+            fd = os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
         except OSError as e:  # the class only: a path-bearing traceback never reaches a log
             raise Stop(f"home_unusable:{type(e).__name__}") from None
+        return os.fdopen(fd)
 
     def token(self) -> str:
         with self.lock, self._auth_lock() as lf:
@@ -555,6 +556,8 @@ class Director:
             if str(e) == "pin_file_unreadable":
                 raise
             self.stop(str(e))
+            if str(e).startswith("home_unusable:"):  # a startup refusal, like home_busy: the entry points exit
+                raise
         self._drain()
         self.ledger.append({"type": "pacing", "run": a.run, "rate_per_min": self.pacer.rate * 60,
                             "burst": self.pacer.burst, "enabled": bool(self.pacer.rate) and a.mode != "stub"})
