@@ -215,3 +215,44 @@ def test_alias_on_an_empty_body_is_unknown(body):
     c = roles.Context(aliases={"summ": roles.alias("compaction")})
     for path in ("/v1/chat/completions", "/v1/responses", "/v1/messages"):
         assert roles.classify({"method": "POST", "path": path, "body": body}, c)[0] == "unknown"
+
+
+# ---- review 2 regressions: the sibling exception holds only inside the latest call message -------------------
+def _older_issued_requests():
+    """The issued call sits only in an older call message; the latest one holds a harness-added sibling."""
+    chat_ = {"method": "POST", "path": "/v1/chat/completions", "body": {"model": "unseen", "tools": TOOLS, "messages": [
+        {"role": "assistant", "tool_calls": [{"id": "issued"}]},
+        {"role": "tool", "tool_call_id": "issued", "content": "older result"},
+        {"role": "user", "content": "another turn"},
+        {"role": "assistant", "tool_calls": [{"id": "sibling"}]},
+        {"role": "tool", "tool_call_id": "issued", "content": "r"}, {"role": "tool", "tool_call_id": "sibling", "content": "r"}]}}
+    out = [{"type": "function_call", "call_id": "issued"}, {"type": "function_call_output", "call_id": "issued"}]
+    resp = {"method": "POST", "path": "/v1/responses", "body": {"model": "unseen", "tools": TOOLS, "input": [
+        *out, {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "another turn"}]},
+        {"type": "function_call", "call_id": "sibling"}, {"type": "function_call_output", "call_id": "issued"},
+        {"type": "function_call_output", "call_id": "sibling"}]}}
+    batch = {"method": "POST", "path": "/v1/responses", "body": {"model": "unseen", "tools": TOOLS, "input": [
+        *out, {"type": "function_call", "call_id": "sibling"}, {"type": "function_call_output", "call_id": "issued"},
+        {"type": "function_call_output", "call_id": "sibling"}]}}  # an older completed batch, contiguous
+    anth = {"method": "POST", "path": "/v1/messages", "body": {"model": "unseen", "tools": TOOLS, "messages": [
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "issued"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "issued"}]},
+        {"role": "user", "content": [{"type": "text", "text": "another turn"}]},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "sibling"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "issued"},
+                                     {"type": "tool_result", "tool_use_id": "sibling"}]}]}}
+    return [chat_, resp, batch, anth]
+
+
+@pytest.mark.parametrize("i", range(4))
+def test_sibling_exception_needs_the_issued_call_in_the_latest_message(i):
+    c = roles.Context(issued={"issued": "probe_main"})
+    assert roles.classify(_older_issued_requests()[i], c)[:2] == ("unknown", "unknown")
+
+
+def test_recorded_harness_splits_still_pass():
+    rows = {(s["source"], r["seq"]): r for s in FIX["sources"] for r in s["rows"]}
+    for key in (("s6a-r6-write", 136), ("s6b-r7c-write", 165)):
+        s = rows[key]["shape"]
+        c = roles.Context(issued={cid: "probe_main" for cid in s["tail_calls"][:1]})
+        assert roles.classify_shape(s, c)[:2] == ("probe_main", "cursor")

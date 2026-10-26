@@ -11,9 +11,9 @@ in two pure steps, so a test can run on minimized shapes that hold no harness te
 
 The rule, in order (DESIGN §6.2, job 6):
   1. cursor       in the main frame (no marker of an auxiliary role): trailing tool results that all answer
-                  call ids the director issued or forwarded, all of one role. An unmatched result fails closed
-                  unless it answers a sibling call in the same call message as an issued id (a harness
-                  split); a matching call alone never counts. Or the last user message carries the scripted
+                  call ids the director issued or forwarded, all of one role, every result answering a call
+                  in the latest call message. An unmatched result passes only as a sibling call in that same
+                  message beside an issued id (a harness split); a matching call alone never counts. Or the last user message carries the scripted
                   turn at the cursor, or the current turn again (a retry), or a harness continuation marker
                   on the current turn, with tools offered
   2. model_alias  a declared auxiliary alias: a per-task base-URL prefix or a model name. A marker may refine
@@ -129,11 +129,14 @@ def _items(wire: str, body: dict) -> tuple[str, tuple[list, list], list[list[str
             else:
                 toks.append("t" if t.endswith("_output") else "c" if t.endswith("_call") else "r" if t == "reasoning"
                             else "x")
-        if items and str(items[-1].get("type", "")).endswith("_output"):
-            for it in reversed(items):
-                if not str(it.get("type", "")).endswith(("_output", "_call")):
-                    break
-                (tail if str(it.get("type")).endswith("_output") else calls).append(it.get("call_id") or "")
+        k = len(items)  # the latest call batch: the outputs at the end, then the calls just before them
+        while k and str(items[k - 1].get("type", "")).endswith("_output"):
+            k -= 1
+        j = k
+        while j and str(items[j - 1].get("type", "")).endswith("_call"):
+            j -= 1
+        tail = [it.get("call_id") or "" for it in items[k:]]
+        calls = [it.get("call_id") or "" for it in items[j:k]]
     elif wire == "anthropic":
         system += _blocks(body.get("system"))
         convo = []
@@ -225,9 +228,10 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
     if mroles <= MAIN_ROLES:  # 1. cursor, in the main frame only
         if s["tail_ids"]:  # the results answered here: matched by their own ids, never by the calls alone
             got = {ctx.issued[cid] for cid in s["tail_ids"] if cid in ctx.issued}
-            # a result with an unissued id passes only as a sibling the harness added to a call message that
-            # also carries an issued id (Hermes splits one forwarded call into two); any other fails closed
-            stray = [cid for cid in s["tail_ids"] if cid not in ctx.issued and cid not in s["tail_calls"]]
+            # every result must answer a call in the latest call message, and at least one an issued id, all of
+            # one role. An unissued result then passes only as a sibling the harness added to that same message
+            # (Hermes splits one forwarded call into two); anything else fails closed
+            stray = [cid for cid in s["tail_ids"] if cid not in s["tail_calls"]]
             if len(got) != 1 or stray:
                 return "unknown", "unknown", {**ev, "reason": "tool result for an unissued call id or mixed roles"}
             return done(got.pop(), "cursor", call_id=next(c for c in s["tail_ids"] if c in ctx.issued))
