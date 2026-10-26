@@ -48,8 +48,9 @@ A3 pairs upstream memory arguments with returned calls in order, checks the
 exact monotonic `bcw` ids used by both recorded directors, and finds tool results
 in the following harness request. Newly appearing unissued result ids fail the
 check. A non-write attempt counts as blocked only when no served call has its
-name, the following request has no result and no new history call with its id
-or name, and no later request carries its id. Both runs attempted only memory
+name, the following request has no new history call with its id or name, and
+no later request carries its id as a call or result that was not already in the
+triggering request. Both runs attempted only memory
 calls, so the blocked and reached-harness paths are exercised by synthetic tests
 rather than by these runs.
 
@@ -113,7 +114,7 @@ already inherited priority again; the effective priority was verified as 10.
 
 | Validation | Observed result |
 |---|---|
-| `python3.14 -m unittest` in S7 | 15 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked and reaching the harness, unissued execution, effect gaps, staged and unparseable results, patch/remove, discard in conversation, tool channels and other fields, and integrity |
+| `python3.14 -m unittest` in S7 | 16 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, discard in conversation, tool channels and other fields, and integrity |
 | `python3.14 -m unittest` in S6a | 9 tests, OK |
 | `python3.14 -m unittest` in S6b | 76 tests, OK; one existing HTTPError resource warning |
 | `python3.14 -m pytest spikes/s1 -q` with installed pytest on `PYTHONPATH`, plugin autoload disabled, scratch basetemp | 97 passed |

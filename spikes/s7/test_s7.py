@@ -217,6 +217,34 @@ class Readback(unittest.TestCase):
                     if where == "served":
                         self.assertIn("call_count", kinds)
 
+    def test_inherited_non_write_history_is_not_a_forwarded_call(self):
+        for wire in rb.MODELS:
+            for with_result in (False, True):
+                with self.subTest(wire=wire, with_result=with_result):
+                    data = fixture(wire)
+                    rows, blobs, _, _ = data
+                    if wire == "chat":
+                        old = [{"role": "assistant", "content": "", "tool_calls": [{"id": "review-term", "type": "function",
+                               "function": {"name": "terminal", "arguments": "{}"}}]}]
+                        old += [{"role": "tool", "tool_call_id": "review-term", "content": "{}"}] * with_result
+                    else:
+                        old = [{"type": "function_call", "call_id": "review-term", "name": "terminal", "arguments": "{}"}]
+                        old += [{"type": "function_call_output", "call_id": "review-term", "output": "{}"}] * with_result
+                    key = "messages" if wire == "chat" else "input"
+                    for row in rows:  # the same older history in the trigger, the forwarded body and every later request
+                        items = blobs[row["req"]][key]
+                        items[1:1] = copy.deepcopy(old)
+                    sent = blobs[rows[0]["upstream"][0]["req"]][key]
+                    sent[1:1] = copy.deepcopy(old)
+                    up = blobs[rows[0]["upstream"][0]["resp"]]
+                    if wire == "chat":
+                        up["choices"][0]["message"]["tool_calls"].append(
+                            {"id": "review-term", "function": {"name": "terminal", "arguments": "{}"}})
+                    else:
+                        up["sse"] += "data: " + json.dumps({"type": "response.output_item.done", "item": old[0]}) + "\n\n"
+                    a3 = self.audit(data, wire)["A3"]
+                    self.assertEqual((a3["non_write_attempts"], a3["non_write_blocked"], a3["failures"]), (1, 1, []))
+
     def test_staged_and_unparseable_results(self):
         def call(result):
             return [{"record": 1, "session": 1, "id": "bcw00001", "result": result,

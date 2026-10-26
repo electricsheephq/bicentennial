@@ -287,12 +287,13 @@ def audit(rows, blobs, life, stores, wire):
                         if tc["name"] == "memory":
                             continue
                         a3["non_write_attempts"] += 1
+                        # reachability counts only calls and results new relative to the triggering request
+                        prior = {c for c, _ in calls_in(body, wire)} | results(body, wire).keys()
                         new_calls = calls_in(following[1], wire) - calls_in(body, wire) if following else set()
                         later = {i for rr, bb in requests if rr["seq"] > seq
-                                 for i in {c for c, _ in calls_in(bb, wire)} | results(bb, wire).keys()}
-                        blocked = (not any(c["name"] == tc["name"] for c in served) and tc["id"] not in new_results
-                                   and not any(i == tc["id"] or n == tc["name"] for i, n in new_calls)
-                                   and tc["id"] not in later)
+                                 for i in {c for c, _ in calls_in(bb, wire)} | results(bb, wire).keys()} - prior
+                        blocked = (not any(c["name"] == tc["name"] for c in served) and tc["id"] not in later
+                                   and not any(i == tc["id"] or n == tc["name"] for i, n in new_calls))
                         a3["non_write_blocked"] += blocked
                         a3["non_write_calls"].append({"record": seq, "attempt": n, "call": tc["id"], "blocked": blocked,
                             "next_request_record": following[0]["seq"] if following else None})
