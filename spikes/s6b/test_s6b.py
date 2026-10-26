@@ -1,14 +1,17 @@
 """Offline tests for the S6b director (fake tokens, a loopback fake upstream). Run: python3.14 -m unittest test_s6b"""
 
 import base64
+import http.client
 import json
 import os
 import socket
 import stat
+import sys
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from compression import zstd
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,6 +46,26 @@ def sse(*items, usage=None, terminal="response.completed", echo=None):
     evs = [{"type": "response.created", "response": {"id": "r1", "safety_identifier": echo}}] * bool(echo) + [{"type": "response.output_item.done", "output_index": i, "item": it} for i, it in enumerate(items)]
     evs.append({"type": terminal, "response": {"id": "r1", "status": "completed", "model": "gpt-6.1-sol",
                                                "usage": usage or {"input_tokens": 7, "output_tokens": 3}}})
+    return b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in evs)
+
+
+class Resp:  # an in-memory upstream stream: no socket
+    status, headers = 200, {}
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def read(self):
+        return self.raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def frames(*evs) -> bytes:
     return b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in evs)
 
 
@@ -280,20 +303,6 @@ class Wire(Base):
         self.assertEqual(sd.parse_sse(raw), [ev])
 
     def test_sse_auth_error_in_an_http_200_is_never_replayed(self):
-        class Resp:  # an in-memory upstream stream: no socket
-            status, headers = 200, {}
-
-            def __init__(self, raw):
-                self.raw = raw
-
-            def read(self):
-                return self.raw
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
         words = "Unauthorized: invalid token, token expired, access denied, invalid_api_key 401 403"
         model_text = [{"type": "response.output_text.delta", "delta": words},  # model output: never searched
                       {"type": "response.function_call_arguments.delta", "delta": words},
@@ -317,23 +326,25 @@ class Wire(Base):
                  ({"type": "error", "detail": "Failed to extract accountid from token"}, True),
                  ({"type": "error", "code": "server_error", "message": "An error occurred"}, False),
                  ({"type": "error", "code": "server_is_overloaded", "message": "Our servers are overloaded"}, False),
-                 ({"type": "response.failed", "response": {"status": "failed", "error": {
-                     "code": "server_is_overloaded", "message": "Unauthorized retries are overloaded"}}}, False),
+                 ({"type": "response.failed", "response": {"status": "failed", "error": {  # auth words: stop
+                     "code": "server_is_overloaded", "message": "Unauthorized retries are overloaded"}}}, True),
+                 ({"type": "error", "message": "Unauthorized: invalid token for credit endpoint"}, True),
+                 ({"type": "error", "status": 403, "error": {"code": "server_is_overloaded"}}, True),
                  ({"type": "error", "code": "insufficient_quota", "message": "You exceeded your current quota"}, False),
                  (model_text, False)]
         for ev, auth in cases:
             self.tmp = Path(tempfile.mkdtemp())
             d, n = self.make(), []
-            raw = b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in (
-                ev if isinstance(ev, list) else [ev]))
+            raw = frames(*(ev if isinstance(ev, list) else [ev]))
             d.urlopen = lambda req, timeout, n=n, raw=raw: (n.append(1), Resp(raw))[1]
             with mock.patch.object(sd.time, "sleep"):
                 code, out, rec = d.handle(AUX, {})
             self.assertEqual((rec["upstream"][0]["category"] == "auth_sse", d.stopped), (auth, auth), ev)
             self.assertEqual((self.tmp / "auth.json.stopped").exists(), auth)  # a later process refuses too
+            if ev is not model_text:  # every error object: a neutral 503, never the stream
+                self.assertEqual((code, json.loads(out)), (503, sd.NEUTRAL_503), ev)
             if auth:
-                self.assertEqual((code, json.loads(out), d.stop_reason), (503, sd.NEUTRAL_503, "upstream_sse_auth"))
-                self.assertNotRegex(out.decode().lower(), r"api key|token|auth|401|403|forbidden")
+                self.assertEqual((d.stop_reason, len(n)), ("upstream_sse_auth", 1))
                 d.handle(AUX, {})  # stopped: no further upstream call
                 self.assertEqual(len(n), 1)
         self.assertEqual((code, out), (200, raw))  # model text: forwarded byte for byte
@@ -345,24 +356,24 @@ class Wire(Base):
                                                                "they hit their quota and the billing limit"}])]}}
         Upstream.script = [(200, f"event: {inc['type']}\ndata: {json.dumps(inc)}\n\n".encode())]
         up = d.upstream(AUX, "aux", {})
-        self.assertEqual((up["ok"], up["category"], d.quota_streak, d.stopped), (False, "other", 0, False))
+        self.assertEqual((up["ok"], up["forward"], up["category"], d.stopped), (False, True, "other", False))
 
-    def test_a_refusal_echoing_identity_headers_persists_no_name_or_value(self):
+    def test_a_refusal_echoing_identity_headers_persists_no_value(self):
         d = self.make()
         echo = json.dumps({"error": {"type": "invalid_request_error", "code": "missing_header", "param": "Authorization",
                                      "message": f"Missing Authorization or ChatGPT-Account-ID header (account {ACCT}, "
                                                 f"X-OpenAI-Internal-Codex-Residency: {RES})"}}).encode()
         Upstream.script = [(400, echo), (200, sse(MSG, echo=RES))]
         title = dict(AUX, input=[{"type": "message", "role": "user", "content": "x"}])
-        self.assertEqual([self.http(d, "POST", sd.MOUNT + "/responses", title)[0] for _ in range(2)], [400, 200])
+        self.assertEqual([self.http(d, "POST", sd.MOUNT + "/responses", title)[0] for _ in range(2)], [503, 200])
         real = json.loads((self.tmp / "auth.json").read_text())["tokens"]["access_token"]
-        self.assertEqual(self.records("request")[0]["upstream"][0]["error_obj"]["param"], "redacted-header-name")
-        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, RES, USER)]
+        self.assertEqual(self.records("request")[0]["upstream"][0]["error_obj"]["param"], "Authorization")  # a name
+        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, USER)]  # residency is not a needle
         files = [f for f in (self.tmp / "ledger").rglob("*") if f.is_file()]
         self.assertGreater(len(files), 3)
         for f in files:
             data = zstd.decompress(f.read_bytes()) if f.suffix == ".zst" else f.read_bytes()
-            self.assertFalse([n for n in needles if n in data] or sd.IDENTITY_NAME_RE.findall(data.decode()), f.name)
+            self.assertFalse([n for n in needles if n in data], f.name)
 
 
 class Roles(Base):
@@ -478,11 +489,14 @@ class Serving(Base):
             Upstream.script = [(429, rate)] * 4  # still refused after the backoff: a neutral 503, never a 429
             code, out, rec = d.handle(aux, {})
             self.assertEqual((code, len(rec["upstream"]), rec["served"]), (503, 4, "neutral_503"))
-            for i in range(3):  # usage limit: no retry; the third in a row stops the director
+            Upstream.script = [(200, sse(MSG))]
+            d.handle(aux, {})  # a success ends the streak
+            for i in range(3):  # usage limit: no retry; the third unrecovered failure in a row stops the director
                 Upstream.script = [(429, quota)]
                 code, out, rec = d.handle(aux, {})
                 self.assertEqual((code, rec["upstream"][0]["category"], d.stopped), (503, "quota", i == 2))
                 self.assertNotRegex(out.decode().lower(), r"quota|usage|limit|rate|429|billing")
+        self.assertEqual(d.stop_reason, "upstream_failures_3_in_a_row")
         self.assertEqual(rec["upstream"][0]["body_shape"]["error"], {"type": "usage_limit_reached", "message": "str",
                                                                      "resets_in_seconds": "int"})
         d2 = self.make()  # a 401 stops at once: no retry, no refresh, no second credential
@@ -642,6 +656,235 @@ class RateBound(unittest.TestCase):
         edge = an.rate_grid([{"L": 48, "cuts": "none", "cadence": "every turn", "board": {"lane_h": 24.0, "lane_fits": False},
                               "robustness": {"lane_h": 1.0, "lane_fits": True}}], ri)[0]["board"]  # 24.04 h shown as 24.0
         self.assertFalse(any(v["fits"] for v in edge["rate"].values()))
+
+
+class Failures(Base):
+    """Round 3: only a clean completed or incomplete stream is replayed; every other result is a neutral 503."""
+    def run_raw(self, *raws, n=None, **kw):
+        d, n = self.make(write_turns=False, **kw), [] if n is None else n
+        script = list(raws)
+        d.urlopen = lambda req, timeout: (n.append(1), Resp(script.pop(0) if script else frames(
+            {"type": "response.completed", "response": {"status": "completed"}})))[1]
+        with mock.patch.object(sd.time, "sleep"):
+            code, out, rec = d.handle(AUX, {})
+        return d, code, out, rec, n
+
+    def test_round3_shapes_get_a_neutral_503_and_no_replay(self):
+        bare = {"type": "response.failed", "response": {"status": "failed", "error": None}}
+        generic = {"type": "response.failed", "response": {"status": "failed", "error": {"code": "server_error"}}}
+        usage = {"type": "error", "code": "usage_limit_reached", "message": "The usage limit has been reached"}
+        rate = {"type": "error", "code": "rate_limit_exceeded", "message": "Rate limit reached for requests"}
+        failed_usage = {"type": "response.failed", "response": {"status": "failed", "error": {
+            "code": "usage_limit_reached", "message": "The usage limit has been reached"}}}
+        cases = [((usage, bare), "quota", False), ((rate, bare), "rate", False), ((rate, generic), "rate", False),
+                 ((failed_usage, {"type": "error", "code": "server_error"}), "quota", False),
+                 (({"type": "error", "message": "Unauthorized: invalid token for credit endpoint"},), "auth_sse", True),
+                 (({"type": "error", "status": 403, "error": {"code": "server_is_overloaded", "message":
+                    "Our servers are overloaded"}},), "auth_sse", True)]
+        for evs, cat, stop in cases:
+            self.tmp = Path(tempfile.mkdtemp())
+            raw = frames(*evs)
+            d, code, out, rec, n = self.run_raw(*[raw] * 4)
+            self.assertEqual((code, json.loads(out), rec["served"]), (503, sd.NEUTRAL_503, "neutral_503"), evs)
+            self.assertEqual((rec["upstream"][-1]["category"], d.stopped), (cat, stop), evs)
+            self.assertEqual(rec["upstream"][0]["frame_types"], [e["type"] for e in evs])
+            self.assertEqual(len(n), 4 if cat == "rate" else 1)  # rate is retried with backoff; quota and auth not
+
+    def test_incomplete_max_output_tokens_is_forwarded_unchanged(self):
+        inc = frames({"type": "response.output_text.delta", "delta": "half an answer about quota"},
+                     {"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {
+                         "reason": "max_output_tokens"}}})
+        d, code, out, rec, n = self.run_raw(inc)
+        self.assertEqual((code, out, rec["served"], d.failure_streak, len(n)), (200, inc, "forward", 0, 1))
+
+    def test_output_text_naming_auth_quota_or_rate_is_forwarded_unchanged(self):
+        words = "Unauthorized 401: invalid token; the usage limit and quota were exceeded; rate limit, overloaded"
+        raw = frames({"type": "response.output_text.delta", "delta": words},
+                     {"type": "response.output_item.done", "item": dict(MSG, content=[{"type": "output_text",
+                                                                                      "text": words}])},
+                     {"type": "response.completed", "response": {"status": "completed"}})
+        d, code, out, rec, _ = self.run_raw(raw)
+        self.assertEqual((code, out, d.stopped, rec["upstream"][0]["category"]), (200, raw, False, None))
+
+    def test_breaker_stops_after_three_unrecovered_failures(self):
+        d = self.make(write_turns=False)
+        ok = frames({"type": "response.completed", "response": {"status": "completed"}})
+        over = frames({"type": "error", "code": "server_is_overloaded", "message": "Our servers are overloaded"})
+        other = frames({"type": "response.failed", "response": {"status": "failed", "error": None}})
+        quota = frames({"type": "error", "code": "insufficient_quota", "message": "You exceeded your current quota"})
+        plan = [other, quota, over, ok, other, quota, over, over, over, over]  # an overload recovered, then 3 unrecovered
+        d.urlopen = lambda req, timeout: Resp(plan.pop(0))
+        with mock.patch.object(sd.time, "sleep"):
+            codes = [d.handle(AUX, {})[0] for _ in range(4)]
+            self.assertEqual((codes, d.failure_streak, d.stopped), ([503, 503, 200, 503], 1, False))
+            self.assertEqual(d.handle(AUX, {})[0], 503)
+            self.assertFalse(d.stopped)
+            self.assertEqual((d.handle(AUX, {})[0], d.stopped, d.stop_reason),
+                             (503, True, "upstream_failures_3_in_a_row"))
+        self.assertEqual(plan, [])
+        self.assertFalse((self.tmp / "auth.json.stopped").exists())  # not a login stop
+
+    def test_write_turn_naming_identity_headers_persists_byte_identical(self):
+        d = self.make()
+        text = "Discuss Authorization and preauthorization, then save the note."
+        reply = sse(dict(CALL, arguments=json.dumps({"content": "Authorization: preauthorization noted"})))
+        Upstream.script = [(200, reply)]
+        body = self.turn(d)
+        body["input"].insert(0, {"type": "message", "role": "assistant", "content": text})
+        code, _ = self.http(d, "POST", sd.MOUNT + "/responses", body)
+        rec = self.records("request")[0]
+
+        def load(h):
+            return zstd.decompress((self.tmp / "ledger" / "blobs" / h[:2] / f"{h}.json.zst").read_bytes())
+        sent_body, sent_wire = Upstream.seen[0][1], json.loads(load(rec["upstream"][0]["req"]))
+        self.assertEqual((code, rec["served"], rec["write_turn_readback"]), (200, "write_tool_calls", True))
+        self.assertEqual(sent_wire, sent_body)  # exactly the forwarded request
+        self.assertEqual(json.loads(load(rec["req"])), body)  # exactly the harness request
+        self.assertTrue(sd.readback(json.loads(load(rec["req"])), sent_wire, sd.MODEL))  # the persisted round trip
+        self.assertEqual(json.loads(load(rec["upstream"][0]["resp"]))["sse"].encode(), reply)  # the bytes received
+
+    def test_sentinel_is_published_atomically(self):
+        p, real, seen = store(self.tmp, exp_in=60), json.dumps, []
+
+        def dumps(obj, *a, **kw):
+            if isinstance(obj, dict) and "reason" in obj:
+                seen.append(p.with_name("auth.json.stopped").exists())  # while the content is serialised
+            return real(obj, *a, **kw)
+        login = sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=lambda u, f: (401, {}))
+        with mock.patch.object(sd.json, "dumps", side_effect=dumps), self.assertRaises(sd.Stop):
+            login.token()
+        self.assertEqual(seen, [False])
+        self.assertEqual((json.loads(login.sentinel.read_text())["reason"], stat.S_IMODE(login.sentinel.stat().st_mode)),
+                         ("token_endpoint_401", 0o600))
+        self.assertEqual(sorted(x.name for x in self.tmp.iterdir()), ["auth.json", "auth.json.lock", "auth.json.stopped"])
+
+    def test_a_failed_sentinel_write_still_stops(self):
+        calls, real = [], json.dumps
+
+        def dumps(obj, *a, **kw):
+            if isinstance(obj, dict) and "reason" in obj:
+                raise OSError(28, "No space left on device")
+            return real(obj, *a, **kw)
+        login = sd.Login(store(Path(tempfile.mkdtemp()), exp_in=60), "http://127.0.0.1:9/never", "client-fake",
+                         post=lambda u, f: (calls.append(1), (401, {}))[1])
+        d = self.make()  # the director path: an upstream 401 whose sentinel cannot be written
+        Upstream.script = [(401, b'{"error": {"message": "expired"}}')]
+        with mock.patch.object(sd.json, "dumps", side_effect=dumps):
+            for _ in range(2):  # the in-process latch holds
+                with self.assertRaisesRegex(sd.Stop, "^token_endpoint_401$"):
+                    login.token()
+            code = d.handle(AUX, {})[0]
+        self.assertEqual((calls, code, d.login.dead, d.stop_reason), ([1], 503, "upstream_401", "upstream_401"))
+        self.assertEqual((login.sentinel.exists(), [x["error"] for x in login.log + d.login.log
+                                                    if x["type"] == "sentinel_error"]), (False, ["OSError"] * 2))
+        with self.assertRaisesRegex(sd.Stop, "^upstream_401$"):
+            d.login.token()
+
+    def test_refresh_budget_latches_in_process_only(self):
+        p, calls = store(self.tmp, exp_in=60), []
+        login = sd.Login(p, "http://127.0.0.1:9/never", "client-fake", post=lambda u, f: (calls.append(1), (401, {}))[1],
+                         on_refresh=lambda: False)
+        for _ in range(2):
+            with self.assertRaisesRegex(sd.Stop, "^refresh_budget$"):
+                login.token()
+        self.assertEqual((calls, login.sentinel.exists()), ([], False))  # the refresh token was never sent
+
+
+class Round4(Base):
+    """Round 4: the edge shapes of the round-3 failure path."""
+    COMPLETED = frames({"type": "response.completed", "response": {"status": "completed"}})
+
+    def test_an_unreadable_refusal_body_keeps_its_status_and_stops_on_auth(self):
+        class Body:
+            def __init__(self, close_fails):
+                self.close_fails = close_fails
+
+            def read(self, *a):
+                raise http.client.IncompleteRead(b"")
+
+            def close(self):
+                if self.close_fails:  # a failing cleanup must not replace the record
+                    raise OSError(9, "Bad file descriptor")
+        for code, close_fails in ((401, False), (403, False), (429, False), (503, False), (401, True), (503, True)):
+            self.tmp = Path(tempfile.mkdtemp())
+            d, n = self.make(write_turns=False), []
+
+            def refuse(req, timeout, code=code, n=n, close_fails=close_fails):
+                n.append(1)
+                raise urllib.error.HTTPError("http://upstream.invalid", code, "refused", {}, Body(close_fails))
+            d.urlopen = refuse
+            with mock.patch.object(sd.time, "sleep"):
+                status, out, rec = d.handle(AUX, {})
+                d.handle(AUX, {})
+            self.assertEqual((status, json.loads(out)), (503, sd.NEUTRAL_503), code)
+            u = rec["upstream"][0]
+            self.assertEqual((u["status"], u["body_read_error"], "t_ms" in u), (code, "IncompleteRead", True))
+            auth = code in (401, 403)
+            self.assertEqual((d.stopped, (self.tmp / "auth.json.stopped").exists()), (auth, auth))
+            self.assertEqual((len(n), len(rec["upstream"])), (1, 1) if auth else (8, 4))  # 429/503: retried
+
+    def test_a_non_object_json_frame_is_unparsed_not_a_crash(self):
+        for frame in (b"data: 123\n\n", b"data: [1]\n\n", b'data: "x"\n\n'):
+            d = self.make(write_turns=False)
+            d.urlopen = lambda req, timeout, f=frame: Resp(f + self.COMPLETED)
+            up = d.upstream(AUX, "aux", {})
+            self.assertEqual((up["ok"], up["forward"], up["n_unparsed"]), (True, False, 1), frame)
+
+    def test_an_unparsed_frame_is_served_but_never_replayed(self):
+        for raw in (b"data: {broken}\n\n" + self.COMPLETED, self.COMPLETED + b"data: {trunc"):
+            d, n = self.make(write_turns=False), []
+            d.urlopen = lambda req, timeout, raw=raw, n=n: (n.append(1), Resp(raw))[1]
+            d.failure_streak = 2
+            code, out, rec = d.handle(AUX, {})
+            u = rec["upstream"][0]
+            self.assertEqual((code, json.loads(out), u["ok"], u["n_unparsed"] >= 1), (503, sd.NEUTRAL_503, True, True))
+            self.assertEqual((d.failure_streak, d.stopped, len(n)), (2, False, 1))  # held, not counted
+            self.assertTrue(d.upstream(AUX, "aux", {})["ok"])
+        d = self.make(write_turns=False)
+        d.urlopen = lambda req, timeout: Resp(self.COMPLETED)
+        self.assertEqual(d.handle(AUX, {})[:2], (200, self.COMPLETED))  # a clean control: byte for byte
+
+    def test_a_long_first_error_does_not_hide_a_later_rate_limit(self):
+        raw = frames({"type": "error", "message": "x" * 2200},
+                     {"type": "error", "code": "rate_limit_exceeded", "message": "Rate limit reached"})
+        d, n = self.make(write_turns=False), []
+        d.urlopen = lambda req, timeout: (n.append(1), Resp(raw))[1]
+        with mock.patch.object(sd.time, "sleep"):
+            code, _, rec = d.handle(AUX, {})
+        self.assertEqual((code, rec["upstream"][0]["category"], len(n)), (503, "rate", 4))
+
+    def test_completed_under_another_2xx_is_not_served(self):
+        for status in (201, 202, 206):
+            d = self.make(write_turns=False)
+            resp = Resp(self.COMPLETED)
+            resp.status = status
+            d.urlopen = lambda req, timeout, r=resp: r
+            code, out, rec = d.handle(AUX, {})
+            self.assertEqual((code, json.loads(out), rec["upstream"][0]["ok"]), (503, sd.NEUTRAL_503, False), status)
+
+    def test_error_scope_is_top_level_and_response_level_only(self):
+        echo = frames({"type": "response.completed", "response": {"status": "completed", "tools": [{
+            "type": "function", "name": "report", "parameters": {"type": "object", "properties": {
+                "error": {"type": "string", "description": "the error to report"}}}}]}})
+        d = self.make(write_turns=False)
+        d.urlopen = lambda req, timeout: Resp(echo)
+        self.assertEqual(d.handle(AUX, {})[:2], (200, echo))  # an echoed tool schema is not an error object
+
+    def test_scripted_usage_counts_instructions(self):
+        d = self.make(mode="stub")
+        body = self.turn(d)
+        base = d._usage(body, [MSG])["input_tokens"]
+        more = d._usage(dict(body, instructions="i" * 40000), [MSG])["input_tokens"]
+        self.assertAlmostEqual(more - base, 10000, delta=10)
+
+    def test_replay_rejects_flags_the_sol_director_lacks(self):
+        import replay
+        for extra in (["--measure-overhead"], ["--lane-rewrite", "x"]):
+            argv = ["replay.py", "--run", "r", "--port", "1", "--lane", "sol", *extra]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(replay, "env", side_effect=AssertionError(
+                    "reached run setup")), mock.patch("sys.stderr"), self.assertRaises(SystemExit) as cm:
+                replay.main()
+            self.assertEqual(cm.exception.code, 2)
 
 
 if __name__ == "__main__":
