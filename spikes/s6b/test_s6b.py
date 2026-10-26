@@ -2198,8 +2198,8 @@ class FixRound1(unittest.TestCase):
         import fcntl
         HolderProtocol.pin_entry(self)
         (self.tmp / "scan").write_text("synthetic body " + ACCT)
-        lf = open(self.p.with_name(self.p.name + ".lock"), "a+")
-        self.addCleanup(lf.close)
+        lf = os.open(self.p.with_name(self.p.name + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+        self.addCleanup(os.close, lf)
         fcntl.flock(lf, fcntl.LOCK_EX)  # a refresher holds the auth lock: scan refuses after its bounded wait
         with mock.patch.object(sd, "SNAPSHOT_WAIT_S", 0.3, create=True):  # create: the test also runs on the base
             self.scan_main("auth_lock_busy")
