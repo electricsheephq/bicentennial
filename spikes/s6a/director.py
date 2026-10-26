@@ -20,6 +20,7 @@ import os
 import re
 import select
 import socket
+import string
 import subprocess
 import sys
 import threading
@@ -151,10 +152,13 @@ def refusal_category(status: int, text: str) -> str:
 
 
 def redact(text: str) -> str:
-    text = text[:4096]
+    cut, text = len(text) > 4096, text[:4096]
     text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "<email>", text)
     text = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", text, flags=re.I)
-    return re.sub(r"\d{6,}", "<n>", text)[:600]
+    text = re.sub(r"\d{6,}", "<n>", text)
+    if cut and len(text) <= 600:  # a token split at the cut would escape the patterns: drop it
+        text = text.rstrip(string.ascii_letters + string.digits + "_.+@-")
+    return text[:600]
 
 
 class Director:

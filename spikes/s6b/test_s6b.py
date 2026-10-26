@@ -481,7 +481,7 @@ class Fix1(Base):
 
     def test_refresh_network_failure_reconciles(self):
         row = self.refresh_shape(urllib.error.URLError("private host"))
-        self.assertEqual((row["status"], row["error"]), (-1, "Stop"))
+        self.assertEqual((row["status"], row["error"]), (-1, "refresh_error:URLError"))
         self.assertNotIn("private host", json.dumps(row))
 
     def test_refresh_non_json_response_reconciles(self):
@@ -502,6 +502,83 @@ class Fix1(Base):
             result = json.loads((self.tmp / "ledger" / "summary.json").read_text())
             self.assertEqual(result["breaker_stops"], count)
             self.assertEqual(result["stop_reason"], reason)
+
+    def test_sigterm_with_four_pace_waiters_keeps_budget_equal_to_ledger(self):
+        import verify
+        # R2-F1: every woken waiter must finish its release before the interpreter exits. Each child release is
+        # slowed by 50 ms so that a missing grace wait leaves the file truncated or the reservations leaked.
+        script = textwrap.dedent('''
+            import sys, threading, time
+            from pathlib import Path
+            sys.path.insert(0, sys.argv[2])
+            import sol_director as sd
+            import test_s6b as t
+            root = Path(sys.argv[1])
+            real_director, real_server, real_flock = sd.Director, sd.ThreadingHTTPServer, sd.fcntl.flock
+            def slow_flock(f, op):
+                real_flock(f, op)
+                if threading.current_thread() is not threading.main_thread():
+                    time.sleep(0.05)
+            sd.fcntl.flock = slow_flock
+            def director(a):
+                login = sd.Login(t.store(root), "http://127.0.0.1:9/never", "client-fake")
+                d = real_director(a, login=login, urlopen=lambda *a, **kw: t.Resp(t.sse(t.MSG)))
+                def sleep(delay):
+                    with open(root / "waiting", "a") as f:
+                        f.write(f"{threading.get_ident()}\\n")
+                    d.stop_event.wait(delay)
+                d.pacer.sleep = sleep
+                return d
+            def server(*a):
+                srv = real_server(*a)
+                (root / "port").write_text(str(srv.server_address[1]))
+                return srv
+            sd.Director, sd.ThreadingHTTPServer = director, server
+            sys.argv = ["sol_director.py", "--port", "0", "--life", str(t.LIFE), "--ledger-dir", str(root / "ledger"),
+                        "--budget-file", str(root / "b.json"), "--run", "t", "--rate-per-min", "1", "--burst", "1"]
+            sd.os.environ["BICENTENNIAL_SOL_AUTH"] = str(root / "auth.json")
+            sd.os.environ["BICENTENNIAL_SOL_BASE_URL"] = "http://127.0.0.1:9/never"
+            sd.main()
+        ''')
+        proc = subprocess.Popen([sys.executable, "-B", "-c", script, str(self.tmp), str(Path(__file__).resolve().parent)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def waiting() -> int:
+            path = self.tmp / "waiting"
+            return len(set(path.read_text().split())) if path.exists() else 0
+
+        def post():
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{sd.MOUNT}/responses", data=json.dumps(AUX).encode(),
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    response.read()
+            except OSError:
+                pass
+        try:
+            deadline = time.monotonic() + 5
+            while not (self.tmp / "port").exists() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            port = int((self.tmp / "port").read_text())
+            post()
+            waiters = [threading.Thread(target=post, daemon=True) for _ in range(4)]
+            for w in waiters:
+                w.start()
+            deadline = time.monotonic() + 5
+            while waiting() < 4 and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(waiting(), 4)
+            proc.terminate()
+            _, err = proc.communicate(timeout=10)
+            for w in waiters:
+                w.join(timeout=2)
+            self.assertEqual(proc.returncode, 0, err)
+            budget = json.loads((self.tmp / "b.json").read_text())  # parses: never left truncated
+            self.assertEqual((budget["by_run"]["t"], verify.check_ledger(self.tmp)["upstream_attempts"]), (1, 1))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
 
     def test_sigterm_during_pace_wait_releases_budget_reservation(self):
         import verify

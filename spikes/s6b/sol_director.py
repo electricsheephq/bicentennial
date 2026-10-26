@@ -14,7 +14,7 @@ Environment, from the local helper and never the repo: BICENTENNIAL_SOL_BASE_URL
 "/responses" is appended), BICENTENNIAL_SOL_TOKEN_URL, BICENTENNIAL_SOL_CLIENT_ID and BICENTENNIAL_SOL_AUTH
 (the login store). Declared adaptations: the model alias, store-and-forward SSE, typed text parts, and the
 rebuilt identity headers. Every other request key (reasoning, include, store, tools...) is forwarded unchanged.
-Stops upstream_invalid_request_<code> and upstream_unparsed_3_in_a_row never write a login sentinel.
+Stops upstream_invalid_request_<code>, upstream_unparsed_3_in_a_row and director_exit never write a login sentinel.
 """
 
 from __future__ import annotations
@@ -223,7 +223,8 @@ class Login:
             status, body = self.post(self.token_url, {"grant_type": "refresh_token", "refresh_token": old,
                                                       "client_id": self.client_id})
         except Exception as e:  # class only: the charged POST may have consumed the refresh token
-            self.log.append({"type": "refresh", "status": -1, "error": type(e).__name__})
+            self.log.append({"type": "refresh", "status": -1, "t": time.time(),
+                             "error": str(e) if isinstance(e, Stop) else type(e).__name__})
             raise
         body = body if isinstance(body, dict) else {}
         c = jwt_claims(body.get("access_token"))
@@ -422,6 +423,7 @@ class Director:
     def __init__(self, a, login: Login | None = None, urlopen=urllib.request.urlopen, clock=time.monotonic, sleep=None):
         self.stop_event, self.metrics_lock, self.tries, self.retry_counts = threading.Event(), threading.Lock(), [], Counter()
         self.unparsed_streak, self.pace_wait_ms = 0, 0
+        self.pacing_cv, self.pacing_now = threading.Condition(), 0
         self.pacer = Pacer(getattr(a, "rate_per_min", 180), getattr(a, "burst", 10), self.stop_event, clock, sleep,
                            getattr(a, "allow_over_window", False))
         self.a, self.urlopen = a, urlopen
@@ -560,17 +562,24 @@ class Director:
                 "Authorization": f"Bearer {token}", "Content-Type": "application/json",
                 "Accept": "text/event-stream", **IDENTITY, **account_headers(token), **fwd})
             pace_start = self.pacer.clock()
-            wait = self.pacer.acquire()
-            sub["pace_wait_ms"] = wait if wait is not None else (self.pacer.clock() - pace_start) * 1000
-            if wait is None or self.stopped:
-                with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
-                    fcntl.flock(f, fcntl.LOCK_EX)
-                    b = json.load(f)
-                    b["total"] -= 1
-                    b["by_run"][self.a.run] -= 1
-                    b["by_kind"][kind] -= 1
-                    f.seek(0), f.truncate(), json.dump(b, f)
-                return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
+            with self.pacing_cv:
+                self.pacing_now += 1
+            try:
+                wait = self.pacer.acquire()
+                sub["pace_wait_ms"] = wait if wait is not None else (self.pacer.clock() - pace_start) * 1000
+                if wait is None or self.stopped:
+                    with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
+                        fcntl.flock(f, fcntl.LOCK_EX)
+                        b = json.load(f)
+                        b["total"] -= 1
+                        b["by_run"][self.a.run] -= 1
+                        b["by_kind"][kind] -= 1
+                        f.seek(0), f.truncate(), json.dump(b, f)
+                    return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
+            finally:
+                with self.pacing_cv:
+                    self.pacing_now -= 1
+                    self.pacing_cv.notify_all()
             sub["t_sent"] = self.pacer.clock()
             t0 = time.monotonic()  # service time excludes pacing
             try:
@@ -881,6 +890,8 @@ def main():
         srv.serve_forever()
     finally:
         d.stop("director_exit")
+        with d.pacing_cv:  # woken pace waiters release their reservations before the interpreter exits
+            d.pacing_cv.wait_for(lambda: not d.pacing_now, timeout=2)
 
 
 if __name__ == "__main__":

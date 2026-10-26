@@ -237,11 +237,15 @@ The ramp deliberately uses rate 0 to retain its refusal-threshold burst measurem
 `summary.json` beside the ledger reports counts, recovery outcomes, overload/429/breaker counts,
 trailing half-open 60 s request windows ending at each send (p50/max, including start-up), and total pace wait;
 service latency excludes pacing. Summaries contain no bodies or headers; older ledgers remain readable.
+`summary.json` also records `stop_reason`, a fixed-vocabulary label, and `breaker_stops` counts only
+`upstream_failures_3_in_a_row`.
 Invalid HTTP 4xx except 401/403/429 stop with `upstream_invalid_request_<code>` and invalidate evidence.
-Three consecutive served-but-unparsed calls stop with `upstream_unparsed_3_in_a_row`, holding the failure
-breaker streak and never forwarding the stream. Neither stop writes the credential sentinel.
+Three served-but-unparsed calls with no forwarded call between them stop with `upstream_unparsed_3_in_a_row`
+(failed tries in between neither extend nor reset the count), holding the failure breaker streak and never
+forwarding the stream. Neither stop writes the credential sentinel.
 Upstream success and HTTP-error bodies are bounded to 8 MiB + 1 byte; oversize yields only `error:oversize`
 without decoding, parsing, replaying or persisting the body. Refresh-log draining is atomic, soak slots release
-on exceptions, and ledger attempt reconciliation includes refresh records.
+on exceptions, and ledger attempt reconciliation includes refresh, soak and ramp records. On exit the director stops, then
+waits up to 2 s for woken pace waiters to release their reservations, so the budget equals the ledger.
 The >=10 minute paced soak with no 429 is **pending**, to be run by the orchestrator before the pilot;
 this offline implementation does not confirm the sustainable rate.

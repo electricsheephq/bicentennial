@@ -143,6 +143,16 @@ class Director(unittest.TestCase):
             director.Ledger(root, director.Guard())
 
 
+class Redact(unittest.TestCase):
+    def test_a_token_split_at_the_input_cut_is_dropped(self):  # S6c review 2, R2-F3
+        email = director.redact("1" * 4090 + " someone@example.com tail")
+        self.assertNotIn("someo", email)
+        uuid = director.redact("1" * 4090 + " 0123abcd-1234-1234-1234-123456789abc")
+        self.assertNotIn("1234-1", uuid)
+        self.assertEqual(len(director.redact("P" * (8 << 20))), 600)  # a long body with no separators keeps its 600
+        self.assertEqual(director.redact("a@b.co and 1234567"), "<email> and <n>")
+
+
 class Ramp(unittest.TestCase):
     def test_quota_streak_stops_level_below_threshold(self):  # finding 3: 13 ok then 3 quota, 3/16 < 25%
         n, lock = [0], threading.Lock()
