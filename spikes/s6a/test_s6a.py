@@ -79,7 +79,7 @@ class Director(unittest.TestCase):
         d.upstream = lambda body, kind: (time.sleep(0.4), real(body, kind))[1]
         body = json.dumps({"messages": [{"role": "user", "content": "title"}]}).encode()
         s = socket.create_connection(("127.0.0.1", port))
-        s.sendall(b"POST /aux/title_generation/v1/x HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body))
+        s.sendall(b"POST /aux/title_generation/v1/chat/completions HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body))
         s.close()
         time.sleep(1.0)
 
