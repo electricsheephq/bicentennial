@@ -677,7 +677,7 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 |---|---|---|---|
 | Learn chains, with their no-memory and frozen-skill arms | terminal forks in the seasonal robustness study (§6) | per system, per study life: one chain per applicable Learn cell, 3 in a G1 life and 4 in a G2 life | C_learn, inside Cost_rob |
 | erasure probes | terminal forks in the seasonal robustness study (§6) | per system, per study life: one per scored Keep forget bundle, at most 6 | C_erase, inside Cost_rob |
-| the Image profile board, both views, including the vision reader | a separate profile board (§6): L_img = 8 lives, b_img = 40 image bundles per life | per system, once the profile is on the board, as its own run | C_image, above |
+| the Image profile board, both views, including the vision reader | a separate profile board (§6): L_img = 8 lives, b_img = 40 image bundles per life | per system, once the profile is on the board; one Image board run holds every system, apart from the Text board's run (§11) | C_image, above |
 | the crossover panel | Ring-0 Act packs (§10), in its own window after the sealed board closes | shared, once per panel row (C-13), counted once per season; never inside a system's board window | C_cross |
 | the raw-archive marker, including its K10 run | computed like the controls (§6) | shared, once per season | C_marker |
 | the bar-2 A/A′ rerun of the control arms | the bar-2 run (§6) | shared, once per generator version | C_aa, added once to the bar-2 run of record |
