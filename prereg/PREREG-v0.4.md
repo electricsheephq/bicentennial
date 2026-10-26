@@ -33,7 +33,11 @@
 
 - **PREREG-v1** adds the [pilot] values, computed by the frozen code, plus the full-tier roster and the seed hashes. It is frozen before **any** system's first full-tier run.
   - **Freeze gate:** an operating-characteristic simulation of the certification rule (§7), on the penalised scale, at true margins 0, +5, +10 and +15, plus one cell at −10. Its variance inputs (twin correlation, within-cell and cross-cell life correlations) are measured on the bar-2 run's control arms with one A/A′ rerun (§6).
-    - **Drift envelope:** the simulation also runs the projected schedule of overlapping blocks under a drift shared by all arms. The drift is a 5-raw-point step at a uniformly drawn block, a 5-raw-point linear trend across the run, or a ±3-raw-point daily cycle. Each acts on an arm in proportion to its distance above the floor, at the arm's own probe times. The pass criteria must hold under each.
+    - **Drift envelope:** the simulation also runs under a drift on the pinned reader, shared by every arm it serves. Swap-route drift is outside the envelope (§11).
+      - **The perturbation:** a probe answered at time t on the pinned reader in cell k scores s(t) = s⁰ + d(t) · (s⁰ − f⁰_k) / (c⁰_k − f⁰_k), clipped to [−100, +100], where s⁰ is its undrifted score and f⁰_k and c⁰_k are the cell's undrifted floor and ceiling. The floor never moves, the ceiling moves by d(t), and the gate by d(t)/2.
+      - **The cases:** a step, d = ±5 from the start of a uniformly drawn block; a trend, d(t) = ±5 · (t − t₀) / (t₁ − t₀), over the run's projected span from t₀ to t₁; and a daily cycle, d(t) = 3 · sin(2πt / 24 h + φ), at φ = 0, π/2, π and 3π/2. Each sign and each phase is its own case.
+      - **The schedule:** arrival times come from the bar-2 run's measured per-arm session times, placed in the projected overlap of blocks at C-11's capacity, with the dispatch rule (§6) applied to them, its pass-over cases at the pilot's observed rate included. A stress schedule also runs, with half the rows 1.5 times slower than the rest. Account moves are not modelled (§11).
+      - **True margins** are undrifted: m⁰_k = s⁰ − g⁰_k, with g⁰_k = f⁰_k + ½(c⁰_k − f⁰_k). The pass criteria must hold in every case, on both schedules. A pass bounds the certification claim to this envelope; it is not a bound on real provider drift.
     - **Pass criteria:** with margin 0 in every cell, the certification rate is ≤ 5%; with +10 in every cell, it is ≥ 80%; with +10 in every cell but one, which sits at −10, it is ≤ 20%.
     - The simulation sets the final n_L, b and per-cell SE bound for certification (§7). Until then those are planning values.
 - **Approval.** The benchmark session approves each freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964. There is no owner co-sign: the owner retired it on 2026-10-26.
@@ -428,13 +432,22 @@ There are two ladders. **Developer tiers** carry no decision bar. **The measurem
 - **Roster:** every real system in the frozen roster, including LCM-X at its last release before the public generator.
 - **Controls:** in a full-tier run, the control arms (no-memory floor, oracle evidence) are arms of every life's block, like any real system (§11). They run on the pinned reader and harness and **never swap**: their probes at post-swap points are answered on the pinned reader too, so every gate stays the pinned-reader gate (§7).
   - **Naive RAG** runs with them in every block, as a baseline arm for admission (§4) and the tables. It is never a real system.
-  - **Checkpoint-matched probes.** A control arm replays nothing, so its probes for checkpoint c are dispatched when a keyed-random real arm of its block reaches checkpoint c. If that arm stalls or fails, the next arm in key order is used. The key is (control arm, life, branch, checkpoint). Control probe times are then draws from the systems' own checkpoint times.
+  - **Checkpoint-dispatched probes.** The control arms and naive RAG replay nothing: they are the block's **probe-only arms**. Every probe-only arm's probes for checkpoint c of branch b follow the same real arm of its block, chosen by this frozen rule, so a gate's floor and ceiling, and naive RAG, are probed together:
+    - **Eligible arms:** the block's real-system arms whose schedule includes checkpoint c of branch b.
+    - **Order:** the eligible arms sorted by sha256(seed, life, branch, checkpoint, arm id). Its attempt index is 0, so a resume, an attempt or a retry reuses the order.
+    - **Dispatch:** the probes go out when the first arm in that order that has not been passed over reaches c. An arm is **passed over** at c only when it can no longer reach c: its (arm, life) has ended (completed, failed or BLOCKED) or broken its life bound before c. A quota wait or a hold is not a pass-over; the probe-only arm waits with it.
+    - **Already arrived:** if the next arm in order reached c before the arm ahead of it was passed over, the probes go out at once.
+    - **Exhausted:** if every eligible arm is passed over, the probes go out at the last pass-over, flagged unmatched.
+    - **Recorded:** for every dispatch, the followed arm, its arrival time, the probes' send times and the lag between them.
+    - **Timing bounds:** the life bound and the start window (§11) bind the arms that replay. A probe-only arm's times are set by this rule and are checked through the arms it follows.
+    - **What it gives:** the probe-only arms' probe times are a keyed-random sample of the eligible arms' checkpoint times, under this rule. That removes a probe-only arm's lead over the systems. It does not match a gate's times to any one row: a row that runs systematically faster or slower than the roster meets a time-varying reader effect that its gate's probes do not (§11).
   - **Computed after the last block.** The frozen code (C-8) computes the cell gates (§7) and cell admission (§4) from the control arms alone. Control results stay sealed with the systems' results until the run completes.
   - **A mechanics check first.** Before the first block, the control arms run once on one public life, on every route they use. Every probe must return a parsed, scored outcome, and the oracle arm must hand over its evidence; otherwise the run does not start.
   - **Gates are per run.** A table prints each row's run gate. A delta board's in-block controls re-measure the season board's on the same lives, and the change is reported.
   - In the pilot's runs of record, the controls run first. Controls are re-run on any pin change (DESIGN §8).
 - **Scheduling** (§11): every arm, the control arms included, runs interleaved in life-major blocks. Each block is one life, run by every arm on the roster, so each life's contrasts and its control results are within one block.
 - **The raw-archive marker** (C-14) is built from a public spec. It keeps everything raw, text and media, with timestamps and sources, and searches it. It is frozen per season, runs in the season board's blocks like the controls (§6), on the pinned reader, is shown as a marker column, and also run at K10. It is **never** used in gates, cell admission or rung calibration, and it is never a real system (§8, §10).
+- **The full-history oracle ceiling,** which every table shows where the history fits (the baselines rule), is a labelled diagnostic. It is a probe-only arm in the season board's blocks, on the pinned reader, under the dispatch rule, run once per season at the checkpoints whose history fits the window. It is never used in gates, cell admission or rung calibration, and its cost is counted with the marker's (C_marker).
 
 **The Image profile board.** Once the Image profile is admitted to the sealed board (§2), its two views, memory-layer rows and native-routing system rows (§4), form a separate profile board beside the full core board.
 - **Planning size:** L_img = 8 lives, with b_img = 40 image bundles per life.
@@ -505,8 +518,11 @@ There are two ladders. **Developer tiers** carry no decision bar. **The measurem
   - **R-a:** the one-sided 95% lower confidence bound of the equal-weight mean margin (1/K)Σm_k is ≥ 0;
   - **R-b:** every required cell has a one-sided 95% lower confidence bound of m_k ≥ −10 raw points.
   - **CIs** come from a wild cluster bootstrap over base-plus-twin life pairs, with all cells resampled jointly (Rademacher weights, 10,000 draws, fixed seed).
-  - **Per-life margins:** each life pair's margin is m_k,l = a_k,l − g_k,l, on the pair's common valid bundles, with g_k,l from that pair's own control arms. A pair's controls are resampled with its systems. A pair whose control (arm, life) failed (§11) uses the pooled gate, disclosed. A sensitivity bootstrap, clustered by groups of blocks that overlap in time, is reported beside the CIs.
-- **Eligibility.** In a required cell, N/A_READER or coverage below 95% **blocks** certification. BLOCKED **defers** it.
+  - **Per-life margins:** each life pair's margin is m_k,l = a_k,l − g_k,l, on the pair's common valid bundles, with g_k,l from that pair's own control arms. A pair's controls are resampled with its systems: each replicate perturbs a pair's system scores and its control gate with that pair's weight. A sensitivity bootstrap, clustered by groups of blocks that overlap in time, is reported beside the CIs.
+  - **The pooled gate.** A pair whose control (arm, life) failed (§11) keeps every system result, and its gate is the cell's pooled gate: the equal-weight mean of g_k,l over the cell's surviving pairs with valid controls. Every replicate recomputes it from that replicate's perturbed surviving gates, so the pairs that share it share its error.
+    - **Support:** a cell's control support is its number of surviving pairs with valid controls. The per-cell SE bound counts the pooled gate's uncertainty. A cell whose control support is below ¾ of its pairs reads BLOCKED for every system, as an infrastructure cause, and defers certification; it is never read as a pass. Admission (§4) uses the surviving pairs only.
+    - **Disclosure:** the card lists the pooled pairs, which lose their own controls' in-block timing, and reports R-a and R-b without them as a sensitivity.
+- **Eligibility.** In a required cell, N/A_READER or coverage below 95% **blocks** certification. BLOCKED **defers** it, and so does NOT ADMITTED (§4).
   - A coverage shortfall caused by infrastructure reads BLOCKED, and defers.
   - A coverage shortfall the system causes blocks.
 - **Where certification happens:** only on the **sealed board at the pre-registered powered size**: a season board, or a delta board (§6).
@@ -687,7 +703,7 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 | erasure probes | terminal forks in the seasonal robustness study (§6) | per system, per study life: one per scored Keep forget bundle, at most 6 | C_erase, inside Cost_rob |
 | the Image profile board, both views, including the vision reader | a separate profile board (§6): L_img = 8 lives, b_img = 40 image bundles per life | per system, once the profile is on the board; one Image board run holds every system, apart from the Text board's run (§11) | C_image, above |
 | the crossover panel | Ring-0 Act packs (§10), in its own window after the sealed board closes | shared, once per panel row (C-13), counted once per season; never inside a system's board window | C_cross |
-| the raw-archive marker, including its K10 run | in the season board's blocks, like the controls (§6) | shared, once per season | C_marker |
+| the raw-archive marker, including its K10 run, and the full-history oracle ceiling | in the season board's blocks, like the controls (§6) | shared, once per season | C_marker |
 | the bar-2 A/A′ rerun of the control arms | the bar-2 run (§6) | shared, once per generator version | C_aa, added once to the bar-2 run of record |
 | the control arms of a full-tier run | the no-memory floor and oracle evidence, as arms of every block (§6, §11) | shared, once per full-tier run; never charged to a system | C_ctrl: the control arms' probe cost |
 | Ring 1 | fresh-seed runs of the public templates (§6) | per system, at each benchmark release and at least monthly | C_ring1, per run |
@@ -722,17 +738,21 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
 
 **Drift controls:**
 - **Served identity:** the director checks every response's served identity against the identity recorded for that model. A new identity stops the admission of new sessions; sessions in flight finish and are flagged.
-- **Time-matched controls.** The control arms are arms of every block, on the pinned reader, and their checkpoint probes are dispatched at a keyed-random real arm's arrival there (§6). Pinned-reader drift, between blocks and within a block, therefore reaches a life's controls and its systems at matched times, and every gate comes from the same blocks as the scores judged against it. Drift is absorbed, not tested.
-- **The start window:** every arm of a block makes its first upstream request within 24 h of the block's first, so two arms' requests on one life are at most 48 h apart. The projection checks it as it checks the life bound. An (arm, life) that breaks it reads BLOCKED, as an infrastructure cause, and is disclosed (§10).
+- **In-block controls.** The control arms are arms of every block, on the pinned reader, and their checkpoint probes follow the dispatch rule (§6). Pinned-reader drift between blocks therefore reaches a life's controls and its systems in the same block; within a block, a gate's probe times are a keyed-random sample of the roster's own checkpoint times. Every gate comes from the same blocks as the scores judged against it. Drift is absorbed on average over the roster's times, not tested, and not cancelled row by row.
+- **The start window:** every arm of a block makes its first upstream request within 24 h of the block's first, so two arms' requests on one life are at most 48 h apart. The projection checks it as it checks the life bound. An (arm, life) that breaks it reads BLOCKED, as an infrastructure cause, and is disclosed (§10). Both bounds bind the arms that replay; a probe-only arm's times follow the dispatch rule (§6).
 - **What it does not cover** (stated on the card):
   - drift on the swap route, which serves the systems' post-swap probes but never a control's;
   - drift in write turns and in the summariser, which act on systems only;
-  - an excursion shorter than the gap between a checkpoint's matched probes;
+  - an excursion shorter than the gap between a gate's probes and a row's own;
+  - a row's timing imbalance: a row that runs systematically faster or slower than the roster meets a time-varying reader effect at other times than its gate's probes, which moves its margin even when it sits at its gate (DESIGN §6.7a);
+  - account-dependent serving: S9's carry-over check shows that an account keeps no state across requests, not that accounts serve alike after quota moves;
+  - the lag between a followed arm's arrival and a probe-only arm's sends, and their serving delay;
   - the residual of a shared reader change, which moves a system's margin in proportion to its distance from the gate.
 - **Reported, never tested:**
   - the first-half and second-half gates (§7);
   - each control cell's slope against block start time;
-  - the **swap-route anchor:** in every block, the oracle-evidence arm also answers that life's first 20 post-swap bundles, in seed order, on the swap route, at matched times. Its per-block result is printed beside the gates.
+  - each row's **timing imbalance:** the mean and spread, over its (life, branch, checkpoint) probes, of its own probe send time minus its gate's probe send time, in hours, with the dispatch lags (§6);
+  - the **swap-route anchor:** in every block, the oracle-evidence arm also answers that life's first 20 post-swap bundles, in seed order, on the swap route, under the dispatch rule. Its per-block result is printed beside the gates.
 - **After an identity change,** the run ends, and its completed blocks are published as diagnostics, with the cause labelled. Only the stopped run restarts, as a fresh run of its own kind (§6) on the same lives, under a new lock. Runs completed before it stand. Cell gates, verdicts and certification use the restarted run's own blocks. The restarted run shares the stopped run's paid-lane ceiling (below), unless the owner raises it.
 
 **Pauses:**
@@ -750,7 +770,7 @@ The terms are defined in DESIGN §13: R, R_cap, f, P, r_c, p_c, P_K, P_W, R_B an
   - S9 also runs the §6.8 carry-over canary items (DESIGN §6.8) on a control arm after a system on the same account, to show that a lane account keeps no state across requests. If it fails, the control arms get accounts of their own.
 
 **Attempts:**
-- **A control (arm, life)** that fails re-executes its failed probe items as an attempt, within its block's start window and the life bound. If it still fails, that life leaves gate estimation, and its systems' margins use the pooled gate, disclosed (§7).
+- **A control (arm, life)** follows the cause rule (§7) like any arm: a reader's wrong, refused or unparsable answer is the control's scored outcome and is never retried. After an INFRA_FAILURE, its failed probe items are re-executed as an attempt as soon as the failure is classified, under the two-rerun limit below, and their send times and lag are recorded. A retry is not a first request: the start window does not apply to it, and no retry or attempt repairs a breached start window. If the items still fail, that (arm, life) leaves gate estimation, and its systems' margins use the pooled gate (§7).
 - Only the failed (arm, life) is re-executed, from its last session-boundary snapshot, and only after an INFRA_FAILURE that the ledger attributes to a benchmark-owned component. Each bundle counts toward §7's limit of two reruns, then reads BLOCKED. The last attempt is scored. A SYSTEM_FAILURE never triggers a re-execution.
 - Every attempt stays in the ledger and on the card. No run is published with a shrunk denominator, and results stay sealed until the run completes or ends early (above).
 
@@ -832,7 +852,7 @@ If a cut leaves a season below the certification rule's powered size (§7), no c
   - blocks of one life, in seed order;
   - the run lock, with the served identities recorded beside it, and keyed randomness;
   - the served-identity check;
-  - the control arms and naive RAG as arms of every block, on the pinned reader, with checkpoint-matched probes; gates and admission computed after the last block, with per-life margins; a 24-hour start window per block; a control mechanics check before the first block; a report-only swap-route anchor; and the OC simulation's drift envelope;
+  - the control arms and naive RAG as arms of every block, on the pinned reader, with checkpoint-dispatched probes under a frozen pass-over rule; gates and admission computed after the last block, with per-life margins and a defined pooled gate; a 24-hour start window per block; a control mechanics check before the first block; a report-only swap-route anchor and each row's timing imbalance; and the OC simulation's drift envelope, defined on the pinned reader with a stress schedule;
   - pauses at session boundaries, with a hash proof of every agent-visible surface; holds inside sessions; spike S9;
   - attempts per (arm, life);
   - the study inside its board's run;
