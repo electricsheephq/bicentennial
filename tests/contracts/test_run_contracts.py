@@ -288,12 +288,52 @@ def test_masks_cover_required_categories_and_exclude_director_tool_ids():
             assert entry["except_prefix"] == "bcw-"
         assert entry["target"] != "bcw-"
         assert not entry["placeholder"].startswith("bcw-")
-    assert [m["target"] for m in masks if m["kind"] == "literal"] == [
-        "{SANDBOX_ROOT}", "{DIRECTOR_PORT}"]
+    assert [m["target"] for m in masks if m["kind"] == "run_value"] == [
+        "sandbox_root", "director_port"]
 
 
 @pytest.mark.parametrize("target", ['$[?(@ == $.id)]', '$..[?(@.x)].y', 'session_id', '$.a b'])
 def test_mask_targets_outside_the_path_subset_are_refused(target):
     masks = [{"name": "m", "kind": "jsonpath", "target": target, "placeholder": "{X}"}]
     with pytest.raises(ValueError):
+        validate("masks", masks)
+
+
+def test_patterns_full_match_so_a_trailing_newline_is_refused():
+    system = copy.deepcopy(fixture("system"))
+    system["artifact"]["sha256"] += "\n"
+    with pytest.raises(ValueError, match="pattern"):
+        validate("system", system)
+
+
+def test_scan_script_reports_sealed_text_in_object_keys():
+    script = copy.deepcopy(fixture("script"))
+    turn = script["sessions"][0]["turns"][0]
+    turn["tool_calls"] = [{"name": "mem", "args": {"bcw-fact-0001": "x", "q": "gold-token"}}]
+    hits = scan_script(script, ["bcw-fact-0001"], ["gold-token"])
+    assert any(h.endswith('["bcw-fact-0001"]') for h in hits)
+    assert any(h.endswith('["q"]') for h in hits)
+
+
+def test_a_system_without_recall_declares_null():
+    system = copy.deepcopy(fixture("system"))
+    system.update(recall=None, read_tools=[])
+    validate("system", system)
+
+
+def test_names_come_from_schema_files_and_checks_can_be_registered(monkeypatch):
+    from bicentennial.contracts import run
+    assert run.NAMES == {p.name.removesuffix(".schema.json") for p in SCHEMAS.glob("*.schema.json")}
+    with pytest.raises(ValueError, match="unknown contract"):
+        run.register_check("../script", lambda obj: None)
+    seen = []
+    monkeypatch.setattr(run, "_CHECKS", {})
+    run.register_check("fault-lite", seen.append)
+    validate("fault-lite", fixture("fault-lite"))
+    assert seen == [fixture("fault-lite")]
+
+
+def test_run_value_masks_name_known_values_only():
+    masks = [{"name": "m", "kind": "run_value", "target": "home_dir", "placeholder": "{X}"}]
+    with pytest.raises(ValueError, match="run value"):
         validate("masks", masks)

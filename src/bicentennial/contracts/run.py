@@ -12,8 +12,10 @@ from bicentennial.canon import canon
 
 SCHEMAS = Path(__file__).resolve().parents[3] / "schemas"
 _MASK_PATH = re.compile(r"\$(?:\.\.?[A-Za-z_][A-Za-z0-9_]*|\[\*\])+")
-NAMES = {"script", "ledger-record", "masks", "route-table", "fault-lite",
-         "system", "surfaces", "lock"}
+# Every schema file is a contract name, so later units add schemas without editing this module.
+NAMES = frozenset(p.name.removesuffix(".schema.json") for p in SCHEMAS.glob("*.schema.json"))
+RUN_VALUES = {"sandbox_root", "director_port"}
+_CHECKS: dict[str, list] = {}
 FORBIDDEN = {"event_id", "fact_id", "fact_ids", "gold", "gold_spans",
              "options", "manifest"}
 TYPES = {"object": dict, "array": list, "string": str, "integer": int,
@@ -35,10 +37,17 @@ def _children(value, path="$", keys=False):
 
 
 def scan_script(script, sealed_ids, gold_tokens) -> list[str]:
-    """Return each string-value path containing any exact sealed substring."""
+    """Return each path whose string value or object key holds an exact sealed substring."""
     tokens = tuple(sealed_ids) + tuple(gold_tokens)
-    return [path for path, text in _children(script)
+    return [path for keys in (False, True) for path, text in _children(script, keys=keys)
             if any(token in text for token in tokens)]
+
+
+def register_check(name, check) -> None:
+    """Add a semantic check that validate(name, obj) runs after the schema and built-in checks."""
+    if name not in NAMES:
+        raise ValueError(f"unknown contract: {name}")
+    _CHECKS.setdefault(name, []).append(check)
 
 
 def _check(schema, value, path="$"):
@@ -50,7 +59,7 @@ def _check(schema, value, path="$"):
                                      for v in schema["enum"]):
         raise ValueError(f"{path}: invalid enum value")
     if isinstance(value, str) and "pattern" in schema:
-        if re.search(schema["pattern"], value) is None:
+        if re.fullmatch(schema["pattern"], value) is None:  # "$" in re.search allows a trailing newline
             raise ValueError(f"{path}: pattern mismatch")
     if type(value) is int and value < schema.get("minimum", value):
         raise ValueError(f"{path}: below minimum")
@@ -107,11 +116,12 @@ def validate(name, obj) -> None:
             if set(row) != shapes[row["kind"]] or row.get("mode", 0) > 0o7777:
                 raise ValueError(f"surfaces: invalid {row['kind']} row")
     elif name == "system":
-        for path, text in _children(obj["recall"]["argument_template"]):
-            if re.search(r"\{[^{}]*\}", text.replace("{prompt}", "")):
-                raise ValueError(f"recall{path}: only {{prompt}} is allowed")
-        if obj["recall"]["tool"] not in obj["read_tools"]:
-            raise ValueError("recall tool is not a declared read tool")
+        if obj["recall"] is not None:  # null: the system declares no recall call (a control)
+            for path, text in _children(obj["recall"]["argument_template"]):
+                if re.search(r"\{[^{}]*\}", text.replace("{prompt}", "")):
+                    raise ValueError(f"recall{path}: only {{prompt}} is allowed")
+            if obj["recall"]["tool"] not in obj["read_tools"]:
+                raise ValueError("recall tool is not a declared read tool")
         roles = [route["role"] for route in obj["own_model_routes"]]
         _unique(roles, "own_model_routes")
         if set(obj["structured_formats"]) - set(roles):
@@ -124,3 +134,7 @@ def validate(name, obj) -> None:
         for entry in obj:
             if entry["kind"] == "jsonpath" and not _MASK_PATH.fullmatch(entry["target"]):
                 raise ValueError(f"mask {entry['name']}: only $, .name, ..name and [*] segments")
+            if entry["kind"] == "run_value" and entry["target"] not in RUN_VALUES:
+                raise ValueError(f"mask {entry['name']}: unknown run value")
+    for check in _CHECKS.get(name, ()):
+        check(obj)
