@@ -33,9 +33,11 @@ def parse_sse(raw: bytes) -> list[dict]:
     return events
 
 
-def sse_bytes(items: list[dict], usage: dict, model: str) -> bytes:
-    """S6b stream: created, one text delta per message, done items, completed."""
-    rid, evs = f"resp_bc{time.time_ns()}", []
+def sse_bytes(items: list[dict], usage: dict, model: str, *, response_id: str | None = None) -> bytes:
+    """S6b stream: created, one text delta per message, done items, completed.
+
+    response_id defaults to S6b's wall-clock id; the director passes a keyed one."""
+    rid, evs = response_id or f"resp_bc{time.time_ns()}", []
     evs.append({"type": "response.created", "response": {"id": rid, "object": "response", "status": "in_progress",
                                                          "model": model}})
     for i, it in enumerate(items):

@@ -96,6 +96,9 @@ def test_responses_round_trip_and_spike_parity():
         raw = responses.sse_bytes(items, usage, "synthetic-model")
         spike = _spike_functions("responses")
         assert spike["sse_bytes"](items, usage, "synthetic-model") == raw
+        keyed = responses.sse_bytes(items, usage, "synthetic-model", response_id="bcw-0123456789abcdef")
+        assert keyed == responses.sse_bytes(items, usage, "synthetic-model", response_id="bcw-0123456789abcdef")
+        assert responses.parse_sse(keyed)[0]["response"]["id"] == "bcw-0123456789abcdef"
     events = responses.parse_sse(raw)
     assert [e["item"] for e in events if e["type"] == "response.output_item.done"] == items
     assert events[-1]["response"]["usage"] == usage
@@ -209,6 +212,17 @@ def test_readback_requires_keys_types_and_accepts_only_declared_typing():
     assert writeturn.readback(nan, json.loads('{"model": "m", "temperature": NaN}'))  # as S7 A1
     with pytest.raises(ValueError, match="unsupported_write_wire"):
         writeturn.expected_write_body(CHAT, "anthropic", "m", "suffix")
+
+
+def test_write_body_filters_to_the_declared_write_tools():
+    tools = [{"type": "function", "name": n} for n in ("memory", "notes", "terminal")]
+    body = {"model": "m", "input": "q", "tools": tools}
+    got = writeturn.expected_write_body(body, "responses", "m", "s", write_tools=frozenset({"notes"}))
+    assert [t["name"] for t in got["tools"]] == ["notes"]
+    assert [t["name"] for t in writeturn.expected_write_body(body, "responses", "m", "s")["tools"]] == ["memory"]
+    chat = {"messages": [], "tools": [{"type": "function", "function": {"name": n}} for n in ("memory", "notes")]}
+    got = writeturn.expected_write_body(chat, "chat", "m", "s", write_tools=frozenset())
+    assert got["tools"] == []
 
 
 @pytest.mark.parametrize("value", ["synthetic text", ["one", "two"], [1, 2], [[1], [2, 3]]])
