@@ -56,6 +56,7 @@ SUFFIX_ITEM = {"type": "message", "role": "user", "content": [{"type": "input_te
 PASS_HEADERS = ("session_id", "x-client-request-id")  # forwarded verbatim; everything else is rebuilt
 IDENTITY = {"originator": "hermes-agent", "User-Agent": "HermesAgent/0.22.2"}  # Hermes' own at the official host
 REFRESH_SKEW_S = 300
+READ_GRACE_S = 1.0  # a post-wait token read longer than this blocked on a refresh, so the request is admitted again
 AUTH_CLAIM = "https://api.openai.com/auth"  # the JWT claim namespace (a claim name, not an endpoint)
 RETRYABLE = ("rate", "overload", "concurrency", "server")
 NEUTRAL_503 = {"error": {"message": "director: upstream unavailable, retry later", "type": "director_unavailable"}}
@@ -562,14 +563,19 @@ class Director:
             with self.pacing_cv:
                 self.pacing_now += 1
             try:
-                wait = self.pacer.acquire()
-                sub["pace_wait_ms"] = wait if wait is not None else (self.pacer.clock() - pace_start) * 1000
-                if wait and self.login and not self.stopped:  # the token can expire during a long pace wait
+                wait, readmitted = self.pacer.acquire(), False
+                while wait and self.login and not self.stopped:  # the token can expire during a long pace wait
+                    read = self.pacer.clock()
                     try:
                         token = self.login.token()
                     except Stop as e:
                         self.stop(str(e))
                     self._drain()  # a refresh it made is charged, so its row goes to the ledger now
+                    if self.stopped or self.pacer.clock() - read <= READ_GRACE_S:
+                        break
+                    # the read blocked on a refresh while the bucket refilled: admit again, so the send keeps the bound
+                    wait, readmitted = self.pacer.acquire(), True
+                sub["pace_wait_ms"] = wait if wait is not None and not readmitted else (self.pacer.clock() - pace_start) * 1000
                 if wait is None or self.stopped:
                     with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
                         fcntl.flock(f, fcntl.LOCK_EX)

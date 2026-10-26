@@ -696,6 +696,24 @@ class PaceThreads(Base):
         self.assertEqual((up["category"], len(seen), d.stopped), ("budget_or_stop", 1, True))
         self.assertEqual((b["total"], b["by_kind"].get("refresh"), len(self.records("refresh"))), (2, 1, 1))
 
+    def test_a_post_wait_read_that_blocks_is_admitted_again(self):
+        for blocked, admissions in ((30, 3), (0, 2)):
+            clock, calls = Clock(), []
+
+            def token(blocked=blocked, calls=calls, clock=clock):
+                calls.append(clock.now)
+                if len(calls) == 3 and blocked:  # another request's refresh holds the login lock
+                    clock.sleep(blocked)
+                return f"t{len(calls)}"
+            d = self.make(rate_per_min=180, burst=1, clock=clock, sleep=clock.sleep)
+            seen = self.sent(d)
+            d.login.token = token
+            d.pacer.acquire = mock.Mock(wraps=d.pacer.acquire)
+            d.upstream(AUX, "aux", {})
+            second = d.upstream(AUX, "aux", {})
+            self.assertEqual((d.pacer.acquire.call_count, seen[-1]), (admissions, "Bearer t3"))
+            self.assertAlmostEqual(second["pace_wait_ms"], 1000 / 3 + blocked * 1000, delta=1)
+
     def test_no_wait_reads_the_token_once(self):
         d = self.make(rate_per_min=180, burst=10)
         seen = self.sent(d)
