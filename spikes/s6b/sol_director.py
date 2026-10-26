@@ -465,7 +465,10 @@ class Director:
                     return {**sub, "status": e.code, "category": sol_category(e.code, ""), "ok": False,
                             "body_read_error": type(x).__name__, "t_ms": round((time.monotonic() - t0) * 1000)}
                 finally:
-                    e.close()
+                    try:
+                        e.close()
+                    except Exception:  # noqa: BLE001, S110 - cleanup only: the record above is always returned
+                        pass
                 cat = sol_category(e.code, text)
                 try:
                     body_shape = shape(json.loads(text))

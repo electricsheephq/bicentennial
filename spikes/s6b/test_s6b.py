@@ -656,18 +656,22 @@ class Round4(Base):
 
     def test_an_unreadable_refusal_body_keeps_its_status_and_stops_on_auth(self):
         class Body:
+            def __init__(self, close_fails):
+                self.close_fails = close_fails
+
             def read(self, *a):
                 raise http.client.IncompleteRead(b"")
 
             def close(self):
-                pass
-        for code in (401, 403, 429, 503):
+                if self.close_fails:  # a failing cleanup must not replace the record
+                    raise OSError(9, "Bad file descriptor")
+        for code, close_fails in ((401, False), (403, False), (429, False), (503, False), (401, True), (503, True)):
             self.tmp = Path(tempfile.mkdtemp())
             d, n = self.make(write_turns=False), []
 
-            def refuse(req, timeout, code=code, n=n):
+            def refuse(req, timeout, code=code, n=n, close_fails=close_fails):
                 n.append(1)
-                raise urllib.error.HTTPError("http://upstream.invalid", code, "refused", {}, Body())
+                raise urllib.error.HTTPError("http://upstream.invalid", code, "refused", {}, Body(close_fails))
             d.urlopen = refuse
             with mock.patch.object(sd.time, "sleep"):
                 status, out, rec = d.handle(AUX, {})
