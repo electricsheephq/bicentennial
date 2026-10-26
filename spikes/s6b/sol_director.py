@@ -134,7 +134,7 @@ def full_sync(fd):
 def sync_folder(path):
     fd = os.open(path, os.O_RDONLY)
     try:
-        os.fsync(fd)
+        fcntl.fcntl(fd, fcntl.F_FULLFSYNC) if hasattr(fcntl, "F_FULLFSYNC") else os.fsync(fd)  # the entry leaves the drive cache too
     finally:
         os.close(fd)
 
@@ -158,6 +158,17 @@ def durable_write(path, data, link=False, keep_on_error=False):
 
 def utc():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
+
+
+def release(budget, run, kind):
+    """Return one unsent reservation to the shared budget, under its lock."""
+    with open(budget.path, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        b = json.load(f)
+        b["total"] -= 1
+        b["by_run"][run] -= 1
+        b["by_kind"][kind] -= 1
+        f.seek(0), f.truncate(), json.dump(b, f)
 
 
 def lease_id(path):
@@ -234,9 +245,9 @@ class Login:
     director's upstream_401/403 and upstream_sse_auth; refresh_in_flight spans each POST until durable write-back.
     A stop before any POST (refresh_budget, refresh_sentinel_failed, account_changed, an unreadable
     store) latches in this process only: the refresh token was never sent."""
-    def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None):
+    def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None, on_unsent=None):
         self.path, self.token_url, self.client_id, self.post = Path(path), token_url, client_id, post
-        self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), {}, []
+        self.on_refresh, self.on_unsent, self.lock, self.secrets, self.log = on_refresh, on_unsent, threading.Lock(), {}, []
         self.dead, self.posted = "", False  # the latched failure; whether this refresh reached the token endpoint
         self.pin = None
         self.sentinel = self.path.with_name(self.path.name + ".stopped")
@@ -301,6 +312,8 @@ class Login:
             self._sentinel("refresh_in_flight")
         except Exception as e:  # noqa: BLE001 - fail closed before sending; log only the class
             self.log.append({"type": "sentinel_error", "error": type(e).__name__, "t": time.time()})
+            if self.on_refresh and self.on_unsent:  # no POST went out: release the charged refresh
+                self.on_unsent()
             raise Stop("refresh_sentinel_failed") from None
         self.posted = True
         try:
@@ -346,9 +359,9 @@ class Login:
                         if isinstance(vv, str) and re.search(r"account|user|email|org|^sub$", kk):
                             self.secrets.setdefault(vv, f"claim.{kk}")
 
-    def learn_only(self) -> dict:
-        """Read-only (no lock, no refresh): the needles, for --scan."""
-        self._learn(json.loads(self.path.read_text()))
+    def learn_only(self, store=None) -> dict:
+        """No refresh: the needles, for --scan, from the store snapshot its pin check read."""
+        self._learn(json.loads(self.path.read_text()) if store is None else store)
         return self.secrets
 
 
@@ -382,12 +395,14 @@ def _where(data: bytes, s: str):
 
 def scan(login: Login, paths: list[str], run=None) -> dict:
     """Counts of credential, account and email needles in files (zstd blobs decompressed); never a value."""
+    with login._auth_lock():  # one snapshot of store and lease: the pin is checked on the store the needles come from
+        store, lid = json.loads(login.path.read_text()), lease_id(login.path)
     if run is not None:
         try:
             pins = json.loads(login.path.with_name("director-pin.json").read_text())
-        except OSError:
+        except FileNotFoundError:
             pins = {}
-        except ValueError:
+        except (OSError, ValueError):  # present but unreadable or unparseable
             raise Stop("pin_file_invalid") from None
         if not isinstance(pins, dict):
             raise Stop("pin_file_invalid")
@@ -396,11 +411,11 @@ def scan(login: Login, paths: list[str], run=None) -> dict:
         entry = pins[run]
         if not isinstance(entry, dict) or "pin" not in entry or "lease_id" not in entry:
             raise Stop("pin_file_invalid")
-        if entry["lease_id"] != lease_id(login.path):
+        if entry["lease_id"] != lid:
             raise Stop("lease_changed")
-        if account_pin(json.loads(login.path.read_text())["tokens"]["access_token"]) != entry["pin"]:
+        if account_pin(store["tokens"]["access_token"]) != entry["pin"]:
             raise Stop("account_changed")
-    needles, files, hits = login.learn_only(), 0, {}
+    needles, files, hits = login.learn_only(store), 0, {}
     for f in [q for p in map(Path, paths) for q in ([p] if p.is_file() else p.rglob("*")) if q.is_file()]:
         files += 1
         data = f.read_bytes()
@@ -533,7 +548,8 @@ class Director:
         self.budget = Budget(Path(a.budget_file), a.budget_cap)
         self.login = login if login is not None or a.mode == "stub" else Login(
             os.environ["BICENTENNIAL_SOL_AUTH"], os.environ["BICENTENNIAL_SOL_TOKEN_URL"],
-            os.environ["BICENTENNIAL_SOL_CLIENT_ID"], on_refresh=lambda: self.budget.take(a.run, "refresh"))
+            os.environ["BICENTENNIAL_SOL_CLIENT_ID"], on_refresh=lambda: self.budget.take(a.run, "refresh"),
+            on_unsent=lambda: release(self.budget, a.run, "refresh"))
         self.failure_streak, self.stopped, self.stop_reason, self.write_failures = 0, False, "", 0
         self.streak_lock = threading.Lock()
         self.guard = Guard(self.login)
@@ -706,13 +722,7 @@ class Director:
                     wait, readmitted = self.pacer.acquire(), True
                 sub["pace_wait_ms"] = wait if wait is not None and not readmitted else (self.pacer.clock() - pace_start) * 1000
                 if wait is None or self.stopped:
-                    with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
-                        fcntl.flock(f, fcntl.LOCK_EX)
-                        b = json.load(f)
-                        b["total"] -= 1
-                        b["by_run"][self.a.run] -= 1
-                        b["by_kind"][kind] -= 1
-                        f.seek(0), f.truncate(), json.dump(b, f)
+                    release(self.budget, self.a.run, kind)  # this reservation was never sent
                     return {**sub, "status": 0, "category": "budget_or_stop", "ok": False, "t_ms": 0}
             finally:
                 with self.pacing_cv:

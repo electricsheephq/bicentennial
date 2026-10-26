@@ -2126,6 +2126,55 @@ class FixRound1(unittest.TestCase):
         self.assertFalse((self.tmp / "ledger" / "summary.json").exists())
         self.assertEqual(self.calls, [])
 
+    def test_cx4_scan_checks_and_learns_one_store_snapshot(self):
+        HolderProtocol.pin_entry(self)
+        (self.tmp / "scan").write_text("synthetic body " + ACCT)
+        other = json.dumps({"tokens": {"id_token": "fake-other-id-token", "access_token": "fake-other-access-token",
+                                       "refresh_token": "rt-fake-other", "account_id": "acct-FAKE-9999-other"}})
+        real, reads = Path.read_text, []
+
+        def read_text(path, *a, **kw):
+            if path == self.p:
+                reads.append(1)
+                if len(reads) > 1:  # an account switch lands after the first read of the store
+                    return other
+            return real(path, *a, **kw)
+        with mock.patch.object(Path, "read_text", read_text):
+            result = self.scan_main()
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(result["hits"].get("tokens.account_id"), 1)
+
+    def test_cx5_failed_sentinel_releases_the_refresh_budget(self):
+        store(self.tmp, exp_in=60)  # expiring, so startup refreshes
+        real = sd.durable_write
+
+        def deny(path, data, **kw):
+            if path.name.endswith(".stopped"):
+                raise OSError("fake sentinel write failure")
+            return real(path, data, **kw)
+        with mock.patch.object(sd, "durable_write", side_effect=deny):
+            d = sd.Director(self.args())
+        self._close_holders()
+        self.assertEqual(d.stop_reason, "refresh_sentinel_failed")
+        budget = json.loads((self.tmp / "budget.json").read_text())
+        self.assertEqual((budget["total"], budget["by_run"]["fake-run"], budget["by_kind"]["refresh"]), (0, 0, 0))
+
+    def test_cx6_folder_sync_flushes_the_drive_cache(self):
+        if not hasattr(sd.fcntl, "F_FULLFSYNC"):
+            self.skipTest("F_FULLFSYNC is macOS only")
+        calls, real = [], sd.fcntl.fcntl
+
+        def record(fd, op, *a):
+            calls.append((stat.S_ISDIR(os.fstat(fd).st_mode), op))
+            return real(fd, op, *a)
+        with mock.patch.object(sd.fcntl, "fcntl", side_effect=record):
+            sd.durable_write(self.tmp / "fake.json", "{}\n")
+        self.assertIn((True, sd.fcntl.F_FULLFSYNC), calls)
+
+    def test_cx7_scan_refuses_an_unreadable_pin_file(self):
+        (self.tmp / "director-pin.json").mkdir()  # present but unreadable
+        self.scan_main("pin_file_invalid")
+
     def test_cx2_pin_write_error_is_class_only(self):
         real = sd.tempfile.mkstemp
 
