@@ -19,6 +19,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 import uuid
 
@@ -231,15 +232,31 @@ def validate_cell(cell):
         raise ValueError("WAL control invalid: sidecars absent")
 
 
+def wal_pending(db):
+    """Sidecars exist, the WAL is non-empty, and the main file alone lacks the WAL row."""
+    if not all(Path(str(db) + suffix).exists() for suffix in ("-wal", "-shm")):
+        return False
+    if Path(str(db) + "-wal").stat().st_size == 0:
+        return False
+    with tempfile.TemporaryDirectory() as scratch:
+        main = Path(scratch) / db.name
+        shutil.copyfile(db, main)  # No sidecars: SQLite sees only the main file.
+        with closing(sqlite3.connect(main)) as connection:
+            return connection.execute("SELECT count(*) FROM entries").fetchone()[0] == 256
+
+
 def wal_control(source, roots, probes, busy_command):
     keeper = generate(source, "plugin", 1, wal=True)
     try:
         db, _ = layout(source)
-        sidecars = all(Path(str(db) + suffix).exists() for suffix in ("-wal", "-shm"))
+        sidecars = wal_pending(db)
         if not sidecars:
-            raise ValueError("WAL control invalid: sidecars absent")
+            raise ValueError("WAL control invalid: sidecars absent or checkpointed")
         control = measure(source, roots, 1, probes, busy_command, expected_rows=257)
+        # A checkpoint during the run would let fresh clones pass from the main file.
+        sidecars = wal_pending(db)
         control.update(store="uncheckpointed", sidecars_present=sidecars,
+                       wal_pending_checked=True,
                        source_bytes=sum(p.stat().st_size for p in files(source)))
         validate_cell(control)
         return control

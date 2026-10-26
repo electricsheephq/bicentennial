@@ -148,16 +148,35 @@ def test_environment_queries_mount_point(tmp_path, monkeypatch):
                      ["diskutil", "info", "-plist", "/fixture volume"]]
 
 
-@pytest.mark.parametrize("invalid", ["sidecars", "checks"])
+@pytest.mark.parametrize("mode", ["PASSIVE", "TRUNCATE"])
+def test_checkpointed_wal_is_not_pending(tmp_path, mode):
+    keeper = probe.generate(tmp_path / "source", "plugin", 1, wal=True)
+    try:
+        db, _ = probe.layout(tmp_path / "source")
+        assert probe.wal_pending(db)
+        keeper.execute(f"PRAGMA wal_checkpoint({mode})")
+        assert not probe.wal_pending(db)
+    finally:
+        keeper.close()
+
+
+@pytest.mark.parametrize("invalid", ["sidecars", "checks", "checkpoint"])
 def test_runner_rejects_invalid_wal_control(tmp_path, monkeypatch, invalid):
     control = receipt_fixture()["cells"][0]
     if invalid == "checks":
         control["rows"][0]["checks"]["fresh_database_valid"] = False
-    else:
+    elif invalid == "sidecars":
         real_exists = Path.exists
         monkeypatch.setattr(Path, "exists", lambda p: False if str(p).endswith("-shm")
                             else real_exists(p))
-    monkeypatch.setattr(probe, "measure", lambda *a, **k: control)
+
+    def measure(source, *args, **kwargs):
+        if invalid == "checkpoint":  # A stray checkpoint during the run.
+            with probe.closing(probe.sqlite3.connect(source / "store.sqlite")) as db:
+                db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        return control
+
+    monkeypatch.setattr(probe, "measure", measure)
     with pytest.raises(ValueError, match="sidecars|isolation"):
         probe.wal_control(tmp_path / "source", tmp_path / "roots", 1, None)
 
@@ -206,3 +225,37 @@ def test_summary_derives_counts_environment_and_wal_size(tmp_path):
     assert "fixture test receipt" in report
     assert "123456" in (tmp_path / "summary" / "aggregate.csv").read_text()
     assert "440 clone-admission" not in report and "20/20" not in report
+
+
+def test_summary_reports_recovery_retention_and_deferred_workers(tmp_path):
+    data = receipt_fixture()
+    ordinary = copy.deepcopy(data["cells"][0])
+    ordinary.update(store="plugin-10", size_mb=10, workers=2)
+    large = copy.deepcopy(ordinary)
+    large.update(store="home-100", size_mb=100)
+    data["cells"] += [ordinary, large]
+    for cell in data["cells"]:
+        for sample in cell["rows"][0]["clones"]:
+            sample["marker"]["exit"] = 10
+    data["planned_disk_mb"]["retained_payload_mb"] = 20
+    data["recovery"] = "fixture recovery"
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps(data))
+    summary.summarize(receipt, tmp_path / "summary")
+    report = (tmp_path / "summary" / "REPORT.md").read_text()
+    assert "Recovery: the 2 ordinary cells come from a runner invocation" in report
+    assert "keeps only the 1 fixtures of 10 MB or less (plugin-10)" in report
+    assert "`--retained-payload-mb 20` is machine-specific" in report
+    assert "Exactly one hardlink negative-control probe is run" in report
+    assert ("The 4- and 8-worker counts are deferred: the busy marker exited 10 "
+            "throughout and never 0") in report
+    data.pop("recovery")
+    receipt.write_text(json.dumps(data))
+    summary.summarize(receipt, tmp_path / "summary")
+    report = (tmp_path / "summary" / "REPORT.md").read_text()
+    assert "Recovery:" not in report
+    assert "does not exclude a stray checkpoint" in report
+    data["cells"][0]["wal_pending_checked"] = True
+    receipt.write_text(json.dumps(data))
+    summary.summarize(receipt, tmp_path / "summary")
+    assert "stray checkpoint" not in (tmp_path / "summary" / "REPORT.md").read_text()

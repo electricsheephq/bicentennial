@@ -60,6 +60,16 @@ def summarize(receipt, destination, validation=None):
     plan = data["planned_disk_mb"]
     ordinary = [c for c in cells if c["store"] != "uncheckpointed"]
     fixture_labels = sorted({c["store"] for c in ordinary})
+    # The runner deletes fixtures above 10 MB after their cells and keeps the rest.
+    kept = sorted({c["store"] for c in ordinary if c.get("size_mb", math.inf) <= 10})
+    kept_text = (f"the runner keeps only the {len(kept)} fixtures of 10 MB or less ("
+                 + ", ".join(kept) + ")" if kept else "the runner keeps no fixture")
+    exits = sorted({s["marker"]["exit"] for s in samples}, key=str)
+    recovery = ([f"Recovery: the {len(ordinary)} ordinary cells come from a runner "
+                 "invocation that crashed in diskutil after their timing completed; "
+                 "the WAL/hardlink controls and the environment block come from a "
+                 "separate recovery step run later, at a different machine load "
+                 "(see each row's load range).", ""] if data.get("recovery") else [])
     lines = [
         "# S3: copy-on-write store clones", "", "## Claim", "",
         "**advisory** — APFS fixture-store clones isolated every measured probe; "
@@ -95,11 +105,12 @@ def summarize(receipt, destination, validation=None):
         "baseline hash and fixture generation are excluded. There is one cell "
         "per fixture/worker pair, no warm-up or repeated throughput trial. This "
         "is guarded fixture throughput, not a projection for real probes.", "",
+        *recovery,
         "The busy marker and `sysctl -n vm.loadavg` are sampled immediately "
         "before every clone. Table load ranges are the one-minute values across "
         f"the {clone_n} samples per cell (see each row); aggregate.csv also records five- and "
         "fifteen-minute ranges, marker states, and the minimum free space. "
-        "Large fixtures run sequentially; only the two small fixtures remain. "
+        f"Large fixtures run sequentially and are deleted after their cells; {kept_text}. "
         f"Peak extra disk was planned, not measured. The arithmetic bound is "
         f"{plan['fixture_payload_mb']} MB maximum fixture payload + "
         f"{plan['retained_payload_mb']} MB earlier retained payload + "
@@ -110,7 +121,10 @@ def summarize(receipt, destination, validation=None):
         "and the bounded fixture writes; it is not a measured allocation guarantee. "
         "Logical clone sizes are not summed as physical usage.", "",
         "Reproduce on APFS with caller-supplied scratch, receipt and marker "
-        "locations (the runner refuses an existing fixture destination):", "",
+        "locations (the runner refuses an existing fixture destination). "
+        f"`--retained-payload-mb {plan['retained_payload_mb']}` is machine-specific: it "
+        "declares payload an earlier run left in the measurement machine's scratch; "
+        "set it to what your scratch holds (0 when empty).", "",
         "```sh",
         'nice -n 19 taskpolicy -b uv run --offline --python 3.12 --no-project python spikes/s3/clone_probe.py --scratch "$SCRATCH" --output "$RECEIPTS" --busy-command "$BICENTENNIAL_BUSY_CMD" --workers '
         + " ".join(map(str, data["requested_workers"])) + f" --probes {cells[0]['probes']}"
@@ -139,28 +153,31 @@ def summarize(receipt, destination, validation=None):
                         for row in cell["rows"])
         lines.append(f"| {cell['store']} | {cell['workers']} | `{flags}` |")
     wal_n = len(wal["rows"])
-    negative_n = len([data["negative_control"]])
     lines += ["", f"The uncheckpointed control had both sidecars present (n={sum(c['store'] == 'uncheckpointed' for c in cells)} fixture) "
               f"and passed all checks in {wal_n}/{wal['probes']} probes, including the WAL-only row. "
-              f"The hardlink negative control was caught in {negative_n}/{negative_n} probe: the nonce "
+              + ("" if wal.get("wal_pending_checked") else
+                 "This receipt's control predates the runner's check that the WAL is "
+                 "non-empty and the main file alone lacks the WAL-only row, so it does "
+                 "not exclude a stray checkpoint. ") +
+              "Exactly one hardlink negative-control probe is run, and it was caught: the nonce "
               "leaked into the original and into fresh B, changing the original "
               "tree hash. These are expected failures of isolation.", "",
               "Focused validation: " + (f"`{validation}` (caller-supplied test receipt)."
                                         if validation else "not supplied; see PR evidence."), "",
               "## What is deferred", ""]
-    deferred_workers = sorted({row["workers"] for row in data["deferred"]})
+    deferred_workers = sorted({1, 2, 4, 8} - {r["workers"] for r in records})
     if deferred_workers:
-        lines.append("Worker counts " + " and ".join(map(str, deferred_workers)) +
-                     " were deferred where the immediately preceding marker was "
-                     "not idle; no throughput is inferred for those cells. The "
-                     "committed runner can measure them when the marker exits 0.")
+        reason = ("the busy marker exited " + ", ".join(map(str, exits)) +
+                  " throughout and never 0 (idle), so, as the spec requires, they "
+                  "were left as a script and not run" if 0 not in exits else
+                  "they were not requested, or the immediately preceding marker "
+                  "was not idle")
+        lines.append("The " + "- and ".join(map(str, deferred_workers)) +
+                     "-worker counts are deferred: " + reason + ". No throughput "
+                     "is inferred for them; the committed runner can measure them "
+                     "when the marker exits 0.")
     else:
-        lines.append("No requested worker count was deferred.")
-    unrequested = sorted({1, 2, 4, 8} - set(data["requested_workers"]))
-    if unrequested:
-        lines.append("Worker counts " + ", ".join(map(str, unrequested)) +
-                     " were not requested or measured in this rerun; elevated "
-                     "counts require an immediately preceding idle marker.")
+        lines.append("No worker count was deferred.")
     lines += ["", "Reflinks on other platforms, the SQLite backup API, active-writer "
               "snapshots, path-bearing stores, and repeated/cold-cache trials remain deferred.",
               "", "## Does not prove", "",
