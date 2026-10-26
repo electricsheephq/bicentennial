@@ -19,7 +19,7 @@ from unittest import mock
 import sol_director as sd
 
 LIFE = Path(__file__).resolve().parent.parent / "s6a" / "micro_life.json"
-ACCT, EMAIL, RES = "acct-FAKE-0000-test", "nobody-fake@example.invalid", "fake-region"
+ACCT, EMAIL, RES, USER = "acct-FAKE-0000-test", "nobody-fake@example.invalid", "fake-region", "user-FAKE-0000"
 MEM = {"type": "function", "name": "memory", "parameters": {"type": "object"}, "strict": False}
 TODO = {"type": "function", "name": "todo", "parameters": {"type": "object"}, "strict": False}
 
@@ -27,7 +27,7 @@ TODO = {"type": "function", "name": "todo", "parameters": {"type": "object"}, "s
 def jwt(exp_in, n=0):
     seg = [base64.urlsafe_b64encode(json.dumps(x).encode()).rstrip(b"=").decode() for x in (
         {"alg": "none"}, {"exp": int(time.time() + exp_in), "iat": int(time.time()), "n": n, "email": EMAIL,
-                          sd.AUTH_CLAIM: {"chatgpt_account_id": ACCT, "chatgpt_data_residency": RES}})]
+                          sd.AUTH_CLAIM: {"chatgpt_account_id": ACCT, "chatgpt_data_residency": RES, "chatgpt_user_id": USER}})]
     return ".".join(seg) + ".fake-signature"
 
 
@@ -39,8 +39,8 @@ def store(tmp, exp_in=3600):
     return p
 
 
-def sse(*items, usage=None, terminal="response.completed"):
-    evs = [{"type": "response.output_item.done", "output_index": i, "item": it} for i, it in enumerate(items)]
+def sse(*items, usage=None, terminal="response.completed", echo=None):
+    evs = [{"type": "response.created", "response": {"id": "r1", "safety_identifier": echo}}] * bool(echo) + [{"type": "response.output_item.done", "output_index": i, "item": it} for i, it in enumerate(items)]
     evs.append({"type": terminal, "response": {"id": "r1", "status": "completed", "model": "gpt-6.1-sol",
                                                "usage": usage or {"input_tokens": 7, "output_tokens": 3}}})
     return b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in evs)
@@ -145,7 +145,7 @@ class Login(Base):
             before = json.loads((self.tmp / "auth.json").read_text())["tokens"]
             self.assertEqual((d.stopped, d.stop_reason, len(calls)), (True, reason, 1))
             self.assertEqual(json.loads((self.tmp / "auth.json").read_text())["tokens"], before)
-            code, _, rec = d.handle(self.turn(d), {})  # stopped: no upstream call, no second refresh
+            _, _, rec = d.handle(self.turn(d), {})  # stopped: no upstream call, no second refresh
             self.assertEqual((len(Upstream.seen), len(calls), rec["write_turn_failed"]), (0, 1, "budget_or_stop"))
 
 
@@ -156,9 +156,10 @@ class Wire(Base):
                  "input": [{"type": "message", "role": "user", "content": d.expected[0]["user"]}]}
         hin = {"Authorization": "Bearer " + sd.placeholder_auth()["providers"]["openai-codex"]["tokens"]["access_token"],
                "ChatGPT-Account-ID": "placeholder-account", "session_id": "sess-1", "x-client-request-id": "k"}
+        Upstream.script = [(200, sse(MSG, echo=USER))]  # the backend echoes the user id (safety_identifier)
         code, out = self.http(d, "POST", sd.MOUNT + "/responses", title, hin)
         h, wire = Upstream.seen[0]
-        self.assertEqual((code, out), (200, sse(MSG)))
+        self.assertEqual((code, out), (200, sse(MSG, echo="redacted-by-director")))
         real = json.loads((self.tmp / "auth.json").read_text())["tokens"]["access_token"]
         self.assertEqual((h["authorization"], h["chatgpt-account-id"], h["x-openai-internal-codex-residency"]),
                          ("Bearer " + real, ACCT, RES))
@@ -167,8 +168,8 @@ class Wire(Base):
         rec = self.records("request")[0]
         self.assertEqual((rec["role"], rec["subrole"], rec["upstream"][0]["limit_headers"]),
                          ("aux", "title_generation", {"x-codex-primary-used-percent": "42"}))
-        self.assertIn("authorization", rec["in_headers"])
-        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, RES)]
+        self.assertEqual((rec["upstream"][0]["scrubbed"], "authorization" in rec["in_headers"]), (1, True))
+        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, RES, USER)]
         for f in (self.tmp / "ledger").rglob("*"):
             if f.is_file():
                 data = zstd.decompress(f.read_bytes()) if f.suffix == ".zst" else f.read_bytes()
@@ -176,8 +177,15 @@ class Wire(Base):
 
     def test_guard_refuses_a_secret(self):
         d = self.make()
-        with mock.patch.object(sd.os, "_exit", side_effect=SystemExit(3)), self.assertRaises(SystemExit):
+        with mock.patch.object(sd.os, "_exit", side_effect=SystemExit(3)), self.assertRaises(SystemExit), \
+                mock.patch.object(sd.os, "write") as w:
             d.ledger.append({"note": "acct " + ACCT})
+        self.assertEqual(w.call_args[0][1], b"FATAL: tokens.account_id reached a ledger write at ['note']; stopping\n")
+        self.assertEqual(sd._where(json.dumps({"sse": sse(dict(MSG, user=ACCT)).decode()}).encode(), ACCT),
+                         ["sse", "sse:response.output_item.done", "item", "user"])
+        hits = sd.scan(d.login, [str(self.tmp)])["hits"]  # the store itself holds every needle; the ledger none
+        self.assertEqual((hits["tokens.access_token"], hits["tokens.account_id"]), (1, 1))
+        self.assertFalse(sd.scan(d.login, [str(self.tmp / "ledger")])["hits"])
 
     def test_sse_buffered_then_replayed_with_usage(self):
         d = self.make()
@@ -232,7 +240,7 @@ class Roles(Base):
         nxt = dict(body, input=body["input"] + [{"type": "function_call", "call_id": cid[0], "name": "memory",
                                                 "arguments": "{}"},
                                                {"type": "function_call_output", "call_id": cid[0], "output": "saved"}])
-        code, out, rec = d.handle(nxt, {})
+        _, out, rec = d.handle(nxt, {})
         self.assertEqual((rec["role"], rec["served"], cid), ("write_turn", "script", ["bcw00001"]))
         self.assertIn(d.expected[0]["assistant"], out.decode())
 
@@ -280,12 +288,14 @@ class Serving(Base):
         for method, path in (("GET", "/v1/models"), ("POST", "/main/v1/chat/completions"),
                              ("POST", sd.MOUNT + "/responses/compact"), ("GET", sd.MOUNT + "/other")):
             self.assertEqual(self.http(d, method, path, {} if method == "POST" else None)[0], 404)
+        self.assertEqual(self.http(d, "GET", sd.MOUNT + "/api/tags")[0], 404)
         code, out = self.http(d, "GET", sd.MOUNT + "/models?client_version=99.0.0")
         self.assertEqual((code, json.loads(out)["models"][0]["slug"]), (200, "gpt-6.1-sol"))
         code, out = self.http(d, "GET", "/backend-api/wham/usage")
         self.assertEqual((code, json.loads(out)["rate_limit"]), (200, None))
         self.assertEqual([(r["role"], r["subrole"]) for r in self.records("request")],
-                         [("unknown", "path_refused")] * 4 + [("metadata", "catalog"), ("metadata", "usage_probe")])
+                         [("unknown", "path_refused")] * 4 + [("metadata", "local_server_probe"), ("metadata", "catalog"),
+                                                               ("metadata", "usage_probe")])
         self.assertEqual((Upstream.seen, (self.tmp / "b.json").exists()), ([], False))
 
     def test_no_synthesised_429(self):

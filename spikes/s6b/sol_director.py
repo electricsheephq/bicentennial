@@ -34,6 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from compression import zstd
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "s6a"))
@@ -42,6 +43,8 @@ from director import REVIEW_PREFIX, WRITE_SUFFIX, WRITE_TOOLS, Budget, Ledger, _
 MODEL, EFFORT = "gpt-6.1-sol", "medium"  # the pin (Hermes sends agent.reasoning_effort; recorded per call)
 MOUNT = "/backend-api/codex"
 USAGE_PATH = "/backend-api/wham/usage"
+# Hermes' local-server detection waterfall (agent/model_metadata.py): a known shape, answered 404 and recorded
+LOCAL_PROBES = ("/api/v1/models", "/api/tags", "/v1/props", "/props", "/version")
 TITLE_SIG = "You name chat sessions."  # Hermes title_generation instructions (shape signature)
 SUMMARY_SIG = "You are a summarization agent creating a context checkpoint"  # Hermes compression prompt
 SUFFIX_ITEM = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": WRITE_SUFFIX}]}
@@ -106,7 +109,7 @@ class Login:
     atomically, in the file's own format, before the new access token is used."""
     def __init__(self, path, token_url: str, client_id: str, post=_post_form, on_refresh=None):
         self.path, self.token_url, self.client_id, self.post = Path(path), token_url, client_id, post
-        self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), set(), []
+        self.on_refresh, self.lock, self.secrets, self.log = on_refresh, threading.Lock(), {}, []
 
     def token(self) -> str:
         with self.lock, os.fdopen(os.open(self.path.with_name(self.path.name + ".lock"), os.O_CREAT | os.O_RDWR,
@@ -152,14 +155,20 @@ class Login:
         return store["tokens"]["access_token"]
 
     def _learn(self, store: dict):
-        """Every token, and every account, user or email value in their claims, becomes a guard needle."""
-        for tok in store["tokens"].values():
+        """Every token, and every account, user or email value in their claims, becomes a guard needle
+        (value -> a label naming only the field)."""
+        for name, tok in store["tokens"].items():
             if isinstance(tok, str):
-                self.secrets.add(tok)
+                self.secrets[tok] = f"tokens.{name}"
                 for k, v in jwt_claims(tok).items():  # top-level claims and the namespaced auth/profile claims
                     for kk, vv in (v.items() if isinstance(v, dict) else [(k, v)]):
                         if isinstance(vv, str) and re.search(r"account|user|email|org|^sub$", kk):
-                            self.secrets.add(vv)
+                            self.secrets.setdefault(vv, f"claim.{kk}")
+
+    def learn_only(self) -> dict:
+        """Read-only (no lock, no refresh): the needles, for --scan."""
+        self._learn(json.loads(self.path.read_text()))
+        return self.secrets
 
 
 class Guard:
@@ -168,11 +177,39 @@ class Guard:
         self.login = login
 
     def check(self, data: bytes) -> bytes:
-        for s in (self.login.secrets if self.login else ()):
-            if len(s) >= 8 and s.encode() in data:
-                os.write(2, b"FATAL: a credential reached a ledger write; stopping\n")
+        for s, label in list(self.login.secrets.items() if self.login else ()):
+            if len(s) >= 8 and s.encode() in data:  # name the field and its JSON path, never the value
+                os.write(2, f"FATAL: {label} reached a ledger write at {_where(data, s)}; stopping\n".encode())
                 os._exit(3)
         return data
+
+
+def _where(data: bytes, s: str):
+    """The key path to the first string holding s; an SSE text is walked event by event."""
+    def walk(o, path):
+        if isinstance(o, str):
+            if s in o and o.startswith(("event:", "data:")):
+                return next(filter(None, (walk(e, [*path, f"sse:{e.get('type')}"]) for e in parse_sse(o.encode()))), path)
+            return path if s in o else None
+        kids = o.items() if isinstance(o, dict) else enumerate(o) if isinstance(o, list) else ()
+        return next(filter(None, (walk(v, [*path, str(k)]) for k, v in kids)), None)
+    try:
+        return walk(json.loads(data), [])
+    except ValueError:
+        return "non-json"
+
+
+def scan(login: Login, paths: list[str]) -> dict:
+    """Counts of credential, account and email needles in files (zstd blobs decompressed); never a value."""
+    needles, files, hits = login.learn_only(), 0, {}
+    for f in [q for p in map(Path, paths) for q in ([p] if p.is_file() else p.rglob("*")) if q.is_file()]:
+        files += 1
+        data = f.read_bytes()
+        data = zstd.decompress(data) if f.suffix == ".zst" else data
+        for s, label in needles.items():
+            if len(s) >= 8 and s.encode() in data:
+                hits[label] = hits.get(label, 0) + 1
+    return {"files_scanned": files, "needles": sum(len(s) >= 8 for s in needles), "hits": hits}
 
 
 def typed(items) -> list:
@@ -332,7 +369,7 @@ class Director:
                 with self.urlopen(req, timeout=self.a.timeout) as r:
                     raw, status, hdrs = r.read(), r.status, dict(r.headers)
             except urllib.error.HTTPError as e:
-                text, hdrs = e.read().decode("utf-8", "replace"), dict(e.headers or {})
+                text, hdrs = self._scrub(e.read(), sub).decode("utf-8", "replace"), dict(e.headers or {})
                 e.close()
                 cat = sol_category(e.code, text)
                 if e.code in (401, 403):
@@ -348,6 +385,7 @@ class Director:
             except Exception as e:  # network errors: the class only (messages can carry the host)
                 return {**sub, "status": -1, "category": f"error:{type(e).__name__}", "ok": False,
                         "t_ms": round((time.monotonic() - t0) * 1000)}
+        raw = self._scrub(raw, sub)
         events = parse_sse(raw)
         done = next((e for e in reversed(events) if e.get("type") in (
             "response.completed", "response.failed", "response.incomplete", "error")), {})
@@ -362,6 +400,15 @@ class Director:
         if not ok:
             sub["body_shape"] = shape(done)
         return sub
+
+    def _scrub(self, data: bytes, sub: dict) -> bytes:
+        """The upstream echoes account-identifying values (observed: response.safety_identifier carries the
+        user id). Each one is replaced by a fixed placeholder before the stream is stored or replayed."""
+        for s in (self.login.secrets if self.login else ()):
+            if len(s) >= 8 and s.encode() in data:
+                sub["scrubbed"] = sub.get("scrubbed", 0) + data.count(s.encode())
+                data = data.replace(s.encode(), b"redacted-by-director")
+        return data
 
     def _streak(self, cat: str):
         self.quota_streak = self.quota_streak + 1 if cat == "quota" else 0
@@ -477,7 +524,7 @@ class Director:
 
 
 def _limit_headers(h: dict) -> dict:
-    return {k.lower(): v[:40] for k, v in (h or {}).items() if re.search(r"rate|limit|retry|reset|usage|x-codex", k.lower())}
+    return {k.lower(): v[:40] for k, v in (h or {}).items() if re.search(r"rate|limit|retry|reset|usage|x-codex", k.lower()) and "turn-state" not in k.lower()}
 
 
 def _err_obj(text: str) -> dict:
@@ -510,9 +557,9 @@ def make_handler(d: Director):
             self.end_headers()
             self.wfile.write(data)
 
-        def _meta(self, subrole: str, code: int, obj: dict):
+        def _meta(self, subrole: str, code: int, obj: dict, role: str = "metadata"):
             d.ledger.append({"type": "request", "run": d.a.run, "method": self.command, "path": self.path,
-                             "role": "metadata" if code == 200 else "unknown", "subrole": subrole, "status": code,
+                             "role": role, "subrole": subrole, "status": code,
                              "t": time.time()})
             self._send(code, json.dumps(obj).encode())
 
@@ -532,14 +579,17 @@ def make_handler(d: Director):
                 return self._meta("catalog", 200, catalog(d.a))
             if path == USAGE_PATH:
                 return self._meta("usage_probe", 200, {"rate_limit": None, "note": "director: fixed neutral body"})
-            self._meta("path_refused", 404, {"error": {"message": "director: unknown path (fail closed)"}})
+            if path.removeprefix(MOUNT) in LOCAL_PROBES:
+                return self._meta("local_server_probe", 404, {"error": {"message": "director: not a local server"}})
+            self._meta("path_refused", 404, {"error": {"message": "director: unknown path (fail closed)"}}, "unknown")
 
         def do_POST(self):
             if self.path.startswith("http"):
                 return self.do_CONNECT()
             raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             if urllib.parse.urlparse(self.path).path.rstrip("/") != MOUNT + "/responses":
-                return self._meta("path_refused", 404, {"error": {"message": "director: unknown path (fail closed)"}})
+                return self._meta("path_refused", 404, {"error": {"message": "director: unknown path (fail closed)"}},
+                                  "unknown")
             t0, d.inflight = time.time(), d.inflight + 1
             names = sorted({k.lower() for k in self.headers})  # header NAMES only, never values
             fwd = {k: self.headers[k] for k in PASS_HEADERS if self.headers.get(k)}
@@ -576,6 +626,9 @@ def make_handler(d: Director):
 
 def main():
     p = argparse.ArgumentParser()
+    if sys.argv[1:2] == ["--scan"]:  # under the local helper: python3.14 sol_director.py --scan <dir-or-file>...
+        login = Login(os.environ["BICENTENNIAL_SOL_AUTH"], "", "")
+        return print(json.dumps(scan(login, sys.argv[2:])))
     p.add_argument("--port", type=int, required=True)
     p.add_argument("--life", required=True)
     p.add_argument("--ledger-dir", required=True)
