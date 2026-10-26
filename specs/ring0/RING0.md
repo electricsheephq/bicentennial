@@ -55,8 +55,9 @@ At T1 every request the harness or the system sends is answered by a determinist
 | `write_turn` | the content-blind write rule (below) |
 | `probe_main` | the scripted reader's recall call (§1), then the envelope or the first step of the action plan |
 | `compaction`, `summariser`, `extraction` | the extractive stub (below) |
+| `memory_write` | the content-blind write rule. This role is added when the classifier is promoted (R01): S1's background-review marker, and any pre-compaction-flush or session-end marker, map to it instead of `aux` |
 | `title` | the fixed title `Session` |
-| `aux` | the write rule if the request offers a declared write tool (Hermes' background review is `aux`); otherwise an empty assistant message with no tool call |
+| `aux` | an empty assistant message with no tool call |
 | `unknown` | refused, as the director does on every tier |
 
 Embedding requests (an embeddings endpoint on a declared alias) go to the hashed-vector stub.
