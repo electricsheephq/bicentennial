@@ -558,15 +558,17 @@ class Director:
             sub["t_sent"] = self.pacer.clock()
             raw, status, hdrs = self._stub(wire, kind), 200, {}
         else:
-            req = urllib.request.Request(self.url, data=data, method="POST", headers={
-                "Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                "Accept": "text/event-stream", **IDENTITY, **account_headers(token), **fwd})
             pace_start = self.pacer.clock()
             with self.pacing_cv:
                 self.pacing_now += 1
             try:
                 wait = self.pacer.acquire()
                 sub["pace_wait_ms"] = wait if wait is not None else (self.pacer.clock() - pace_start) * 1000
+                if wait and self.login and not self.stopped:  # the token can expire during a long pace wait
+                    try:
+                        token = self.login.token()
+                    except Stop as e:
+                        self.stop(str(e))
                 if wait is None or self.stopped:
                     with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
                         fcntl.flock(f, fcntl.LOCK_EX)
@@ -580,6 +582,9 @@ class Director:
                 with self.pacing_cv:
                     self.pacing_now -= 1
                     self.pacing_cv.notify_all()
+            req = urllib.request.Request(self.url, data=data, method="POST", headers={
+                "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                "Accept": "text/event-stream", **IDENTITY, **account_headers(token), **fwd})
             sub["t_sent"] = self.pacer.clock()
             t0 = time.monotonic()  # service time excludes pacing
             try:

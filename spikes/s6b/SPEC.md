@@ -55,6 +55,9 @@ The ramp deliberately uses rate 0 to retain its refusal-threshold burst measurem
 `summary.json` beside the ledger reports counts, recovery outcomes, overload/429/breaker counts,
 trailing half-open 60 s request windows ending at each send (p50/max, including start-up), and total pace wait;
 service latency excludes pacing. Summaries contain no bodies or headers; older ledgers remain readable.
+After a pace wait the director reads the login token again, so a token that expired while it waited is
+refreshed before the send. A paced soak's send window (`last_send_s`, and the projection's C_effective window)
+ends at the last send after pacing; files without pace waits keep their recorded window.
 `summary.json` also records `stop_reason`, a fixed-vocabulary label, and `breaker_stops` counts only
 `upstream_failures_3_in_a_row`.
 Invalid HTTP 4xx except 401/403/429 stop with `upstream_invalid_request_<code>` and invalidate evidence.

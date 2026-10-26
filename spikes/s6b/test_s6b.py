@@ -419,10 +419,23 @@ class Fix1(Base):
                 "last_send_s": 10, "wall_s": 15, "inflight_mean": 2, "inflight_target": 2, "sustained": True,
                 "n429": 0, "server_overloaded": 0, "sent": 1, "utc_start": 0, "utc_end": 15, "ended_by": "duration"}
         self.assertEqual(an.soak_level(soak)["C_effective"], 0.3)
-        soak["calls"][0]["pace_wait_ms"] = 2000
+        # paced: each interval starts at its send after pacing, and the window ends at the last such send, not at
+        # the last worker start that the recorder before this fix stored as last_send_s
+        soak |= {"calls": [{"ok": True, "t_start_s": 0, "pace_wait_ms": 0, "t_ms": 4000, "t_done_s": 4},
+                           {"ok": True, "t_start_s": 1, "pace_wait_ms": 9000, "t_ms": 5000, "t_done_s": 15}],
+                 "last_send_s": 1}
         result = an.soak_level(soak)
-        self.assertEqual(result["C_effective"], 0.1)
+        self.assertEqual((result["C_window_s"], result["C_effective"]), (10, 0.4))
         self.assertEqual(result["inflight_sampled_mean_label"], "workers including pace waits")
+
+    def test_soak_records_the_last_send_after_pacing(self):
+        import soak_sol
+        d = self.make()
+        d.upstream = mock.Mock(return_value={"status": 200, "ok": True, "category": "ok", "t_ms": 10,
+                                             "pace_wait_ms": 5000.0})
+        res = soak_sol.soak(d, [{"body": AUX, "kind": "write_turn", "hash": "fake"}], 1, 1, 1, pause=0, sample_s=0.01)
+        self.assertEqual(res["sent"], 1)
+        self.assertGreaterEqual(res["last_send_s"], 5.0)
 
     def test_backoff_checks_stop_each_second_and_keeps_sleep_seam(self):
         d = self.make()
@@ -644,6 +657,47 @@ class Fix1(Base):
             if proc.poll() is None:
                 proc.kill()
             proc.communicate(timeout=5)
+
+
+class PaceThreads(Base):
+    """The token is read again after a pace wait, so a long wait never sends a token that expired while it waited."""
+    def sent(self, d):
+        seen = []
+        d.urlopen = lambda req, **kw: (seen.append(req.get_header("Authorization")), Resp(sse(MSG)))[1]
+        return seen
+
+    def test_a_token_that_expires_during_the_pace_wait_is_refreshed_before_the_send(self):
+        clock, refreshed = Clock(), []
+
+        def post(url, fields):
+            refreshed.append(clock.now)
+            return 200, {"access_token": jwt(3600, 1), "refresh_token": "rt-fake-1", "id_token": jwt(3600, 2)}
+        d = self.make(post=post, exp_in=302, rate_per_min=1 / 6, burst=1, clock=clock, sleep=clock.sleep)
+        seen, base = self.sent(d), time.time()
+        with mock.patch.object(sd.time, "time", lambda: base + clock.now):
+            first, second = d.upstream(AUX, "aux", {}), d.upstream(AUX, "aux", {})
+        self.assertEqual((first["ok"], second["ok"], first["pace_wait_ms"], round(second["pace_wait_ms"])),
+                         (True, True, 0, 360_000))
+        self.assertEqual([round(t) for t in refreshed], [360])  # after the wait, not before it
+        self.assertNotEqual(seen[0], seen[1])
+        self.assertEqual(seen[1], f"Bearer {json.loads(d.login.path.read_text())['tokens']['access_token']}")
+
+    def test_no_wait_reads_the_token_once(self):
+        d = self.make(rate_per_min=180, burst=10)
+        seen = self.sent(d)
+        d.login.token = mock.Mock(return_value="old")
+        d.pacer.acquire = mock.Mock(return_value=0.0)
+        d.upstream(AUX, "aux", {})
+        self.assertEqual((seen, d.login.token.call_count), (["Bearer old"], 1))
+
+    def test_a_login_stop_after_the_wait_sends_nothing_and_releases_the_reservation(self):
+        d = self.make(rate_per_min=180, burst=10)
+        seen = self.sent(d)
+        d.login.token = mock.Mock(side_effect=["old", sd.Stop("login_latched:x")])
+        d.pacer.acquire = mock.Mock(return_value=1000.0)
+        up = d.upstream(AUX, "aux", {})
+        self.assertEqual((up["category"], seen, d.stop_reason), ("budget_or_stop", [], "login_latched:x"))
+        self.assertEqual(json.loads((self.tmp / "b.json").read_text())["total"], 0)
 
 
 class Login(Base):

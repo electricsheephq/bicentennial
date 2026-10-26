@@ -149,7 +149,7 @@ def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling:
     wall = time.monotonic() - t0
     sent = sorted((c for c in calls if not c["unsent"]), key=lambda c: c["n"])
     ok, refused = [c for c in sent if c["ok"]], [c for c in sent if not c["ok"]]
-    last_send = max((c["t_start_s"] for c in sent), default=0.0)
+    last_send = max((round(c["t_start_s"] + c.get("pace_wait_ms", 0) / 1000, 2) for c in sent), default=0.0)  # after pacing
     window = [n for t, n in samples if sample_s <= t <= last_send]  # after start-up, while sends still started
     ended = state["ended"]
     minutes = []

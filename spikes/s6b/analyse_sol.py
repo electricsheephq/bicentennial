@@ -260,12 +260,14 @@ def measured_C(lvl: dict | None, ramp: dict) -> int:
 
 def soak_level(soak: dict) -> dict:
     """C_effective is the ok calls' service time clipped to the send window, over that window (Little's law on one
-    declared window): service that runs on into the drain is not counted against a window that excludes the drain."""
+    declared window): service that runs on into the drain is not counted against a window that excludes the drain.
+    The window ends at the last send after pacing, the same send times the service intervals start from."""
     ok = [c for c in soak["calls"] if c["ok"]]
     busy = sum(c["t_ms"] for c in ok) / 1000
-    window = soak["last_send_s"] or soak["wall_s"]
     def send(c):
         return c["t_start_s"] + c.get("pace_wait_ms", 0) / 1000
+    paced = any("pace_wait_ms" in c for c in soak["calls"])  # older files record no pace waits: keep their window
+    window = (max(map(send, soak["calls"]), default=0) if paced else soak["last_send_s"]) or soak["wall_s"]
     clipped = sum(max(0.0, min(send(c) + c["t_ms"] / 1000, window) - send(c)) for c in ok)
     in_window = sum(c["t_done_s"] <= window for c in ok)
     return {"C_effective": round(clipped / window, 2), "C_window_s": window, "inflight_sampled_mean": soak["inflight_mean"],
