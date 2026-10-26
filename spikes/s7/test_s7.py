@@ -91,7 +91,10 @@ class Readback(unittest.TestCase):
     def test_mismatch_kinds_both_wires(self):
         for wire in rb.MODELS:
             key = "messages" if wire == "chat" else "input"
-            for kind in ("extra", "message", "tool", "suffix", "model", "stream", "adaptation"):
+            expect = {"extra": ["extra"], "message": [key], "tool": ["tools"], "suffix": [key], "model": ["model"],
+                      "stream": ["stream"], "coerced": ["stream"],
+                      "adaptation": ["reasoning_effort" if wire == "chat" else "reasoning"]}
+            for kind, keys in expect.items():
                 with self.subTest(wire=wire, kind=kind):
                     data = fixture(wire)
                     rows, blobs, _, _ = data
@@ -109,13 +112,41 @@ class Readback(unittest.TestCase):
                         sent["model"] = "different-model"
                     elif kind == "stream":
                         sent["stream"] = not sent["stream"]
+                    elif kind == "coerced":  # equal under Python ==, a different body on the wire
+                        sent["stream"] = int(sent["stream"])
                     else:
                         sent.pop("reasoning_effort" if wire == "chat" else "reasoning")
                     result = self.audit(data, wire)
-                    self.assertEqual(len(result["A1"]["mismatches"]), 1)
+                    self.assertEqual([m["keys"] for m in result["A1"]["mismatches"]], [keys])
                     self.assertEqual(result["A1"]["flag_disagreements"], [1])
                     if kind == "tool":
                         self.assertEqual(result["A3"]["failures"][0]["kind"], "non_write_offered")
+
+    def test_flag_disagreement_on_a_matching_body(self):
+        for wire in rb.MODELS:
+            for flag in (False, None):
+                with self.subTest(wire=wire, flag=flag):
+                    data = fixture(wire)
+                    if flag is None:
+                        del data[0][0]["write_turn_readback"]
+                    else:
+                        data[0][0]["write_turn_readback"] = flag
+                    a1 = self.audit(data, wire)["A1"]
+                    self.assertEqual((a1["mismatches"], a1["flag_disagreements"]), ([], [1]))
+
+    def test_pending_reply_and_extra_copies(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, _ = data
+                sent = blobs[rows[0]["upstream"][0]["req"]]
+                sent["leak"] = "first script"  # the cursor turn's reply: served only after the write turn
+                hits = self.audit(data, wire)["A2"]["introduced"]
+                self.assertEqual([(h["kind"], h["id"]) for h in hits], [("pending_assistant", "1:1:assistant")])
+                blobs[rows[0]["req"]]["note"] = "later question"
+                sent["leak"], sent["note"] = "later question", "later question"  # one copy more than the harness
+                a2 = self.audit(data, wire)["A2"]
+                self.assertEqual((a2["raw_hits"], a2["introduced_hits"]), (1, 1))
 
     def test_boundary_and_inherited_collision(self):
         for wire in rb.MODELS:
@@ -149,6 +180,56 @@ class Readback(unittest.TestCase):
             else:
                 blobs[rows[0]["resp"]]["sse"] = blobs[rows[0]["resp"]]["sse"].replace("bcw00001", "bad-id")
             self.assertTrue(self.audit(data, wire)["A3"]["failures"])
+
+    def test_non_write_call_reaching_the_harness(self):
+        for wire in rb.MODELS:
+            for where in ("served", "history_only"):
+                with self.subTest(wire=wire, where=where):
+                    data = fixture(wire)
+                    rows, blobs, _, _ = data
+                    up, served, follow = (blobs[rows[0]["upstream"][0]["resp"]], blobs[rows[0]["resp"]],
+                                          blobs[rows[1]["req"]])
+                    cid = "bcw00002" if where == "served" else "up-term"
+                    if wire == "chat":
+                        up["choices"][0]["message"]["tool_calls"].append(
+                            {"id": "up-term", "function": {"name": "terminal", "arguments": "{}"}})
+                        call = {"id": cid, "type": "function", "function": {"name": "terminal", "arguments": "{}"}}
+                        if where == "served":
+                            served["choices"][0]["message"]["tool_calls"].append(call)
+                            follow["messages"][-2]["tool_calls"].append(call)
+                            follow["messages"].append({"role": "tool", "tool_call_id": cid, "content": "{}"})
+                        else:  # the call lands in the next request's history with no result
+                            follow["messages"][-2]["tool_calls"].append(call)
+                    else:
+                        item = {"type": "function_call", "call_id": cid, "name": "terminal", "arguments": "{}"}
+                        up["sse"] += "data: " + json.dumps({"type": "response.output_item.done", "item": dict(
+                            item, call_id="up-term")}) + "\n\n"
+                        if where == "served":
+                            served["sse"] = served["sse"].replace("data: [DONE]", "data: " + json.dumps(
+                                {"type": "response.output_item.done", "item": item}) + "\n\ndata: [DONE]")
+                            follow["input"] += [item, {"type": "function_call_output", "call_id": cid, "output": "{}"}]
+                        else:
+                            follow["input"].append(item)
+                    a3 = self.audit(data, wire)["A3"]
+                    kinds = {f["kind"] for f in a3["failures"]}
+                    self.assertEqual((a3["non_write_attempts"], a3["non_write_blocked"]), (1, 0))
+                    self.assertIn("non_write_reached_harness", kinds)
+                    if where == "served":
+                        self.assertIn("call_count", kinds)
+
+    def test_staged_and_unparseable_results(self):
+        def call(result):
+            return [{"record": 1, "session": 1, "id": "bcw00001", "result": result,
+                     "arguments": json.dumps({"target": "memory", "action": "add", "content": "note"})}]
+        reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "empty"})]
+        staged = rb.effects(call('{"success": true, "staged": true, "pending_id": "p1"}'), reqs, {"memory": ""}, "responses")
+        self.assertEqual((staged["applied"], staged["refused"], staged["staged"], staged["gaps"]), (0, 0, 1, []))
+        self.assertEqual(staged["calls"][0]["operations"][0]["reasons"], ["staged_not_applied"])
+        for bad in ("Error executing tool memory: boom", '"ok"'):
+            with self.subTest(result=bad):
+                out = rb.effects(call(bad), reqs, {"memory": ""}, "responses")
+                self.assertEqual((out["applied"], out["gaps"]), (0, ["bcw00001"]))
+                self.assertIn("unclassified_result", out["calls"][0]["operations"][0]["reasons"])
 
     def test_effect_gap_and_refusal(self):
         for wire in rb.MODELS:
@@ -214,6 +295,21 @@ class Readback(unittest.TestCase):
                 follow["input"].append({"type": "function_call_output", "call_id": "rogue", "output": "{}"})
             self.assertEqual(self.audit(data, wire)["A3"]["failures"],
                              [{"record": 1, "kind": "unissued_execution", "call": "rogue"}])
+
+    def test_draft_in_a_later_tool_channel(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, _ = data
+                last = blobs[rows[-1]["req"]]
+                text = "prefix discarded draft suffix"
+                if wire == "chat":
+                    last["messages"].append({"role": "assistant", "content": "", "tool_calls": [
+                        {"id": "x1", "type": "function", "function": {"name": "memory", "arguments": text}}]})
+                else:
+                    last["input"].append({"type": "function_call_output", "call_id": "x1", "output": text})
+                a5 = self.audit(data, wire)["A5"]
+                self.assertEqual((a5["text_hits"], a5["tool_channel_hits"]), ([], [{"record": 3, "write_record": 1}]))
 
     def test_configuration_collision_is_not_conversation(self):
         for wire in rb.MODELS:

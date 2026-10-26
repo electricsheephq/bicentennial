@@ -12,10 +12,10 @@ records and referenced blobs were hash-verified before analysis.
 |---|---|---|
 | Input integrity | 136 records; 361 unique blobs; intact | 167 records; 315 unique blobs; intact |
 | A1 independent readback | 60/60 forwarded bodies match; 0 mismatches; 0 flag disagreements | 60/60 match; 0 mismatches; 0 flag disagreements |
-| A2 literal boundary scan | 6 future-text hits, all inherited; 0 introduced; 0 life-id hits | 1 future-text hit, inherited; 0 introduced; 0 life-id hits |
+| A2 literal boundary scan | 7 future-text hits (6 later turns and 1 pending cursor reply), all inherited; 0 introduced; 0 life-id hits | 1 future-text hit, inherited; 0 introduced; 0 life-id hits |
 | A3 tool boundary | 60 memory definitions offered; 14 executed calls with valid issued ids; 0 provenance/filter failures; 0 non-write attempts | 60 memory definitions; 1 executed call with valid issued id; 0 failures; 0 non-write attempts |
-| A4 effect | 14 applied, 0 refused; 11 original contents in final store; 13 original contents visible next session; 14/14 store and next-session effects satisfied after later patches | 1 applied, 0 refused; 1/1 original content in final store and next session; 0 gaps |
-| A5 discard | 60/60 scripted replies match; 0 missing; 46 nonempty write responses checked; 0 whole-content matches later; 137 substring collisions and 318 configuration-value collisions | 60/60 scripted replies match; 0 missing; 59 nonempty write responses checked; 0 whole-content matches later; 215 substring collisions; 0 configuration collisions |
+| A4 effect | 14 applied, 0 refused, 0 staged; 11 original contents in final store; 13 original contents visible next session; 14/14 store and next-session effects satisfied after later patches | 1 applied, 0 refused, 0 staged; 1/1 original content in final store and next session; 0 gaps |
+| A5 discard | 60/60 scripted replies match; 0 missing; 46 nonempty write responses checked; 0 whole-content matches later; 137 conversation substring collisions, 0 tool-channel hits and 318 other-field collisions | 60/60 scripted replies match; 0 missing; 59 nonempty write responses checked; 0 whole-content matches later; 215 conversation substring collisions; 0 tool-channel hits; 0 other-field collisions |
 
 ## Method and discrepancies
 
@@ -25,28 +25,41 @@ stream and transport keys, appends the suffix, and filters tools. Responses
 preserves other fields, sets its declared streaming transport, wraps plain
 message strings in role-appropriate typed text parts, and appends the suffix
 item. Models are pinned in the checker rather than taken from the observed body.
-No director readback function is imported. There are no A1 mismatches to explain.
+No director readback function is imported. Each top-level key is compared as
+canonical JSON bytes, so a boolean sent as an integer is a mismatch. The recorded
+`write_turn_readback` flag is checked in both directions. There are no A1
+mismatches to explain.
 
 A2 scans every later scripted user/assistant string, including probe questions,
-and life id/reference values and event-map keys. Literal matches are retained:
+the cursor turn's own scripted reply (served only after the write turn), and life
+id/reference values and event-map keys. The match is an exact, case-sensitive
+substring with no minimum length, so two-character ids are needles too. A hit is
+inherited only when the forwarded body holds no more copies of the string than the
+expected body built from the harness request. Literal matches are retained:
 r6 record 43 and r7c record 49 contain the repeated user turn identified as
 `8:5:user`; r6 records 90, 92, 93, 94 and 97 contain `8:2:assistant`, the short
-branch answer already in the conversation or memory. Each is also present in
-that record's triggering harness request. The literal expected-zero condition
+branch answer already in the conversation or memory, and record 99 (cursor 8:2)
+holds the same text as its pending reply, from the memory snapshot. Each is also
+present in that record's triggering harness request. The literal expected-zero condition
 is therefore **not met**; the introduced-hit count is zero. The scan is not
 silently relaxed to obtain zero.
 
 A3 pairs upstream memory arguments with returned calls in order, checks the
 exact monotonic `bcw` ids used by both recorded directors, and finds tool results
 in the following harness request. Newly appearing unissued result ids fail the
-check. Both runs attempted only memory calls, so rejection of a model's
-non-write attempt is exercised by synthetic tests rather than by these runs.
+check. A non-write attempt counts as blocked only when no served call has its
+name, the following request has no result and no new history call with its id
+or name, and no later request carries its id. Both runs attempted only memory
+calls, so the blocked and reached-harness paths are exercised by synthetic tests
+rather than by these runs.
 
 A4 reads Hermes' explicit success result, and compares content after whitespace
 normalisation only. It reads the final target file and only the system prompt
 or Responses instructions of the first main request of the next session. The
 last r6 call is checked against the first probe session (record 125). Refusals
-are separate from applications; an unclassified result is a gap. A remove must
+are separate from applications. A result staged for approval is its own class,
+neither applied nor refused. A result that is not a JSON object is unclassified,
+and an unclassified result is a gap. A remove must
 be absent, and patch operations propagate the earlier span through later
 successful calls in the same target.
 
@@ -61,13 +74,17 @@ uses `patch`, including `new_text` and atomic `operations` forms; these are
 reported as such, rather than relabelled as unobserved replace calls. Neither
 recorded run exercises remove or refusal.
 
-A5 checks scripted response contents and scans later conversational text for
-write-response substrings. A separate scan retains equal values in configuration.
-Every conversation hit is the same four-character no-write reply occurring in
-unrelated compression material: r6 has 53 write-record/request pairs in
-compression instructions and 84 in summary tool-use annotations; r7c has 69 and
-146 respectively. All 318 r6 configuration collisions are reasoning-setting
-values. The full pair lists are retained in the JSON; complete conversational
+A5 checks scripted response contents and scans every string of every later
+request for write-response substrings (exact, case-sensitive, no minimum length),
+labelled by channel: conversation text, tool-call arguments and tool outputs
+outside it, and every other field. Every write draft in both runs is the literal
+four-character no-write reply (46 in r6, 59 in r7c), so A5 here tests one short
+token and substring identity carries no provenance. Every conversation hit is
+that reply inside unrelated compression material. Classified by hand from local
+evidence (these splits are not emitted by the checker): r6 has 53
+write-record/request pairs in compression instructions and 84 in summary tool-use
+annotations; r7c has 69 and 146. All 318 r6 other-field collisions are
+reasoning-setting values. The full pair lists are retained in the JSON; complete conversational
 content matches are zero. These counts are pairs, not distinct requests or
 occurrences. Script equality and returned response envelopes show no observed
 write-text forwarding, but the literal substring expected-zero condition is
@@ -96,7 +113,7 @@ already inherited priority again; the effective priority was verified as 10.
 
 | Validation | Observed result |
 |---|---|
-| `python3.14 -m unittest` in S7 | 10 tests, OK; both wire formats, mismatch keys, future/id/probe leaks, non-write attempts, unissued execution, effect gaps, patch/remove, discard and integrity |
+| `python3.14 -m unittest` in S7 | 15 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked and reaching the harness, unissued execution, effect gaps, staged and unparseable results, patch/remove, discard in conversation, tool channels and other fields, and integrity |
 | `python3.14 -m unittest` in S6a | 9 tests, OK |
 | `python3.14 -m unittest` in S6b | 76 tests, OK; one existing HTTPError resource warning |
 | `python3.14 -m pytest spikes/s1 -q` with installed pytest on `PYTHONPATH`, plugin autoload disabled, scratch basetemp | 97 passed |
@@ -108,9 +125,10 @@ failed because the existing S1 tests require strict zip. The final run used
 Python 3.14 and the already installed pytest 8.4.2 package, without installation
 or download. After S7's last passing test, Ruff's dictionary-literal-only edits
 were verified by equal normalised ASTs for both files. Readback was then run
-on the final checker. New non-test code is 328 lines, above the approximate
+on the final checker. New non-test code is 371 lines, above the approximate
 250-line target and below the 400-line stop signal; the extra scope is wire
-response decoding and the observed patch/batch effect trace.
+response decoding, the observed patch/batch effect trace, and the review
+round's channel and absence checks.
 
 ## Does not prove
 

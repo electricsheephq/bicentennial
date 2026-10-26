@@ -53,11 +53,18 @@
             "inherited": true,
             "kind": "future_assistant",
             "record": 97
+          },
+          {
+            "attempt": 1,
+            "id": "8:2:assistant",
+            "inherited": true,
+            "kind": "pending_assistant",
+            "record": 99
           }
         ],
         "introduced": [],
         "introduced_hits": 0,
-        "raw_hits": 6
+        "raw_hits": 7
       },
       "A3": {
         "executed": 14,
@@ -88,7 +95,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 5
+            "record": 5,
+            "staged": false
           },
           {
             "applied": true,
@@ -111,7 +119,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 8
+            "record": 8,
+            "staged": false
           },
           {
             "applied": true,
@@ -130,7 +139,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 10
+            "record": 10,
+            "staged": false
           },
           {
             "applied": true,
@@ -149,7 +159,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 16
+            "record": 16,
+            "staged": false
           },
           {
             "applied": true,
@@ -168,7 +179,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 19
+            "record": 19,
+            "staged": false
           },
           {
             "applied": true,
@@ -187,7 +199,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 21
+            "record": 21,
+            "staged": false
           },
           {
             "applied": true,
@@ -206,7 +219,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 27
+            "record": 27,
+            "staged": false
           },
           {
             "applied": true,
@@ -230,7 +244,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 30
+            "record": 30,
+            "staged": false
           },
           {
             "applied": true,
@@ -249,7 +264,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 34
+            "record": 34,
+            "staged": false
           },
           {
             "applied": true,
@@ -268,7 +284,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 46
+            "record": 46,
+            "staged": false
           },
           {
             "applied": true,
@@ -293,7 +310,8 @@
                 "visible_next_session": false
               }
             ],
-            "record": 87
+            "record": 87,
+            "staged": false
           },
           {
             "applied": true,
@@ -312,7 +330,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 90
+            "record": 90,
+            "staged": false
           },
           {
             "applied": true,
@@ -331,7 +350,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 101
+            "record": 101,
+            "staged": false
           },
           {
             "applied": true,
@@ -350,7 +370,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 119
+            "record": 119,
+            "staged": false
           }
         ],
         "executed": 14,
@@ -358,6 +379,7 @@
         "in_store": 11,
         "next_session_satisfied": 14,
         "refused": 0,
+        "staged": 0,
         "store_satisfied": 14,
         "visible_next_session": 13
       },
@@ -2190,9 +2212,11 @@
             "write_record": 80
           }
         ],
+        "tool_channel_hits": [],
         "whole_content_hits": [],
         "write_texts_checked": 46
       },
+      "blobs_verified": 361,
       "ledger_records": 136,
       "ledger_sha256": "cbab9d5ad491eb39c4afb2f28183e7447f48ec093d4ef72e7cc777ec4fc11b90",
       "wire": "chat"
@@ -2248,7 +2272,8 @@
                 "visible_next_session": true
               }
             ],
-            "record": 56
+            "record": 56,
+            "staged": false
           }
         ],
         "executed": 1,
@@ -2256,6 +2281,7 @@
         "in_store": 1,
         "next_session_satisfied": 1,
         "refused": 0,
+        "staged": 0,
         "store_satisfied": 1,
         "visible_next_session": 1
       },
@@ -3127,9 +3153,11 @@
             "write_record": 91
           }
         ],
+        "tool_channel_hits": [],
         "whole_content_hits": [],
         "write_texts_checked": 59
       },
+      "blobs_verified": 315,
       "ledger_records": 167,
       "ledger_sha256": "c163b2077b324b55ea18e012225634e0e3da9fa25c47946d32ffb5a3ada7f6f2",
       "wire": "responses"

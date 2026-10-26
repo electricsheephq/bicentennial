@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from compression import zstd
@@ -109,6 +110,28 @@ def conversation(body, wire):
                         if m.get("type", "message") == "message"]]))
 
 
+def channels(body, wire):
+    """Every string of a request in three labelled channels: conversation text, tool-call arguments and
+    outputs outside it, and every other string (configuration, schemas). Each string falls in one channel."""
+    conv = conversation(body, wire)
+    items = body.get("messages" if wire == "chat" else "input", [])
+    if wire == "chat":
+        tool = [tc.get("function", {}).get("arguments", "") for m in items for tc in m.get("tool_calls") or []]
+    else:
+        tool = [it.get("arguments" if it.get("type") == "function_call" else "output", "") for it in items
+                if it.get("type") in {"function_call", "function_call_output"}]
+    tool = list(strings(tool))
+    return conv, tool, list((Counter(strings(body)) - Counter(conv) - Counter(tool)).elements())
+
+
+def calls_in(body, wire):
+    """(id, name) of every tool call already in a request's history."""
+    items = body.get("messages" if wire == "chat" else "input", [])
+    if wire == "chat":
+        return {(tc.get("id"), tc.get("function", {}).get("name")) for m in items for tc in m.get("tool_calls") or []}
+    return {(it.get("call_id"), it.get("name")) for it in items if it.get("type") == "function_call"}
+
+
 def results(body, wire):
     items = body.get("messages" if wire == "chat" else "input", [])
     return {it.get("tool_call_id", it.get("call_id")): it.get("content", it.get("output")) for it in items
@@ -135,9 +158,14 @@ def ids(obj, path="life"):
 def effects(calls, requests, stores, wire):
     ops, reports = [], []
     for call in calls:
-        args, result = json.loads(call["arguments"]), json.loads(call["result"])
-        applied = result.get("success")
-        report = {"record": call["record"], "call": call["id"], "applied": applied, "operations": []}
+        args = json.loads(call["arguments"])
+        try:
+            result = json.loads(call["result"])
+        except (TypeError, ValueError):
+            result = None
+        staged = isinstance(result, dict) and bool(result.get("staged"))  # held for approval: not written
+        applied = (False if staged else result.get("success")) if isinstance(result, dict) else None
+        report = {"record": call["record"], "call": call["id"], "applied": applied, "staged": staged, "operations": []}
         reports.append(report)
         for i, op in enumerate(args.get("operations", [args])):
             ops.append(dict(op, target=args.get("target", "memory"), record=call["record"], session=call["session"],
@@ -177,7 +205,9 @@ def effects(calls, requests, stores, wire):
             visible = needle in snapshot
             next_ok = (wanted in snapshot if wanted else needle not in snapshot) if action != "remove" else not visible
         reasons = []
-        if op["applied"] is False:
+        if op["report"]["staged"]:
+            reasons.append("staged_not_applied")
+        elif op["applied"] is False:
             reasons.append("hermes_refused")
         if op["applied"] is None:
             reasons.append("unclassified_result")
@@ -199,7 +229,8 @@ def effects(calls, requests, stores, wire):
     counts = {key: sum(o[key] is True for o in all_ops) for key in (
         "in_store", "visible_next_session", "store_satisfied", "next_session_satisfied")}
     return dict(executed=len(reports), applied=sum(r["applied"] is True for r in reports),
-                refused=sum(r["applied"] is False for r in reports), applied_operations=len(all_ops),
+                refused=sum(r["applied"] is False and not r["staged"] for r in reports),
+                staged=sum(r["staged"] for r in reports), applied_operations=len(all_ops),
                 gaps=gaps, calls=reports, **counts)
 
 
@@ -209,7 +240,7 @@ def audit(rows, blobs, life, stores, wire):
     a1 = {"write_records": 0, "forwarded": 0, "matches": 0, "mismatches": [], "flag_disagreements": []}
     a2 = {"hits": [], "introduced": []}
     a3 = {"offered": 0, "executed": 0, "non_write_attempts": 0, "non_write_blocked": 0, "non_write_calls": [], "failures": []}
-    a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "non_content_collisions": []}
+    a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "tool_channel_hits": [], "non_content_collisions": []}
     calls, drafts, issued = [], [], 0
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
@@ -230,19 +261,22 @@ def audit(rows, blobs, life, stores, wire):
                 a3["failures"].append({"record": seq, "kind": "unissued_execution", "call": tid})
             for n, u in enumerate(attempts, 1):
                 sent = blobs[u["req"]]
-                diff = sorted(k for k in set(want) | set(sent) if (k in want) != (k in sent) or want.get(k) != sent.get(k))
+                diff = sorted(k for k in set(want) | set(sent) if (k in want) != (k in sent) or canon(want.get(k)) != canon(sent.get(k)))
                 verdicts.append(not diff)
                 a1["forwarded"] += 1
                 a1["matches"] += not diff
                 if diff:
                     a1["mismatches"].append({"record": seq, "attempt": n, "keys": diff})
-                needles = [(f"{s}:{t}:{k}", v, f"future_{k}") for s, t, turn in turns[idx + 1:]
-                           for k, v in turn.items() if k in {"user", "assistant"}]
+                s0, t0, now = turns[idx]  # the cursor turn's own reply is served after the write turn: still future
+                needles = [(f"{s0}:{t0}:assistant", now.get("assistant"), "pending_assistant")]
+                needles += [(f"{s}:{t}:{k}", v, f"future_{k}") for s, t, turn in turns[idx + 1:]
+                            for k, v in turn.items() if k in {"user", "assistant"}]
                 needles += [(label, value, "life_id") for label, value in ids(life)]
                 for label, value, kind in needles:
                     if value and any(value in text for text in strings(sent)):
-                        hit = {"record": seq, "attempt": n, "kind": kind, "id": label,
-                                   "inherited": any(value in text for text in strings(body))}
+                        # inherited only when the sent body holds no more copies than the expected body does
+                        hit = {"record": seq, "attempt": n, "kind": kind, "id": label, "inherited": sum(
+                            t.count(value) for t in strings(sent)) <= sum(t.count(value) for t in strings(want))}
                         a2["hits"].append(hit)
                         if not hit["inherited"]:
                             a2["introduced"].append(hit)
@@ -253,7 +287,12 @@ def audit(rows, blobs, life, stores, wire):
                         if tc["name"] == "memory":
                             continue
                         a3["non_write_attempts"] += 1
-                        blocked = not any(c["name"] == tc["name"] for c in served) and tc["id"] not in new_results
+                        new_calls = calls_in(following[1], wire) - calls_in(body, wire) if following else set()
+                        later = {i for rr, bb in requests if rr["seq"] > seq
+                                 for i in {c for c, _ in calls_in(bb, wire)} | results(bb, wire).keys()}
+                        blocked = (not any(c["name"] == tc["name"] for c in served) and tc["id"] not in new_results
+                                   and not any(i == tc["id"] or n == tc["name"] for i, n in new_calls)
+                                   and tc["id"] not in later)
                         a3["non_write_blocked"] += blocked
                         a3["non_write_calls"].append({"record": seq, "attempt": n, "call": tc["id"], "blocked": blocked,
                             "next_request_record": following[0]["seq"] if following else None})
@@ -290,11 +329,14 @@ def audit(rows, blobs, life, stores, wire):
         for r, body in requests:
             if r["seq"] > origin:
                 hit = {"record": r["seq"], "write_record": origin}
-                if any(text in part for part in conversation(body, wire)):
+                conv, tool, other = channels(body, wire)  # case-sensitive substring, every string, labelled
+                if any(text in part for part in conv):
                     a5["text_hits"].append(hit)
-                    if text in conversation(body, wire):
+                    if text in conv:
                         a5["whole_content_hits"].append(hit)
-                elif text in set(strings(body)):
+                if any(text in part for part in tool):
+                    a5["tool_channel_hits"].append(hit)
+                if any(text in part for part in other):
                     a5["non_content_collisions"].append(hit)
     for r, _ in requests:
         if any(u.get("kind") == "write_turn" for u in r.get("upstream", [])) and not any(
@@ -321,7 +363,8 @@ def main():
         path = args.hermes_home / name
         stores[target] = path.read_text() if path.is_file() else ""
     result = audit(rows, blobs, json.loads(args.life.read_text()), stores, args.wire)
-    print(json.dumps(dict(ledger_records=len(rows), ledger_sha256=digest, **result), sort_keys=True))
+    print(json.dumps(dict(ledger_records=len(rows), ledger_sha256=digest, blobs_verified=len(blobs), **result),
+                     sort_keys=True))
 
 
 if __name__ == "__main__":
