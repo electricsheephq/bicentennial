@@ -76,7 +76,11 @@ def hermes_config(port: int, a) -> dict:
     } if a.lane == "glm" else {  # S6b credential model C': the native provider; the director holds the login
         "model": {"default": "gpt-6.1-sol", "provider": "openai-codex", "context_length": a.context_length},
         "agent": {"reasoning_effort": "medium"},  # the pin; aux tasks stay on auto (the main provider)
-        "auxiliary": {t: {"timeout": 900, "no_progress_timeout": 900} for t in ("compression", "title_generation")},
+        # the aux pin: auxiliary.<task>.reasoning_effort (agent/auxiliary_client.py _get_task_extra_body). A declared
+        # limitation: title generation passes reasoning_config={"enabled": False}, which Hermes ranks above the pin,
+        # so the title request carries no reasoning field (the upstream default applies)
+        "auxiliary": {t: {"timeout": 900, "no_progress_timeout": 900, "reasoning_effort": "medium"}
+                      for t in ("compression", "title_generation")},
     }
     cfg |= {
         "memory": {"memory_enabled": True, "user_profile_enabled": True, "provider": ""},
@@ -216,6 +220,8 @@ def main():
     life = json.loads(Path(a.life).read_text())
     life["sessions"] = [s for s in life["sessions"] if lo <= s["index"] <= hi]
     life["probes"] = life.get("probes", []) if a.probes else []
+    for s in life["sessions"] + life["probes"]:  # the director's plan and the replay play the same turns
+        s["turns"] = s["turns"][:a.max_turns or None]
     (work / "life.json").write_text(json.dumps(life))
     (home / "config.yaml").write_text(json.dumps(hermes_config(a.port, a), indent=1))
     script = HERE / "director.py"
@@ -253,7 +259,7 @@ def main():
                     "glm": m["glm"]}
             for what, ms in (("spawn_import", w.ready["t_spawn_ms"]), ("open", opened["t_ms"])):
                 rows.append({**base, "turn": 0, "what": what, "t_ms": ms, "ok": opened["ok"], "load1": os.getloadavg()[0]})
-            for i, t in enumerate(sess["turns"][:a.max_turns or None], 1):
+            for i, t in enumerate(sess["turns"], 1):
                 t_wall = time.time()
                 r = w.call(op="turn", text=t["user"])
                 rows.append({**base, "turn": i, "what": "turn", "t_ms": r["t_ms"], "ok": r["ok"], "t_wall": t_wall,

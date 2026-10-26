@@ -46,6 +46,7 @@ def sse(*items, usage=None, terminal="response.completed", echo=None):
     return b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in evs)
 
 
+AUX = {"instructions": sd.TITLE_SIG, "input": [{"type": "message", "role": "user", "content": "x"}]}
 CALL = {"type": "function_call", "call_id": "call_up1", "name": "memory", "arguments": "{}", "status": "completed"}
 MSG = {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "a title"}]}
 
@@ -148,6 +149,37 @@ class Login(Base):
             _, _, rec = d.handle(self.turn(d), {})  # stopped: no upstream call, no second refresh
             self.assertEqual((len(Upstream.seen), len(calls), rec["write_turn_failed"]), (0, 1, "budget_or_stop"))
 
+    def test_refresh_failure_is_latched_for_queued_callers(self):
+        calls = []
+        d = self.make(post=lambda u, f: (calls.append(f["refresh_token"]), time.sleep(0.2), (401, {}))[2])
+        store(self.tmp, exp_in=60)  # expiring now: both callers need a refresh
+        out = []
+        ts = [threading.Thread(target=lambda: out.append(d.handle(AUX, {})[0])) for _ in range(2)]
+        [t.start() for t in ts], [t.join() for t in ts]
+        self.assertEqual((calls, out, d.stop_reason, len(Upstream.seen)), (["rt-fake-0"], [503, 503],
+                                                                          "token_endpoint_401", 0))
+        with self.assertRaisesRegex(sd.Stop, "token_endpoint_401"):  # the login itself refuses, not only the flag
+            d.login.token()
+        self.assertEqual(calls, ["rt-fake-0"])
+
+    def test_write_back_failure_stops_before_the_refresh_token_is_reused(self):
+        calls, real = [], os.replace
+        d = self.make(post=lambda u, f: (calls.append(f["refresh_token"]), (200, {
+            "access_token": jwt(3600, 1), "refresh_token": f"rt-fake-{len(calls)}"}))[1])
+        store(self.tmp, exp_in=60)
+
+        def replace(src, dst):
+            if Path(dst).name == "auth.json":
+                raise OSError(28, "No space left on device")
+            return real(src, dst)
+        with mock.patch.object(sd.os, "replace", side_effect=replace):
+            codes = [d.handle(AUX, {})[0] for _ in range(2)]
+        self.assertEqual((calls, codes, d.stop_reason, len(Upstream.seen)), (["rt-fake-0"], [503, 503],
+                                                                            "login_error:OSError", 0))
+        with self.assertRaises(sd.Stop):
+            d.login.token()
+        self.assertEqual(calls, ["rt-fake-0"])
+
 
 class Wire(Base):
     def test_header_rebuild_and_no_secret_anywhere(self):
@@ -168,8 +200,9 @@ class Wire(Base):
         rec = self.records("request")[0]
         self.assertEqual((rec["role"], rec["subrole"], rec["upstream"][0]["limit_headers"]),
                          ("aux", "title_generation", {"x-codex-primary-used-percent": "42"}))
-        self.assertEqual((rec["upstream"][0]["scrubbed"], "authorization" in rec["in_headers"]), (1, True))
-        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, RES, USER)]
+        self.assertEqual((rec["upstream"][0]["scrubbed"], set(rec["in_headers"]) & sd.IDENTITY_NAMES,
+                          "session_id" in rec["in_headers"]), (1, set(), True))
+        needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, RES, USER, *sd.IDENTITY_NAMES)]
         for f in (self.tmp / "ledger").rglob("*"):
             if f.is_file():
                 data = zstd.decompress(f.read_bytes()) if f.suffix == ".zst" else f.read_bytes()
@@ -198,6 +231,47 @@ class Wire(Base):
         self.assertEqual((rec["role"], rec["upstream"][0]["usage"]["input_tokens"]), ("probe_main", 11))
         nxt = self.turn(d, probe, [CALL, {"type": "function_call_output", "call_id": "call_up1", "output": "ok"}])
         self.assertEqual(d.classify(nxt)[:2], ("probe_main", "tool_results"))
+
+
+    def test_crlf_and_cr_event_boundaries(self):
+        lf = sse(CALL, MSG)
+        self.assertEqual(len(sd.parse_sse(lf)), 3)
+        for eol in (b"\r\n", b"\r"):
+            self.assertEqual(sd.parse_sse(lf.replace(b"\n", eol)), sd.parse_sse(lf))
+
+    def test_sse_auth_error_in_an_http_200_is_never_replayed(self):
+        class Resp:  # an in-memory upstream stream: no socket
+            status, headers = 200, {}
+
+            def __init__(self, raw):
+                self.raw = raw
+
+            def read(self):
+                return self.raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        cases = [({"type": "error", "code": "invalid_api_key", "message": "Incorrect API key provided"}, True),
+                 ({"type": "error", "error": {"code": "token_expired", "message": "Provided token is expired"}}, True),
+                 ({"type": "error", "status": 403, "message": "Forbidden"}, True),
+                 ({"type": "response.failed", "response": {"status": "failed", "error": {
+                     "code": "invalid_api_key", "message": "Your authentication token is invalid"}}}, True),
+                 ({"type": "error", "code": "server_error", "message": "An error occurred"}, False)]
+        for ev, auth in cases:
+            self.tmp = Path(tempfile.mkdtemp())
+            d, n = self.make(), []
+            raw = f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n".encode()
+            d.urlopen = lambda req, timeout, n=n, raw=raw: (n.append(1), Resp(raw))[1]
+            code, out, rec = d.handle(AUX, {})
+            self.assertEqual((rec["upstream"][0]["category"] == "auth_sse", d.stopped), (auth, auth), ev)
+            if auth:
+                self.assertEqual((code, json.loads(out), d.stop_reason), (503, sd.NEUTRAL_503, "upstream_sse_auth"))
+                self.assertNotRegex(out.decode().lower(), r"api key|token|auth|401|403|forbidden")
+                d.handle(AUX, {})  # stopped: no further upstream call
+                self.assertEqual(len(n), 1)
 
 
 class Roles(Base):
@@ -281,7 +355,8 @@ class Serving(Base):
             time.sleep(1.0)
             reqs, errs = self.records("request"), self.records("send_error")
             self.assertEqual((len(reqs), reqs[0]["client_disconnected"], len(Upstream.seen)), (1, True, 1))
-            self.assertEqual([e["request_seq"] for e in errs], [reqs[0]["seq"]] if fail_send else [])
+            seqs = [e["request_seq"] for e in errs]  # a natural hang-up may also fail the real send
+            self.assertEqual(seqs, [reqs[0]["seq"]]) if fail_send else self.assertIn(seqs, ([], [reqs[0]["seq"]]))
 
     def test_unknown_paths_fail_closed_and_metadata_is_local(self):
         d = self.make()
