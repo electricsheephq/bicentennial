@@ -2,7 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
-## PREREG-v0.2, 2026-10-26: frozen (supersedes v0.1 before co-sign)
+## Process note, 2026-10-26: no owner co-sign
+The owner made the benchmark session the product and release owner. Freezes bind on its own data-backed approval, with no owner co-sign. Text that mentions a co-sign in PREREG-v0.2 and design v2.0 is left unchanged so their hashes hold. It is corrected in the next version.
+
+## PREREG-v0.2, 2026-10-26: frozen (supersedes v0.1)
 - **Design v2.0:** the capability map of track rows by evaluation profiles. Its stages are Remember, Survive and Act, and each is reported separately.
 - **Certification on Act only:** on the sealed board, by an intersection-union rule on the raw penalised scale. A season left underpowered by a cut issues no certificate, but every result is still published.
 - **Developer rings 0-2:** rungs on system-agnostic anchors, and a monthly "transfer gap detected" bit per organisation.
