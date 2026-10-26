@@ -77,7 +77,7 @@ Burst concurrency: 48, the ramp's ceiling, with no 429. The weekly quota window 
 - **Aux effort.** Both compaction calls carried `reasoning.effort = medium`. All 15 title requests carried no `reasoning` field: the declared limitation below.
 - **Behaviour.** Sol wrote memory once in 60 write turns (r6: 14). That is a model difference at the same suffix, not a harness change.
 
-[^close]: Session 5's close took 28.6 s, at a load of 26.5, the highest in the run. It raises the mean fixed time and so the job-time reading (R includes S × session fixed time). The lane-time and request-rate readings do not use it.
+[^close]: Session 5's fixed time was 46.1 s, of which its close took 28.6 s, at a load of 26.5, the highest in the run. It raises the mean fixed time and so the job-time reading (R includes S × session fixed time). The lane-time and request-rate readings do not use it.
 
 ### Superseded: r7b-write
 r7b ran with the same parameters on the director at commit 4d9fa0e, before 5704c09. **Its compaction count was affected by the director's usage undercount; superseded by r7c.** It is kept as disclosed evidence and is not used in the projection. It ran 2026-10-26 08:22:37-08:37:29 UTC at marker exit 0, load mean 15.3:
@@ -124,6 +124,8 @@ At ×1, R = 4.56 h, P = 2.63 h and the critical path is 4.6 h.
 - 2.75 per probe turn (n = 4 probe turns, 11 calls).
 
 Scaled with the same §11 formulas, N_req at L = 48 is 263,700 for the board and 166,488 for the study (215,700 and 70,924 after cuts 1-2). The bound is N_req ÷ R_s, and a cell fits when max(lane time at C, N_req ÷ R_s) ≤ 24 h. At R_s = 180 per minute, C_eff is 18.1 at r7c's 6.04 s mean request (18.4 at the soak's 6.12 s). At 360 per minute it is 36.3 (36.7).
+
+The board's N_req fell from r7b's 282,600 although compaction calls doubled. Changing one input at a time from r7b's value to r7c's: compaction calls (1 → 2 per long sprint) add 3,600, aux (1.33 → 1.25 per session) removes 4,500, and probe requests (3.25 → 2.75 per probe turn) remove 18,000, for −18,900 net.
 
 At ×1 latency, with a write turn before every turn (board; study). Each cell is job h / lane h at C, then N_req ÷ R_s at 180 and 360 per minute. ✓ marks ≤ 24 h. **Fits** means max(lane, rate at 180) ≤ 24 h.
 
