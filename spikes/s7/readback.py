@@ -87,7 +87,9 @@ def output(obj, wire):
             data = "\n".join(line[5:].lstrip() for line in block.splitlines() if line.startswith("data:"))
             if data and data != "[DONE]":
                 events.append(json.loads(data))
-        items = [e["item"] for e in events if e.get("type") == "response.output_item.done"]
+        done = [(e.get("output_index", n), e["item"]) for n, e in enumerate(
+            e for e in events if e.get("type") == "response.output_item.done")]  # an item's index is its position
+        items = [it for _, it in done]
         streamed = {}  # the text a client renders from the deltas, per output item
         for e in events:
             if e.get("type") == "response.output_text.delta":
@@ -95,10 +97,18 @@ def output(obj, wire):
                 streamed[key] = streamed.get(key, "") + str(e.get("delta", ""))
         calls = [{"id": it["call_id"], "name": it["name"], "arguments": it["arguments"]}
                  for it in items if it.get("type") == "function_call"]
-        texts = ["".join(strings(it.get("content", []) if isinstance(it.get("content"), str) else
-                               [p.get("text", "") for p in it.get("content", [])]))
-                 for it in items if it.get("type") == "message"]
-        return calls, texts + [t for t in streamed.values() if t and t not in texts]  # a disagreeing stream is kept
+        texts, completed = [], {}  # each completed message's text, and the same by item id and by output index
+        for index, it in done:
+            if it.get("type") == "message":
+                texts.append("".join(strings(it.get("content", []) if isinstance(it.get("content"), str) else
+                                             [p.get("text", "") for p in it.get("content", [])])))
+                completed[("index", index)] = texts[-1]
+                if it.get("id") is not None:
+                    completed[("id", it["id"])] = texts[-1]
+        # a stream is dropped only where it is that same completed message; any other streamed text is kept
+        return calls, texts + [t for (item_id, index), t in streamed.items() if t and not (
+            item_id is not None and completed.get(("id", item_id)) == t or
+            index is not None and completed.get(("index", index)) == t)]
     if "__sse__" in obj:
         deltas = [c["choices"][0]["delta"] for c in obj["__sse__"] if c.get("choices")]
         msg = {"content": "".join(d.get("content", "") for d in deltas),
@@ -184,6 +194,10 @@ def ids(obj, path="life"):
 ACTIONS = {"add", "patch", "replace", "remove"}
 
 
+def known(action):
+    return isinstance(action, str) and action in ACTIONS
+
+
 def effects(calls, requests, stores, wire):
     ops, reports = [], []
     for call in calls:
@@ -209,13 +223,13 @@ def effects(calls, requests, stores, wire):
         action = op.get("action")
         raw = op.get("old_text", "") if action == "remove" else op.get("content", op.get("new_text", ""))
         op["needle"] = norm(raw) if isinstance(raw, str) and isinstance(op.get("old_text", ""), str) else ""
-        if op["applied"] and action not in ACTIONS:  # a write Hermes applied must be one this audit can check
+        if op["applied"] and not known(action):  # a write Hermes applied must be one this audit can check
             raise ValueError(f"unknown_memory_action:{op['record']}")
         if op["applied"] and not op["needle"]:
             raise ValueError(f"empty_memory_content:{op['record']}")
     for i, op in enumerate(ops):
         action, needle = op.get("action"), op["needle"]
-        if action not in ACTIONS or not needle:  # a malformed call Hermes refused, staged or left unclassified
+        if not known(action) or not needle:  # a malformed call Hermes refused, staged or left unclassified
             op["report"]["operations"].append({"id": op["id"], "action": action, "reasons": [
                 "staged_not_applied" if op["report"]["staged"] else "hermes_refused" if op["applied"] is False
                 else "unclassified_result", "malformed_operation"]})
@@ -289,6 +303,11 @@ def audit(rows, blobs, life, stores, wire):
     a3 = {"offered": 0, "executed": 0, "non_write_attempts": 0, "non_write_blocked": 0, "non_write_calls": [], "failures": []}
     a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "tool_channel_hits": [], "non_content_collisions": [], "served_write_text": []}
     calls, drafts, issued = [], [], 0
+    issued_at = {}  # each call id served to the harness, by the record that served it
+    for r in rows:
+        if r.get("served") == "write_tool_calls":
+            for tc in output(blobs[r["resp"]], wire)[0]:
+                issued_at.setdefault(tc["id"], r["seq"])
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
         attempts = [u for u in r.get("upstream", []) if u.get("kind") == "write_turn"]
@@ -306,15 +325,18 @@ def audit(rows, blobs, life, stores, wire):
             if following is None:
                 following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
                                   rr.get("role") in {"replay_main", "write_turn", "probe_main"}), None)
-            new_results = {}  # the harness may return one turn's results over several continuation requests
+            new_results, seen_at = {}, {}  # one turn's results may arrive over several continuation requests
             for rr, bb in requests:
                 if rr["seq"] > seq and rr.get("cursor") == cursor:
                     for tid, out in results(bb, wire).items():
                         new_results.setdefault(tid, out)
+                        seen_at.setdefault(tid, rr["seq"])
             if not new_results and following:
                 new_results = results(following[1], wire)
+                seen_at = dict.fromkeys(new_results, following[0]["seq"])
             for tid in new_results.keys() - results(body, wire).keys() - {tc["id"] for tc in served}:
-                a3["failures"].append({"record": seq, "kind": "unissued_execution", "call": tid})
+                if not issued_at.get(tid, float("inf")) < seen_at[tid]:  # another record's earlier call is not unissued
+                    a3["failures"].append({"record": seq, "kind": "unissued_execution", "call": tid})
             for n, u in enumerate(attempts, 1):
                 sent = blobs[u["req"]]
                 diff = sorted(k for k in set(want) | set(sent) if (k in want) != (k in sent) or canon(want.get(k)) != canon(sent.get(k)))

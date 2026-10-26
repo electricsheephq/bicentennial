@@ -392,6 +392,73 @@ class Readback(unittest.TestCase):
         blobs[rows[0]["resp"]]["sse"] = delta + blobs[rows[0]["resp"]]["sse"]
         self.assertEqual(self.audit(data, "responses")["A5"]["served_write_text"], [1])
 
+    def test_streamed_message_without_its_item(self):
+        data = fixture("responses")
+        rows, blobs, _, _ = data
+        ev = lambda **e: "data: " + json.dumps(e) + "\n\n"
+        msg = {"type": "message", "id": "m1", "role": "assistant", "content": [{"type": "output_text", "text": "first script"}]}
+        honest = ev(type="response.output_text.delta", item_id="m1", output_index=0, content_index=0, delta="first script")
+        honest += ev(type="response.output_item.done", output_index=0, item=msg)
+        blobs[rows[1]["resp"]] = {"sse": honest + "data: [DONE]\n\n"}
+        self.assertEqual(self.audit(data, "responses")["A5"]["script_failures"], [])
+        extra = ev(type="response.output_text.delta", item_id="m2", output_index=1, content_index=0, delta="first script")
+        blobs[rows[1]["resp"]] = {"sse": honest + extra + "data: [DONE]\n\n"}  # a second message, never completed
+        self.assertEqual(self.audit(data, "responses")["A5"]["script_failures"], [2])
+
+    def test_later_turn_results_in_a_delayed_continuation(self):
+        for wire in rb.MODELS:
+            with self.subTest(wire=wire):
+                data = fixture(wire)
+                rows, blobs, _, _ = data
+                key = "messages" if wire == "chat" else "input"
+                def blob(obj, blobs=blobs):
+                    blobs[str(len(blobs))] = obj
+                    return str(len(blobs) - 1)
+                def renamed(obj):  # the first write's blobs, as a second write issuing bcw00002
+                    raw = json.dumps(obj).replace("bcw00001", "bcw00002").replace("upstream-id", "upstream-2")
+                    return json.loads(raw.replace("saved note", "second note").replace("discarded draft", "other draft"))
+                args2 = json.dumps({"target": "memory", "action": "add", "content": "second note"})
+                if wire == "chat":
+                    call2 = [{"role": "assistant", "content": "", "tool_calls": [{"id": "bcw00002", "type": "function",
+                              "function": {"name": "memory", "arguments": args2}}]},
+                             {"role": "tool", "tool_call_id": "bcw00002", "content": '{"success":true}'}]
+                    again = {"role": "tool", "tool_call_id": "bcw00001", "content": '{"success":true}'}
+                else:
+                    call2 = [{"type": "function_call", "call_id": "bcw00002", "name": "memory", "arguments": args2},
+                             {"type": "function_call_output", "call_id": "bcw00002", "output": '{"success":true}'}]
+                    again = {"type": "function_call_output", "call_id": "bcw00001", "output": '{"success":true}'}
+                second = blobs[rows[2]["req"]]
+                rows[2] = dict(rows[0], seq=3, cursor={"session": 2, "turn": 1}, req=rows[2]["req"],
+                               resp=blob(renamed(blobs[rows[0]["resp"]])),
+                               upstream=[{"kind": "write_turn", "req": blob(rb.expected(second, wire)),
+                                          "resp": blob(renamed(blobs[rows[0]["upstream"][0]["resp"]]))}])
+                cont = copy.deepcopy(second)
+                cont[key] += copy.deepcopy(call2)
+                later_script = json.loads(json.dumps(blobs[rows[1]["resp"]]).replace("first script", "later script"))
+                rows.append({"seq": 4, "role": "write_turn", "cursor": {"session": 2, "turn": 1}, "req": blob(cont),
+                             "resp": blob(later_script), "served": "script"})
+                late = copy.deepcopy(blobs[rows[1]["req"]])  # a delayed continuation of the first turn
+                late[key][-1:-1] = copy.deepcopy(call2)
+                late[key].append(again)
+                rows.append({"seq": 5, "role": "write_turn", "cursor": {"session": 1, "turn": 1}, "req": blob(late),
+                             "resp": rows[1]["resp"], "served": "script"})
+                a3 = self.audit(data, wire)["A3"]
+                self.assertEqual((a3["executed"], a3["failures"]), (2, []))
+                late[key].insert(-1, dict(again, **{"tool_call_id" if wire == "chat" else "call_id": "rogue"}))
+                self.assertIn({"record": 1, "kind": "unissued_execution", "call": "rogue"}, self.audit(data, wire)["A3"]["failures"])
+
+    def test_refused_call_with_an_unhashable_action(self):
+        reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "empty"})]
+        for action in ([], {}):
+            with self.subTest(action=action):
+                calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":false}',
+                          "arguments": json.dumps({"action": action, "content": "x"})}]
+                out = rb.effects(calls, reqs, {"memory": ""}, "responses")
+                self.assertEqual(out["calls"][0]["operations"][0]["reasons"], ["hermes_refused", "malformed_operation"])
+                calls[0]["result"] = '{"success":true}'
+                with self.assertRaisesRegex(ValueError, "unknown_memory_action"):
+                    rb.effects(calls, reqs, {"memory": ""}, "responses")
+
     def test_staged_and_unparseable_results(self):
         def call(result):
             return [{"record": 1, "session": 1, "id": "bcw00001", "result": result,

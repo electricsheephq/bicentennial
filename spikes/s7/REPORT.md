@@ -47,7 +47,8 @@ silently relaxed to obtain zero.
 A3 pairs upstream memory arguments with returned calls in order, checks the
 exact monotonic `bcw` ids used by both recorded directors, and finds tool results
 in the harness requests that follow under the same cursor, which may split one
-turn's results. Newly appearing unissued result ids fail the check, and so does
+turn's results. Newly appearing result ids that no record issued before the
+request carrying them fail the check, and so does
 a tool call on a scripted reply. A non-write attempt counts as blocked only when no served call has its
 name, the following request has no new history call with its id or name, and
 no later request carries its id as a call, or as a result, that was not already
@@ -80,7 +81,8 @@ reported as such, rather than relabelled as unobserved replace calls. Neither
 recorded run exercises remove or refusal.
 
 A5 checks scripted response contents (in Responses streams, the text deltas as
-well as the completed items), checks that a response serving write calls
+well as the completed items; a stream counts as its completed message only when
+it carries that message's item id or output index), checks that a response serving write calls
 to the harness carries no assistant or reasoning text (0 in both runs), and scans every
 string of every later
 request for write-response substrings (exact, case-sensitive, no minimum length),
@@ -121,7 +123,7 @@ already inherited priority again; the effective priority was verified as 10.
 
 | Validation | Observed result |
 |---|---|
-| `python3.14 -m unittest` in S7 | 24 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text or reasoning served beside write calls, an inherited call with a new result, a tool call on a scripted reply, results split across continuation requests, a refused malformed write, streamed text disagreeing with its items, discard in conversation, tool channels and other fields, and integrity |
+| `python3.14 -m unittest` in S7 | 27 tests, OK; both wire formats: mismatch keys per kind (a type-coerced value included), the flag in both directions, future, pending-reply, extra-copy, id and probe leaks, non-write attempts blocked, reaching the harness, and inherited from older history, unissued execution, effect gaps, staged and unparseable results, patch/remove, a patch encompassing earlier writes, text or reasoning served beside write calls, an inherited call with a new result, a tool call on a scripted reply, results split across continuation requests, a refused malformed write, streamed text disagreeing with its items or never completed, a later turn's results in a delayed continuation, a refused call with a non-string action, discard in conversation, tool channels and other fields, and integrity |
 | `python3.14 -m unittest` in S6a | 9 tests, OK |
 | `python3.14 -m unittest` in S6b | 76 tests, OK; one existing HTTPError resource warning |
 | `python3.14 -m pytest spikes/s1 -q` with installed pytest on `PYTHONPATH`, plugin autoload disabled, scratch basetemp | 97 passed |
