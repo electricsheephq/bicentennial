@@ -681,6 +681,20 @@ class PaceThreads(Base):
         self.assertEqual([round(t) for t in refreshed], [360])  # after the wait, not before it
         self.assertNotEqual(seen[0], seen[1])
         self.assertEqual(seen[1], f"Bearer {json.loads(d.login.path.read_text())['tokens']['access_token']}")
+        self.assertEqual(len(self.records("refresh")), 1)  # in the ledger at once, not at a later request
+
+    def test_a_refused_refresh_after_the_wait_is_charged_and_in_the_ledger(self):
+        clock = Clock()
+        d = self.make(post=lambda url, fields: (401, {}), exp_in=302, rate_per_min=1 / 6, burst=1, clock=clock,
+                      sleep=clock.sleep)
+        d.login.on_refresh = lambda: d.budget.take("t", "refresh")  # as main() wires it
+        seen, base = self.sent(d), time.time()
+        with mock.patch.object(sd.time, "time", lambda: base + clock.now):
+            d.upstream(AUX, "aux", {})
+            up = d.upstream(AUX, "aux", {})
+        b = json.loads((self.tmp / "b.json").read_text())
+        self.assertEqual((up["category"], len(seen), d.stopped), ("budget_or_stop", 1, True))
+        self.assertEqual((b["total"], b["by_kind"].get("refresh"), len(self.records("refresh"))), (2, 1, 1))
 
     def test_no_wait_reads_the_token_once(self):
         d = self.make(rate_per_min=180, burst=10)

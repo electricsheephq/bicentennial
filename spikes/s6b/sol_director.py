@@ -569,6 +569,7 @@ class Director:
                         token = self.login.token()
                     except Stop as e:
                         self.stop(str(e))
+                    self._drain()  # a refresh it made is charged, so its row goes to the ledger now
                 if wait is None or self.stopped:
                     with open(self.budget.path, "r+") as f:  # release this unsent reservation, under the shared budget lock
                         fcntl.flock(f, fcntl.LOCK_EX)
