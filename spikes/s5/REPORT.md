@@ -2,13 +2,13 @@
 
 ## Claim
 
-**Claim class: `advisory`.** 27 candidate memory systems are surveyed from public sources on 2026-10-26. Every row of [`candidates.csv`](candidates.csv) cites its sources and says what an adapter would need. 17 rows still carry at least one field marked `unverified`. No system was installed, run, timed or scored.
+**Claim class: `advisory`.** 27 candidate memory systems are surveyed from public sources on 2026-10-26. Every row of [`candidates.csv`](candidates.csv) cites its sources and says what an adapter would need. 18 rows still carry at least one field marked `unverified`. No system was installed, run, timed or scored.
 
 ## Method
 
 - **Desk research only.** The survey read READMEs and docs through the GitHub REST API, vendor documentation pages, and public download statistics. Nothing was installed or run. No model was called, and no score was read or recorded.
 - **Pinned Hermes.** Release v0.22.2 (commit `d923a5e`, tagged 2026-10-15). The survey read its memory docs, its two bundled memory providers and its plugin catalog.
-- **LCM-X.** Its public README and the Hermes catalog entry only, never its source.
+- **LCM-X.** Its public documentation and the Hermes catalog entry only, never its source. The survey read the main-branch README, which describes the unreleased development line. At closeout the v0.28.1 tag's README and `docs/embeddings-setup.md` were also read, because the adapter installs the latest stable release. Where the two revisions differ, the LCM-X row says which one each default describes.
 - **Candidate pool:**
   - Hermes native memory and LCM-X.
   - The 2 memory providers bundled in pinned Hermes.
@@ -69,7 +69,7 @@ What an adapter would need, per row. "Settle" marks a row whose writes become se
 | System | Adapter mode | Write tools (C-6 candidates) | Own model calls · local embeddings | State to snapshot | Also needs |
 |---|---|---|---|---|---|
 | Hermes native memory | Hermes | `memory` (add, patch, remove); edits to MEMORY.md and USER.md under the file-tool rule | background review and the compression summariser · no | `memories/` and `state.db` in `$HERMES_HOME` | route both calls through the director; keep `memory.write_approval` false |
-| LCM-X | Hermes (context engine, release artifact) | none documented: 16 tools, all reads or diagnostics | summariser through the Hermes model · yes (FastEmbed) | `lcm.db` and the externalized-payload directory (path not in the README) | route the summariser; pin or disable local embeddings |
+| LCM-X | Hermes (context engine, release artifact v0.28.1) | none documented: 15 tools in v0.28.1 (16 on unreleased main), all reads or diagnostics | the summariser and `lcm_expand_query` answer synthesis, both through the Hermes model (`LCM_SUMMARY_MODEL`, `LCM_EXPANSION_MODEL` override them) · opt-in in v0.28.1 (FastEmbed is on by default only on unreleased main) | `lcm.db` (default `$HERMES_HOME`, overridable) and the externalized-payload directory (location unverified) | route both calls; pin the embedding setting |
 | ByteRover | Hermes with a pinned brv CLI | `brv_curate` | agentic LLM loop on curate and query · unverified | `$HERMES_HOME/byterover/` and the brv settings directory | point its LLM at the director; licence check; whether the plugin stays in the Hermes release used |
 | RetainDB | Hermes against RetainDB Local | `retaindb_remember`, `_forget`, `_upload_file`, `_ingest_file`, `_delete_file` | unverified · unverified | `$HOME/.retaindb` | the plugin defaults to the hosted API; whether it works against Local is unverified; BSL check |
 | Honcho | Hermes with a self-hosted server | `honcho_conclude`, `honcho_profile` (update) | background reasoning and dialectic chat · unverified | the server's Postgres | settle (reasoning queue); config resolves from both `$HERMES_HOME` and `$HOME` |
@@ -106,7 +106,7 @@ What an adapter would need, per row. "Settle" marks a row whose writes become se
 | AML entrant | 13 |
 | Write tools documented | 20 rows name at least one write path (Letta Code's are unnamed file tools) · 7 document none for the agent (LCM-X, MemOS's Hermes adapter, Memobase's Hermes provider, claude-mem, TencentDB Agent Memory, A-MEM, MemoryBear) |
 | Own model calls in the default path | 22 · 1 only with an LLM key (Cognee) · 3 none by default (Holographic, Basic Memory, MemPalace raw mode) · 1 unverified (RetainDB) |
-| Local embeddings by default | 11 · 2 optional · 3 none · 11 unverified or configuration-dependent |
+| Local embeddings by default | 10 · 3 optional (including LCM-X v0.28.1, whose unreleased main enables FastEmbed by default) · 3 none · 11 unverified or configuration-dependent |
 | Licence | 11 MIT · 11 Apache-2.0 · 3 AGPL-3.0 · 1 Elastic-2.0 (source-available) · 1 Apache-2.0 with a BSL 1.1 part |
 | Adapter mode | 13 Hermes (Mem0 and MemOS also have an API mode) · 9 API · 2 MCP or CLI · 2 harness · 1 proxy |
 | Adoption recorded | stars 27 of 27 · downloads 18 of 27 |
@@ -114,7 +114,7 @@ What an adapter would need, per row. "Settle" marks a row whose writes become se
 **Pinned Hermes (v0.22.2).**
 - The catalog has 613 entries. 65 are in category `memory`, all community tier. The survey covers 9 of them.
 - **Bundled providers.** Two memory providers are bundled: ByteRover and RetainDB. The upstream standalone repository of each is marked unmaintained and leaving Hermes core on 2026-10-15. ByteRover's CLI repository is archived and licensed Elastic-2.0.
-- **LCM-X catalog pin.** The catalog pins LCM-X at 0.24.3. LCM-X's latest stable release is v0.28.1 (2026-10-20). The pilot installs LCM-X from its release artifact, as PREREG §10 already requires.
+- **LCM-X catalog pin.** The catalog pins LCM-X at 0.24.3. LCM-X's latest stable release is v0.28.1 (2026-10-20). The pilot installs LCM-X from its release artifact, as PREREG §10 already requires. The v0.28.1 README differs from the main-branch README on two defaults this survey uses: it declares 15 tools, not 16, and makes embeddings opt-in instead of enabling FastEmbed by default. The LCM-X rows follow v0.28.1 where the two differ.
 - **MCP client.** Hermes is an MCP client (`mcp_servers` in `config.yaml`), so an MCP-only system can be attached as tools. Attached that way, it gets none of the provider hooks: no prefetch, turn sync or pre-compress.
 
 **AML board (data file, revision `d01a321`).**
@@ -137,9 +137,9 @@ Each pattern names the rows it rests on.
    - Supermemory: capture is retried at least once.
 
    The adapter contract in DESIGN §6.9 (reset, ingest, query, checkpoint and restore, forget, stats) has no settle step. A checkpoint or a probe taken without one would read a state that is still moving.
-2. **State outside `HERMES_HOME`.** 9 of the 13 rows with a Hermes surface keep state outside it: a server database, a dot-directory in `$HOME`, or Mem0's default vector path in the system temp directory. Only Hermes native, LCM-X, Holographic and MemOS stay inside it (LCM-X's externalized-payload directory is plugin-managed, and the README does not name its path). Snapshots and S3 clones must therefore cover `$HOME` and server data, not only `HERMES_HOME`.
+2. **State outside `HERMES_HOME`.** 9 of the 13 rows with a Hermes surface keep state outside it: a server database, a dot-directory in `$HOME`, or Mem0's default vector path in the system temp directory. Hermes native, Holographic and MemOS stay inside it. LCM-X is `unverified`: `lcm.db` defaults to `$HERMES_HOME` but `LCM_DATABASE_PATH` can move it, and neither README names the location of its plugin-managed externalized-payload directory. Snapshots and S3 clones must therefore cover `$HOME` and server data, not only `HERMES_HOME`.
 3. **Model routing.** 22 rows call a model in their default path. Several default to a hosted provider: Mem0, Graphiti and LangMem, and Cognee once an LLM key is set. At $0, each needs a route-table entry (§10) that points it at the director or a pinned local model, and S1 must class those requests.
-4. **Local embeddings.** 11 rows embed locally by default. The busy marker forbids local-embedding ingest at exit 10, so S5b timings for these rows need marker exit 0.
+4. **Local embeddings.** 10 rows embed locally by default. LCM-X joins them if the pilot enables FastEmbed, or on a main-branch build. The busy marker forbids local-embedding ingest at exit 10, so S5b timings for these rows need marker exit 0.
 5. **Non-Hermes shapes.**
    - TencentDB Agent Memory is a model-API proxy. It would sit in front of the director and send its own memory-model calls.
    - Letta Code is a harness, and claude-mem targets Claude Code and other harnesses, not Hermes.
@@ -148,7 +148,7 @@ Each pattern names the rows it rests on.
    - Some write tools take many actions: Hermes `memory` has 3, Holographic `fact_store` 25, Basic Memory `bm_project` 3. Their lists need action-level entries.
    - A row can have more than one write tool: Holographic's `fact_feedback` changes trust scores and records confirmations, so it belongs on Holographic's list beside `fact_store`.
    - MemPalace has 20 state-changing tools out of 47.
-   - Some tools answer with the system's own model: SimpleMem `memory_query`, Hindsight `hindsight_reflect`, Honcho `honcho_reasoning`. In the layer evaluation the pinned agent answers instead.
+   - Some tools answer with the system's own model: SimpleMem `memory_query`, Hindsight `hindsight_reflect`, Honcho `honcho_reasoning`, LCM-X `lcm_expand_query`. In the layer evaluation the pinned agent answers instead.
    - SimpleMem's EvolveMem self-tunes on development questions. That falls under the equal configuration budget (§10).
 7. **Licences.** 5 rows are AGPL-3.0, Elastic-2.0 or partly BSL. PREREG §10 requires an open-source competitor, and it does not yet say whether a source-available licence (Elastic-2.0) or a BSL part qualifies. C-9 has to settle that.
 8. **The choice of adoption metric changes orderings.**
@@ -166,21 +166,21 @@ Across the 27 rows, the adapter needs reduce to these additions to the Phase 1 b
 - **A settle step** in the adapter contract, for the 6 rows in pattern 1, run before every checkpoint and every probe.
 - **Snapshot scope** that covers `$HOME`, server databases and Docker volumes as well as `HERMES_HOME` (pattern 2), with an isolated `$HOME` per life wherever a row keeps a dot-directory there.
 - **Route-table entries** for every row with its own model calls (pattern 3), including summarisers, extraction, VLMs and answer-synthesising tools, and an S1 class for each.
-- **Machine gating** for the 11 local-embedding rows (pattern 4), and pinned local models where a row ships them.
+- **Machine gating** for the 10 local-embedding rows (pattern 4) and for LCM-X if FastEmbed is enabled. Pinned local models where a row ships them.
 - **Pinned releases and servers.** Every row must be pinned to a released artifact. Rows with a server, daemon or datastore (for example Honcho, Hindsight, OpenViking, Memobase, Graphiti, MemoryBear, MemMachine, MemOS's bridge, Cognee's detached server) need one instance per clone and a start order before the harness.
 - **Telemetry switches** where a row documents one: Mem0, Supermemory and Cognee.
 - **Declared write tools at action level** (pattern 6). 7 rows document no agent write tool, so under §10 they get no write turns.
 
 ## What is deferred
 
-- **S5b,** the p50 latency of each surface. It needs installs, and marker exit 0 for the 11 local-embedding rows.
-- **The `unverified` fields in 17 rows.** The main ones:
+- **S5b,** the p50 latency of each surface. It needs installs, and marker exit 0 for the 10 local-embedding rows (and LCM-X if FastEmbed is enabled).
+- **The `unverified` fields in 18 rows.** The main ones:
   - local-embedding defaults for 9 rows;
   - RetainDB's model calls, and whether the bundled plugin works against RetainDB Local;
   - TencentDB Agent Memory's state paths;
   - whether Supermemory local's server source is in its MIT repository;
   - the tool names of MemOS's Hermes adapter;
-  - the path of LCM-X's externalized-payload directory.
+  - the path of LCM-X's externalized-payload directory, and whether its catalog disclosure for 0.24.3 (read-only access to Hermes `state.db`) still holds in v0.28.1.
 - **The declared write-tool lists (C-6) and the competitor selection (C-9).** This survey supplies candidates only.
 - **Rows not surveyed:**
   - 56 of the 65 catalog memory entries;
