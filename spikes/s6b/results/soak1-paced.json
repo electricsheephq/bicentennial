@@ -1,0 +1,87 @@
+{
+ "result_id": "bicentennial-s6c-soak1",
+ "claim_class": "advisory capacity evidence (one account, one time of day); no memory-system score",
+ "commit": "28c18336d538d1bff605c0fff3ac578c011b8635",
+ "run": "s6c-soak1",
+ "utc_start": "2026-10-26T14:01:13Z",
+ "utc_end": "2026-10-26T14:12:23Z",
+ "lane": "Sol (gpt-6.1-sol, effort medium, every call at the pinned effort)",
+ "accounts": 1,
+ "config": {
+  "rate_per_min": 180,
+  "burst": 10,
+  "inflight": 24,
+  "duration_s": 600,
+  "source": "r7c-write payloads (60 write turns, 2 compactions)"
+ },
+ "results": {
+  "send_window": {
+   "admission_s": 600,
+   "last_send_s": 600.345,
+   "sent_before_600_s": 1809,
+   "sent_after_600_s": 2,
+   "wall_s": 670.14,
+   "drain_s": 69.8,
+   "note": "new calls were admitted for the configured 600 s; two calls admitted before the deadline sent after it, then the run drained"
+  },
+  "sent": 1811,
+  "ok": 1808,
+  "http_429": 0,
+  "in_stream_overloads": 3,
+  "overloaded_per_1000": 1.7,
+  "max_requests_any_60s_window_sliding": 189,
+  "requests_per_min_p50": 180,
+  "ok_per_min_over_wall": 161.9,
+  "latency_ok_s": {
+   "p50_s": 3.864,
+   "p90_s": 9.731,
+   "p95_s": 24.56,
+   "mean_s": 7.34
+  },
+  "stops": 0,
+  "ledger": {
+   "records": 1812,
+   "chain_breaks": 0,
+   "upstream_attempts": 1811
+  },
+  "quota": {
+   "weekly_free_before": 100,
+   "weekly_free_after": 99,
+   "session_free_before": 100,
+   "session_free_after": 99
+  }
+ },
+ "pass_bar": {
+  "no_429_over_600s": true,
+  "window_le_190": true,
+  "median_ge_170": true,
+  "no_stop": true,
+  "ledger_reconciles": true
+ },
+ "verdict": "PASS",
+ "spend_usd": 0,
+ "machine": {
+  "busy_marker": "10 at start and end, glm false",
+  "load_start": [
+   8.32275390625,
+   8.552734375,
+   8.52685546875
+  ],
+  "load_end": [
+   6.16259765625,
+   8.17724609375,
+   8.94189453125
+  ]
+ },
+ "does_not_prove": [
+  "that a second account doubles capacity (soak 2, after #12)",
+  "other times of day or quota windows",
+  "sustained rate beyond 10 minutes",
+  "probe cost at scale",
+  "any memory system's quality"
+ ],
+ "files": {
+  "soak.json": "006d102a349108b090cac893dc3d9660949edcf3f2b643281f669ae41f081332",
+  "ledger/summary.json": "1944c5fecbbd5cf883d2793eb4be62df76b8ad8f467fe7b9da08cd0568a30a18"
+ }
+}

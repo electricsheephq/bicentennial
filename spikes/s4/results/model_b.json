@@ -1,0 +1,139 @@
+{
+ "assumptions": {
+  "n_L": 48,
+  "n_keep": 12,
+  "f": 0.5,
+  "b": 150,
+  "sessions": 200,
+  "turns_per_session": 5,
+  "compactions_per_life": 80,
+  "probe_calls_per_turn": 2.25,
+  "resume_controls_double_P": true,
+  "swap_share": 0.5,
+  "cache_hit_share": 0.8,
+  "n_rob": 8,
+  "P_W_over_P": 0.1,
+  "full_window_prompt": 32000
+ },
+ "s6a_inputs": {
+  "write_turn_in": 4008.9,
+  "write_turn_out": 79.883,
+  "summariser_in": 9282.5,
+  "summariser_out": 7939
+ },
+ "readings": {
+  "micro_life_prompt": {
+   "board_tokens_in_out": [
+    752355900.0,
+    70820793.0
+   ],
+   "swap_share_in_out": [
+    376177950.0,
+    35410396.5
+   ],
+   "comparator_in_out": [
+    61347612.0,
+    8666309.64
+   ]
+  },
+  "full_window_prompt": {
+   "board_tokens_in_out": [
+    5538834000.0,
+    70820793.0
+   ],
+   "swap_share_in_out": [
+    2769417000.0,
+    35410396.5
+   ],
+   "comparator_in_out": [
+    427471200.0,
+    8666309.64
+   ]
+  }
+ },
+ "rows": [
+  {
+   "candidate": "glm-5.3 (z.ai coding plan, subscription)",
+   "family": "Zhipu",
+   "source": "subscription: $0 marginal",
+   "price_read": "2026-10-26",
+   "usd_per_1m": {
+    "hit": 0.0,
+    "miss": 0.0,
+    "out": 0.0
+   },
+   "micro_life_prompt": {
+    "swap_share_usd": 0.0,
+    "study_comparator_usd": 0.0
+   },
+   "full_window_prompt": {
+    "swap_share_usd": 0.0,
+    "study_comparator_usd": 0.0
+   }
+  },
+  {
+   "candidate": "deepseek-v4-pro, peak",
+   "family": "DeepSeek",
+   "source": "https://api-docs.deepseek.com/quick_start/pricing",
+   "price_read": "2026-10-26",
+   "usd_per_1m": {
+    "hit": 0.044,
+    "miss": 1.32,
+    "out": 3.96
+   },
+   "micro_life_prompt": {
+    "swap_share_usd": 252.8,
+    "study_comparator_usd": 52.7
+   },
+   "full_window_prompt": {
+    "swap_share_usd": 968.8,
+    "study_comparator_usd": 162.2
+   }
+  },
+  {
+   "candidate": "deepseek-v4-pro, off-peak",
+   "family": "DeepSeek",
+   "source": "https://api-docs.deepseek.com/quick_start/pricing",
+   "price_read": "2026-10-26",
+   "usd_per_1m": {
+    "hit": 0.022,
+    "miss": 0.66,
+    "out": 1.98
+   },
+   "micro_life_prompt": {
+    "swap_share_usd": 126.4,
+    "study_comparator_usd": 26.3
+   },
+   "full_window_prompt": {
+    "swap_share_usd": 484.4,
+    "study_comparator_usd": 81.1
+   }
+  },
+  {
+   "candidate": "MiniMax-M3, standard, <= 512K input",
+   "family": "MiniMax",
+   "source": "https://platform.minimax.io/docs/guides/pricing-paygo",
+   "price_read": "2026-10-26",
+   "usd_per_1m": {
+    "hit": 0.06,
+    "miss": 0.3,
+    "out": 1.2
+   },
+   "micro_life_prompt": {
+    "swap_share_usd": 83.1,
+    "study_comparator_usd": 17.0
+   },
+   "full_window_prompt": {
+    "swap_share_usd": 341.6,
+    "study_comparator_usd": 56.6
+   }
+  }
+ ],
+ "glm_lane": {
+  "board_lane_h_at_x1": 676.122,
+  "swap_share_lane_h": 338.061,
+  "wall_h_at_C8": 42.3,
+  "C_needed_24h": 14.1,
+  "max_swap_share_at_C8": 0.284
+ }
+}

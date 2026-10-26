@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -50,12 +51,16 @@ def payloads(source: Path, kinds=KINDS) -> list[dict]:
     return out
 
 
-def plan(pays: list[dict], inflight: int, duration: float, ceiling: int) -> dict:
+def plan(pays: list[dict], inflight: int, duration: float, ceiling: int, rate=0, burst=0) -> dict:
     """Calls the window needs at the source run's mean latency (the mix weights it), against the ceiling."""
     mean_s = max(0.1, statistics.mean(p["t_ms"] for p in pays) / 1000)
     est = round(inflight * duration / mean_s)
+    max_duration = int(ceiling * mean_s / inflight)
+    if rate > 0:  # gate() reserves a call before its worker waits for a pacing token
+        est = min(est, burst + math.ceil(rate * duration / 60) + inflight)
+        max_duration = max(max_duration, max(0, int((ceiling - burst - inflight) * 60 / rate)))
     return {"mean_latency_s": round(mean_s, 2), "est_calls": est, "ceiling": ceiling, "fits": est <= ceiling,
-            "max_fitting_duration_s": int(ceiling * mean_s / inflight)}
+            "max_fitting_duration_s": max_duration}
 
 
 def ceiling_for(budget_file: Path, cap: int, max_calls: int, reserve: int) -> int:
@@ -112,13 +117,18 @@ def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling:
         while (n := gate()) is not None:
             p = pays[n % len(pays)]
             ts = time.monotonic() - t0
-            up = d.upstream(p["body"], f"soak_{p['kind']}", {"session_id": str(uuid.uuid5(uuid.NAMESPACE_OID, p["hash"]))})
+            try:
+                up = d.upstream(p["body"], f"soak_{p['kind']}", {"session_id": str(uuid.uuid5(uuid.NAMESPACE_OID, p["hash"]))})
+            except Exception as e:  # noqa: BLE001 - class only; the reserved call remains counted
+                up = {"category": "director_exception", "error": type(e).__name__, "ok": False, "status": -1, "t_ms": 0}
+            finally:
+                with lock:
+                    state["inflight"] -= 1
             c = {"n": n, "kind": p["kind"], "payload": p["hash"], "t_start_s": round(ts, 2),
                  "t_done_s": round(time.monotonic() - t0, 2), "effort_is_pin": up.get("effort_is_pin"),
-                 **{k: up[k] for k in KEEP if k in up}, "usage": tok(up.get("usage"))}
+                 **{k: up[k] for k in (*KEEP, "error") if k in up}, "usage": tok(up.get("usage"))}
             c["unsent"] = up["category"] == "budget_or_stop"
             with lock:
-                state["inflight"] -= 1
                 if not c["unsent"]:  # a call refused before the upstream neither extends nor breaks the streak
                     state["quota_streak"] = state["quota_streak"] + 1 if c.get("category") == "quota" else 0
                     state["quota_stop"] |= state["quota_streak"] >= 3
@@ -135,10 +145,11 @@ def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling:
             samples.append((round(time.monotonic() - t0, 1), state["inflight"]))
         time.sleep(sample_s)
     [t.join() for t in ts]
+    samples.append((round(time.monotonic() - t0, 1), state["inflight"]))
     wall = time.monotonic() - t0
     sent = sorted((c for c in calls if not c["unsent"]), key=lambda c: c["n"])
     ok, refused = [c for c in sent if c["ok"]], [c for c in sent if not c["ok"]]
-    last_send = max((c["t_start_s"] for c in sent), default=0.0)
+    last_send = max((round(c["t_start_s"] + c.get("pace_wait_ms", 0) / 1000, 2) for c in sent), default=0.0)  # after pacing
     window = [n for t, n in samples if sample_s <= t <= last_send]  # after start-up, while sends still started
     ended = state["ended"]
     minutes = []
@@ -163,7 +174,7 @@ def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling:
             "categories": {k: sum(c["category"] == k for c in refused) for k in {c["category"] for c in refused}},
             "sustained": ended == "duration" and not refused,
             "last_send_s": last_send, "wall_s": round(wall, 2), "drain_s": round(wall - last_send, 2),
-            "inflight_min": min(window, default=0), "inflight_mean": round(statistics.mean(window), 1) if window else 0,
+            "inflight_final": samples[-1][1], "inflight_min": min(window, default=0), "inflight_mean": round(statistics.mean(window), 1) if window else 0,
             "inflight_max": max((n for _, n in samples), default=0),
             "ok_per_min": round(len(ok) / max(wall, 1e-9) * 60, 1), "per_minute": minutes,
             "by_kind": {k: kind_stats(sent, k) for k in KINDS},
@@ -193,10 +204,13 @@ def main():
     p.add_argument("--run", default="soak")
     p.add_argument("--timeout", type=float, default=300)
     p.add_argument("--plan-only", action="store_true")
+    p.add_argument("--rate-per-min", type=float, default=180)
+    p.add_argument("--burst", type=int, default=10)
     a = p.parse_args()
     out = Path(a.out)
     pays = payloads(Path(a.source))
-    pl = plan(pays, a.inflight, a.duration, ceiling_for(Path(a.budget_file), a.budget_cap, a.max_calls, a.reserve))
+    pl = plan(pays, a.inflight, a.duration, ceiling_for(Path(a.budget_file), a.budget_cap, a.max_calls, a.reserve),
+              a.rate_per_min, a.burst)
     print(json.dumps(pl), flush=True)
     if a.plan_only or not pl["fits"]:
         sys.exit(0 if a.plan_only else f"the planned window needs ~{pl['est_calls']} calls over a ceiling of "
@@ -206,8 +220,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     d = Director(SimpleNamespace(budget_file=a.budget_file, budget_cap=a.budget_cap, mode="live", run=a.run,
                                  ledger_dir=str(out / "ledger"), life=str(HERE.parent / "s6a" / "micro_life.json"),
-                                 model=MODEL, write_turns=False, timeout=a.timeout, chars_per_token=4.0))
+                                 model=MODEL, write_turns=False, rate_per_min=a.rate_per_min, burst=a.burst, timeout=a.timeout, chars_per_token=4.0))
     res = soak(d, pays, a.inflight, a.duration, pl["ceiling"], a.pause) | {"plan": pl, "source": Path(a.source).name}
+    d.summary()
     (out / "soak.json").write_text(json.dumps(res, indent=1))
     print(json.dumps({k: v for k, v in res.items() if k not in ("calls", "per_minute")}))
 

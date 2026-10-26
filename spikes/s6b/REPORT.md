@@ -46,7 +46,7 @@ Burst concurrency: 48, the ramp's ceiling, with no 429. The weekly quota window 
 
 **The 429 shape.** HTTP 429, body `{"detail": str}`, no quota header on the response, and a `retry-after` header. The 429s came in two bursts: calls 200-272 (+40.6 s to +60.5 s), with `retry-after` counting down from 20 to 1, and calls 473-499 (+112.8 s to +120.5 s), counting down from 8 to 1. None was a quota refusal; the quota stop never fired.
 
-**Inference, labelled as an inference: fixed 60 s windows of exactly 200 accepted requests per account.** Counted from the first send, the three 60 s windows hold exactly 200, 200 and 200 accepted calls (with 72, 26 and 2 refusals). Each burst began when its window's 200th call had been accepted, and each `retry-after` expired near a window edge (about +60.6 s and +120.8 s), so the windows look anchored near the first call. A rolling window is contradicted: 220 starts were accepted in 105.5-165.4 s, alongside 27 rate-refused attempts (+112.8 to +120.5 s), and a rolling cap of 200 accepted starts per 60 s cannot explain 220 accepted within about 60 s, whatever refusals also occurred. Likewise, 113 calls after +125.7 s were accepted although the 60 s before each held 200 or more accepted starts. Concurrency does not fit either (24 were held throughout), nor does quota (the headers read 0%). The ramp is consistent: its largest level sent 96 calls in 27 s. The planning rate below is R_s = 180 requests per minute, 90% of that threshold. A token bucket at R_s is not safe by its refill rate alone: any 60 s window can hold up to its burst capacity plus 180 starts (a burst of 24 allows 201 starts within 59 s), so the burst must stay at 19 or below to keep every window at 199 or fewer. S6c's pacer uses a burst of 10, for at most 190; paced refusal-free operation is still to be validated.
+**Inference, labelled as an inference: fixed 60 s windows of exactly 200 accepted requests per account.** Counted from the first send, the three 60 s windows hold exactly 200, 200 and 200 accepted calls (with 72, 26 and 2 refusals). Each burst began when its window's 200th call had been accepted, and each `retry-after` expired near a window edge (about +60.6 s and +120.8 s), so the windows look anchored near the first call. A rolling window is contradicted: 220 starts were accepted in 105.5-165.4 s, alongside 27 rate-refused attempts (+112.8 to +120.5 s), and a rolling cap of 200 accepted starts per 60 s cannot explain 220 accepted within about 60 s, whatever refusals also occurred. Likewise, 113 calls after +125.7 s were accepted although the 60 s before each held 200 or more accepted starts. Concurrency does not fit either (24 were held throughout), nor does quota (the headers read 0%). The ramp is consistent: its largest level sent 96 calls in 27 s. The planning rate below is R_s = 180 requests per minute, 90% of that threshold. A token bucket at R_s is not safe by its refill rate alone: any 60 s window can hold up to its burst capacity plus 180 starts (a burst of 24 allows 201 starts within 59 s), so the burst must stay at 19 or below to keep every window at 199 or fewer. S6c's pacer uses a burst of 10, for at most 190; paced soak 1 confirmed operation with no HTTP 429s on one account for 10 minutes (S6c pacing, below).
 
 **Overload.** The 2 `server_is_overloaded` refusals arrived as `response.failed` events inside an HTTP 200, each after about 20 s. The director that ran the soak classed them `other` (not retryable), because it read only the first 2,000 characters of the terminal event and that event echoes the whole request before its error. The director now classifies an in-stream failure by its error object, so such a failure is retried with backoff.
 
@@ -210,7 +210,7 @@ An earlier run, r7-write, ran on the director before its review fixes. A machine
 
 ## Does not prove
 - Any quality or score for any memory system: nothing is scored.
-- Sustained behaviour beyond a 3.6-minute soak. The ramp's levels lasted about 25 s each, and burst headroom is not sustained headroom.
+- Sustained behaviour beyond a 3.6-minute soak, for these unpaced measurements. The ramp's levels lasted about 25 s each, and burst headroom is not sustained headroom. S6c's paced soak 1 later ran 10 minutes on one account (below); longer runs, other times of day and two accounts remain untested.
 - The account's quota windows, which are not published and can change without notice. One account at one time of day is measured, and the quota extrapolation is a coarse upper bound from that alone.
 - The rate-limit inference beyond this account and day: it rests on two bursts on one account at one time of day.
 - That the rate limit is per account, and so doubles with a second account on the same host. The two-account rows assume it. It is untested here, so those rows stay hypothetical until S6c's two-account paced soak.
@@ -222,3 +222,36 @@ An earlier run, r7-write, ran on the director before its review fixes. A machine
 - Many Hermes processes at once. Only one was run, while the lane reading needs about 29 at C = 20, 30-32 at the one-account C_k and 60-63 at the two-account C_k.
 - That one micro-life behaves like a board run, or that its 2 compaction calls in one long session are typical.
 - Latency on other machines, accounts or times of day.
+
+
+## S6c pacing
+
+**Paced soak 1, one account (2026-10-26, commit 28c1833; [`results/soak1-paced.json`](results/soak1-paced.json)).** 24 in flight at 180 per minute with a burst of 10, on the r7c-write payloads, every call at the pinned medium effort. New calls were admitted for the configured 600 s: 1,809 were sent before the 600 s mark and 2 already admitted calls after it (the last at 600.3 s), then the run drained (670 s of wall time in all). 1,811 requests were sent and 1,808 served, with **0 HTTP 429s**. The busiest sliding 60 s window held 189 requests, under the 190 bound, and the median rate was 180 per minute, so the pacer bound. The 3 failures were in-stream overloads (1.7 per 1,000), not rate refusals, and no stop fired. The ledger reconciles (1,811 upstream attempts, no chain breaks). The weekly and session quota readings went from 100% to 99% free; the spend was $0. Busy marker 10 with `glm` false at the start and at the end. This confirms R_s = 180 per minute on one account for PREREG §11's paced-soak requirement. It does not show that a second account doubles capacity (soak 2, after #12), nor other times of day, a rate sustained beyond 10 minutes, or probe cost at scale.
+
+Each account's director shares one locked token bucket across HTTP, soak and retry calls:
+180 requests/minute, burst 10, acquired immediately before each upstream POST after budget/stop checks.
+Per director process, any half-open 60 s window contains at most burst + rate sends: 190 by default, below 200.
+Start a paced process only after 60 s with no traffic on that account, and never within 60 s of the unpaced ramp.
+`--rate-per-min 0` disables pacing (recorded in the ledger); stub mode bypasses it.
+`--burst` defaults to 10; burst + rate >= 200 requires `--allow-over-window`.
+The ramp deliberately uses rate 0 to retain its refusal-threshold burst measurement; the soak passes
+`--rate-per-min` and `--burst` through to the director. Every attempt records `pace_wait_ms`.
+`summary.json` beside the ledger reports counts, recovery outcomes, overload/429/breaker counts,
+trailing half-open 60 s request windows ending at each send (p50/max, including start-up), and total pace wait;
+service latency excludes pacing. Summaries contain no bodies or headers; older ledgers remain readable.
+After a pace wait the director reads the login token again, so a token that expired while it waited is
+refreshed before the send. A read that blocks for more than 1 s (on a refresh) admits the request again, so
+each send leaves within 1 s of its admission and a 60 s window holds at most burst + 61/60 × rate sends (193). A paced soak's send window (`last_send_s`, and the projection's C_effective window)
+ends at the last send after pacing; files without pace waits keep their recorded window.
+`summary.json` also records `stop_reason`, a fixed-vocabulary label, and `breaker_stops` counts only
+`upstream_failures_3_in_a_row`.
+Invalid HTTP 4xx except 401/403/429 stop with `upstream_invalid_request_<code>` and invalidate evidence.
+Three served-but-unparsed calls with no forwarded call between them stop with `upstream_unparsed_3_in_a_row`
+(failed tries in between neither extend nor reset the count), holding the failure breaker streak and never
+forwarding the stream. Neither stop writes the credential sentinel.
+Upstream success and HTTP-error bodies are bounded to 8 MiB + 1 byte; oversize yields only `error:oversize`
+without decoding, parsing, replaying or persisting the body. Refresh-log draining is atomic, soak slots release
+on exceptions, and ledger attempt reconciliation includes refresh, soak and ramp records. On exit the director stops, then
+waits up to 2 s for woken pace waiters to release their reservations, so the budget equals the ledger.
+The offline implementation alone did not confirm the sustainable rate; paced soak 1 (above) did, on one account,
+with no 429 in 10 minutes.

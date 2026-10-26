@@ -34,7 +34,7 @@ def check_ledger(run: Path) -> dict:
             bad_chain += 1
         prev = h
         roles[f"{rec.get('type')}:{rec.get('role', '-')}"] += 1
-        attempts += sum(1 for u in rec.get("upstream", []) if u.get("category") != "budget_or_stop")
+        attempts += int(rec.get("type") in ("refresh", "soak", "ramp")) + sum(1 for u in rec.get("upstream", []) if u.get("category") != "budget_or_stop")
         for ref in [rec.get("req"), rec.get("resp")] + [u.get(k) for u in rec.get("upstream", []) for k in ("req", "resp")]:
             if ref:
                 p = run / "ledger" / "blobs" / ref[:2] / f"{ref}.json.zst"
