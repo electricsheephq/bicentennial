@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "s6a"))
 from analyse import grid, load, projection, run_measures, stats
+from sol_director import request_rate
 
 S6A = json.loads((HERE.parent / "s6a" / "results" / "measurements.json").read_text())
 SAME = ("turn_s", "turn_ex_compaction_s_mean", "session_total_s", "session_fixed_s", "restart_s", "rss_kib")
@@ -52,6 +53,10 @@ def sol_load(evid: Path, run: str):
     m["effort_is_pin"] = sum(bool(u.get("effort_is_pin")) for r in led for u in r.get("upstream", []))
     m["served_models"] = sorted({str(u.get("served_model")) for u in ups})
     m["retries"] = retries(led)
+    attempts = [u for r in led for u in r.get("upstream", []) if u.get("category") != "budget_or_stop"]
+    m["pace_wait_ms"] = sum(u.get("pace_wait_ms", 0) for u in attempts)
+    m["paced_request_rate"] = request_rate(u["t_sent"] for u in attempts if "t_sent" in u)
+    m["invalid_evidence"] = any(400 <= u.get("status", 0) < 500 and u["status"] not in (401, 403, 429) for u in attempts)
     m["aux_effort"] = {sub: {"n": len(us), "pinned": sum(bool(u.get("effort_is_pin")) for u in us),
                              "no_reasoning": sum(u.get("reasoning") is None for u in us)}
                        for sub in sorted({r.get("subrole") for r in led if r.get("role") in ("aux", "summariser")})
@@ -332,7 +337,7 @@ def main():
     evid, out = Path(a.evidence), Path(a.out)
     out.mkdir(exist_ok=True)
     w = sol_load(evid, a.write)
-    if not w["complete"] or w["unknown"]:
+    if not w["complete"] or w["unknown"] or w["invalid_evidence"]:
         sys.exit("the run has an unfinished session, a failed write turn or an unknown request; not projecting")
     ramp = json.loads((evid / a.ramp).read_text())
     ramp_s = {k: v for k, v in ramp.items() if k != "levels"} | {

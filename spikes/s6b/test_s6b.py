@@ -2,6 +2,7 @@
 
 import base64
 import http.client
+import io
 import json
 import os
 import socket
@@ -55,8 +56,8 @@ class Resp:  # an in-memory upstream stream: no socket
     def __init__(self, raw):
         self.raw = raw
 
-    def read(self):
-        return self.raw
+    def read(self, size=-1):
+        return self.raw if size < 0 else self.raw[:size]
 
     def __enter__(self):
         return self
@@ -103,14 +104,14 @@ class Base(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         Upstream.script, Upstream.seen = [], []
 
-    def make(self, mode="live", post=None, exp_in=3600, **kw):
+    def make(self, mode="live", post=None, exp_in=3600, clock=time.monotonic, sleep=None, **kw):
         os.environ["BICENTENNIAL_SOL_BASE_URL"] = f"http://127.0.0.1:{serve(self, Upstream)}/backend-api/codex"
         self.addCleanup(os.environ.pop, "BICENTENNIAL_SOL_BASE_URL", None)
         login = sd.Login(store(self.tmp, exp_in), "http://127.0.0.1:9/never", "client-fake", post=post or self.no_post)
         a = SimpleNamespace(**{"life": str(LIFE), "ledger_dir": str(self.tmp / "ledger"), "budget_file": str(
             self.tmp / "b.json"), "budget_cap": 50, "run": "t", "model": sd.MODEL, "mode": mode, "write_turns": True,
-            "chars_per_token": 4.0, "context_length": 272000, "timeout": 10} | kw)
-        return sd.Director(a, login=login if mode == "live" else None)
+            "chars_per_token": 4.0, "context_length": 272000, "timeout": 10, "rate_per_min": 0} | kw)
+        return sd.Director(a, login=login if mode == "live" else None, clock=clock, sleep=sleep)
 
     def no_post(self, *a):
         raise AssertionError("no refresh expected")
@@ -135,6 +136,236 @@ class Base(unittest.TestCase):
                 "include": ["reasoning.encrypted_content"], "reasoning": {"effort": "medium", "summary": "auto"},
                 "tools": [MEM, TODO], "tool_choice": "auto", "prompt_cache_key": "k",
                 "input": [{"type": "message", "role": "user", "content": d.expected[k]["user"]}, *extra]}
+
+
+class Clock:
+    def __init__(self):
+        self.now, self.lock, self.local, self.sleeps = 0.0, threading.Lock(), threading.local(), []
+
+    def __call__(self):
+        with self.lock:
+            self.local.last = self.now
+            return self.now
+
+    def sleep(self, delay):
+        assert delay > 0  # acquisition must sleep rather than spin
+        with self.lock:
+            self.sleeps.append(delay)
+            self.now += delay
+
+
+class Pacing(unittest.TestCase):
+    def bucket(self, rate=180, burst=10, **kw):
+        clock, stop = Clock(), threading.Event()
+        return sd.Pacer(rate, burst, stop, clock, clock.sleep, **kw), clock, stop
+
+    def assert_windows(self, times, bound):
+        times = sorted(times)
+        for start in times:  # every possible maximal half-open window starts at a send
+            self.assertLessEqual(sum(start <= t < start + 60 for t in times), bound)
+
+    def test_window_bound_with_injected_clock(self):
+        bucket, clock, _ = self.bucket()
+        times = []
+        for _ in range(400):
+            bucket.acquire()
+            times.append(clock.local.last)
+        self.assert_windows(times, 190)
+        self.assertEqual(times[:10], [0] * 10)
+        self.assertTrue(clock.sleeps)
+
+    def test_four_threads_share_one_bucket(self):
+        bucket, clock, _ = self.bucket()
+        times, errors, lock, start = [], [], threading.Lock(), threading.Barrier(4)
+
+        def worker():
+            try:
+                start.wait(timeout=2)
+                local = []
+                for _ in range(100):
+                    bucket.acquire()
+                    local.append(clock.local.last)
+                with lock:
+                    times.extend(local)
+            except Exception as e:  # noqa: BLE001 - capture thread failures for the owning test
+                errors.append(type(e).__name__)
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=3)
+        self.assertFalse(any(t.is_alive() for t in threads))
+        self.assertEqual((errors, len(times)), ([], 400))
+        self.assert_windows(times, 190)
+
+    def test_zero_rate_and_window_validation(self):
+        bucket, clock, stop = self.bucket(rate=0)
+        self.assertEqual([bucket.acquire() for _ in range(100)], [0] * 100)
+        self.assertEqual(clock.sleeps, [])
+        stop.set()
+        self.assertIsNone(bucket.acquire())
+        for rate, burst in ((190, 10), (180, 20), (0, 200), (-1, 10), (180, 0), (float("nan"), 10)):
+            with self.assertRaises(ValueError):
+                self.bucket(rate, burst)
+        self.bucket(190, 10, allow=True)
+
+
+class S6c(Base):
+    def test_stop_releases_all_director_waiters(self):
+        d = self.make(rate_per_min=1, burst=1)
+        d.urlopen = lambda *a, **kw: Resp(sse(MSG))
+        first = d.upstream(AUX, "aux", {})  # empty the bucket
+        waiting = threading.Barrier(5)
+        d.pacer.sleep = lambda delay: (waiting.wait(timeout=3), d.stop_event.wait(delay))
+        calls, errors = [], []
+
+        def worker():
+            try:
+                calls.append(d.upstream(AUX, "aux", {}))
+            except Exception as e:  # noqa: BLE001 - capture thread failures for the owning test
+                errors.append(type(e).__name__)
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        waiting.wait(timeout=3)
+        d.stop("test_stop")
+        for t in threads:
+            t.join(timeout=2)
+        self.assertFalse(any(t.is_alive() for t in threads))
+        self.assertEqual((errors, [u["category"] for u in calls]), ([], ["budget_or_stop"] * 4))
+        self.assertEqual(json.loads((self.tmp / "b.json").read_text())["total"], 1)  # only the first send was charged
+        self.assertAlmostEqual(d.summary()["pace_wait_ms"], first["pace_wait_ms"] + sum(u["pace_wait_ms"] for u in calls))
+        self.assertGreater(d.summary()["pace_wait_ms"], 0)
+        d.pacer.acquire = mock.Mock(side_effect=AssertionError("stopped director waited"))
+        self.assertEqual(d.upstream(AUX, "aux", {})["category"], "budget_or_stop")
+
+    def test_defaults_disabled_ledger_and_stub_bypass(self):
+        d = self.make(mode="stub", rate_per_min=180, burst=1)
+        d.pacer.acquire = mock.Mock(side_effect=AssertionError("stub paced"))
+        self.assertEqual(d.upstream(AUX, "aux", {})["pace_wait_ms"], 0)
+        self.assertFalse(self.records("pacing")[-1]["enabled"])
+        d = self.make(rate_per_min=0)
+        self.assertEqual(self.records("pacing")[-1]["rate_per_min"], 0)
+        del d.a.rate_per_min
+        default = sd.Director(d.a, login=d.login)
+        self.assertEqual((default.pacer.rate * 60, default.pacer.burst), (180, 10))
+
+    def test_invalid_request_stops_after_one_call_without_sentinel(self):
+        import analyse_sol as an
+        for code in (400, 404, 413, 422):
+            self.tmp = Path(tempfile.mkdtemp())
+            d, calls = self.make(), []
+
+            def refuse(*a, code=code, calls=calls, **kw):
+                calls.append(1)
+                raise urllib.error.HTTPError("http://fake.invalid", code, "bad", {}, io.BytesIO(b"{}"))
+            d.urlopen = refuse
+            _, _, rec = d.handle(AUX, {})
+            d.handle(AUX, {})
+            self.assertEqual((calls, d.stop_reason), ([1], f"upstream_invalid_request_{code}"))
+            self.assertFalse(d.login.sentinel.exists())
+            with mock.patch.object(an, "load", return_value=([], [{"type": "request", "seq": 1, **rec}], {})), \
+                    mock.patch.object(an, "run_measures", return_value={}):
+                self.assertTrue(an.sol_load(self.tmp, "fake")["invalid_evidence"])
+
+    def test_three_unparsed_calls_hold_breaker_and_stop_without_sentinel(self):
+        d = self.make()
+        d.urlopen = mock.Mock(return_value=Resp(b"data: {broken}\n\n" + sse(MSG)))
+        d.failure_streak = 2
+        for n in range(3):
+            self.assertEqual(d.handle(AUX, {})[0], 503)
+            self.assertEqual((d.failure_streak, d.stopped), (2, n == 2))
+        d.handle(AUX, {})
+        self.assertEqual((d.urlopen.call_count, d.stop_reason), (3, "upstream_unparsed_3_in_a_row"))
+        self.assertFalse(d.login.sentinel.exists())
+
+    def test_bounded_success_and_http_error_reads_never_parse_or_store_oversize(self):
+        for code in (200, 503):
+            self.tmp = Path(tempfile.mkdtemp())
+            d = self.make()
+            body = mock.Mock(wraps=io.BytesIO(b"PRIVATE-OVERSIZE" + b"x" * sd.MAX_BODY))
+            if code == 200:
+                response = Resp(b"")
+                response.read = body.read
+                d.urlopen = lambda *a, response=response, **kw: response
+            else:
+                d.urlopen = mock.Mock(side_effect=urllib.error.HTTPError("http://fake.invalid", code, "bad", {}, body))
+            with mock.patch.object(d, "_scrub") as scrub, mock.patch.object(sd, "parse_sse") as parse:
+                up = d.upstream(AUX, "aux", {})
+            body.read.assert_called_once_with(sd.MAX_BODY + 1)
+            scrub.assert_not_called()
+            parse.assert_not_called()
+            self.assertEqual((up["category"], up["forward"], up["ok"]), ("error:oversize", False, False))
+            self.assertFalse({"raw", "resp", "events", "body_redacted", "body_shape"} & up.keys())
+            for blob in (self.tmp / "ledger" / "blobs").rglob("*.zst"):
+                self.assertNotIn(b"PRIVATE-OVERSIZE", zstd.decompress(blob.read_bytes()))
+
+    def test_refresh_log_is_drained_once_by_two_threads(self):
+        d, start, results, errors = self.make(), threading.Barrier(2), [], []
+        d.login.log.append({"type": "refresh", "status": 200})
+        d.login.token = lambda: (start.wait(timeout=2), "fake")[1]
+        d.urlopen = lambda *a, **kw: Resp(sse(MSG))
+
+        def worker():
+            try:
+                results.append(d.upstream(AUX, "aux", {}))
+            except Exception as e:  # noqa: BLE001 - capture thread failures for the owning test
+                errors.append(type(e).__name__)
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=3)
+        self.assertEqual((errors, len(results), len(self.records("refresh")), d.login.log), ([], 2, 1, []))
+
+    def test_soak_exception_is_counted_and_releases_slot(self):
+        import soak_sol
+        d = self.make()
+        d.upstream = mock.Mock(side_effect=ValueError("private exception text"))
+        pays = [{"body": AUX, "kind": "write_turn", "hash": "fake"}]
+        res = soak_sol.soak(d, pays, 1, 1, 1, pause=0, sample_s=0.01)
+        self.assertEqual((res["sent"], res["inflight_final"], res["categories"]), (1, 0, {"director_exception": 1}))
+        call = res["calls"][0]
+        self.assertEqual((call["error"], call["unsent"]), ("ValueError", False))
+        self.assertNotIn("private exception text", json.dumps(res) + json.dumps(self.records("soak")))
+
+    def test_count_only_summary_tracks_recovery_overload_rate_and_breaker(self):
+        clock = Clock()
+        d = self.make(rate_per_min=180, burst=1, clock=clock, sleep=clock.sleep)
+        overload = frames({"type": "error", "code": "server_overloaded"})
+        script = iter([(503, b"{}"), (200, sse(MSG)), *[(200, overload)] * 4,
+                       (429, b'{"error":"usage limit"}'), (529, b'{"error":"usage limit"}')])
+
+        def send(*a, **kw):
+            code, raw = next(script)
+            if code != 200:
+                raise urllib.error.HTTPError("http://fake.invalid", code, "bad", {}, io.BytesIO(raw))
+            return Resp(raw)
+        d.urlopen = send
+        records = []
+        with mock.patch.object(sd.time, "sleep"):
+            for _ in range(4):
+                records.append(d.handle(AUX, {})[2])
+        summary = json.loads((self.tmp / "ledger" / "summary.json").read_text())
+        self.assertEqual(summary["upstream_tries"], {"overload": 5, "ok": 1, "quota": 2})
+        self.assertEqual(summary["retries"], {"overload": {"recovered": 1, "unrecovered": 3}})
+        self.assertEqual((summary["in_stream_overloads"], summary["http_429s"], summary["breaker_stops"]), (4, 1, 1))
+        self.assertEqual(summary["http_overloads"], {"502": 0, "503": 1, "529": 1})
+        self.assertEqual(summary["requests_per_min"], {"p50": 4.5, "max": 8})
+        self.assertAlmostEqual(summary["pace_wait_ms"], sum(u["pace_wait_ms"] for r in records for u in r["upstream"]))
+        self.assertGreater(summary["pace_wait_ms"], 2000)
+        self.assertNotIn("body", json.dumps(summary))
+        self.assertNotIn("header", json.dumps(summary))
+
+    def test_analysis_accepts_old_ledgers_without_pacing_fields(self):
+        import analyse_sol as an
+        old = [{"type": "request", "seq": 1, "role": "aux", "upstream": [
+            {"kind": "aux", "ok": True, "category": None, "status": 200, "t_ms": 2}]}]
+        with mock.patch.object(an, "load", return_value=([], old, {})), \
+                mock.patch.object(an, "run_measures", return_value={}):
+            res = an.sol_load(self.tmp, "old")
+        self.assertEqual((res["pace_wait_ms"], res["paced_request_rate"], res["invalid_evidence"]),
+                         (0, {"p50": 0, "max": 0}, False))
 
 
 class Login(Base):
@@ -365,7 +596,8 @@ class Wire(Base):
                                                 f"X-OpenAI-Internal-Codex-Residency: {RES})"}}).encode()
         Upstream.script = [(400, echo), (200, sse(MSG, echo=RES))]
         title = dict(AUX, input=[{"type": "message", "role": "user", "content": "x"}])
-        self.assertEqual([self.http(d, "POST", sd.MOUNT + "/responses", title)[0] for _ in range(2)], [503, 200])
+        self.assertEqual([self.http(d, "POST", sd.MOUNT + "/responses", title)[0] for _ in range(2)], [503, 503])
+        self.assertEqual((d.stop_reason, len(Upstream.seen)), ("upstream_invalid_request_400", 1))
         real = json.loads((self.tmp / "auth.json").read_text())["tokens"]["access_token"]
         self.assertEqual(self.records("request")[0]["upstream"][0]["error_obj"]["param"], "Authorization")  # a name
         needles = [n.encode() for n in (real, "rt-fake-0", ACCT, EMAIL, USER)]  # residency is not a needle

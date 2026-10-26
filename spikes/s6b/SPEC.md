@@ -40,3 +40,25 @@ Hermes v0.22.2 replays the micro-life (r7c) with write turns end to end on Sol t
 
 ## Declared limitation
 Hermes's title generator disables reasoning for its request, and Hermes ranks that above the configured auxiliary effort pin. `gpt-6.1-sol` has no "none" effort to pin instead, so title-generation requests carry no `reasoning` field and the upstream default applies to them. Compaction and every other auxiliary task carry the pin.
+
+
+## S6c pacing
+
+Each account's director shares one locked token bucket across HTTP, soak and retry calls:
+180 requests/minute, burst 10, acquired immediately before each upstream POST after budget/stop checks.
+Any half-open 60 s window contains at most burst + rate sends: 190 by default, below 200.
+`--rate-per-min 0` disables pacing (recorded in the ledger); stub mode bypasses it.
+`--burst` defaults to 10; burst + rate >= 200 requires `--allow-over-window`.
+The ramp deliberately uses rate 0 to retain its refusal-threshold burst measurement; the soak passes
+`--rate-per-min` and `--burst` through to the director. Every attempt records `pace_wait_ms`.
+`summary.json` beside the ledger reports counts, recovery outcomes, overload/429/breaker counts,
+trailing half-open 60 s request windows ending at each send (p50/max, including start-up), and total pace wait;
+service latency excludes pacing. Summaries contain no bodies or headers; older ledgers remain readable.
+Invalid HTTP 4xx except 401/403/429 stop with `upstream_invalid_request_<code>` and invalidate evidence.
+Three consecutive served-but-unparsed calls stop with `upstream_unparsed_3_in_a_row`, holding the failure
+breaker streak and never forwarding the stream. Neither stop writes the credential sentinel.
+Upstream success and HTTP-error bodies are bounded to 8 MiB + 1 byte; oversize yields only `error:oversize`
+without decoding, parsing, replaying or persisting the body. Refresh-log draining is atomic, soak slots release
+on exceptions, and ledger attempt reconciliation includes refresh records.
+The >=10 minute paced soak with no 429 is **pending**, to be run by the orchestrator before the pilot;
+this offline implementation does not confirm the sustainable rate.

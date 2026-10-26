@@ -65,6 +65,15 @@ class Director(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
 
+    def test_refresh_and_response_attempts_reconcile_with_budget(self):
+        d = make(self.tmp)
+        d.budget.take("t", "refresh")
+        d.ledger.append({"type": "refresh", "status": 200})
+        d.budget.take("t", "aux")
+        d.ledger.append({"type": "request", "upstream": [{"category": None}]})
+        self.assertEqual(verify.check_ledger(self.tmp)["upstream_attempts"], 2)
+        self.assertEqual(json.loads((self.tmp / "b.json").read_text())["total"], 2)
+
     def post_aux(self, d, handler):  # an aux request whose client hangs up during the (slowed) upstream call
         port, real = serve(self, handler), d.upstream
         d.upstream = lambda body, kind: (time.sleep(0.4), real(body, kind))[1]
