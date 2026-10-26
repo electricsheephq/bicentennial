@@ -71,18 +71,29 @@ def tok(u: dict) -> dict:
             "cached": (u.get("input_tokens_details") or {}).get("cached_tokens")}
 
 
+def pct(ms: list[float]) -> dict:
+    q = lambda f: ms[round(f * (len(ms) - 1))] if ms else None
+    return {"p50_s": statistics.median(ms) if ms else None, "p90_s": q(0.9), "p95_s": q(0.95),
+            "mean_s": round(statistics.mean(ms), 2) if ms else None}
+
+
+def overloaded(c: dict) -> bool:
+    """A server_overloaded refusal: by category, or by its redacted code or type (HTTP status aside)."""
+    return not c["ok"] and (c.get("category") == "overload" or "overload" in json.dumps(
+        [c.get("body_shape"), c.get("error_obj")]).lower())
+
+
 def kind_stats(sent: list[dict], kind: str) -> dict:
     ks = [c for c in sent if c["kind"] == kind]
     ms = sorted(c["t_ms"] / 1000 for c in ks if c["ok"])
-    return {"sent": len(ks), "ok": len(ms), "p50_s": statistics.median(ms) if ms else None,
-            "p90_s": ms[round(0.9 * (len(ms) - 1))] if ms else None, "mean_s": round(statistics.mean(ms), 2) if ms else None,
+    return {"sent": len(ks), "ok": len(ms), **pct(ms),
             **{f"{f}_tokens": sum(c["usage"][f] or 0 for c in ks if c["ok"]) for f in ("input", "output", "reasoning", "cached")}}
 
 
 def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling: int, pause: float = 5.0,
          sample_s: float = 1.0) -> dict:
     lock, state = threading.Lock(), {"quota_streak": 0, "quota_stop": False, "taken": 0, "inflight": 0, "ended": ""}
-    calls, samples, t0 = [], [], time.monotonic()
+    calls, samples, t0, utc0 = [], [], time.monotonic(), time.time()
     deadline, m0, load0 = t0 + duration, marker_state(), os.getloadavg()  # Sol does not use GLM
 
     def gate() -> int | None:  # the stop is checked before every send; the first reason to stop is kept
@@ -143,6 +154,10 @@ def soak(d: Director, pays: list[dict], inflight: int, duration: float, ceiling:
     return {"model": MODEL, "effort": EFFORT, "inflight_target": inflight, "duration_s": duration,
             "ceiling": ceiling, "ended_by": ended, "stop_reason": d.stop_reason, "sent": len(sent), "ok": len(ok),
             "refused": len(refused), "n429": sum(c["status"] == 429 for c in sent),
+            "server_overloaded": (no := sum(map(overloaded, sent))), "overloaded_per_1000": round(1000 * no / max(1, len(sent)), 1),
+            "latency_ok": pct(sorted(c["t_ms"] / 1000 for c in ok)),
+            "utc_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(utc0)),
+            "utc_end": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(utc0 + wall)),
             "statuses": sorted({c["status"] for c in sent}),
             "categories": {k: sum(c["category"] == k for c in refused) for k in {c["category"] for c in refused}},
             "sustained": ended == "duration" and not refused,

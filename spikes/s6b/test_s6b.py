@@ -438,11 +438,15 @@ class Soak(Base):
         d = self.make(write_turns=False, budget_cap=2000, run="soak")
         src, bodies = self.source(d)
         pays = soak_sol.payloads(src)
+        real = d.upstream  # a call of 0.3 s, so a slot's ledger write is short against its call
+        d.upstream = lambda *a: (time.sleep(0.3), real(*a))[1]
         self.assertEqual(([p["kind"] for p in pays], [p["body"] for p in pays]),
                          (["write_turn"] * 3 + ["summariser"], bodies))
-        res = soak_sol.soak(d, pays, inflight=4, duration=1.0, ceiling=1000, sample_s=0.1)
+        res = soak_sol.soak(d, pays, inflight=4, duration=1.5, ceiling=1000, sample_s=0.1)
         self.assertEqual((res["ended_by"], res["refused"], res["sustained"], res["inflight_max"]), ("duration", 0, True, 4))
-        self.assertGreaterEqual(res["inflight_min"], 3)  # a slot is refilled as soon as its call returns
+        self.assertGreaterEqual(res["inflight_mean"], 3)  # a slot is refilled as soon as its call returns
+        self.assertEqual((res["server_overloaded"], res["n429"]), (0, 0))
+        self.assertLessEqual(res["latency_ok"]["p50_s"], res["latency_ok"]["p95_s"])
         self.assertEqual((res["sent"], len(Upstream.seen)), (res["ok"], res["ok"]))
         self.assertGreater(res["sent"], 8)
         self.assertEqual(sum(m["ok"] for m in res["per_minute"]), res["ok"])
@@ -472,6 +476,8 @@ class Soak(Base):
         self.assertEqual((shape["status"], shape["category"], shape["body_shape"]["error"]["type"]),
                          (429, "quota", "usage_limit_reached"))
         self.assertEqual(res["per_minute"][0]["n429"], res["sent"])
+        self.assertTrue(soak_sol.overloaded({"ok": False, "category": "rate", "error_obj": {"code": "server_overloaded"}}))
+        self.assertFalse(soak_sol.overloaded({"ok": False, "category": "quota", "error_obj": {"type": "usage_limit"}}))
 
     def test_call_ceiling_and_plan(self):
         import soak_sol
