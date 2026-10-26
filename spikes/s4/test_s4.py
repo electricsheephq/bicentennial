@@ -7,6 +7,7 @@ import json
 import socket
 import sys
 import threading
+import types
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -184,7 +185,10 @@ def test_stdlib_error_replies_echo_no_request_text(up, tmp_path, line):
         while chunk := c.recv(65536):
             reply += chunk
     srv.shutdown()
-    assert reply.split(b" ")[1] in (b"400", b"501") and UP_KEY.encode() not in reply and up.calls == []
+    head = reply.split(b"\r\n", 1)[0]
+    # some Python 3.14 releases answer a bad version as HTTP/0.9: an HTML error page with no status line
+    assert head.split(b" ")[1] in (b"400", b"501") if head.startswith(b"HTTP/") else b"Error code: 400" in reply
+    assert UP_KEY.encode() not in reply and up.calls == []
 
 
 def test_bad_content_length_and_handler_errors_leave_no_request_text(up, tmp_path, capfd, monkeypatch):
@@ -221,6 +225,26 @@ def test_driver_paths_are_absolute_and_never_combine_runs(tmp_path, monkeypatch)
     (tmp_path / "ev" / "director-ledger.jsonl").write_text("{}\n")
     with pytest.raises(SystemExit):
         run_s4.fresh_paths("scratch", "ev")
+
+
+@pytest.mark.parametrize("busy", ["", "marker --json"])
+def test_the_configured_busy_command_reaches_the_director(tmp_path, monkeypatch, busy):
+    seen = {}
+
+    class Proc:
+        def __init__(self, cmd, env=None, **kw):
+            seen["env"] = env
+            (tmp_path / "director-t1.port").write_text("1")
+
+        def poll(self):
+            return None
+    monkeypatch.setattr(run_s4.subprocess, "Popen", Proc)
+    a = types.SimpleNamespace(upstream_wrapper="w", evidence_path=tmp_path, max_calls=1, model="m", busy_cmd=busy)
+    assert run_s4.start_director(a, tmp_path, "t1", 0, print)[1] == 1
+    if busy:  # the director's own per-request GLM pause reads it; the rest of the environment is inherited
+        assert seen["env"]["BICENTENNIAL_BUSY_CMD"] == busy and seen["env"]["PATH"] == run_s4.os.environ["PATH"]
+    else:
+        assert seen["env"] is None
 
 
 def test_summary_of_a_run_stopped_before_the_injected_429(tmp_path):

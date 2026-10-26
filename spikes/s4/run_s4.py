@@ -80,8 +80,9 @@ def start_director(a, root: Path, step: str, inject: int, log):
                "--budget-file", str(root / "budget.json"), "--strip-file", str(root / "strip.json"),
                "--stop-file", str(root / "STOP"), "--bodies-dir", str(root / "bodies" / step), "--run", step,
                "--max-calls", str(a.max_calls), "--inject-429", str(inject), "--model", a.model]
+        env = dict(os.environ, BICENTENNIAL_BUSY_CMD=a.busy_cmd) if a.busy_cmd else None  # its per-request GLM pause
         with open(root / f"director-{step}.stderr", "w") as err:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=err)
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=err, env=env)
         for _ in range(200):
             if port_file.exists():
                 return proc, int(port_file.read_text())
