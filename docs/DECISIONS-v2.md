@@ -1,20 +1,20 @@
-# Design v2.0 and v2.1: the decision record
+# Design v2.0 to v2.2: the decision record
 
-**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.3.md`](../prereg/PREREG-v0.3.md)) is the only normative source for frozen quantities. PREREG-v0.3 is frozen and supersedes PREREG-v0.2. Its hash is in [`prereg/FREEZE-v0.3.md`](../prereg/FREEZE-v0.3.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). Design v2.1 adds DV42, decided by the benchmark session under the owner's grant of 2026-10-26.
+**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.4.md`](../prereg/PREREG-v0.4.md)) is the only normative source for frozen quantities. PREREG-v0.4 is frozen and supersedes PREREG-v0.3. Its hash is in [`prereg/FREEZE-v0.4.md`](../prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). Design v2.1 adds DV42, decided by the benchmark session under the owner's grant of 2026-10-26. Design v2.2 adds DV47, the run-time rule, at the owner's direction of the same day.
 
-The other documents cite these decisions as DV1-DV46. DV42 was decided on 2026-10-26, after spike S6b, in design v2.1. Section references (DESIGN §, PREREG §) are to design v2.1 and PREREG-v0.3; v2.1 changes only DV42's passages.
+The other documents cite these decisions as DV1-DV47. DV42 was decided on 2026-10-26, after spike S6b, in design v2.1, and DV47 the same day, in design v2.2. Section references (DESIGN §, PREREG §) are to design v2.2 and PREREG-v0.4; v2.1 changes only DV42's passages, and v2.2 only DV47's.
 
 **What does not change:**
 - the north star and the firewall (DESIGN §1, §14);
 - the seven tracks (DESIGN §3);
 - the generator's ground truth before text (DESIGN §4.1);
 - bundles and twins (DESIGN §5.1a);
-- the director, write turns and route table (DESIGN §6.2);
+- the director, write turns and route table (DESIGN §6.2), except that DV47 gives the director a job that checks the run;
 - **action-outcome scoring with the asymmetric penalty (DESIGN §7.1), which stays the scoring that decides**;
-- the paired confirmatory family (DESIGN §12, PREREG §7);
+- the paired confirmatory family (DESIGN §12, PREREG §7), except that DV47 computes each c_l within its life's block and adds a first-half and second-half sensitivity;
 - the sealed board and the developer/measurement split (DESIGN §9-§10);
 - the external scoring veto before PREREG-v1;
-- the 24-hour rule.
+- the 24-hour rule, until DV47 (design v2.2) replaced its contiguous window with the run-time rule at the owner's direction; every replaying (arm, life) still finishes within 24 h.
 
 Where v2.0 changes how a requirement is met, DESIGN says so and the pre-registration records it.
 
@@ -70,7 +70,7 @@ Spatial memory waits for E1 (DV15).
 
 **DV5. Gates and certification.** Both are on the **penalised action score**: the twin minimum with the asymmetric penalty. Gates and cell admission are computed on its **raw scale**, −100 to +100; the normalised 0-100 scale, with the no-memory floor at 0 and oracle evidence at 100, is for display only (DV25).
 - **The cell gate:** g_k = floor_k + ½(ceiling_k − floor_k), in raw points.
-  - It is computed from **the board's own control arms** (no-memory, oracle evidence), run on the pinned reader and harness **before any real system**. The 4-life calibration set is not used.
+  - It is computed from **the board's own control arms** (no-memory, oracle evidence), run on the pinned reader and harness **before any real system** (amended by DV47: in a full-tier run, as arms of every block on the pinned reader with checkpoint-dispatched probes, with the gates computed after the last block). The 4-life calibration set is not used.
   - SE(g) is printed with every gate, in raw points. Bridge anchors link pack versions.
 - **Cell admission:** a cell is admitted only if the one-sided 95% LCB of (raw ceiling − raw floor) is at least **30 raw points**, and **naive RAG does not CLEAR it** (requirement J's pilot-acceptance test, applied per cell). A cell that naive RAG clears is redesigned.
 - **Certification on Act, per profile** (an intersection-union test with K required cells and margin m_k = a_k − g_k):
@@ -78,7 +78,7 @@ Spatial memory waits for E1 (DV15).
   - **R-b:** every required cell has a one-sided 95% LCB of m_k ≥ −10.
   - CIs come from a wild cluster bootstrap over base-plus-twin life pairs, with all cells resampled jointly (Rademacher weights, 10,000 draws).
 - **Where certification happens:** only on a **sealed board at the pre-registered size**: season boards, and delta boards when powered (DV33). Pilot and developer runs never certify. The planning values n_L ≥ 24, b = 150 and a per-cell SE of about 5 or less are provisional until PREREG-v1 (DV26).
-- **Freeze gate for PREREG-v1:** an operating-characteristic simulation on the penalised scale, at true margins 0, +5, +10 and +15, plus one cell at −10, with the pass criteria of DV26. The variance inputs (twin correlation, within-cell and cross-cell life correlations) are measured on the bar-2 control arms with one A/A′ rerun.
+- **Freeze gate for PREREG-v1:** an operating-characteristic simulation on the penalised scale, at true margins 0, +5, +10 and +15, plus one cell at −10, with the pass criteria of DV26, holding in every drift case and on both schedules of PREREG's freeze gate. The variance inputs (twin correlation, within-cell and cross-cell life correlations) are measured on the bar-2 control arms with one A/A′ rerun.
 - **Every card shows:**
   - **certification stability:** the bootstrap share of replicates that pass, a descriptive output and not an error-rate or power guarantee;
   - the per-item action accuracy (DV31, DV34);
@@ -202,6 +202,7 @@ Spatial memory waits for E1 (DV15).
 - The token ceilings of PREREG §11 are **report-only**.
 - Bar 5 reads "fits the 24-hour rule at the measured sustainable capacity", and also checks the paid-lane spend and wall-time ceilings (DV32).
 - There is no credits slot.
+- DV47 replaces the contiguous window with the run-time rule; the sizing by measured capacity carries over to every lane a run uses.
 
 **DV19. PREREG-v0.2 carries five amendments:** long sprints by count (A1); the Wake claim contract (A2); per-item accuracy reported (A3); added turn latency (A4); G1 task completion (A5). A3 reads: the launch measurement "best below about 60%" is taken on per-item action accuracy and disclosed beside the penalised score; it is measured and published whatever its value, never a release condition, and it is not tuned toward (DV31, DV34).
 
@@ -278,7 +279,7 @@ Spatial memory waits for E1 (DV15).
 - **Per-item action accuracy:** the share of action items whose decision-table outcome is the correct action. A late Tuesday action, partial credit or a confident wrong action all count as incorrect. Benign extras don't change it. Its unit, denominator, exclusions and aggregation are defined in DV34.
 - **One panel:** the harmful-actions panel and the violations panel are the same panel.
 
-**DV32. Costs.** The added workloads are explicit cost terms in DESIGN §13 and PREREG §11. Each value is filled from S6, S8 or the pilot; until then it is a placeholder, and bar 5 checks the 24-hour rule plus the paid-lane spend and wall-time ceilings. The workloads:
+**DV32. Costs.** The added workloads are explicit cost terms in DESIGN §13 and PREREG §11. Each value is filled from S6, S8 or the pilot; until then it is a placeholder, and bar 5 checks the 24-hour rule plus the paid-lane spend and wall-time ceilings. Superseded by DV47: bar 5 now reads the run-time rule, the paid-lane ceilings and the pilot runs' wall-time ceilings. The workloads:
 - Learn chains;
 - erasure probes;
 - the Image profile's two views;
@@ -350,10 +351,10 @@ Spatial memory waits for E1 (DV15).
   - At that size it issues **no certificate**. It publishes cell verdicts and diagnostics.
   - The Image profile certifies only in a season whose Image board meets its own OC-powered size (DV26).
 - **Cost:** C_image = L_img × [R_img(1 + f) + 2P_img], plus vision-provider spend, which is within the owner's seasonal vision budget (DESIGN §13, PREREG §11).
-- **The 24-hour rule applies** to the Image board per system, as a separate run from the Text board.
+- **The 24-hour rule applies** to the Image board per system, as a separate run from the Text board. Under DV47 the run-time rule applies instead.
 
 **DV39. The crossover panel's cadence.**
-- It runs **once per season**, after the sealed board closes, in its own 24-hour window. It also runs once when a new PREREG version is frozen.
+- It runs **once per season**, after the sealed board closes, in its own window (a 24-hour window until DV47). It also runs once when a new PREREG version is frozen.
 - C_cross is counted once per season and never inside a system's board window.
 
 **DV40. Notation and names.**
@@ -401,6 +402,39 @@ Spatial memory waits for E1 (DV15).
 
 **DV46. Who fills the remaining placeholders.** The benchmark maintainers name S8's vision-capable main model in S8, write E1's done-when after v1, and fill the README's freeze status, date and link at the v0.2 freeze. The owner's review releases this record for publication.
 
+**DV47. The run-time rule replaces the contiguous 24-hour window** (design v2.2, PREREG-v0.4; at the owner's direction of 2026-10-26, decided by the benchmark session under the owner's grant, before any full-tier data).
+- **Why.** The owner asked whether a board needs one 24-hour window, or can run as resumable tests from the same commit and stores, as AML's resumable Full runs do. The window was a v1.4 sizing and cadence rule. It never protected the comparison from provider drift, because a season's board already spans days across systems. Cadence now lives in Rings 0-2. Meanwhile the window bound the design's choices: with the mid-life swap's lane counted, GLM as the swap model at session 100 needs 52.8 h on one plan at its measured concurrency of 8.
+- **The rule** (PREREG §11) covers the **full-tier runs**: the full core board with its seasonal robustness study, each delta board, and the Image profile board. The pilot's runs of record (bar 1, bar 2 and the calibration set) run contiguously, within wall-time ceilings.
+  - **life bound:** every replaying (arm, life) finishes within 24 h of that arm's first upstream request on that life; a probe-only arm's times follow the dispatch rule. The projection checks each replaying (arm, life)'s span under the run's lane occupancy; a breach follows cause: SYSTEM_FAILURE for the bundles not yet probed when the span less benchmark-attributed time still exceeds 24 h, BLOCKED otherwise, and is disclosed;
+  - **work bound:** a system's lane work, the work of its own arms only, times 1.25 for pauses, is at most 96 h on every lane the run uses, in each of its board, study and Image board runs, not summed. Shared work is never charged to a system. 96 h is PREREG-v0's per-system ceiling; at it, the swap at session 100 fits on one GLM plan with margin, under fair sharing as well as strict per-life priority;
+  - **lane occupancy:** a run's work on a lane, every arm, the shared work and the added workloads, each counted once. It sets each life's span and the season's span;
+  - **the season's span** is projected and disclosed, not bounded.
+- **What makes segments valid:**
+  - the run lock, verified at every segment start. It holds the route table (every model by name and route) and the account pool; the served identities are recorded beside it at each model's first response, the controls' included;
+  - keyed randomness, by (arm, life, branch, session); only run-time draws use the key: the arm order, the account assignment and the checkpoint dispatch order;
+  - blocks of one life, run by every arm, the control arms and naive RAG included, starting in published seed order and free to overlap, with a 24-hour start window for the replaying arms, so each life's contrasts and its controls sit in one block. The controls stay on the pinned reader and never swap, and each checkpoint's control probes follow a keyed-random real arm under a frozen pass-over rule, so a gate's probe times are a sample of the roster's own, not matched to any one row. The gates and admission are computed after the last block, from the control arms alone, with per-life margins;
+  - the seasonal robustness study inside its board's run (the season board's, or at a major release that GA's delta board's), with its work bound and cost term counted on their own;
+  - the served-identity check, and the first-half and second-half gates, each control cell's trend, a swap-route anchor and each row's timing imbalance, reported, never tested. Swap-route, write-turn and summariser drift are stated as uncovered;
+  - pauses only at session boundaries, with one declared boundary behaviour per system and a hash proof of every agent-visible surface; holds inside sessions are not pauses;
+  - attempts only for the failed (arm, life), from its last session-boundary snapshot, after a benchmark-attributed infrastructure failure, with no grafting; the last attempt is scored.
+- **Stops and publication:** a served-identity change ends the run. Only the stopped run restarts, on the same lives, under a new lock, sharing the stopped run's paid-lane ceiling. A run that ends early is published as diagnostics: it sets no gate and issues no verdict or certificate.
+- **Considered and not chosen:**
+  - keeping the window: valid, but it leaves the drift gap open and forces a late swap or more capacity;
+  - per-system resumable segments without interleaving: valid within a system, but each pair is still confounded by run day;
+  - controls first, with an end-of-run control check and an early canary (this version's first draft): the check compares endpoints, so it misses excursions between them and drift on the swap route. In-block controls cost the same single control pass;
+  - route-matched controls through the swap: a coherent estimand, but it turns the pinned-reader gate into a two-model mixture and moves gates and admission by about the size of the decision margins. The gate keeps its meaning, and the swap route gets a report-only anchor;
+  - a remote harness, each system hosting its own endpoints: it breaks the seal, the faults, the clones, the clock and the exposure ledger. It fits only the vendor self-run lane in API mode (DESIGN §10).
+- **DV42, re-read.** DV42's 24-hour fit put every request on the Sol lane and left the swap's lane uncounted (the correction posted on lcm-x #1964). Sol stays pinned on DV42's other grounds: write-turn latency (3.1 s against 6.1 s), frontier standing, and the owner's frontier direction. GLM stays the replication family and the swap model. C-2 now pins the swap model's reasoning effort, and its cost and run-time terms are measured at that effort.
+- **Paid lanes:** the paid-lane ceiling is $100 per full-tier run, all systems together, the owner's limit of 2026-10-26 of $100 per test, down from $300 per system. Each paid request is reserved at its largest billable cost before it is sent, and every block start counts the open reservations and the admitted blocks' remainders, with a spend pause. A plan lane (also called a subscription lane) adds no charge at the margin; any per-token or per-call charge makes a paid lane. Plan lanes have no spend ceiling; their tokens are reported.
+  - A paid row projected over the ceiling goes to the owner. It moves to a plan lane only where that lane serves the same pinned model at its pinned effort, and cuts apply only if the owner picks them.
+  - Embedding spend is a labelled paid row under the owner's standing embedding grant of up to $100 per run, outside the ceiling.
+  - The blind panel's third family runs on a plan lane, or as its own capped run at ≤ $100 projected per release.
+  - The Image board's vision spend sits outside its $100, within the season's vision budget.
+- **Before the first full-tier run:** spike S9 (pause invisibility, at $0 on public lives, never on LCM-X), with one pinned-lane session resumed after at least 24 h on a spare account. If S9 fails for service-backed systems, they pause only between lives; if the spare-account resume fails, each (arm, life) keeps one account.
+- **Before the pilot:** a code check for keyed randomness and a fully rendered, hashed history set.
+- **The firewall holds:** every input is a spike measurement of cost, timing or capacity, or a control. No slot is filled from any real system's score.
+
 ## Owner decisions
 - **Approved on 2026-10-26:** design v2.0, and the vision budget of about $50 a season (DV9).
-- **Decided by the benchmark session on 2026-10-26, under the owner's grant:** the 24-hour decision of PREREG §11, through DV42. The plan of record is n_L = 48, uncut, on two benchmark accounts, with the §11 cut order on one account as the fallback.
+- **Directed by the owner on 2026-10-26:** replace the 24-hour window with resumable runs from the same commit and stores (DV47), and spend no more than $100 per test except on plan lanes.
+- **Decided by the benchmark session on 2026-10-26, under the owner's grant:** the 24-hour decision of PREREG §11, through DV42; then DV47's run-time rule and its parameters. The plan of record is n_L = 48, uncut, on two benchmark accounts, with the §11 cut order on one account as the fallback.

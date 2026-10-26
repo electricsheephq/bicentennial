@@ -1,6 +1,6 @@
-# Bicentennial: a benchmark of memory for long-lived agents — design v2.1
+# Bicentennial: a benchmark of memory for long-lived agents — design v2.2
 
-Status: design v2.1, 2026-10-26. It amends design v2.0, which the owner approved the same day, with one decision: DV42, the pinned agent family, decided after spike S6b by the benchmark session under the owner's grant, and its consequences (§5.2, §6.2c, §13). Design v2.0 restructures v1.4 into a capability map, at the owner's direction of 2026-10-26. Its decisions, DV1-DV46 (DV42 decided in v2.1), are recorded in `docs/DECISIONS-v2.md`, published in public form after the owner's review. DV1-DV24 were checked by an adversarial review, a statistics check of the certification rule, and an enumeration of every passage they change; DV25-DV33 settle a closure check of that review and a consistency review of the drafts, DV34-DV41 close a second round of that consistency review, and DV43-DV46 close a final closure check and a third consistency round. Each is summarised under "What changed in v2.0" below.
+Status: design v2.2, 2026-10-26. It amends design v2.1 with one decision: DV47, the run-time rule, which replaces the contiguous 24-hour window with locked, resumable segments at the owner's direction of 2026-10-26 (§6.2, §6.6, §6.7a, §6.8, §13). Design v2.1 amended design v2.0, which the owner approved the same day, with DV42, the pinned agent family, decided after spike S6b by the benchmark session under the owner's grant, and its consequences (§5.2, §6.2c, §13). Design v2.0 restructures v1.4 into a capability map, at the owner's direction of 2026-10-26. Its decisions, DV1-DV46 (DV42 decided in v2.1; DV47 added in v2.2), are recorded in `docs/DECISIONS-v2.md`, published in public form after the owner's review. DV1-DV24 were checked by an adversarial review, a statistics check of the certification rule, and an enumeration of every passage they change; DV25-DV33 settle a closure check of that review and a consistency review of the drafts, DV34-DV41 close a second round of that consistency review, and DV43-DV46 close a final closure check and a third consistency round. Each is summarised under "What changed in v2.0" below.
 
 Earlier versions were revised after three adversarial review rounds and a closure check. Every finding has a recorded disposition in `docs/REVIEW-SUMMARY.md`:
 - **Round 1:** two independent reviewers, 98 findings.
@@ -10,17 +10,23 @@ Earlier versions were revised after three adversarial review rounds and a closur
 - **v1.4:** the **24-hour rule**, at the owner's direction. The hardest run (the full board for one system) finishes within 24 h of wall-clock time. A benchmark that takes days is rarely run, so it cannot drive improvement (PREREG §11).
 - **v2.0:** results become a capability map of track rows × evaluation profiles, certified on the Act stage within a declared profile. The developer loop gains rings and rungs, the Image profile enters through spike S8, and World profiles become a roadmap.
 - **v2.1:** DV42 pins the agent family: OpenAI's gpt-6.1-sol, on dedicated benchmark accounts, with GLM as the replication family. The blind panel, the capacity slot and the tuning disclosure follow (PREREG-v0.3).
+- **v2.2:** DV47, the run-time rule. The full-tier runs execute in locked, resumable segments: every arm's run of a life finishes within 24 h, and each system's work fits a work bound in each of its board, study and Image board runs. The pilot's runs of record stay contiguous. v1.4's cadence goal now lives in Rings 0-2 (§9); the board keeps v1.4's sizing discipline and a day per life (PREREG-v0.4).
 
-PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16).
+PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16). PREREG-v0.4 carries v2.2's rules. It was frozen on 2026-10-26, and its hash is posted on #1964 (§16).
 
-**Precedence:** `prereg/PREREG-v0.3.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
+**Precedence:** `prereg/PREREG-v0.4.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
 
 The numbers marked *(pre-reg)* freeze twice:
-- in `PREREG-v0.3`, before the first real-system pilot run;
+- in `PREREG-v0.4`, before the first real-system pilot run;
 - in `PREREG-v1`, before any system's first full-tier run.
 
 
 A memory system can score well on a quiz and still delete the thing that mattered most. Bicentennial is built to catch that.
+
+## What changed in v2.2
+- **DV47, the run-time rule** (§6.2, §6.6, §6.7a, §6.8, §13): for the full-tier runs (the board with its study, each delta board and the Image board), the contiguous 24-hour window becomes locked, resumable segments. Every replaying arm's run of a life finishes within 24 h of that arm's first request on it. Each system's projected lane work, with a pause allowance, fits a work bound of 96 h on every lane, in each of its board, study and Image board runs, not summed. The pilot's runs of record stay contiguous, within wall-time ceilings. The run lock, keyed randomness, a served-identity check, control arms in every one-life block on the pinned reader with checkpoint-dispatched probes, pause rules with a hash proof of every agent-visible surface, attempts per (arm, life) and one-life blocks of interleaved arms make a segmented run valid. A run that ends early is published as diagnostics. The card discloses the segments.
+- **DV42's fit, corrected:** its projection left the mid-life swap's lane uncounted. Sol stays pinned on its other grounds (latency, frontier standing and the owner's direction), and the fit now covers every lane a run uses.
+- **The paid-lane ceiling** is $100 per full-tier run, all systems together, the owner's limit of 2026-10-26 of $100 per test, down from $300 per system (§13).
 
 ## What changed in v2.1
 - **DV42, the pinned agent family** (§5.2, §6.2c, §13): OpenAI's gpt-6.1-sol at medium effort is pinned, on dedicated benchmark accounts, because spike S6b projects that it fits the 24-hour rule (uncut on two accounts), subject to DV42's before-pilot checks, and the GLM lane does not. GLM becomes the replication family and the swap model. The blind panel becomes Anthropic, Zhipu and one paid third family. Capacity is read per account, as concurrency or a paced request rate.
@@ -443,7 +449,7 @@ The director is an LLM API proxy. Every harness points at it through its base-UR
 - **Wire formats:** OpenAI chat completions, the OpenAI Responses API (including the compaction calls Codex uses) and Anthropic messages.
 - **Credentials:** it never forwards a harness's subscription credentials. Forwarded calls use the director's own pinned endpoints.
 
-It does six jobs:
+It does seven jobs:
 1. **Serves the scripted history** during replay, through the tool-call compiler (§6.2d).
 2. **Forwards live requests** by role:
    - probe and live requests go to the probe model;
@@ -454,7 +460,8 @@ It does six jobs:
 3. **Creates compaction pressure** through an equal **configured effective context window** per harness. Exact token counts are always reported. Inflating the reported usage is used only where a harness has no window setting, and that is disclosed.
 4. **Writes the independent ledger:** every request and response, content-addressed and zstd-compressed. The ledger is the ground truth for exposure and for the agent's own actions.
 5. **Injects provider faults:** 429s and 5xx errors, slow and held responses, truncated streams, duplicated responses.
-6. **Classifies each request's role**, in a fixed order:
+6. **Checks the run** (§6.7a): the served model identity on every response, against the identity recorded for that model. Every ledger record carries the run's lock hash and its attempt id.
+7. **Classifies each request's role**, in a fixed order:
    1. a match against the script cursor (the scripted turn, or a tool-call id the director issued);
    2. a model alias, where the harness or system lets the model be named;
    3. a shape signature, confirmed afterwards from the harness's own markers.
@@ -572,6 +579,8 @@ Spike S2 must cover every time source, including C-level calls such as SQLite's 
 
 **Fallback.** For any harness without a working clock, the director rewrites dates in requests, the generator sets git and file times, and the card discloses that store timestamps are wall-compressed.
 
+**On a resume** (§6.7a), the clock file is set from the schedule, never from elapsed time, and the skew audit runs per segment, server clocks included.
+
 **Clock-skew audit.** The ledger audits clock skew on every request and every stored timestamp. A row enters a comparison only if it passes. Wall-compressed rows are excluded from time-dependent bundles (Tuesday, Drift time-to-correct, Wake gap items).
 
 **Guards and channels.** A working clock must remove the need for guard overrides; any override that remains is disclosed on the card. Channel timestamps (mail headers, chat stamps, log lines) appear wherever real channels carry them.
@@ -582,8 +591,30 @@ Spike S2 must cover every time source, including C-level calls such as SQLite's 
 - **Tenure checkpoints.** Every life is probed at sessions 20, 60, 120 and 200 *(pre-reg)*. One life thus yields a tenure curve, and prompt caching makes many probes on one clone family cheap.
 - **Memory services that cannot be cloned** run in API mode, under a read-only query contract.
 
+### 6.7a Segments and resume *(pre-reg)*
+A full-tier run executes in segments: stretches between pauses, which fall at session boundaries. The full-tier runs are the full core board with its seasonal robustness study, each delta board, and the Image profile board. The pilot's runs of record (bar 1, bar 2 and the calibration set) run contiguously, within wall-time ceilings. PREREG §11 freezes the rules; this section explains them.
+- **Why segments.** A season's board already spans days across systems, so one contiguous window per system never protected the comparison from provider drift. Segments keep each replaying arm's run of a life inside a day, and interleaving puts every contrast inside one block (below).
+- **Two bounds.** The life bound: each replaying (arm, life) finishes within 24 h of that arm's first upstream request on that life; a probe-only arm (the controls and naive RAG) has its times set by the dispatch rule (§6.7a). The projection checks each replaying (arm, life)'s span under the run's lane occupancy. A breach in the run follows cause: when the span less benchmark-attributed time (pauses, held waits, waits for capacity, INFRA reruns) still exceeds 24 h, the bundles not yet probed are SYSTEM_FAILURE; otherwise it reads BLOCKED. It is disclosed. The work bound: a system's lane work, its own arms only, times 1.25, is at most 96 h on every lane. It holds for each of its board, study and Image board runs on its own, not summed. Shared work is never charged to a system (§13).
+- **Blocks.** A block is one life, run by every arm. Blocks start in published seed order and may overlap. The seasonal robustness study runs inside its board's run: the season board's, or at a major release, that GA's delta board's. It shares that run's lock and blocks, and its work bound and cost term are counted on their own.
+- **The run lock.** The benchmark, director and analysis commits, the generator and seeds, the rendered history set (rendered in full and hashed before the run), each harness and system artifact, the environment, the route table (every model the run may call, by name and route), the write-turn package and the account pool are hashed at the start and verified at every segment start. A mismatch refuses the resume; a fix means a new run, never a patch. The served identities are recorded beside the lock, at each model's first response in the run, the controls' included.
+- **Keyed randomness.** Every draw is a function of the seed, the unit and the attempt, so a resume draws the same values. The unit is the (arm, life, branch, session). Rendered content is fixed by the locked history set, so only run-time draws (the arm order, the account assignment and the checkpoint dispatch order) use the key. Every benchmark process runs with `PYTHONHASHSEED=0`.
+- **Pauses are invisible to the system.** The harness has exited at every session boundary anyway. A service-backed system declares one boundary behaviour (its services paused in place, or drained to a settle barrier and cold-started) and gets it at every boundary of every run, pause or not. After the boundary behaviour, every agent-visible surface (§6.7) is hashed at the pause, and again at the resume. A failed proof refuses the resume, and the cause decides first (§12a): a benchmark-owned fault restores the (arm, life) from the pause snapshot as an attempt; otherwise it is a system failure, and nothing is restored. A system whose surfaces cannot be hashed as files pauses only between lives. A pause never falls between the inline fault and its restart.
+- **Holds are not pauses.** A quota refusal, a rate refusal or a `glm` flip inside a session makes the director hold that session's requests until its next boundary. Held time is excluded from latency. A failure caused by a hold is INFRA_FAILURE; a system failure independent of the hold keeps its cause (§12a).
+- **Spike S9** checks pause invisibility before the first full-tier run, not before the pilot, with one pinned-lane session resumed after at least 24 h on a spare account. If S9 fails for service-backed systems, they pause only between lives; if the spare-account resume fails, each (arm, life) keeps one account.
+- **Drift.** The director checks the served identity on every response; a new identity ends the run. Only the stopped run restarts, on the same lives, under a new lock; runs completed before it stand. The restart shares the stopped run's paid-lane ceiling.
+  - **Controls in every block.** The control arms and naive RAG are arms of every block, on the pinned reader. They never swap, so a gate stays the pinned-reader gate. They replay nothing, so each checkpoint's probes, for all of them together, follow one real arm of the block, drawn by keyed randomness, and go out when it reaches that checkpoint; an arm that can no longer reach it is passed over for the next in key order (PREREG §6 freezes the rule). The gates and admission are computed after the last block, from the controls alone, with per-life margins, and stay sealed with the results. Pinned-reader drift between blocks then reaches a life's controls and its systems in the same block, and within a block a gate's probe times are a random sample of the roster's own, delayed where an arm is passed over. A control-only mechanics check on one public life comes before the first block.
+  - **What sampling does not do.** It does not match a gate's times to any one row. Say a daily reader cycle reads −3 points when a fast arm reaches a checkpoint and +3 when a slow arm does, with the floor at 0, the ceiling at 80 and both systems at 40, their own gates at those times. They score 38.5 and 41.5; the gate, drawn from either time, averages 40; their expected margins are −1.5 and +1.5. More lives do not remove this, since the speeds repeat. The card reports each row's timing imbalance, and the OC simulation runs a stress schedule of this kind (PREREG, Freezes).
+  - **The start window.** Every replaying arm of a block makes its first request within 24 h of the block's first, so two replaying arms' requests on one life are at most 48 h apart. A breach reads BLOCKED, and it passes that arm over for the controls' dispatch.
+  - **Not covered, and stated on the card:** swap-route, write-turn and summariser drift, which act on systems only; excursions between a gate's probes and a row's own; a row's timing imbalance (above); account-dependent serving after quota moves; the lag and serving delay of the controls' probes; and the residual of a shared reader change, which grows with a system's distance from the gate.
+  - **Reported only:** the first-half and second-half gates, each control cell's trend against block start, and a swap-route anchor, in which the oracle arm answers 20 post-swap bundles per block on the swap route, and each row's timing imbalance with the dispatch lags.
+  - **Why not an end-of-run check or a canary.** Re-running the controls after the last block compares endpoints: it misses excursions between them and drift on the swap route. In-block controls cost the same single control pass and need no test of their own.
+- **Publication.** A run that ends early (an identity stop, a spend stop or a refused resume) is published as diagnostics with its cause. It sets no gate and issues no verdict or certificate.
+- **Scheduling.** Every arm, the controls included, interleaved in one-life blocks, with arm order and accounts drawn by keyed randomness; the replaying arms start inside the start window, and the probe-only arms follow the dispatch rule. An (arm, life) keeps its account unless a quota stop moves it. A/A′ reruns, fault reruns and the swap comparator run in their originals' block, and a delta board interleaves the new GA with the previous version.
+- **Attempts and grafting.** A probe-only arm re-sends its failed probe items; if they still fail, it leaves gate estimation (naive RAG: the CLEAR test), and the systems keep their results. For an arm that replays, only the failed (arm, life) re-runs, from its last session-boundary snapshot under the same lock, and only after an infrastructure failure the ledger attributes to the benchmark. Each bundle counts toward the limit of two reruns (§12a), and the last attempt is scored. A snapshot is never continued by a different system, harness, model or benchmark version.
+
 ### 6.8 Cross-run hygiene
 - Every run starts from a store, and harness directories, that are verified empty.
+- Every segment starts by verifying the run lock (§6.7a), and a mismatch refuses the resume.
 - Canary lives detect carry-over: their items are answerable only by a system that remembers an earlier benchmark run.
 - Private lives are never streamed to a third-party hosted memory service. Hosted services run on the semi-private split (§10) or on self-hosted deployments.
 
@@ -599,7 +630,7 @@ Spike S2 must cover every time source, including C-level calls such as SQLite's 
 - LCM-X stays out of the API-mode correlation until it has an API surface.
 
 **Stack identity** (§6.1):
-- **The crossover panel.** A small predeclared panel of other models and harnesses runs on the Ring 0 Act packs (§9.1), with no full grid. It is a developer-pack result, so it never certifies (§7.7). Its rows render past turns in the pinned reader's voice, the same text for every model (§6.2b), and a model from a blind-panel family is excluded from it (§5.2). It runs once per season, after the sealed board closes, in its own 24-hour window, and once more when a new PREREG version is frozen (§13).
+- **The crossover panel.** A small predeclared panel of other models and harnesses runs on the Ring 0 Act packs (§9.1), with no full grid. It is a developer-pack result, so it never certifies (§7.7). Its rows render past turns in the pinned reader's voice, the same text for every model (§6.2b), and a model from a blind-panel family is excluded from it (§5.2). It runs once per season, after the sealed board closes, in its own window, and once more when a new PREREG version is frozen (§13).
 - **Frozen items.** Common item IDs and filters are frozen once. Each reader's direct-evidence and blind performance is published, and nothing is refiltered per model (§5.2).
 - **The stack view.** Model-native memories appear on a separately labelled stack view, outside board eligibility. The board's open-source, self-hostable rule (§8) is unchanged. The stack view follows board eligibility, minus the open-source rule, and each row is vendor-submitted with a disclosed configuration.
 - **The lab slice** (v1.x) uses a seal-preserving design: the benchmark runs the lab's model inside the sealed runner (§10), with no per-item private results and no traces of private items.
@@ -651,7 +682,7 @@ Every multiplier forks from a snapshot instead of replaying a life from the star
   - faults on Keep-budget, swap or replication-family branches;
   - Keep budgets on swap or replication-family branches.
 - **Survive** (§3) draws its stresses from this inventory. It is diagnostic, so no stress branch blocks certification.
-- **Learn chains** (§6.1) and **the erasure probes** (§7.6) are terminal forks in this study's inventory. Their counts are planning values: S6 measures chain cost on the 24-hour critical path, and §13's cut order may reduce them.
+- **Learn chains** (§6.1) and **the erasure probes** (§7.6) are terminal forks in this study's inventory. Their counts are planning values: S6 measures chain cost on each life's critical path, and §13's cut order may reduce them.
   - **Learn chains:** one per applicable Learn cell on each study life. A G1 life carries 3: procedural supersession, the effect of consolidation on later decisions, and poisoning by an ordinary user. A G2 life carries 4, adding shared memory with mid-life revocation.
   - **Erasure probes:** one per scored Keep forget bundle in the life, capped at 6.
 - **The Image profile's two views** (§11.1) form a separate profile board.
@@ -707,7 +738,7 @@ Partial completion earns no headline credit in v1; it is reported as a diagnosti
 - The base verdicts are PASS, FAIL_MEMORY, FAIL_TASK, OMISSION and HARMFUL_EXTRA.
 - FAIL_MEMORY and HARMFUL_EXTRA take precedence over FAIL_TASK.
 - A FAIL_TASK never becomes a confident false memory.
-- **Per-item action accuracy** (§7.7) is the share of action items whose decision-table outcome is the correct action, without the twin minimum or the penalty. A late Tuesday action, partial credit or a confident wrong action all count as incorrect; benign extras don't change it. PREREG-v0.3 §3 is normative.
+- **Per-item action accuracy** (§7.7) is the share of action items whose decision-table outcome is the correct action, without the twin minimum or the penalty. A late Tuesday action, partial credit or a confident wrong action all count as incorrect; benign extras don't change it. PREREG-v0.4 §3 is normative.
   - **The unit** is one action item: each base item and each twin item counts on its own, since accuracy takes no twin minimum.
   - **Eligible items** are the assigned action items in the system's required Act cells of the declared profile. The launch figure uses the Text profile.
   - **Outside the denominator,** with their counts disclosed: N/A (outside the profile, so never assigned), N/A_READER (Image profile only, so never in the Text launch figure) and BLOCKED (benchmark infrastructure failed, §12a), plus N/A_EXPOSURE and N/A_CLOCK exactly as they leave the penalised score (§12a).
@@ -871,10 +902,10 @@ Gold error is controlled in two stages *(pre-reg)*.
 **The scale.** Gates and cell admission are computed on the **raw penalised action score**: the twin minimum with the asymmetric penalty (§7.1), from −100 to +100. Certification margins are taken against those gates in the same raw points. The normalised score, with the no-memory floor at 0 and oracle evidence at 100, is for display only.
 
 **The cell gate:** g_k = floor_k + ½(ceiling_k − floor_k), in raw points.
-- **Where it comes from.** The floor and the ceiling are **the board's own control arms**, no-memory and oracle evidence, run on the pinned reader and harness **before any real system**. They are runs of their own, not the filter's trials (§5.2). The 4-life calibration set is not used: an illustration on the per-item accuracy model, which v2.0 no longer certifies on, put its SE(g) at 4.3 points or more.
+- **Where it comes from.** The floor and the ceiling are **the board's own control arms**, no-memory and oracle evidence, run on the pinned reader and harness **in the same blocks as the real systems**, never swapping, with checkpoint-dispatched probes, and the gates are computed after the last block from the control arms alone (§6.7a). A pair whose controls failed uses the cell's pooled gate, recomputed in every bootstrap replicate, and a cell with too few valid controls reads BLOCKED (PREREG §7); in the pilot's runs of record they run first. They are runs of their own, not the filter's trials (§5.2). The 4-life calibration set is not used: an illustration on the per-item accuracy model, which v2.0 no longer certifies on, put its SE(g) at 4.3 points or more.
 - **Disclosure.** SE(g), the standard error of the raw gate in raw points, is printed with every gate. Bridge anchors link pack versions (§10).
 
-**Cell admission.** A cell is admitted only if the one-sided 95% LCB of (raw ceiling − raw floor) is at least 30 raw points, and naive RAG does not CLEAR it. It is a separate test, on its own sample, from inclusion condition 1 (§15, bar 3), which is a track test on the calibration set's controls. A cell that naive RAG clears is redesigned.
+**Cell admission.** A cell is admitted only if the one-sided 95% LCB of (raw ceiling − raw floor) is at least 30 raw points, and naive RAG does not CLEAR it; a naive-RAG test that is BLOCKED, undefined or below ¾ support gives no admission verdict (PREREG §4). It is a separate test, on its own sample, from inclusion condition 1 (§15, bar 3), which is a track test on the calibration set's controls. A cell that naive RAG clears is redesigned.
 
 **Display verdicts** per cell, from two-sided 95% CIs against the cell gate:
 - **CLEAR:** the lower bound is at least g_k;
@@ -905,7 +936,7 @@ The CIs come from a wild cluster bootstrap over base-plus-twin life pairs, with 
 
 α is per certification claim (system × profile), so a season with many null claims can carry false badges at up to that rate. This is disclosed.
 
-**Freeze gate for PREREG-v1.** An operating-characteristic simulation on the penalised scale runs at true margins 0, +5, +10 and +15, plus one cell at −10. Its variance inputs (the twin correlation, and the within-cell and cross-cell life correlations) are measured on the bar-2 run's control arms with one A/A′ rerun. It passes only if:
+**Freeze gate for PREREG-v1.** An operating-characteristic simulation on the penalised scale runs at true margins 0, +5, +10 and +15, plus one cell at −10. Its variance inputs (the twin correlation, and the within-cell and cross-cell life correlations) are measured on the bar-2 run's control arms with one A/A′ rerun. It passes only if, in every drift case and on both schedules of PREREG's freeze gate:
 - with a margin of 0 in every cell, at most 5% of systems certify;
 - with +10 in every cell, at least 80% certify;
 - with +10 in every cell but one, which sits at −10, at most 20% certify.
@@ -942,10 +973,10 @@ These are run in the pilot and in every published table, per track:
 | **Raw-archive marker:** built from a public spec; it keeps everything raw, text and media, with timestamps and sources, and searches it. Frozen per season, and also run at Keep's K10 budget | a marker column: what keeping everything raw achieves. It is **never** used in gates, cell admission or rung calibration, and it is never the 100 |
 
 **Where controls run** (first-principles review, D-09):
-- **What they depend on.** A control's output depends on the lives, the probe-model pin and the harness pin, never on the system under test. So every LLM-using control and filter is computed **once per (lives, probe pin, harness pin)**, cited in every table that season, and re-run on any pin change.
+- **What they depend on.** A control's output depends on the lives, the probe-model pin, the harness pin and when it is served, never on the system under test. In a full-tier run, the controls behind gates and admission are arms of every block, measured per run (§6.7a, PREREG §6), and a delta board's controls re-measure the season's. Cached controls, computed **once per (lives, probe pin, harness pin)** and re-run on any pin change, serve only the developer tier, the filters and rung calibration.
 - **The no-memory floor** runs its probes through the same harness with every memory surface off, the harness's native memory included. Only the environment state is built offline. Where API-mode rows are reported, no-memory runs in both modes, so comparison pairs stay matched (§6.1).
-- **The raw-archive marker** is a control too: it is computed once per (lives, probe pin, harness pin) each season. It is never a real system, never in the bar-2 family and never on the roster.
-- **Every published table** shows its declared profile's baselines (§3): the no-memory floor, the oracle-evidence ceiling and naive RAG, and the full-history oracle ceiling wherever the history fits, so every table carries both ceilings (addendum §E).
+- **The raw-archive marker** is a control too: it runs once per season, in the season board's blocks, as a replaying arm under the life bound and the start window, on the pinned reader (PREREG §6). It is never a real system, never in the bar-2 family and never on the roster.
+- **Every published table** shows its declared profile's baselines (§3): the no-memory floor, the oracle-evidence ceiling and naive RAG, and the full-history oracle ceiling wherever the history fits, so every table carries both ceilings (addendum §E). The full-history ceiling is a labelled diagnostic: a probe-only arm under the dispatch rule, run once per season with the marker in the season board's blocks and counted in C_marker (PREREG §6); it never sets a gate. A delta board's tables cite the season board's values for both, labelled as such.
 - **Moved to a seasonal exploratory row:** the token-matched window, transcript grep, and naive RAG top-2 vs top-20.
 - **LCM-X at its last release before the public generator** runs on every board. Its version never changes, and it is the tuning detector.
 
@@ -1050,9 +1081,9 @@ No result ever carries advice on any system's internals.
   - Tokens per life are about 1M plus the sprint tokens: about 2.3M at W = 128K and about 3M at W = 200K.
   - Filler chat is shortened, never tool output.
   - The window stays the pinned model's harness default, frozen by name.
-  - S6 measures the 24-hour rule at this size.
+  - S6 measures the run-time rule at this size.
 - **Delta boards** run only for a new GA of a board system: at most 2 per system per season, in order, with the previous version re-run alongside.
-  - A change of harness pin or model alias forces a fresh board. LCM-X ships as a Hermes plug-in, so a newer Hermes pin invalidates every cached result.
+  - A change of harness pin or model alias, or a served-identity change, forces a fresh board (§6.7a). Only the stopped run restarts. LCM-X ships as a Hermes plug-in, so a newer Hermes pin invalidates every cached result.
   - Every scheduled run is published in order, and the board shows each system's latest version, never its best.
   - Sealed runs never serve as a phase of a release gauntlet.
 
@@ -1126,7 +1157,7 @@ v1.4's frontier tier is gone. Its parts move to three places:
 **The Image board** (season 1, conditional):
 - **Planning size:** L_img = 8 lives, with b_img = 40 image bundles per life.
 - **No certificate at that size.** It publishes cell verdicts and diagnostics. The Image profile certifies only in a season whose Image board meets its own operating-characteristic powered size (§7.7).
-- **The 24-hour rule** applies to it per system, as a run separate from the Text board. Its cost is C_image (§13).
+- **The run-time rule** applies to it per system, as a run separate from the Text board. Its cost is C_image (§13).
 
 **Evidence.** Images are rendered from world state, never by an image generator: dashboards, terminals, whiteboards, receipts. Some facts then exist only in pixels. Gold uses only the values in the image's exposure manifest, those that are legible and unoccluded (§4.4, §6.4).
 
@@ -1285,7 +1316,7 @@ Every assigned bundle ends in exactly one class:
 - A headline rank is valid only with at least 95% coverage and no more than 5% infrastructure exclusions.
 - **For certification,** a required cell whose coverage falls below 95% through the system blocks it. A shortfall caused by infrastructure reads BLOCKED, and a BLOCKED required cell defers it (§7.7).
 
-**Pre-registration.** PREREG-v0.3, then PREREG-v1, is the normative record. Both freezes are committed with a timestamp, and each hash is posted on #1964. Later changes are versioned and disclosed (§14).
+**Pre-registration.** PREREG-v0.4, then PREREG-v1, is the normative record. Both freezes are committed with a timestamp, and each hash is posted on #1964. Later changes are versioned and disclosed (§14).
 - PREREG, from v0.2 on, freezes the **rules**, not per-season contents such as the census (§11.2) and community templates (§10).
 - **Requirement note** (addendum G, pre-registration): the rules are pre-registered as before. Per-season contents are met differently: they are versioned and disclosed each season, outside the pre-registration.
 
@@ -1309,14 +1340,15 @@ The formula, constants, ceilings and cut order are frozen in PREREG §11.
 | C_image | the Image profile board for one system, both views, including the vision reader: L_img × [R_img(1 + f) + 2P_img], plus vision-provider spend |
 | R_img, P_img | replay cost of one Image-board life, and probe cost of its image bundles on one branch |
 | C_cross | one crossover-panel row on the Ring 0 Act packs |
-| C_marker | the raw-archive marker for one season, including its K10 run |
+| C_marker | the raw-archive marker for one season, including its K10 run, and the full-history oracle ceiling |
 | C_aa | the bar-2 run's A/A′ rerun of the control arms |
+| C_ctrl | the probe-only arms (both controls, the swap-route anchor and naive RAG) in one full-tier run's blocks |
 | C_ring1, C_ring2 | one Ring 1 run, and one organisation's monthly Ring 2 check |
 
 **The added workloads** have the C_ terms above. Each value is filled from S6, S8 or the pilot; until then it is a placeholder. They count as follows:
 - **per system, in the robustness study:** C_learn and C_erase on each study life, since Learn chains and the erasure probes are terminal forks there (§6.10);
 - **per system, on the Image profile board:** C_image, once the profile is on the board, as a run separate from the Text board (§11.1);
-- **shared controls:** C_marker once per season (§8), C_aa once per generator version (§9.2), and C_cross for each crossover-panel row once per season, after the sealed board closes, plus once when a new PREREG version is frozen (§6.9). The panel runs in its own 24-hour window, never inside a system's board window;
+- **shared controls:** C_marker once per season (§8), C_aa once per generator version (§9.2), and C_cross for each crossover-panel row once per season, after the sealed board closes, plus once when a new PREREG version is frozen (§6.9). The panel runs in its own window, never inside a board window; C_ctrl once per full-tier run (§6.7a), never charged to a system;
 - **recurring:** C_ring1 at each benchmark release and at least monthly, and C_ring2 once per organisation per month (§10).
 
 From the inventory in §6.10, the costs per system are (PREREG §11 is normative):
@@ -1329,35 +1361,40 @@ From the inventory in §6.10, the costs per system are (PREREG §11 is normative
 
 - R includes the board's inline fault and the swap. n_rob = 8 (4 after the cut), q = 3, n_curve = min(n_rob, n_keep), and δ_W = 0 when the swap model is from the replication family.
 - L_img = 8 and b_img = 40 are planning values (§11.1). The vision-provider spend is within the owner's seasonal vision budget.
-- **The 24-hour projection** counts every term that runs on the agent's model lane in the same window as a board: the board and study terms, plus the shared and recurring terms scheduled in that window, at the measured sustainable capacity per account, with the declared account count (C-11). The Image board is its own 24-hour run per system, and the crossover panel has its own window (§6.9), so neither is counted inside a system's board window.
+- **The run-time projection** separates two quantities on every lane a run uses, at the measured sustainable capacity per account, with the declared account count (C-11):
+  - **a system's lane work:** its own arms' replay, probes, auxiliary calls and added-workload terms. The work bound limits it, for each of the system's board, study and Image board runs on its own, never summed. Shared work (the control arms) is never charged to a system;
+  - **a run's lane occupancy:** all of its work on the lane, each term counted once: every interleaved arm, the shared work, and the added workloads scheduled while the run executes. It sets each (arm, life)'s projected span and the season's span.
+
+  The Image board is its own run, and the crossover panel has its own window (§6.9), so neither is counted inside a board window.
+- **The swap lane counts.** The mid-life swap moves the probe model, the summariser and the alias to the swap model, so from the swap session on a life's requests sit on the swap model's lane. DV42's first projection missed that lane (DV47).
 - The runs of record (bar 1, bar 2) and the calibration set have formulas of their own in PREREG §11.
 
 **Projection, mid band** (estimates from the first-principles review's assumption bands; S6a and S6 replace them):
 
 | | v1.2 | Now |
 |---|---|---|
-| Per system on the board | about 4,600-6,700 sequential h | about 360-430 sequential h: ≤ 24 h at the capacity S6a and S6b measure (C-11; v1.4 assumed about 16-20 concurrent jobs), with about 5 assistant turns per scripted session so each life's write-turn chain stays near 3 h |
-| First board of a season, 5 real systems plus controls | about 171 machine-days | about 19 machine-days at 8 jobs |
+| Per system on the board | about 4,600-6,700 sequential h | about 360-430 sequential h of the system's own lane work: within the work bound at the capacity S6a and S6b measure (C-11; v1.4 assumed about 16-20 concurrent jobs), with about 5 assistant turns per scripted session so each life's write-turn chain stays near 3 h |
+| First board of a season, 5 real systems plus controls | about 171 machine-days | about 19 machine-days at 8 jobs: the run's lane occupancy, which sets the season's span |
 | A delta board, with the previous version re-run alongside | — | about 3-4 machine-days |
-| An extraction competitor on its vendor's models, per board | about $2-5K | about $0.1-0.3K |
+| An extraction competitor on its vendor's models, per board | about $2-5K | about $0.1-0.3K: a paid row, so a projection over the run's $100 ceiling goes to the owner before the run; cuts apply only if the owner picks them |
 
 **After these cuts probes dominate,** at about 2/3 of a system's hours. Further cuts therefore come from the probe side: bundles per life and cost per episode.
 
 **Spikes:**
 - **S6a** replays one 10-session micro-life on Hermes native, in hours. It measures replay time, write-turn and summariser calls, probe latency, lane concurrency, the harness overhead behind the developer windows, and whether parallel sandbox roots work.
-- **S6** replays one full-scale life (about 200 sessions) on Hermes native and on one extraction competitor, once uncapped and once at the K10 cap. It runs at the PREREG A1 size (about 1M tokens plus at least 8 long sprints of at least 1.25 W), measures the 24-hour rule there, and measures every term by role, Learn chains and image cells included.
+- **S6** replays one full-scale life (about 200 sessions) on Hermes native and on one extraction competitor, once uncapped and once at the K10 cap. It runs at the PREREG A1 size (about 1M tokens plus at least 8 long sprints of at least 1.25 W), measures the run-time rule there, and measures every term by role, Learn chains and image cells included.
 - **Replication-family terms** are measured on one life, or taken as the pinned family's costs × the price ratio.
 
-**The 24-hour rule is sized by measured capacity:** the sustainable capacity per account of the pinned agent family's model lane (its sustained concurrency, or its paced request rate where a request rate binds), with the number of accounts, as the spike on that lane measures it (S6a or S6b; completion slot C-11). The director paces each account, so a run never relies on rate-limit retries. GLM-plan use is paused while the busy marker's `glm` field is true. There is no credits slot.
+**The run-time rule is sized by measured capacity:** the sustainable capacity per account of every lane a run uses (the pinned family's, the swap model's and the replication family's) (its sustained concurrency, or its paced request rate where a request rate binds), with the number of accounts, as the spike on that lane measures it (S6a or S6b; completion slot C-11). The director paces each account, so a run never relies on rate-limit retries. GLM-plan use is paused while the busy marker's `glm` field is true. There is no credits slot.
 
 **Ceilings and cuts** are in PREREG §11:
-- the board and the robustness study: **≤ 24 h wall clock** (the 24-hour rule) and ≤ $300 per system each. Token counts (v1.4's ≤ 3B input and ≤ 100M output) are reported, never ceilings;
-- the Image board: ≤ 24 h wall clock per system, as a run separate from the Text board;
-- the bar-1 run: ≤ 8 h for all arms;
-- the bar-2 run: ≤ 8 h per real system;
-- the calibration set: ≤ 24 h.
+- the board with its robustness study, and each delta board: **every replaying (arm, life) within 24 h, and each system's work in each of its runs within the work bound** (the run-time rule). Paid-lane spend is ≤ $100 per full-tier run, all systems together, the owner's limit of $100 per test. Each paid request is reserved at its largest billable cost before it is sent, and every block start counts the open reservations and the admitted blocks' remainders; a run that would pass it pauses until the owner raises it. Token counts (v1.4's ≤ 3B input and ≤ 100M output) are reported, never ceilings;
+- the Image board: the same run-time rule and $100 ceiling, as a run separate from the Text board. Its vision-provider spend sits outside its $100, within the season's vision budget;
+- the bar-1 run: ≤ 8 h of wall time for all arms;
+- the bar-2 run: ≤ 8 h of wall time per real system;
+- the calibration set: ≤ 24 h of wall time.
 
-**Go / no-go** is pilot bar 5: the projection "fits the 24-hour rule at the measured sustainable capacity", and the paid-lane spend and wall-time ceilings above hold. It is evaluated at the end of S6 with n_L = 48 for the board and re-checked once n_L is known. The cuts apply in this order:
+**Go / no-go** is pilot bar 5: the projection "fits the run-time rule (life and work bounds) at the measured sustainable capacity", and the paid-lane spend ceilings and the pilot runs' wall-time ceilings above hold. It is evaluated at the end of S6 with n_L = 48 for the board and re-checked once n_L is known. The cuts apply in this order:
 1. bundles per board life, down to 100;
 2. the robustness study, down to 4 lives;
 3. n_L, down to 24.
@@ -1371,11 +1408,13 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 - Runs refuse to start below 150 GB of free disk.
 - Heavy work gates on the gauntlet's timed-row marker, not on load average.
 - CPU-bound jobs and model-wait jobs are counted separately.
-- A failed session resumes from its last snapshot.
+- Re-runs follow §6.7a: only the failed (arm, life), from its last session-boundary snapshot, and only after a benchmark-attributed INFRA_FAILURE.
 
 **Lanes.**
 - Readers, summarisers and renderers run on subscription lanes first.
-- Paid rows are labelled and capped: the third blind-panel family, extraction competitors' vendor models, the replication family, and the pinned vision reader (§11.1).
+- A **plan lane** (also called a subscription lane) adds no charge at the margin; any per-token or per-call charge makes a paid lane.
+- Paid rows are labelled and capped: the third blind-panel family (on a plan lane, or its own capped run at ≤ $100 projected per release), extraction competitors' vendor models, the replication family when it runs off a plan lane, and the pinned vision reader (§11.1).
+- **Embedding spend** is a labelled paid row under the owner's standing embedding grant of up to $100 per run, outside the paid-lane ceiling.
 - **The vision slot's cost** is about $50 a season, approved by the owner on 2026-10-26.
 - Every run reports its spend, and its tokens by role.
 
@@ -1385,7 +1424,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 - **Equal terms.** Every system, LCM-X included, is driven only through its public surfaces and documented configuration, pinned to a released artifact, within the same configuration budget.
 - **Private data stays private.** LCM-X developers and lanes never see private seeds, private templates or per-item private results (§10).
 - **Freeze before data.**
-  - PREREG-v0.3 is frozen and hashed before the first real-system pilot run. It includes the code that computes every [pilot] value and the write-turn package.
+  - PREREG-v0.4 is frozen and hashed before the first real-system pilot run. It includes the code that computes every [pilot] value and the write-turn package.
   - PREREG-v1 is frozen before **any** system's first full-tier run.
 - **Blinding.** Pilot analysis runs on blinded system codes until the [pilot] values are committed.
 - **LCM-X never sets the test.**
@@ -1411,7 +1450,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 | Phase | Content | Done when |
 |---|---|---|
 | 0 (by about 2026-11-09) | survey, taxonomy, threat model, this design, three review rounds (Astra and an independent Opus red-team in round 1; targeted readbacks in rounds 2 and 3), a closure check, the first-principles cost review, and the v2.0 decisions with their reviews | design v2.0 and PREREG-v0.2 approved and frozen, then design v2.1 and PREREG-v0.3 with DV42; any overrun posted on #1964, with the cuts |
-| Spikes | S1 role classification; S2 clocks; S3 clones, including parallel per-worker sandbox roots; S4 Claude Code against the director, which also names the swap model; S5 surfaces and entrypoints, extended by the capability census; **S6a one 10-session micro-life**; **S6 one full-scale life**, at the PREREG A1 size, uncapped and at K10; **S7 write turns**, plus the passive-pacing check; **S8 images**, an image rendered from world state routed through the director in both Hermes vision modes, with its direct-evidence control | S6a and S6 measurements in hand for bar 5; S7 shows agent-curated memory working in replay, with the write-turn boundary confirmed by readback; S8 passes, or the Image profile stays pending |
+| Spikes | S1 role classification; S2 clocks; S3 clones, including parallel per-worker sandbox roots; S4 Claude Code against the director, which also names the swap model; S5 surfaces and entrypoints, extended by the capability census; **S6a one 10-session micro-life**; **S6 one full-scale life**, at the PREREG A1 size, uncapped and at K10; **S7 write turns**, plus the passive-pacing check; **S8 images**, an image rendered from world state routed through the director in both Hermes vision modes, with its direct-evidence control; **S9 pauses**, pause invisibility at $0 on public lives (never on LCM-X), with one pinned-lane session resumed after at least 24 h on a spare account | S6a and S6 measurements in hand for bar 5; S7 shows agent-curated memory working in replay, with the write-turn boundary confirmed by readback; S8 passes, or the Image profile stays pending; before the first full-tier run, S9 passes, or service-backed systems pause only between lives and each (arm, life) keeps one account |
 | Pilot (timebox re-planned after S6 and S8, from the first plan's 3 weeks from approval; posted on #1964) | Developer tiers T0 and T1 first, then T2, T3 and the fault finder, as the Ring 0 packs with their rungs. The Image profile in Ring 0 once S8 admits it; Learn chains as a diagnostic. The calibration set, then the bar-1 and bar-2 runs of record. G1 and G2, both evaluations. The roster: both LCM-X releases, Hermes native, ≥ 2 external self-hosted competitors, and every §8 control. Wake, Drift, Tuesday, Rachael and Keep. Flatten is not in the pilot; its map row reads "not yet built" | the bars below |
 | Pre-registration | PREREG-v1 approved and committed | before any full-tier run |
 | Phase 1 build (targeted alongside LCM-X v0.30.0, not gated by it) | the full core board for G1 and G2 in the Text profile, text and code; the Image profile's board in season 1 only if S8 and the pilot's validity checks pass, otherwise in season 2 (§11.1); the seasonal robustness study; the developer rings and tiers shipped with the harness, with Ring 1 and Ring 2; the capability census; one results table with full stack identity, the crossover panel and the stack view; director; Hermes and Claude Code adapters; ≥ 3 external competitors; the replication family; the seal | the launch figure, the highest real system's per-item action accuracy on the full-tier Text board (§7.1a), measured and published beside the penalised score whatever its value: below about 60% is the disclosed expectation, never a release condition, and the test is not tuned toward it (§12); the acceptance bar (§9.3) met before v1 is called a developer product; Codex adapter next |
@@ -1434,7 +1473,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
    - the template census passes, and the pilot instance audit (75 per track, clustered bound) is at most 10%;
    - check error rates are each ≤ 2%;
    - verifier recall is ≥ 0.90 per class, with a Wilson lower bound ≥ 0.80.
-5. **Cost.** The S6a and S6 projection fits the 24-hour rule at the measured sustainable capacity, and the paid-lane spend and wall-time ceilings hold (§13). Token counts are reported, never a bar. The developer-tier targets are not bars; any that are missed are disclosed.
+5. **Cost.** The S6a and S6 projection fits the run-time rule (life and work bounds) at the measured sustainable capacity, and the paid-lane spend ceilings and the pilot runs' wall-time ceilings hold (§13). Token counts are reported, never a bar. The developer-tier targets are not bars; any that are missed are disclosed.
 6. **Correlation.** API mode vs system is measured per comparable pair, with no bar. Proxy status needs the §6.1 criterion.
 
 **Labelling.** If no human grader pool exists by pilot time, the pilot is labelled a **feasibility pilot**, and it cannot claim the binding gate.
@@ -1481,7 +1520,7 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 
 ## 16. Approval and channels
 - **Ownership.** The benchmark session owns this design.
-- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
+- **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; PREREG-v0.4 carries v2.2's and was frozen on 2026-10-26; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
 - **External veto.** An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. PREREG-v1 is not frozen without one unless the owner waives that in writing. DV1, DV4 and DV5 go to that reviewer first (§14).
 - **Channel.** #1964 is the status channel, not an approval point.
 
@@ -1502,5 +1541,5 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 6. **Variance inputs:** what are the twin correlation and the within-cell and cross-cell life correlations? They are measured on the bar-2 run's control arms with one A/A′ rerun, before the PREREG-v1 freeze gate, and the operating-characteristic simulation sets the final certification numbers from them (§7.7). The per-rung A/A′ flip rate (q₀) is measured before any loop claim (§9.1).
 7. **Loop time:** what does each developer tier take, idle and busy? It is measured and published per tier (§9.1), replacing the T1 projection.
 8. **Images:** does spike S8 route an image through the director in both Hermes vision modes, with its direct-evidence control clearing the no-memory floor, at a cost inside the vision budget (§11.1)?
-9. **Learn chains:** what do they cost on the 24-hour critical path? (Spike S6.)
+9. **Learn chains:** what do they cost on a life's critical path? (Spike S6.)
 10. **E1, after v1:** does the E1 spike find a memory question the Text and Image profiles cannot expose (§11.3)?
