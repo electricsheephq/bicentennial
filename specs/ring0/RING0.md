@@ -197,12 +197,16 @@ The oracle-evidence, full-history and naive-RAG columns are cached with the pack
 
 **Also run:** the public regression corpus, and the write-turn audit (R10).
 
+**Forgetting is not exercised at T1.** The scripted model only adds (§2), so no deletion is ever requested.
+- KEEP-FORGET and KEEP-NEIGH items are reported "not exercised at T1" and sit outside the T1 gate. They are never scored as a system failure.
+- T0 exercises forgetting through the adapter contract (§7).
+- A content-blind delete for T1 waits for v0.2: it needs a declared forget plan per system and a forget target that a script can carry without a gold token.
+
 **The T1 gate** is PASS only when all of the following hold:
 - every S05 invariant passes:
   - recall verbatim after compaction and after the crash, where gold needs verbatim;
   - the newest correction governs after a restart;
   - a tool result sits with its call after the crash;
-  - forgetting, checked by byte search of the declared surfaces;
 - no restart-crossing bundle scores below the system's own baseline card;
 - every corpus case meets its expectation;
 - the wiped-store control FAILs.
@@ -223,7 +227,10 @@ A first run has no baseline card. If every other condition holds, it is a labell
   - **Hermes plug-in systems** go through an in-process memory host. It calls the provider's documented lifecycle hooks, in their documented order, to ingest each scripted turn. The content-blind write rule (§2) fills its write tools, and the reader's recall call uses its read tools.
   - **Hermes native memory** is driven through its documented agent tools, `memory` and `session_search`, called in process with the arguments an agent would send. That is the surface the agent uses. It exercises storage and retrieval, not the harness's prompt injection, which T1 covers, and the card says so.
 - **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed.
-- **Scoring:** the scripted reader and the S05 invariants.
+- **Forgetting:** at each forget-request event, the runner calls `forget(selector)` with the target's locked tokens as the selector.
+  - Each adapter maps the call onto the system's documented deletion surface: Hermes native's `memory` `remove`, Mem0's delete after its own search, Holographic's forget or remove action (C-6).
+  - The forgetting invariant is then checked by byte search of the declared surfaces, beside the KEEP-FORGET and KEEP-NEIGH items.
+- **Scoring:** the scripted reader and the S05 invariants, forgetting included.
 - **Budget:** ≤ 60 s per pack and $0, with no upstream credential loaded.
 - **Outputs:** `junit.xml`, `card.json` and `receipt.json`.
 
