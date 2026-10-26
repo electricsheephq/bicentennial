@@ -103,7 +103,11 @@ def requests(rows: list[dict], led: list[dict], inputs: dict) -> tuple[dict, dic
          "aux_per_session": att(lambda r, u: u["kind"] == "aux") / n_sess,
          "probe_per_probe_turn": att(lambda r, u: u["kind"] == "probe") / max(1, len(probes)),
          "sessions": n_sess, "turns": len(turns), "probe_turns": len(probes)}
-    ri = dict(inputs, upstream_turn_s=q["write_per_turn"] + q["scripted_per_turn"],
+    long_s = {r.get("session") for r in rows if r.get("what") == "turn" and int(r.get("turn") or 0) > 5}
+    q["compactions_per_long_session"] = sum(r.get("role") == "summariser" for r in reqs) / max(1, len(long_s))
+    # logical compactions per sprint: the attempts factor is in compaction_per_compaction, so counting it once
+    ri = dict(inputs, comp_per_sprint=q["compactions_per_long_session"],
+              upstream_turn_s=q["write_per_turn"] + q["scripted_per_turn"],
               summariser_s=q["compaction_per_compaction"], aux_per_session_s=q["aux_per_session"],
               probe_upstream_s=q["probe_per_probe_turn"])
     return q, ri
@@ -121,9 +125,9 @@ def rate_grid(rows: list[dict], ri: dict) -> list[dict]:
         for run in ("board", "robustness"):
             q = r[run]
             q["N_req"] = n[key][run]
-            for label, rs in RATES.items():
-                rate_h = round(q["N_req"] / rs / 60, 1)
-                q.setdefault("rate", {})[label] = {"rate_h": rate_h, "fits": max(q["lane_h"], rate_h) <= 24}
+            for label, rs in RATES.items():  # the verdict on exact values (grid()'s lane_fits); rounding for display
+                rate_h = q["N_req"] / rs / 60
+                q.setdefault("rate", {})[label] = {"rate_h": round(rate_h, 1), "fits": q["lane_fits"] and rate_h <= 24}
     return rows
 
 

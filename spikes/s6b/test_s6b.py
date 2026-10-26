@@ -617,18 +617,19 @@ class RateBound(unittest.TestCase):
         led = [{"type": "request", "role": "replay_main", "subrole": "cursor", "upstream": [up("write_turn", False),
                                                                                            up("write_turn")]},
                {"type": "request", "role": "replay_main", "subrole": "cursor", "upstream": [up("write_turn")]},
-               {"type": "request", "role": "summariser", "upstream": [up("summariser")]},
+               {"type": "request", "role": "summariser", "upstream": [up("summariser", False), up("summariser")]},
                {"type": "request", "role": "aux", "upstream": [up("aux"), up("aux")]},
                {"type": "request", "role": "probe_main", "subrole": "cursor", "upstream": [up("probe")] * 3}]
-        rows = [{"phase": "life", "session": "1"}, {"phase": "probe", "session": "1"}]
+        rows = [{"phase": "life", "session": "1", "what": "turn", "turn": "6"}, {"phase": "probe", "session": "1"}]
         inputs = {"turn_ex_comp_s": 10, "upstream_turn_s": 6, "summariser_s": 90, "session_fixed_s": 29,
                   "comp_per_sprint": 2, "probe_turn_s": 30, "probe_upstream_s": 20, "probe_fixed_s": 26,
                   "aux_per_session_s": 5, "plain_turn_s": 2}
         q, ri = an.requests(rows, led, inputs)
         self.assertEqual((q["write_per_turn"], q["compaction_per_compaction"], q["aux_per_session"],
-                          q["probe_per_probe_turn"], q["scripted_per_turn"]), (1.5, 1.0, 1.0, 3.0, 0.0))
+                          q["probe_per_probe_turn"], q["scripted_per_turn"]), (1.5, 2.0, 1.0, 3.0, 0.0))
+        self.assertEqual(ri["comp_per_sprint"], 1.0)  # one logical compaction: its retry is counted once, in q
         pr = an.projection(ri, C=1, L=48)  # S = 200, 5 turns, 80 compactions, b = 150 probes doubled by controls
-        R, P = 1000 * 1.5 + 80 * 1.0 + 200 * 1.0, 150 * (3.0 + 1.0) * 2
+        R, P = 1000 * 1.5 + 40 * 2.0 + 200 * 1.0, 150 * (3.0 + 1.0) * 2  # 40 compactions of 2 attempts each
         self.assertAlmostEqual(pr["R_lane_h"] * 3600, R)
         self.assertAlmostEqual(pr["P_lane_h"] * 3600, P)
         rows = an.rate_grid(an.grid(inputs, 0.2, Cs=(24,)), ri)
@@ -637,7 +638,10 @@ class RateBound(unittest.TestCase):
         self.assertEqual(b["N_req"], round(60 * (R * 1.5 + 2 * P)))  # (L + L_keep) lives, f = 0.5
         one, two = b["rate"].values()
         self.assertEqual((one["rate_h"], two["rate_h"]), (round(b["N_req"] / 180 / 60, 1), round(b["N_req"] / 360 / 60, 1)))
-        self.assertEqual(one["fits"], max(b["lane_h"], one["rate_h"]) <= 24)
+        self.assertEqual(one["fits"], b["lane_fits"] and b["N_req"] / 180 / 60 <= 24)
+        edge = an.rate_grid([{"L": 48, "cuts": "none", "cadence": "every turn", "board": {"lane_h": 24.0, "lane_fits": False},
+                              "robustness": {"lane_h": 1.0, "lane_fits": True}}], ri)[0]["board"]  # 24.04 h shown as 24.0
+        self.assertFalse(any(v["fits"] for v in edge["rate"].values()))
 
 
 if __name__ == "__main__":

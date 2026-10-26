@@ -7,7 +7,8 @@
   "probe_per_probe_turn": 3.25,
   "sessions": 12,
   "turns": 60,
-  "probe_turns": 4
+  "probe_turns": 4,
+  "compactions_per_long_session": 1.0
  },
  "request_rates_per_min": {
   "1 account (planning, 90% of the ~200/min burst threshold)": 180,
