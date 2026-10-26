@@ -602,6 +602,7 @@ class Director:
                 except OSError as e:  # the class only: a path-bearing traceback never reaches a log
                     raise Stop(f"home_unusable:{type(e).__name__}") from None
         except Stop as e:
+            self._drain()  # a refused startup still records any refresh it sent, so the budget reconciles
             if str(e) in ("pin_file_unreadable", "run_pin_conflict"):
                 raise
             self.stop(str(e))

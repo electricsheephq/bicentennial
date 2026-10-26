@@ -2238,6 +2238,29 @@ class FixRound1(unittest.TestCase):
         self.assertFalse((self.tmp / "director-pin.json").exists())
         self.assertEqual(self.calls, [])
 
+    def test_cx10_a_pin_write_failure_after_refresh_is_in_the_ledger(self):
+        store(self.tmp, exp_in=60)  # a new run with an expiring token refreshes before its pin is written
+        real = sd.tempfile.mkstemp
+
+        def deny(*a, **kw):
+            if str(kw.get("prefix", "")).startswith(".director-pin"):
+                raise PermissionError("fake denial")
+            return real(*a, **kw)
+
+        real_init = sd.Login.__init__
+
+        def init(login, *a, **kw):  # the director's own login, with this test's in-memory refresh endpoint
+            real_init(login, *a, **kw)
+            login.post = self.post
+        with mock.patch.object(sd.Login, "__init__", init), mock.patch.object(sd.tempfile, "mkstemp", side_effect=deny), \
+                self.assertRaisesRegex(sd.Stop, "^home_unusable:PermissionError$"):
+            sd.Director(self.args())
+        self._close_holders()
+        budget = json.loads((self.tmp / "budget.json").read_text())
+        self.assertEqual((len(self.calls), budget["total"], budget["by_kind"]["refresh"]), (1, 1, 1))
+        import verify
+        self.assertEqual(verify.check_ledger(self.tmp)["upstream_attempts"], 1)
+
     def test_e4_corrupt_pin_file_refuses_start_without_overwrite(self):
         self.bad_pin_start("{broken-json")
 
