@@ -279,7 +279,14 @@ def make_handler(d: Director):
             super().send_error(code, None, None)
 
         def _do(self):
-            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:  # its message would carry the header value
+                n = -1
+            if n < 0:
+                self.send_error(400)
+                return
+            raw = self.rfile.read(n)
             status, ctype, data, extra = d.serve(self.command, self.path, self.headers.items(), raw)
             self.send_response(status)
             self.send_header("Content-Type", ctype)
@@ -292,6 +299,11 @@ def make_handler(d: Director):
         do_POST = do_GET = do_PUT = do_DELETE = do_HEAD = do_OPTIONS = do_PATCH = _do
 
     return H
+
+
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):  # the class only: a traceback can carry request text
+        os.write(2, f"director: handler error {sys.exc_info()[0].__name__}\n".encode())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -318,7 +330,7 @@ def main():
     a = build_parser().parse_args()
     if not os.environ.get("BICENTENNIAL_UPSTREAM_KEY") or not os.environ.get("BICENTENNIAL_UPSTREAM_ANTHROPIC_URL"):
         sys.exit("needs the upstream environment (run under the helper)")
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(Director(a)))
+    srv = Server(("127.0.0.1", a.port), make_handler(Director(a)))
     tmp = Path(a.port_file + ".tmp")
     tmp.write_text(str(srv.server_address[1]))
     os.replace(tmp, a.port_file)

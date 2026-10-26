@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anthropic_director as ad
 import mcp_fixture
+import run_s4
 
 UP_KEY = "up-key-0123456789-test"
 FOREIGN = "sk-foreign-credential-value-xyz"
@@ -183,6 +184,42 @@ def test_stdlib_error_replies_echo_no_request_text(up, tmp_path, line):
             reply += chunk
     srv.shutdown()
     assert reply.split(b" ")[1] in (b"400", b"501") and UP_KEY.encode() not in reply and up.calls == []
+
+
+def test_bad_content_length_and_handler_errors_leave_no_request_text(up, tmp_path, capfd, monkeypatch):
+    d = director(tmp_path)
+    srv = ad.Server(("127.0.0.1", 0), ad.make_handler(d))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def send(length: str) -> bytes:
+        with socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=10) as c:
+            c.sendall(f"POST /v1/messages HTTP/1.1\r\nHost: x\r\nx-api-key: placeholder\r\n"
+                      f"Content-Length: {length}\r\n\r\n".encode())
+            reply = b""
+            while chunk := c.recv(65536):
+                reply += chunk
+        return reply
+
+    reply = send(UP_KEY)
+    assert reply.split(b" ")[1] == b"400" and UP_KEY.encode() not in reply and up.calls == []
+
+    def boom(*a):
+        raise ValueError(UP_KEY)
+    monkeypatch.setattr(d, "serve", boom)
+    send("0")
+    srv.shutdown()
+    err = capfd.readouterr().err
+    assert UP_KEY not in err and "handler error ValueError" in err
+
+
+def test_driver_paths_are_absolute_and_never_combine_runs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    root, ev = run_s4.fresh_paths("scratch", "ev")
+    assert root.is_absolute() and ev.is_absolute() and root == tmp_path / "scratch"
+    (tmp_path / "ev").mkdir()
+    (tmp_path / "ev" / "director-ledger.jsonl").write_text("{}\n")
+    with pytest.raises(SystemExit):
+        run_s4.fresh_paths("scratch", "ev")
 
 
 def test_metadata_user_id_dropped_unless_kept(up, tmp_path):

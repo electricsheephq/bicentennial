@@ -134,6 +134,17 @@ def digest(evs: list[dict]) -> dict:
                                  for e in evs if e.get("subtype") == "init"), {})}
 
 
+def fresh_paths(root: str, evidence: str) -> tuple[Path, Path]:
+    """Absolute paths (Claude Code runs in another directory), refusing to reuse a root or an earlier run's
+    evidence, whose ledger the director would append to."""
+    r, ev = Path(root).resolve(), Path(evidence).resolve()
+    if r.exists():
+        sys.exit("root already exists: refusing to reuse it")
+    if any((ev / f).exists() for f in ("director-ledger.jsonl", "run.json")):
+        sys.exit("evidence already holds a run: refusing to combine runs")
+    return r, ev
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True, help="fresh scratch dir (must not exist)")
@@ -144,9 +155,7 @@ def main():
     ap.add_argument("--max-calls", type=int, default=120)
     ap.add_argument("--timeout", type=int, default=600)
     a = ap.parse_args()
-    root, ev = Path(a.root), Path(a.evidence)
-    if root.exists():
-        sys.exit("root already exists: refusing to reuse it")
+    root, ev = fresh_paths(a.root, a.evidence)
     home, config, out = root / "home", root / "config", root / "out"
     for d in (home, config, out):
         d.mkdir(parents=True)
