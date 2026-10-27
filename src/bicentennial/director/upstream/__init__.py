@@ -72,7 +72,9 @@ class LiveResponder:
         body = forward.wire_body(call)
         keys = ("max_output_tokens",) if call.wire == "responses" else ("max_completion_tokens", "max_tokens")
         cap = next((body[k] for k in keys if type(body.get(k)) is int and body[k] > 0), None)
-        if cap is None:  # the fallback is sent too, so the request and the reservation share one bound
+        if not up.send_cap:
+            cap, body = up.max_output_tokens, {k: v for k, v in body.items() if k not in keys}
+        elif cap is None:  # the fallback is sent too, so the request and the reservation share one bound
             cap = up.max_output_tokens
             body.update({k: cap for k in keys if k in body} or {keys[-1]: cap})
         data = canon(body)
@@ -155,10 +157,14 @@ class LiveResponder:
             if d["pace_wait_ms"] is None or self.state()["stopped"]:
                 d["pace_wait_ms"] = 0
                 return None, "live_stopped"
-            t_auth = self.pacer.clock()
-            headers = {**self.auth(), "Content-Type": "application/json", "Accept": "text/event-stream" if up.wire == "responses" else "application/json"}
-            if self.pacer.rate and self.pacer.clock() - t_auth > 1 / self.pacer.rate:
-                d["pace_wait_ms"] += self.pacer.acquire() or 0  # a slow auth let the bucket refill: admit again before sending
+            while True:
+                t_auth = self.pacer.clock()
+                headers = {**self.auth(), "Content-Type": "application/json", "Accept": "text/event-stream" if up.wire == "responses" else "application/json"}
+                if getattr(self.auth, "handles_readmission", False) or not self.pacer.rate or self.pacer.clock() - t_auth <= 1 / self.pacer.rate:
+                    break
+                if (waited := self.pacer.acquire()) is None:
+                    return None, "live_stopped"
+                d["pace_wait_ms"] += waited
             with self.lock:
                 if self.pacer.stop.is_set():
                     return None, "live_stopped"

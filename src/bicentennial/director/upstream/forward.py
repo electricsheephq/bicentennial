@@ -31,6 +31,7 @@ class Upstream:
     glm_plan: bool = False
     effort: str | None = None
     timeout_s: int = 900
+    send_cap: bool = True
 
     def __post_init__(self):
         url = urllib.parse.urlsplit(self.base_url)
@@ -39,7 +40,7 @@ class Upstream:
                 or url.scheme not in ("http", "https") or not url.hostname or url.username or url.password
                 or url.query or url.fragment or type(self.max_output_tokens) is not int or self.max_output_tokens < 1
                 or type(self.glm_plan) is not bool or (self.effort is not None and (not isinstance(self.effort, str) or not self.effort))
-                or type(self.timeout_s) is not int or self.timeout_s < 1
+                or type(self.timeout_s) is not int or self.timeout_s < 1 or type(self.send_cap) is not bool
                 or asdict(self.price) != self.spend.policy["price"]):
             raise ValueError("invalid upstream or spend policy")
 
@@ -145,7 +146,7 @@ def send(up, data, headers):
                 items = [e["item"] for e in events if e.get("type") == "response.output_item.done" and isinstance(e.get("item"), dict)]
                 messages = [i for i in items if i.get("type") == "message"]
                 text = "".join(p.get("text") or "" for i in messages for p in i.get("content") or [] if p.get("type") == "output_text") if messages else "".join(e.get("delta") or "" for e in events if e.get("type") == "response.output_text.delta")
-                calls = tuple({"name": i["name"], "arguments": i.get("arguments") if isinstance(i.get("arguments"), str) else "{}"} for i in items if i.get("type") == "function_call")
+                calls = tuple({"name": i["name"], "arguments": i.get("arguments", "{}")} for i in items if i.get("type") == "function_call")
                 result.update(_typed(text, calls), n_dropped_items=sum(i.get("type") not in ("message", "function_call") for i in items))
             except (TypeError, KeyError, AttributeError):
                 result["category"], result["n_unparsed"] = "unparsed", 1
