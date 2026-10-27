@@ -23,6 +23,28 @@ def known(action):
     return isinstance(action, str) and action in ACTIONS
 
 
+def blocks(content):
+    """A content's text blocks, as the director reads them (roles._blocks): a string, or its text parts."""
+    if isinstance(content, str):
+        return [content]
+    return [p["text"] for p in content if isinstance(p, dict) and isinstance(p.get("text"), str)
+            and p.get("type") in (None, "text", "input_text", "output_text")] if isinstance(content, list) else []
+
+
+def snapshot(body, wire):
+    """The memory snapshot a request carries: chat system messages; Responses instructions and the system and
+    developer messages in input, as the director extracts them (roles._items)."""
+    if wire != "responses":
+        return " ".join(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]))
+    items = body.get("input") if isinstance(body.get("input"), list) else []  # a string input is a user message
+    found = [body["instructions"]] if isinstance(body.get("instructions"), str) else []
+    for it in items:
+        if isinstance(it, dict) and str(it.get("type", "message")) == "message" and it.get("role") in (
+                "system", "developer"):
+            found += blocks(it.get("content"))
+    return " ".join(found)
+
+
 def effects(calls, requests, stores, wire):
     ops, reports = [], []
     for call in calls:
@@ -50,11 +72,14 @@ def effects(calls, requests, stores, wire):
         op["needle"] = norm(raw) if isinstance(raw, str) and isinstance(op.get("old_text", ""), str) else ""
         if op["applied"] and not known(action):  # a write Hermes applied must be one this audit can check
             raise ValueError(f"unknown_memory_action:{op['record']}")
+        if op["applied"] and not isinstance(op["target"], str):
+            raise ValueError(f"malformed_memory_target:{op['record']}")
         if op["applied"] and not op["needle"]:
             raise ValueError(f"empty_memory_content:{op['record']}")
     for i, op in enumerate(ops):
         action, needle = op.get("action"), op["needle"]
-        if not known(action) or not needle:  # a malformed call Hermes refused, staged or left unclassified
+        if not known(action) or not needle or not isinstance(op["target"], str):
+            # a malformed call Hermes refused, staged or left unclassified: never looked up
             label = action if known(action) else None  # a malformed action is model text: never reported
             op["report"]["operations"].append({"id": op["id"], "action": label, "reasons": [
                 "staged_not_applied" if op["report"]["staged"] else "hermes_refused" if op["applied"] is False
@@ -96,13 +121,11 @@ def effects(calls, requests, stores, wire):
         visible, next_ok, next_side_ok, next_changed, wanted = None, None, None, [], final
         if nxt:
             r, b = nxt
-            system = b.get("instructions", "") if wire == "responses" else " ".join(
-                strings([m.get("content", "") for m in b.get("messages", []) if m.get("role") == "system"]))
-            snapshot = norm(system)
+            snap = norm(snapshot(b, wire))
             wanted, next_changed = state(r["seq"], start)
-            visible = needle in snapshot
-            next_ok = holds(wanted, snapshot)
-            next_side_ok = holds(state(r["seq"], ("absent", replaced))[0], snapshot) if replaced else True
+            visible = needle in snap
+            next_ok = holds(wanted, snap)
+            next_side_ok = holds(state(r["seq"], ("absent", replaced))[0], snap) if replaced else True
         reasons = []
         if op["report"]["staged"]:
             reasons.append("staged_not_applied")

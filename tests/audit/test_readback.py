@@ -7,6 +7,7 @@ they live outside the repository and are named only by environment variable; wit
 
 import ast
 import copy
+import dataclasses
 import hashlib
 import json
 import os
@@ -918,3 +919,67 @@ def test_history_scans_take_every_responses_input_shape(body):
     conv, tool, _ = rb.channels(body, "responses")
     assert [c for c in conv if c] == (["plain text"] if body.get("input") == "plain text" else [])
     assert tool == [] and rb.calls_in(body, "responses") == set() and rb.results(body, "responses") == {}
+
+
+def test_responses_snapshot_reads_input_system_and_developer_messages():
+    calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":true}',
+              "arguments": json.dumps({"target": "memory", "action": action, **fields})}
+             for action, fields in (("add", {"content": "kept note"}), ("remove", {"old_text": "dropped note"}))]
+    for role, content in (("developer", "kept note"), ("system", [{"type": "input_text", "text": "kept note"}])):
+        body = {"instructions": "other", "input": [{"type": "message", "role": role, "content": content},
+                                                   {"type": "message", "role": "user", "content": "dropped note"}]}
+        reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, body)]
+        out = ef.effects(calls[:1], reqs, {"memory": "kept note"}, "responses")
+        assert (out["gaps"], out["visible_next_session"]) == ([], 1)
+        assert ef.effects(calls[1:], reqs, {"memory": ""}, "responses")["gaps"] == []  # a user message is no snapshot
+        body["input"][0]["content"] = "dropped note"  # a removal still visible next session is a gap
+        out = ef.effects(calls[1:], reqs, {"memory": ""}, "responses")
+        assert out["gaps"] == ["bcw00001"]
+        assert out["calls"][0]["operations"][0]["reasons"] == ["remove_visible_next_session"]
+        assert "note" not in json.dumps(out)
+
+
+class WrongWriteModel:
+    """R08's fake responder, except that the write turn answers as another model (DESIGN §6.2 job 6)."""
+
+    def __init__(self):
+        self.fake = CORE["Fake"]()
+
+    def respond(self, call):
+        reply = self.fake.respond(call)
+        return dataclasses.replace(reply, model="another-model") if call.role == "write_turn" else reply
+
+
+@pytest.mark.parametrize("wire", sorted(CORE["WIRE_SOURCE"]))
+def test_kit_served_refusal_is_a_failure(wire, tmp_path):
+    d = CORE["make"](tmp_path, WrongWriteModel())
+    CORE["start"](d, tmp_path)
+    path, body = ("/main/v1/chat/completions", CORE["turn_body"]()) if wire == "chat" else (
+        "/v1/responses", {"model": "m", "input": CORE["TURN1"]["user"], "tools": CORE["tools_of"](2, False)})
+    try:
+        for _ in range(2):  # the write turn's refusal, then a request after admission stopped
+            assert CORE["post"](d, path, body)[0] == 503
+    finally:
+        d.close()
+    rows, blobs, digest = rb.load(tmp_path / "ledger", "kit")
+    assert [(r["served"], r["status"]) for r in rows] == [("identity_mismatch", 503), ("stopped", 503)]
+    report, mode = kit_audit((rows, blobs, digest), wire)
+    assert report["A3"]["failures"] == [{"record": 1, "kind": "served_refusal"}]
+    assert (report["A1"]["matches"], report["A5"]["missing_scripts"]) == (1, [1])
+    assert "A3.failures" in rb.failures(report) and rb.run_status(report, mode) == "INFRA_FAILURE"
+    text = json.dumps(report)
+    assert CORE["TURN1"]["user"] not in text and "discard me" not in text and "director:" not in text
+
+
+def test_malformed_target_is_reported_never_looked_up():
+    reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "empty"})]
+    for target in (["private target"], {"private": "target"}, 7):
+        args = json.dumps({"target": target, "action": "add", "content": "private memory draft"})
+        calls = [{"record": 1, "session": 1, "id": "bcw00001", "arguments": args, "result": '{"success":false}'}]
+        out = ef.effects(calls, reqs, {"memory": ""}, "responses")
+        assert out["calls"][0]["operations"] == [
+            {"id": "bcw00001:1", "action": "add", "reasons": ["hermes_refused", "malformed_operation"]}]
+        assert "private" not in json.dumps(out)
+        calls[0]["result"] = '{"success":true}'
+        with pytest.raises(ValueError, match="^malformed_memory_target:1$"):
+            ef.effects(calls, reqs, {"memory": ""}, "responses")

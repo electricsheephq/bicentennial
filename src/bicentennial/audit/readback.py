@@ -171,6 +171,11 @@ def output(obj, wire):
     return [dict(id=tc["id"], **tc["function"]) for tc in msg.get("tool_calls", [])], [msg.get("content") or ""]
 
 
+def refused(row, obj):
+    """A served refusal or other non-completion (R08's identity_mismatch or stopped error envelope): never parsed."""
+    return row.get("status", 200) != 200 or not isinstance(obj, dict) or "error" in obj
+
+
 def reasoning(obj, wire):
     """Textual reasoning a stored response carries: Responses reasoning items and deltas, chat reasoning fields."""
     if wire == "responses":
@@ -285,7 +290,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     calls, drafts, issued = [], [], 0
     issued_at = {}  # each call id served to the harness, by the record that served it
     for r in rows:
-        if r.get("served") == "write_tool_calls":
+        if r.get("served") == "write_tool_calls" and not refused(r, blobs.get(r.get("resp"))):
             for tc in output(blobs[r["resp"]], wire)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
     minted, last_k, served_ids = {}, {}, set()  # kit: each mintable id -> (attempt id, counter)
@@ -296,7 +301,9 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
         minted = {mint_id(a, k): (a, k) for a, n in budget.items() if isinstance(a, str) for k in range(1, n + 1)}
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
-        attempts = attempts_of(r)
+        attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
+        if bad and (attempts or r.get("served") in {"write_tool_calls", "script", "script_retry"}):
+            a3["failures"].append({"record": seq, "kind": "served_refusal"})  # the turn served no completion
         if r.get("write_turn_failed"):
             a3["failures"].append({"record": seq, "kind": "write_turn_failed"})
         if attempts and not write_tools:  # PREREG §10: no write turn for a system without write tools
@@ -308,8 +315,8 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
             idx = turn_index(seq, cursor)
             want = expected(body, wire, model_for(cursor["session"]), suffix, write_tools)
             verdicts = []
-            served, served_texts = output(blobs[r["resp"]], wire)
-            if r.get("served") == "write_tool_calls" and (any(served_texts) or reasoning(blobs[r["resp"]], wire)):
+            served, served_texts = ([], []) if bad else output(blobs[r["resp"]], wire)
+            if not bad and r.get("served") == "write_tool_calls" and (any(served_texts) or reasoning(blobs[r["resp"]], wire)):
                 # the harness gets the calls only: no reply or reasoning text
                 a5["served_write_text"].append(seq)
             following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
@@ -382,7 +389,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 a1["flag_disagreements"].append(seq)
             upstream = _reply(blobs[attempts[-1]["resp"]], wire, fmt)[0] if "resp" in attempts[-1] else []
             filtered = [tc for tc in upstream if tc["name"] in write_tools]
-            if len(filtered) != len(served):
+            if not bad and len(filtered) != len(served):
                 a3["failures"].append({"record": seq, "kind": "call_count"})
             for i, tc in enumerate(served):
                 if fmt == "s6":
@@ -401,7 +408,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 if tc["id"] in new_results and tc["name"] in write_tools:
                     a3["executed"] += 1
                     calls.append(dict(tc, record=seq, session=cursor["session"], result=new_results[tc["id"]]))
-        if r.get("served") in {"script", "script_retry"}:
+        if r.get("served") in {"script", "script_retry"} and not bad:
             script_calls, texts = output(blobs[r["resp"]], wire)
             script = turns[turn_index(seq, cursor)][2].get("assistant")
             a5["scripted"] += 1
