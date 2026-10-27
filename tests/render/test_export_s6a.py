@@ -45,7 +45,7 @@ from bicentennial.world.schedule import build_schedule, write_sessions
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = ROOT / "tests/fixtures/g1_golden_tidewater.toml"
-GOLDEN_SHA256 = "4df024d7cbaaaf2e281eb07a1e3058f41f30339a99f28182b87b87e1506196e6"
+GOLDEN_SHA256 = "d3bf8e2f5f61ebee22e1db5f3c6a7ae00a22c6d5091bdeb72afdbd1681fb3ded"
 TOKEN = "TOK-4410"
 
 
