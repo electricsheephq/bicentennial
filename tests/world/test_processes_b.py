@@ -390,6 +390,28 @@ def test_forget_refusals_and_verify(tmp_path):
         verify(db)
 
 
+def test_forget_verify_recomputes_coverage(tmp_path):
+    db, event, predicates, _ = forget_case(tmp_path / 'w.db', 0)
+    fr = request(db, event, predicates)
+    g01(db, 'e-late-fact', event.t_sim - 1, 'c-late', predicate=predicates[0], object='v-late')
+    writers.insert_locked_token(db, token_id='tok-late', fact_id='c-late', kind='code', value='TOK-late')
+    assert 'c-late' not in fr.covered
+    with pytest.raises(ValueError, match='coverage'):
+        verify(db)
+
+
+def test_forget_refuses_unsupported_lineage(tmp_path):
+    db, event, predicates, _ = forget_case(tmp_path / 'w.db', 0)
+    writers.insert_lineage(db, artifact_id='note-1', artifact_kind='note', source_fact_id='c0')
+    refused(db, request, db, event, predicates)
+    db, event, predicates, _ = forget_case(tmp_path / 'v.db', 0)
+    request(db, event, predicates)
+    verify(db)
+    writers.insert_lineage(db, artifact_id='note-1', artifact_kind='note', source_fact_id='c0')
+    with pytest.raises(ValueError, match='unsupported'):
+        verify(db)
+
+
 def hashes():
     with tempfile.TemporaryDirectory() as tmp:
         out = [world_hash(plant_case(Path(tmp) / f'p{c}.db', c)[0]) for c in range(10)]
