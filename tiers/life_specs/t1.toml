@@ -45,6 +45,6 @@ genre = "G2"
 seed = 2
 
 [selection]
-g1 = ["drift-chain", "drift-chain-fault", "drift-config", "recall-value", "wake-loop"]
+g1 = ["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"]
 g2 = ["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"]
 pinned = { "drift-chain-fault" = 20, "drift-booking" = 20 }
