@@ -764,3 +764,23 @@ def test_live(factory, name, capsys):
         report(capsys, dict(system=name, live_pack=run, elapsed_ms=elapsed_ms, answers=results[-1][0]))
         assert elapsed_ms <= 60_000
     assert canon(results[0][0]) == canon(results[1][0])
+
+
+@pytest.mark.parametrize("name", tuple(plugin_host.PROVIDERS))
+def test_fresh_install_hash_matches_cell_across_ports(factory, monkeypatch, name):
+    installed = []
+    original = plugin_host.PluginCell.install
+
+    def install(cell, *args, **kwargs):
+        result = original(cell, *args, **kwargs)
+        installed.append(cell.fresh_install_hash)
+        return result
+
+    monkeypatch.setattr(plugin_host.PluginCell, "install", install)
+    first, second = factory(name), factory(name)
+    assert first.server.port != second.server.port
+    assert installed == [first.fresh_install_hash, second.fresh_install_hash]
+    assert first.fresh_install_hash == second.fresh_install_hash
+    for host in (first, second):
+        for (directory, volatile), (_, digest, _) in zip(host.surfaces(), host._fresh, strict=True):
+            assert digest == plugin_host.surface_hash(directory, volatile)

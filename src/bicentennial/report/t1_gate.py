@@ -101,6 +101,7 @@ def t1_gate(card, baseline, corpus, *, invariants, crossing, arm="system") -> Ga
             or sorted(r["invariant"] for r in inv if type(r["invariant"]) is str) != sorted(INVARIANTS)
             or any(r["status"] not in INV_STATUSES for r in inv)):
         raise ValueError("exactly one valid verdict per invariant is required")
+    infra = {r["invariant"]: bool(r["infra"]) for r in inv}
     inv = {r["invariant"]: r["status"] for r in inv}
     if inv["INV-FORGET"] != "NOT_EXERCISED":
         raise ValueError("T1 does not exercise forgetting")
@@ -114,10 +115,11 @@ def t1_gate(card, baseline, corpus, *, invariants, crossing, arm="system") -> Ga
         raise ValueError("invalid corpus results")
     reasons, blocked, regressions, excluded, failed = set(), set(), [], [], []
     for name in GATED_T1:
-        if inv[name] == "INFRA_FAILURE":
+        # A FAIL verdict can still carry infra probes; RING0 §6 keeps them as blocked entries.
+        if inv[name] == "INFRA_FAILURE" or infra[name]:
             reasons.add("invariant_infra")
             blocked.add(f"invariant:{name}")
-        elif inv[name] != "PASS":
+        if inv[name] not in ("PASS", "INFRA_FAILURE"):
             reasons.add("invariant_fail")
     if baseline is None:
         reasons.add("baseline_absent")

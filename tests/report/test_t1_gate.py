@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -113,6 +113,10 @@ def scenarios():
                 blocked=(f"invariant:{name}",) if infra else ())
     add("mixed", invariants=invs(**{"INV-VERB": "FAIL", "INV-NEW": "INFRA_FAILURE"}),
         verdict="FAIL", reasons=("invariant_fail", "invariant_infra"), blocked=("invariant:INV-NEW",))
+    fail_infra = invs()
+    fail_infra[0] = replace(fail_infra[0], status="FAIL", failed=("p1",), infra=("p2",))
+    add("fail-with-infra-probe", invariants=fail_infra, verdict="FAIL",
+        reasons=("invariant_fail", "invariant_infra"), blocked=("invariant:INV-VERB",))
     add("corpus-infra", cases=corpus("INFRA_FAILURE", "infra"), verdict="BLOCKED",
         reasons=("corpus_infra",), blocked=("corpus:r1.wipe_on_restart",))
     add("corpus-fail", cases=bad, verdict="FAIL", reasons=("corpus_fail",), failed=(bad[0]["case_id"],))
