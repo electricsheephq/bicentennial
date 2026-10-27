@@ -497,6 +497,9 @@ def test_forget_removes_marker(tmp_path):
     verify(db)
     f = flip(db, s, "forget", fid)
     db1 = twin.apply(db, (f,), tmp_path / "twin.db")
+    request_t = db.execute("SELECT t_sim FROM event WHERE id=?", (event,)).fetchone()[0]
+    replacement, = db1.execute("SELECT kind FROM event WHERE t_sim=?", (request_t,)).fetchall()
+    assert replacement["kind"] == "filler"
     assert not db1.execute("SELECT 1 FROM fact WHERE predicate='forget_ref'").fetchall()
     assert not db1.execute("SELECT 1 FROM locked_token WHERE value LIKE 'REQ-%'").fetchall()
     assert not db1.execute("SELECT 1 FROM fact_surface WHERE fact_id=?", (fr.marker_fact_id,)).fetchall()
@@ -726,6 +729,13 @@ def test_source_evidence_swap(tmp_path):
     finish(db, s)
     f = flip(db, s, "source", fid)
     db1 = twin.apply(db, (f,), tmp_path / "twin.db")
+    carrier_id = plant(db, fid).carrier_event_id
+    carrier = db.execute("SELECT * FROM event WHERE id=?", (carrier_id,)).fetchone()
+    replacement = db1.execute("SELECT * FROM event WHERE id=?", (carrier_id,)).fetchone()
+    assert replacement["actor_id"] != carrier["actor_id"]
+    assert replacement["t_sim"] == carrier["t_sim"]
+    assert db1.execute("SELECT count(*) FROM event").fetchone()[0] == db.execute("SELECT count(*) FROM event").fetchone()[0]
+    assert not db1.execute("SELECT 1 FROM event WHERE kind='filler' AND t_sim=?", (replacement["t_sim"],)).fetchall()
     assert "evidence-fact" in f.facts and "evidence-event" in f.events
     assert json.loads(db1.execute("SELECT object FROM fact WHERE id='evidence-fact'").fetchone()[0]) == "accepted"
     assert rejection(db1, fid, plant(db, fid).carrier_event_id) is None

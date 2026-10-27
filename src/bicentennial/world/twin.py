@@ -215,7 +215,7 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
         missing -= {(r["table"], r["row"]["id"]) for r in added if r["table"] in ("event", "fact")}
         if any(canon(fid) in canon(r) for _, fid in sorted(missing) for r in retained):
             raise ValueError
-        occupied = {r["row"]["t_sim"] for r in retained if r["table"] == "event"}
+        occupied = {r["row"]["t_sim"] for r in retained + added if r["table"] == "event"}
         vacated = {r["row"]["t_sim"] for r in removed if r["table"] == "event"} - occupied
         for k in range(1, len(schedule.sessions) + 1):
             for n in range(1, TURNS + 1):
