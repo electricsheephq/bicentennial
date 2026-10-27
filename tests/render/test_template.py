@@ -516,6 +516,16 @@ def test_window_across_dst(tmp_path, tz, anchor, open_t, close_t, expected):
     assert commit_world(tmp_path, 'dst', open_t, close_t, anchor, tz)[1] == expected
 
 
+def test_windows_in_the_repeated_hour_render_apart(tmp_path):
+    # #68: 01:10-01:20 on 1 Nov happens twice in New York, an hour apart; the Tuesday scorer tells the
+    # two windows apart, so the text must, and only the ambiguous bounds carry an offset.
+    edt = commit_world(tmp_path, 'edt', 1793509800, 1793510400)[1]
+    est = commit_world(tmp_path, 'est', 1793513400, 1793514000)[1]
+    assert edt == 'between 01:10 -0400 and 01:20 -0400 tomorrow'
+    assert est == 'between 01:10 -0500 and 01:20 -0500 tomorrow'
+    assert window(1793503800, 1793509800, 1793520000, NY) == 'between 01:10 -0400 and 03:00 tomorrow'
+
+
 def test_k12_agreement(tmp_path):
     fixture = json.loads((ROOT / 'schemas/fixtures/gen/world.json').read_bytes())
     db = create_world(tmp_path / 'k12.sqlite', META)
