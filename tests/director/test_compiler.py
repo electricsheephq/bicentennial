@@ -501,7 +501,7 @@ def test_relative_scratch_adapter(tmp_path, monkeypatch):
 
 
 def test_import_boundaries():
-    allowed = {"json", "shlex", "dataclasses", "bicentennial.canon", "bicentennial.contracts.run",
+    allowed = {"json", "re", "shlex", "dataclasses", "bicentennial.canon", "bicentennial.contracts.run",
                "bicentennial.render.stream", "bicentennial.genres.g1_software.diffs",
                "bicentennial.sandbox.envserver.tools_g2"}
     for module, imports in ((compiler, allowed), (normalize, {
