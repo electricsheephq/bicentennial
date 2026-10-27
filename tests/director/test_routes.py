@@ -104,15 +104,21 @@ def test_duplicate_system_segment_refused_but_systems_are_independent():
     assert table.resolve("other", 1, FaultLite.load([], script()))["system"] == "other"
 
 
-@pytest.mark.parametrize("visions", [["vision-a"], [None, "vision-b"], ["vision-a", "vision-b"]])
-def test_non_null_and_moved_vision_refused(visions):
+@pytest.mark.parametrize("visions", [["vision-a"], ["vision-a", "vision-a", "vision-a"]])
+def test_non_null_vision_loads(visions):
     rows = [row(n) | {"vision": vision} for n, vision in enumerate(visions)]
-    with pytest.raises(ValueError):
+    assert RouteTable.load({"routes": rows}).to_obj() == {"routes": rows}
+
+
+@pytest.mark.parametrize("visions", [[None, "vision-b"], ["vision-a", "vision-b"], ["vision-a", None]])
+def test_moved_vision_refused(visions):
+    rows = [row(n) | {"vision": vision} for n, vision in enumerate(visions)]
+    with pytest.raises(ValueError, match="must not move vision"):
         RouteTable.load({"routes": rows})
 
 
 def test_vision_invariant_survives_future_schema_admission(monkeypatch):
-    # Isolate the explicitly requested future guard: K13 currently admits only null.
+    # Isolate the swap guard from schema validation.
     monkeypatch.setattr(routes, "validate", lambda name, obj: None)
     with pytest.raises(ValueError, match="must not move vision"):
         RouteTable.load({"routes": [row(10) | {"vision": "b"},
@@ -127,6 +133,8 @@ def test_noncanonical_segment_refused(segment):
 
 @pytest.mark.parametrize("obj", [{}, {"routes": [row() | {"extra": 1}]},
                                  {"routes": [row() | {"alias": ""}]},
+                                 {"routes": [row() | {"vision": ""}]},
+                                 {"routes": [row() | {"vision": 1}]},
                                  {"routes": [row() | {"served_by": "unknown"}]}])
 def test_route_schema_enforced(obj):
     with pytest.raises(ValueError):
