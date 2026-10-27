@@ -201,6 +201,9 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
             if tw.actor_id != carrier["actor_id"]:
                 swap("event", carrier, carrier | {"actor_id": tw.actor_id})
             if tw.evidence_fact_id is not None:
+                evidence_links = find("link", fact_id=tw.evidence_fact_id)
+                if any(find("event", id=link["event_id"])[0]["payload_json"] for link in evidence_links):
+                    raise ValueError
                 evidence, = find("fact", id=tw.evidence_fact_id)
                 swap("fact", evidence, evidence | {"object": tw.evidence_object, "polarity": tw.evidence_polarity})
         removed = [json.loads(line) for line in out]
@@ -270,17 +273,20 @@ def independent(db, schedule, flips, guards):
 
 
 def plan(db0, schedule, b0, *, principal_id):
-    flips, guards, ids = [], {}, {}
+    flips, guards, ids, refused = [], {}, {}, []
     for item, meta in b0.entries:
         if meta["twin_type"] is None:
             continue
         key = meta["template_id"], meta["instance_key"]
-        flips.append(plan_flip(db0, schedule, key=key, twin_type=meta["twin_type"],
-                               decisive_fact_id=meta["decisive_fact_id"], principal_id=principal_id))
+        try:
+            flips.append(plan_flip(db0, schedule, key=key, twin_type=meta["twin_type"],
+                                   decisive_fact_id=meta["decisive_fact_id"], principal_id=principal_id))
+        except ValueError:
+            refused.append(key)
         guards[key] = frozenset(item["gold_spans"]), guard(db0, item, meta["decisive_fact_id"])
         ids[key] = item["item_id"]
     accepted, rejected = independent(db0, schedule, flips, guards)
-    rejected = list(rejected)
+    rejected = [*refused, *rejected]
     values = dict(db0.execute("SELECT token_id, value FROM locked_token"))
     for f in accepted:
         if f.kind != "value":
