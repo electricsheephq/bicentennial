@@ -490,6 +490,34 @@ def test_loop_side_required(tree, side, busy):
     assert codes(load_result(tree)) == {f"loop_time_unmeasured:{side}"}
 
 
+@pytest.mark.parametrize("status", ["BLOCKED", "INFRA_FAILURE"])
+@pytest.mark.parametrize("tier,arm", [("t0", None), ("t1", "system"), ("t1", "wiped")])
+def test_receipt_run_status_must_match_complete_card(tree, status, tier, arm):
+    path = unit_path(tree, tier=tier, unit=arm or tree.rels[0])
+    rewrite_receipt(path, run_status=status)
+    assert accept.main(argv(tree)) == 1
+    result = load_result(tree)
+    assert not result["accepted"]
+    assert codes(result) == {"run_status"}
+    check = next(c for c in result["checks"] if c["name"] == "run_status")
+    assert check["failures"] == [["run_status", (path / "receipt.json").relative_to(tree.runs).as_posix()]]
+
+
+def test_empty_marker_readings_are_unmeasured(tree, capsys):
+    for system in accept.SYSTEMS:
+        for run in accept.RUNS["t1"]:
+            rewrite_receipt(unit_path(tree, system=system, name=run), busy_marker_readings=[])
+    rewrite_receipt(unit_path(tree), busy_marker_readings=[True])
+    assert accept.main(argv(tree)) == 1
+    result = load_result(tree)
+    assert not result["accepted"]
+    assert codes(result) == {"loop_time_unmeasured:idle"}
+    assert "loop_time_unmeasured:idle" in capsys.readouterr().out
+    assert result["loop_time"]["T1"]["idle_n"] == 0
+    assert result["loop_time"]["T1"]["idle_max_ms"] is None
+    assert result["loop_time"]["T1"]["busy_n"] == 1
+
+
 def test_constants():
     assert accept.T1_DISCLOSURES == tuple(n for n, _ in compare.DISCLOSURES)
     assert accept.PLUGIN_T1_DISCLOSURES == tuple(n for n, _ in compare.PLUGIN_DISCLOSURES)

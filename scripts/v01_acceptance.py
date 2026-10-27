@@ -308,7 +308,15 @@ class Predicates:
         return tuple(("t0_pack_set", r.where) for r in self.runs if r.tier == "t0" and r.units != self.packs)
 
     def run_status(self):
-        return tuple(("run_status", f"{r.where}/{u}") for r, u, c in self.units() if c.get("run_status") != "COMPLETE")
+        failures = []
+        for r, unit, card in self.units():
+            status = card.get("run_status")
+            if status != "COMPLETE":
+                failures.append(("run_status", f"{r.where}/{unit}"))
+            receipt_status = obj(r.obj(f"{unit}/receipt.json")).get("run_status")
+            if receipt_status != status or receipt_status != "COMPLETE":
+                failures.append(("run_status", f"{r.where}/{unit}/receipt.json"))
+        return tuple(failures)
 
     def compare(self, a, b, rel, code, normalize=False):
         if any((r.where, rel) in self.invalid or rel not in r.files for r in (a, b)):
@@ -506,7 +514,8 @@ def manifest(args, runs, packs, failures, excluded, invalid, api, systems):
             receipt = obj(r.obj(f"{unit}/receipt.json"))
             spend = receipt.get("spend_micro_usd")
             row["spend_micro_usd"] += spend if type(spend) is int else 0
-            if (r.tier == "t0" or unit == "system") and (r.where, f"{unit}/receipt.json") not in invalid:
+            if ((r.tier == "t0" or unit == "system") and (r.where, f"{unit}/receipt.json") not in invalid
+                    and receipt.get("busy_marker_readings")):
                 ms, busy = api.loop_time(receipt)
                 row["loop"].append(dict(unit=unit, ms=ms, busy=busy))
                 stats = timing[r.tier.upper()]

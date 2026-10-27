@@ -32,6 +32,7 @@ from bicentennial.harness.hermes.adapter import (
 )
 from bicentennial.harness.hermes.config import PLACEHOLDER_KEY
 from bicentennial.ledger import BlobStore, Guard, verify
+from bicentennial.runner.life import PluginWake
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.surfaces import surface_hash, verify_empty
@@ -670,3 +671,39 @@ def test_fresh_install_hash_is_port_stable_and_direct(tmp_path, name):
     finally:
         for a in reversed(opened):
             a.close()
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_plugin_wake_hashes_are_port_stable(tmp_path, monkeypatch, name):
+    repo, digest, _ = plugin_repo(tmp_path, name)
+    records, raw = [], []
+    for port in (41001, 51002):
+        root = tmp_path / str(port)
+        paths = {key: root / key for key in ("home", "hermes_home", "workspace", "tmp")}
+        for path in paths.values():
+            path.mkdir(parents=True)
+        paths["root"] = root
+        fake = SimpleNamespace(paths=paths, director=SimpleNamespace(run_values={"director_port": str(port)}))
+        e = entry(name)
+        e["artifact"]["sha256"] = digest
+        cell = PluginCell(e, fake)
+        cell.install(repo, alias="bicentennial-main")
+        raw.append([h for _, h in cell.snapshots])
+        hook = PluginWake()
+        hook.cell = cell
+        assert hook("session_start") is False
+        for _, directory in cell.surfaces:
+            (directory / "unwiped").write_bytes(b"retained memory")
+        assert hook("kill") is True
+        for (s, directory), (_, fresh) in zip(cell.surfaces, cell.snapshots, strict=True):
+            verify_empty(directory, s["volatile_paths"], fresh)
+        rows = hook.records()
+        assert all(s["post_wipe_hash"] == s["fresh_install_hash"] for s in rows[1]["surfaces"])
+        records.append(canon(rows))
+        monkeypatch.setattr(cell, "wipe", lambda: True)
+        for _, directory in cell.surfaces:
+            (directory / "unwiped").write_bytes(b"retained memory")
+        hook("restart")
+        assert all(s["post_wipe_hash"] != s["fresh_install_hash"] for s in hook.records()[2]["surfaces"])
+    assert raw[0] != raw[1]
+    assert records[0] == records[1]
