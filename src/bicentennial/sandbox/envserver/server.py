@@ -26,6 +26,39 @@ def _load(raw):
     return value
 
 
+MAX_DEPTH = 64
+
+
+def _canonical(value):
+    try:
+        canon(value)
+        return True
+    except (ValueError, TypeError, RecursionError):
+        return False
+
+
+def _shallow(value):
+    stack = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > MAX_DEPTH:
+            return False
+        children = item.values() if type(item) is dict else item if type(item) is list else ()
+        stack.extend((child, depth + 1) for child in children)
+    return True
+
+
+def _envelope(line):
+    """Only the envelope decides whether a line is malformed; the wire is UTF-8 whatever the locale."""
+    msg = json.loads(line.decode("utf-8") if type(line) is bytes else line, object_pairs_hook=_object)
+    if (type(msg) is not dict or msg.get("jsonrpc") != "2.0"
+            or type(msg.get("method")) is not str or not _shallow(msg)
+            or ("id" in msg and (type(msg["id"]) not in (str, int, type(None))
+                                 or not _canonical(msg["id"])))):
+        raise ValueError("invalid request")
+    return msg
+
+
 def _tools(state):
     tools = []
     for tool in state.tools.values():
@@ -64,29 +97,32 @@ def serve(seed, log_dir, clock, source, sink):
         boundary("session_start")
         for line in source:
             try:
-                msg = _load(line)
-                if (type(msg) is not dict or msg.get("jsonrpc") != "2.0"
-                        or type(msg.get("method")) is not str
-                        or ("id" in msg and type(msg["id"]) not in (str, int, type(None)))):
-                    raise ValueError("invalid request")
-            except (ValueError, TypeError, UnicodeError):
+                msg = _envelope(line)
+            except (ValueError, TypeError, RecursionError):
                 write({"type": "malformed"})
                 continue
             if "id" not in msg:
                 continue
-            method, params = msg["method"], msg.get("params", {})
+            # Params that canon cannot encode (a float, a lone surrogate) are answered, never dropped.
+            clean = _canonical(msg)
+            method, params = msg["method"], msg.get("params", {}) if clean else {}
             response = {"jsonrpc": "2.0", "id": msg["id"]}
             if method == "tools/call":
                 seq += 1
                 t_sim = now()
+                raw = msg.get("params")
                 params = params if type(params) is dict else {}
                 name, args = params.get("name"), params.get("arguments", {})
                 changed, ok = False, False
-                try:
-                    text, changed = state.call(name, args)
-                    ok = True
-                except (ValueError, TypeError) as error:
-                    text = str(error)
+                if not clean:
+                    name = raw.get("name") if type(raw) is dict and _canonical(raw.get("name")) else None
+                    args, text = None, "arguments must be canonical JSON: no floats or lone surrogates"
+                else:
+                    try:
+                        text, changed = state.call(name, args)
+                        ok = True
+                    except (ValueError, TypeError) as error:
+                        text = str(error)
                 result = {"content": [{"type": "text", "text": text}], "isError": not ok}
                 write({"type": "action", "seq": seq, "session": seed["session"], "t_sim": t_sim,
                        "tool": name, "args": args, "ok": ok, "state_changed": changed,
@@ -104,7 +140,7 @@ def serve(seed, log_dir, clock, source, sink):
                 response["error"] = {"code": -32601, "message": "method not found"}
             if "error" not in response:
                 response["result"] = result
-            sink.write(canon(response).decode("utf-8") + "\n")
+            sink.write(canon(response) + b"\n")
             sink.flush()
         boundary("session_end")
     return state.state
@@ -115,4 +151,4 @@ def main():
     for name in ("seed", "log-dir", "clock"):
         parser.add_argument(f"--{name}", required=True, type=Path)
     args = parser.parse_args()
-    serve(_load(args.seed.read_bytes()), args.log_dir, args.clock, sys.stdin, sys.stdout)
+    serve(_load(args.seed.read_bytes()), args.log_dir, args.clock, sys.stdin.buffer, sys.stdout.buffer)

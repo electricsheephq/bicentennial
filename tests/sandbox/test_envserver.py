@@ -210,8 +210,8 @@ def test_protocol_negatives_and_append_fsync(seed, tmp_path, monkeypatch):
              request(5, "tools/call", name="book_seat", arguments=[]),
              request(6, "tools/call", name="ask_user", arguments={"question": None}),
              request(7, "tools/call")]
-    source = io.StringIO("\n".join(malformed + [canon(msg).decode() for msg in calls]) + "\n")
-    sink = io.StringIO()
+    source = io.BytesIO(("\n".join(malformed + [canon(msg).decode() for msg in calls]) + "\n").encode())
+    sink = io.BytesIO()
     assert serve(seed, tmp_path, clock, source, sink) == seed["state"]
     rows = records_at(tmp_path)
     assert rows[1:6] == [{"type": "malformed"}] * 5
@@ -223,9 +223,40 @@ def test_protocol_negatives_and_append_fsync(seed, tmp_path, monkeypatch):
     assert replies[1]["error"]["code"] == -32601
     assert all(row["result"]["isError"] for row in replies[2:])
     assert trace(rows, {"book_seat"}) == (True, False, None)
-    serve(seed, tmp_path, clock, io.StringIO(""), io.StringIO())
+    serve(seed, tmp_path, clock, io.BytesIO(b""), io.BytesIO())
     assert records_at(tmp_path) == rows + [rows[0], rows[-1]]
     assert clock.read_bytes() == canon({"sim_start": 20, "rate": 0, "wall_anchor": 0, "step_s": 1})
+
+
+def test_wire_is_utf8_and_hostile_lines_never_stop_the_server(seed, tmp_path):
+    seed_path, clock = tmp_path / "seed.json", tmp_path / "clock.json"
+    seed_path.write_bytes(canon(seed))
+    clock_at(clock, 100)
+    deep = b'{"jsonrpc":"2.0","id":9,"method":"ping","params":' + b"[" * 3000 + b"]" * 3000 + b"}"
+    lines = [b"\xff\xfe garbage", deep, b"[" * 3000,
+             canon(request(1, "tools/call", name="book_seat",
+                           arguments={"passenger": "p", "seat": "\u00e9"})),
+             b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"book_seat",'
+             b'"arguments":{"passenger":"q","seat":7.5}}}',
+             b'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ask_user",'
+             b'"arguments":{"question":"hi \\ud83d"}}}',
+             canon(request(4, "ping"))]
+    env = {"PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "PYTHONIOENCODING": "latin-1"}
+    done = subprocess.run(
+        [sys.executable, "-m", "bicentennial.sandbox.envserver", "--seed", str(seed_path),
+         "--log-dir", str(tmp_path), "--clock", str(clock)],
+        input=b"\n".join(lines) + b"\n", capture_output=True, timeout=30, env=env, cwd=ROOT)
+    assert done.returncode == 0, done.stderr.decode()
+    replies = [json.loads(line) for line in done.stdout.splitlines()]
+    assert [row["id"] for row in replies] == [1, 2, 3, 4]
+    assert [row["result"].get("isError") for row in replies] == [False, True, True, None]
+    rows = records_at(tmp_path)
+    assert [row["type"] for row in rows] == ["boundary"] + ["malformed"] * 3 + ["action"] * 3 + ["boundary"]
+    assert [(row["tool"], row["args"], row["ok"]) for row in rows[5:7]] == [
+        ("book_seat", None, False), ("ask_user", None, False)]
+    booked = copy.deepcopy(seed["state"])
+    booked["seats"]["p"] = "\u00e9"
+    assert rows[-1]["state_hash"] == state_hash(booked)
 
 
 def test_honeypot(tmp_path):
