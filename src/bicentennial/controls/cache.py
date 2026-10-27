@@ -1,5 +1,6 @@
-"""Canonical, pinned and independently recomputed cached-control entries."""
+"""Canonical cached-control entries: integrity-checked, stale on any code-hash change, with aggregates recomputed on read."""
 
+import ast
 import json
 import os
 import re
@@ -25,6 +26,40 @@ CONTROL_FILES = ("api/adapters/nomemory.py", "api/adapters/oracle_evidence.py",
                  "controls/cache.py", "controls/common.py", "controls/full_history.py",
                  "controls/no_memory.py", "controls/oracle_evidence.py", "world/tokens.py")
 MIN_GAP_MILLI = 500
+
+
+def import_closure(roots, *, root=PACKAGE_ROOT):
+    pending, found = set(roots), set()
+    while pending:
+        path = min(pending)
+        found.add(path)
+        package = ("bicentennial", *Path(path).parts[:-1])
+        for node in ast.walk(ast.parse((root / path).read_bytes())):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                prefix = package[:len(package) - node.level + 1] if node.level else ()
+                base = ".".join((*prefix, node.module or "")).rstrip(".")
+                names = [base, *(base + "." + alias.name for alias in node.names)]
+            else:
+                continue
+            for name in sorted(names):
+                parts = name.split(".")
+                if parts[0] != "bicentennial":
+                    continue
+                for length in range(1, len(parts) + 1):
+                    stem = "/".join(parts[1:length])
+                    file = next((p for p in (root / (stem + ".py" if stem else "__init__.py"),
+                                            root / stem / "__init__.py") if p.is_file()), None)
+                    if file is not None:
+                        pending.add(file.relative_to(root).as_posix())
+        pending -= found
+    return tuple(sorted(found))
+
+
+CONTROL_FILES = tuple(sorted(set(CONTROL_FILES) | {p for p in import_closure(
+    (*READER_FILES, *(f"controls/{p.name}" for p in sorted((PACKAGE_ROOT / "controls").glob("*.py")))))
+    if p not in READER_FILES and Path(p).parent != Path("score")}))
 
 
 class ControlsTampered(ValueError):

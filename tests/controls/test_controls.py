@@ -8,6 +8,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from hashlib import sha256
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -415,6 +416,101 @@ def test_code_hashes_read_contents_and_self_exclusion(tmp_path):
         cache.code_sha256(["missing.py"], root=root)
 
 
+def independent_closure(roots, root):
+    modules = {}
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        parts = relative.with_suffix("").parts
+        name = ".".join(("bicentennial", *(parts[:-1] if parts[-1] == "__init__" else parts)))
+        modules[name] = relative.as_posix()
+    found, queue = set(), list(roots)
+    while queue:
+        relative = queue.pop(0)
+        if relative in found:
+            continue
+        found.add(relative)
+        package = ".".join(("bicentennial", *Path(relative).parts[:-1]))
+        names = []
+        for node in ast.walk(ast.parse((root / relative).read_text())):
+            if isinstance(node, ast.Import):
+                names.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                base = resolve_name("." * node.level + (node.module or ""), package)
+                names.extend([base, *(base + "." + alias.name for alias in node.names)])
+        for name in sorted(names):
+            parts = name.split(".")
+            for length in range(1, len(parts) + 1):
+                module = ".".join(parts[:length])
+                if module in modules and modules[module] not in found:
+                    queue.append(modules[module])
+    return tuple(sorted(found))
+
+
+def test_import_closure_covers_all_three_code_hashes():
+    root = cache.PACKAGE_ROOT
+    roots = tuple(p.relative_to(root).as_posix() for p in sorted((root / "controls").glob("*.py")))
+    closure = independent_closure((*roots, *cache.READER_FILES), root)
+    assert cache.import_closure((*roots, *cache.READER_FILES)) == closure
+    scorer = tuple(p.relative_to(root).as_posix() for p in sorted((root / "score").glob("*.py")))
+    controls = tuple(p for p in closure if p not in scorer and p not in cache.READER_FILES)
+    assert cache.CONTROL_FILES == controls
+    assert set(closure) <= set(cache.CONTROL_FILES) | set(cache.READER_FILES) | set(scorer)
+    assert {"api/adapters/nomemory.py", "api/adapters/oracle_evidence.py",
+            "api/adapters/reference_store.py", "api/contract.py", "contracts/items.py",
+            "controls/__init__.py", "controls/cache.py", "controls/common.py",
+            "controls/full_history.py", "controls/no_memory.py", "controls/oracle_evidence.py",
+            "world/tokens.py"} <= set(cache.CONTROL_FILES)
+    key = cache.cache_key(fixture_input()[0], harness_pin=PIN)
+    for field, paths in (("reader_sha256", cache.READER_FILES), ("scorer_sha256", scorer),
+                         ("controls_sha256", controls)):
+        assert key[field] == sha256_canon([
+            [p, sha256((root / p).read_bytes()).hexdigest()] for p in sorted(paths)])
+
+
+def test_import_closure_resolves_import_forms_without_execution(tmp_path):
+    sources = {
+        "__init__.py": "raise RuntimeError('must not import')",
+        "start.py": "import json\nimport bicentennial.pkg.leaf as leaf\n"
+                    "from bicentennial import sibling\nfrom .pkg import child\n"
+                    "from bicentennial.absent import missing",
+        "sibling.py": "",
+        "pkg/__init__.py": "from . import child",
+        "pkg/leaf.py": "from .. import sibling\nfrom .child import value",
+        "pkg/child.py": "from ..start import value\nfrom . import absent",
+        "unused.py": "",
+    }
+    for relative, source in sorted(sources.items()):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    expected = tuple(sorted(set(sources) - {"unused.py"}))
+    assert independent_closure(("start.py",), tmp_path) == expected
+    assert cache.import_closure(("start.py",), root=tmp_path) == expected
+    assert cache.import_closure(("pkg/__init__.py", "start.py", "start.py"), root=tmp_path) == expected
+
+
+@pytest.mark.parametrize("relative", ["render/stream.py", "canon.py"])
+def test_transitive_code_edit_invalidates_controls(tmp_path, relative):
+    inp, _ = fixture_input()
+    root = tmp_path / "package"
+    shutil.copytree(cache.PACKAGE_ROOT, root, ignore=shutil.ignore_patterns("__pycache__"))
+    key = cache.cache_key(inp, harness_pin=PIN, root=root)
+    path = tmp_path / "controls.json"
+    cache.write_entry(path, computed())
+    assert cache.read_entry(path, key) is not None
+    source = root / relative
+    source.write_bytes(source.read_bytes() + b" ")
+    changed = cache.cache_key(inp, harness_pin=PIN, root=root)
+    assert changed["controls_sha256"] != key["controls_sha256"]
+    assert {field for field in key if key[field] != changed[field]} == {"controls_sha256"}
+    assert cache.read_entry(path, changed) is None
+
+
+def test_cache_docstring_states_verification_boundary():
+    assert cache.__doc__ == ("Canonical cached-control entries: integrity-checked, stale on any "
+                             "code-hash change, with aggregates recomputed on read.")
+
+
 def reseal(entry):
     entry["digest"] = sha256_canon({k: v for k, v in entry.items() if k != "digest"})
 
@@ -572,7 +668,7 @@ def test_determinism():
 
 
 def assert_pure(tree):
-    allowed = {"json", "os", "tempfile", "hashlib", "re", "fractions", "pathlib", "dataclasses",
+    allowed = {"ast", "json", "os", "tempfile", "hashlib", "re", "fractions", "pathlib", "dataclasses",
                "collections.abc", "bicentennial.canon", "bicentennial.contracts.run",
                "bicentennial.contracts.items", "bicentennial.api.contract",
                "bicentennial.api.adapters.nomemory", "bicentennial.api.adapters.oracle_evidence",
