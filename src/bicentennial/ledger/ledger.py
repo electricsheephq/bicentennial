@@ -64,9 +64,10 @@ class Ledger:
             rec = dict(rec, seq=self._seq + 1, prev_hash=self._prev,
                        lock_hash=self.lock_hash, attempt_id=self.attempt_id)
             rec["hash"] = sha256(self._prev.encode() + canon(rec)).hexdigest()
+            # The guard runs first: a schema error names unexpected keys, and a key can hold a credential.
+            line = self.guard.check(canon(rec) + b"\n")
             if rec["type"] == "request":
                 validate("ledger-record", rec)
-            line = self.guard.check(canon(rec) + b"\n")
             self._file.write(line)
             self._file.flush()
             os.fsync(self._file.fileno())

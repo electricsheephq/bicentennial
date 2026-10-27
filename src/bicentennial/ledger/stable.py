@@ -53,8 +53,12 @@ def apply_masks(obj, run_values: dict[str, str]):
 
 
 def stable_digest(records: list[dict], run_values: dict[str, str]) -> str:
-    projected = [apply_masks({k: v for k, v in rec.items() if k in _SCHEMA["properties"]
-                 and _SCHEMA["properties"][k]["x-stability"] == "stable"}, run_values)
+    stable = {k for k, p in _SCHEMA["properties"].items() if p["x-stability"] == "stable"}
+    # The sha256 fields already cover masked bodies; masking them again would let a run value
+    # (the port, say) that happens to occur inside a hex digest rewrite it.
+    digests = {k for k in stable if _SCHEMA["properties"][k].get("pattern") == "^[0-9a-f]{64}$"}
+    projected = [dict(apply_masks({k: v for k, v in rec.items() if k in stable - digests}, run_values),
+                      **{k: rec[k] for k in digests if k in rec})
                  for rec in records if rec.get("type") == "request"]
 
     def order(rec):

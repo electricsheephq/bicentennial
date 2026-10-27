@@ -14,7 +14,9 @@ def _scan(path):
     counts = dict(records=0, chain_breaks=0, truncated_tail=int(bool(raw) and
                   not raw.endswith(b"\n")), bad_blobs=0, missing_lock_fields=0)
     prev, records = "0" * 64, []
-    for index, line in enumerate(raw.splitlines(), 1):
+    # Only \n ends a line: splitlines() would also split on \r, hiding a one-byte tamper.
+    lines = raw.split(b"\n")[:-1] if raw.endswith(b"\n") else raw.split(b"\n")
+    for index, line in enumerate(lines if raw else [], 1):
         try:
             rec = json.loads(line)
             if not isinstance(rec, dict):

@@ -307,3 +307,41 @@ def test_stable_projection_and_numeric_cursor_order(tmp_path):
     expected = [projected[i] for i in (1, 3, 2, 0)]
     assert stable_digest(records, RUN_VALUES) == sha256(canon(expected)).hexdigest()
     assert stable_digest([], RUN_VALUES) == sha256(canon([])).hexdigest()
+
+
+def test_credential_in_a_field_name_never_reaches_the_schema_error(tmp_path, monkeypatch):
+    needle = "".join(chr(n) for n in [75, 51, 89, 45, 102, 97, 107, 101, 45, 110, 97, 109, 101])
+    monkeypatch.setenv("R02_TEST_KEY_NAME", needle)
+    writer = ledger(tmp_path, Guard(["R02_TEST_KEY_NAME"]))
+    try:
+        for rec in (request(**{needle: 1}), request(cursor={"session": 1, "turn": 1, needle: 1})):
+            with pytest.raises(CredentialLeak) as error:
+                writer.append(rec)
+            assert needle not in str(error.value)
+        assert (tmp_path / "ledger.jsonl").read_bytes() == b""
+    finally:
+        writer.close()
+
+
+def test_a_carriage_return_in_place_of_a_newline_is_a_chain_break(tmp_path):
+    writer = ledger(tmp_path)
+    try:
+        for n in range(3):
+            writer.append({"type": "lifecycle", "n": n})
+    finally:
+        writer.close()
+    path = tmp_path / "ledger.jsonl"
+    raw = path.read_bytes()
+    path.write_bytes(raw.replace(b"\n", b"\r", 1))
+    assert verify(tmp_path)["chain_breaks"] >= 1
+    with pytest.raises(ChainBroken):
+        ledger(tmp_path)
+
+
+def test_a_run_value_inside_a_hex_digest_is_not_masked(tmp_path):
+    rec = {k: v for k, v in request().items()}
+    digest = "0f48123" + "a" * 57  # the port of run A occurs inside the hash
+    a = [dict(rec, seq=1, req_masked_sha256=digest, lock_hash=LOCK, attempt_id="x", type="request")]
+    b = [dict(a[0])]
+    assert stable_digest(a, RUN_VALUES) == stable_digest(
+        b, {"sandbox_root": "/sandbox/run-b", "director_port": "49123"})
