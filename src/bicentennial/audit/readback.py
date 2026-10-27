@@ -8,7 +8,7 @@ from collections import Counter
 from compression import zstd
 from pathlib import Path
 
-from bicentennial.audit.effects import strings
+from bicentennial.audit.effects import request_wire, strings
 from bicentennial.keyed import mint_id
 from bicentennial.ledger import BlobStore, verify
 
@@ -206,16 +206,27 @@ def _n_calls(obj):
         len(v) if k == "tool_calls" and isinstance(v, list) else _n_calls(v) for k, v in obj.items())
 
 
+def _minted_ids(rows, blobs):
+    """Kit mint budgets: scripted turns share the attempt seed; other records use their ledger role."""
+    budget = Counter()
+    for r in rows:
+        attempt = r.get("attempt_id")
+        if isinstance(attempt, str):
+            seed = attempt if r.get("cursor") is not None else canon([attempt, r["role"]]).decode()
+            budget[seed] += 1 + _n_calls(blobs.get(r.get("resp")))
+    return {mint_id(seed, k): (seed, k) for seed, n in budget.items() for k in range(1, n + 1)}
+
+
 def _items(body, wire):
     """A request's history items. A string input is one user message; token ids and other non-object
     items (an embeddings request's input) carry no history, and their strings stay in the other channel."""
-    items = body.get("messages" if wire == "chat" else "input", [])
+    items = [] if wire == "embeddings" else body.get("messages" if wire == "chat" else "input", [])
     items = [{"type": "message", "role": "user", "content": items}] if isinstance(items, str) else items
     return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
 
 
 def conversation(body, wire):
-    if wire == "chat":
+    if wire != "responses":
         return list(strings([m.get("content", "") for m in _items(body, wire) if m.get("role") != "tool"]))
     return list(strings([body.get("instructions", ""), [m.get("content", "") for m in _items(body, wire)
                         if m.get("type", "message") == "message"]]))
@@ -293,12 +304,8 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
         if r.get("served") == "write_tool_calls" and not refused(r, blobs.get(r.get("resp"))):
             for tc in output(blobs[r["resp"]], wire)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
-    minted, last_k, served_ids = {}, {}, set()  # kit: each mintable id -> (attempt id, counter)
-    if fmt == "kit":
-        budget = Counter()
-        for r in rows:
-            budget[r.get("attempt_id")] += 1 + _n_calls(blobs.get(r.get("resp")))
-        minted = {mint_id(a, k): (a, k) for a, n in budget.items() if isinstance(a, str) for k in range(1, n + 1)}
+    minted = _minted_ids(rows, blobs) if fmt == "kit" else {}
+    last_k, served_ids = {}, set()  # each namespace's last served counter; ids served once in the ledger
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
         attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
@@ -320,18 +327,18 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 # the harness gets the calls only: no reply or reasoning text
                 a5["served_write_text"].append(seq)
             following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
-                              rr.get("cursor") == cursor and results(bb, wire)), None)
+                              rr.get("cursor") == cursor and results(bb, request_wire(rr, wire))), None)
             if following is None:
                 following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
                                   rr.get("role") in {"replay_main", "write_turn", "probe_main"}), None)
             new_results, seen_at = {}, {}  # one turn's results may arrive over several continuation requests
             for rr, bb in requests:
                 if rr["seq"] > seq and rr.get("cursor") == cursor:
-                    for tid, out in results(bb, wire).items():
+                    for tid, out in results(bb, request_wire(rr, wire)).items():
                         new_results.setdefault(tid, out)
                         seen_at.setdefault(tid, rr["seq"])
             if not new_results and following:
-                new_results = results(following[1], wire)
+                new_results = results(following[1], request_wire(following[0], wire))
                 seen_at = dict.fromkeys(new_results, following[0]["seq"])
             for tid in new_results.keys() - results(body, wire).keys() - {tc["id"] for tc in served}:
                 if not issued_at.get(tid, float("inf")) < seen_at[tid]:  # another record's earlier call is not unissued
@@ -367,12 +374,13 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                         label = tc["id"] if tc["id"] is not None else f"{seq}:{n}:{j}"
                         # reachability counts only calls and results new relative to the triggering request
                         prior_calls, prior_results = {c for c, _ in calls_in(body, wire)}, results(body, wire).keys()
-                        new_calls = calls_in(following[1], wire) - calls_in(body, wire) if following else set()
+                        new_calls = (calls_in(following[1], request_wire(following[0], wire)) - calls_in(body, wire)
+                                     if following else set())
                         later = set()  # calls and results are new against their own kind: an old call, new result is new
                         for rr, bb in requests:
-                            if rr["seq"] > seq:
-                                later |= {c for c, _ in calls_in(bb, wire)} - prior_calls
-                                later |= results(bb, wire).keys() - prior_results
+                            if rr["seq"] > seq:  # each later request read on its own wire
+                                later |= {c for c, _ in calls_in(bb, request_wire(rr, wire))} - prior_calls
+                                later |= results(bb, request_wire(rr, wire)).keys() - prior_results
                         blocked = (not any(c["name"] == tc["name"] for c in served) and not any(
                             nm == tc["name"] for _, nm in new_calls) and (tc["id"] is None or tc["id"] not in later
                             and not any(i == tc["id"] for i, _ in new_calls)))  # a kit attempt has no id clauses
@@ -422,7 +430,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
         for r, body in requests:
             if r["seq"] > origin:
                 hit = {"record": r["seq"], "write_record": origin}
-                conv, tool, other = channels(body, wire)  # case-sensitive substring, every string, labelled
+                conv, tool, other = channels(body, request_wire(r, wire))  # case-sensitive substring, every string, labelled
                 if any(text in part for part in conv):
                     a5["text_hits"].append(hit)
                     if text in conv:

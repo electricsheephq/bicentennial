@@ -599,6 +599,19 @@ def test_blocked_singleton_shows_in_worst_case_blocked():
     validate('card_ring0', c)
 
 
+def test_compare_blocks_a_singleton_blocked_in_any_arm():
+    # #70, PREREG §7: a singleton BLOCKED after exhausted retries in one arm is BLOCKED for every system.
+    ok, blocked = qa_singleton(), qa_singleton(cause='INFRA_FAILURE')
+    assert ok['score_milli'] is not None and blocked['failure_class'] == 'BLOCKED'
+    lives = {ok['item_id']: 'life-g1'}
+    out = compare(dict(system=([ok], []), wiped=([blocked], [])), singleton_lives=lives)
+    for arm in out.values():
+        assert arm['coverage'] == dict(assigned=1, scored=0, blocked=1, na_exposure=0, na_clock=0,
+                                       coverage_milli=0, incomplete=True)
+        assert arm['worst_case'] == [dict(stage='remember', track='Recall', score_milli=None, blocked=1)]
+    # A singleton-only reduce of the scored arm is unchanged.
+    assert reduce([ok], [], singleton_lives=lives)['coverage']['incomplete'] is False
+
 def test_score_act_reads_a_sqlite_row_commitment():
     item = load('schemas/fixtures/gen/act-item.json')
     table = load('tests/fixtures/decision_table/contracts.json')['contracts']['decision_table']

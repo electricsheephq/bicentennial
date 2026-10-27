@@ -27,6 +27,14 @@ def _links(db, fact_ids):
                                          f'ON e.id = l.event_id WHERE l.fact_id IN ({marks})', fact_ids)]
 
 
+def _coverage(db, subject_id, predicates, t):
+    """Sorted ids of the subject's facts with a requested predicate and any link before t."""
+    marks = ','.join('?' * len(predicates))
+    return sorted(r[0] for r in db.execute(
+        'SELECT DISTINCT f.id FROM fact f JOIN link l ON l.fact_id = f.id JOIN event e ON e.id = l.event_id '
+        f'WHERE f.subject_id = ? AND f.predicate IN ({marks}) AND e.t_sim < ?', (subject_id, *predicates, t)))
+
+
 def forget_request(db, event_id) -> ForgetRequest:
     """Read one request back from rows, re-running every refusal check."""
     row = db.execute('SELECT * FROM forget_request WHERE event_id = ?', (event_id,)).fetchone()
@@ -40,10 +48,14 @@ def forget_request(db, event_id) -> ForgetRequest:
     if len(subjects) != 1 or not covered:
         raise ValueError('a request covers facts of one subject')
     (subject,), predicates = subjects, tuple(sorted(json.loads(r['object']) for r in asks))
+    if list(covered) != _coverage(db, subject, predicates, t):
+        raise ValueError('the saved coverage differs from the current rows')
     tokens = [db.execute('SELECT value FROM locked_token WHERE fact_id = ?', (f,)).fetchall() for f in covered]
     if any(len(found) != 1 for found in tokens):
         raise ValueError('every covered fact needs exactly one locked token')
     lineage = closure(db, covered)
+    if lineage.other:
+        raise ValueError('an unsupported derivative kind in the lineage')
     reach = (*covered, *lineage.facts)
     times = dict(db.execute(f'SELECT id, t_sim FROM event WHERE id IN ({",".join("?" * len(lineage.events))})',
                             tuple(lineage.events)).fetchall())
@@ -80,11 +92,7 @@ def request_forget(db, *, life, key, event: Ev, subject_id, predicates: tuple[st
         write_event(db, mint(0), event, ('chat', 'mail'))
         for i, predicate in enumerate(sorted(predicates)):
             write_fact(db, mint(i + 1), mint(0), subject_id=subject_id, predicate='forget', object=predicate)
-        marks = ','.join('?' * len(predicates))
-        covered = sorted(r[0] for r in db.execute(
-            'SELECT DISTINCT f.id FROM fact f JOIN link l ON l.fact_id = f.id JOIN event e ON e.id = l.event_id '
-            f'WHERE f.subject_id = ? AND f.predicate IN ({marks}) AND e.t_sim < ?',
-            (subject_id, *predicates, event.t_sim)))
+        covered = _coverage(db, subject_id, predicates, event.t_sim)
         if not covered:
             raise ValueError('a forget request must cover a fact')
         insert_forget_request(db, event_id=mint(0), covered_fact_ids_json=covered)
