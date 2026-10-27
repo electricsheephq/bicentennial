@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from bicentennial.canon import canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.core import AUX_TASKS
 from bicentennial.harness.hermes import config
 from bicentennial.harness.hermes.config import (
@@ -57,6 +57,31 @@ def test_plugin_by_name_only():
     for bad in ("Bad Name", "-x", "", "a\n", "a/b"):
         with pytest.raises(ValueError):
             hermes_config(4321, "bicentennial-main", plugin=bad)
+
+
+def test_window_matches_base_golden_and_sets_full_threshold():
+    default = hermes_config(1234, "bicentennial-main")
+    assert sha256_canon(default) == "c6e1612d6953ce9be177a81aca16f024efedfcd584e51dbfe6e1d0f47d843d9d"
+    assert canon(default) == canon(hermes_config(1234, "bicentennial-main", window=None))
+    full = hermes_config(1234, "bicentennial-main", window=131072)
+    assert full["compression"]["threshold_tokens"] == 131072
+    assert full["model"]["context_length"] == full["auxiliary"]["compression"]["context_length"] == 524288
+    for bad in (True, 0, 16383, "131072", 131072.0):
+        with pytest.raises(ValueError, match="^window must be an int of at least 16384$"):
+            hermes_config(1234, "bicentennial-main", window=bad)
+
+
+@pytest.mark.parametrize("memory", [True, False])
+def test_window_combines_with_toolsets_and_mcp_servers(memory):
+    toolsets = config.HERMES_TOOLSETS + ("envserver",)
+    servers = {"envserver": {"command": "python"}}
+    base = hermes_config(4321, "main", memory=memory, toolsets=toolsets, mcp_servers=servers)
+    assert canon(base) == canon(hermes_config(4321, "main", memory=memory, toolsets=toolsets,
+                                            mcp_servers=servers, window=None))
+    full = hermes_config(4321, "main", memory=memory, toolsets=toolsets, mcp_servers=servers, window=131072)
+    base["compression"]["threshold_tokens"] = 131072
+    base["model"]["context_length"] = base["auxiliary"]["compression"]["context_length"] = 524288
+    assert full == base
 
 
 def test_written_bytes_are_canonical_and_repeatable(tmp_path):
