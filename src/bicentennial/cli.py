@@ -34,9 +34,9 @@ def _source_checkout(root) -> bool:
             ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
             capture_output=True, text=True,
         )
+        return result.returncode != 0 or os.path.samefile(result.stdout.strip(), root)
     except OSError:
         return True
-    return result.returncode != 0 or os.path.realpath(result.stdout.strip()) == os.path.realpath(root)
 
 
 def main(argv=None) -> int:

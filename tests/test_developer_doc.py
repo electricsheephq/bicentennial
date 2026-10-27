@@ -2,6 +2,7 @@
 
 import ast
 import importlib
+import inspect
 import json
 import re
 import runpy
@@ -12,7 +13,7 @@ import pytest
 
 from bicentennial import cli
 from bicentennial.packs import install
-from bicentennial.runner import compare
+from bicentennial.runner import compare, t0, t1
 
 REPO = Path(__file__).resolve().parents[1]
 GUIDE = REPO / "docs/developers/ring0.md"
@@ -101,8 +102,28 @@ def _flags_in_help(main, sub, tokens, capsys):
             assert token.split("=", 1)[0] in flags
 
 
+def _inline_flags(text):
+    subs = ("t0", "t1")
+    for line in text.splitlines():
+        if line.startswith("## "):
+            subs = tuple(tier.lower() for tier in re.findall(r"\bT[01]\b", line)) or ("t0", "t1")
+        # Outside tier-specific sections, an explicit tier on the line supplies context.
+        selected = subs
+        if len(subs) == 2:
+            selected = tuple(sorted({tier.lower() for tier in re.findall(r"\bT[01]\b", line)})) or subs
+        flags = [flag for span in re.findall(r"`([^`\n]+)`", line)
+                 if span.startswith("--")
+                 for flag in re.findall(r"--[a-z][a-z-]*", span)]
+        if flags:
+            for sub in selected:
+                yield sub, flags
+
+
 def test_doc_commands_exist(capsys):
-    for line in _shell_lines(GUIDE.read_text()):
+    text = GUIDE.read_text()
+    for sub, flags in _inline_flags(text):
+        _flags_in_help(cli.main, sub, flags, capsys)
+    for line in _shell_lines(text):
         tokens = shlex.split(line)
         assert "lcm-x" not in tokens
         if tokens[:1] == ["bicentennial"]:
@@ -120,6 +141,25 @@ def test_doc_commands_exist(capsys):
                         assert hasattr(module, alias.name)
 
 
+@pytest.mark.parametrize("section, flag", [
+    ("5. Run T0 in your own CI", "--mode"),
+    ("5. Run T0 in your own CI", "--workers"),
+    ("5. Run T0 in your own CI", "--cache"),
+    ("7. Run T1 as a merge gate", "--cache"),
+])
+def test_doc_rejects_unknown_inline_flag(tmp_path, monkeypatch, capsys, section, flag):
+    text = GUIDE.read_text()
+    start = text.index("## " + section)
+    end = text.index("\n## ", start)
+    changed = text[start:end].replace("`" + flag, "`--removed-flag", 1)
+    assert changed != text[start:end]
+    guide = tmp_path / "ring0.md"
+    guide.write_text(text[:start] + changed + text[end:])
+    monkeypatch.setitem(globals(), "GUIDE", guide)
+    with pytest.raises(AssertionError, match="--removed-flag"):
+        test_doc_commands_exist(capsys)
+
+
 def _refusal_codes(path):
     for node in ast.walk(ast.parse(path.read_text())):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -132,8 +172,7 @@ def _refusal_codes(path):
                 yield "mode_unavailable:hermes"
 
 
-def test_doc_codes():
-    text = GUIDE.read_text()
+def _code_refusals():
     codes = set()
     for name in ("t0", "t1", "compare"):
         codes.update(_refusal_codes(REPO / f"src/bicentennial/runner/{name}.py"))
@@ -144,14 +183,50 @@ def test_doc_codes():
                 and node.func.attr == "append" and node.args
                 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
             codes.add(node.args[0].value)
+    codes.update(refusal.code for refusal in (*t0.REFUSALS, *t1.REFUSALS)
+                 if hasattr(refusal, "code"))
+    # These messages have no class-level code attribute.
     codes.update(("unmeasured:artifact.sha256", "unmeasured:fresh_install_hash", "hashseed",
-                  "usage", "source_checkout_required", "pinned_artifact_changed", "lock_mismatch",
-                  "gate_refused", "pin_mismatch", "SpendRefused", "baseline_mismatch"))
+                  "usage", "source_checkout_required", "gate_refused", "pin_mismatch",
+                  "SpendRefused", "baseline_mismatch", "refused"))
+    return codes
+
+
+def test_doc_codes():
+    text = GUIDE.read_text()
+    codes = _code_refusals()
+    table = text.split("| Code | Cause |\n|---|---|\n", 1)[1].split("\n\n", 1)[0]
+    listed = set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE))
+    assert listed
+    assert not sorted(listed - codes)
     codes.update(name for name, _ in (*compare.DISCLOSURES, *compare.PLUGIN_DISCLOSURES))
     schema = json.loads((REPO / "schemas/card_ring0.schema.json").read_text())
     for label in schema["properties"]["labels"]["properties"].values():
         codes.update(label["enum"])
     assert not sorted(code for code in codes if code not in text)
+
+
+def test_doc_rejects_unknown_refusal_code(tmp_path, monkeypatch):
+    text = GUIDE.read_text()
+    guide = tmp_path / "ring0.md"
+    guide.write_text(text.replace("| Code | Cause |\n|---|---|",
+                                 "| Code | Cause |\n|---|---|\n"
+                                 "| `removed_refusal_code` | Stale code. |"))
+    monkeypatch.setitem(globals(), "GUIDE", guide)
+    with pytest.raises(AssertionError, match="removed_refusal_code"):
+        test_doc_codes()
+
+
+def test_doc_junit_properties():
+    # Literal property keys in _junit supplement the exported disclosure lists.
+    tree = ast.parse(inspect.getsource(compare._junit))
+    names = {node.elts[0].value for node in ast.walk(tree)
+             if isinstance(node, ast.Tuple) and len(node.elts) == 2
+             and isinstance(node.elts[0], ast.Constant)
+             and isinstance(node.elts[0].value, str)}
+    names.update(name for name, _ in (*compare.DISCLOSURES, *compare.PLUGIN_DISCLOSURES))
+    documented = set(re.findall(r"`([^`\n]+)`", GUIDE.read_text()))
+    assert not sorted(names - documented)
 
 
 def test_doc_public_text():

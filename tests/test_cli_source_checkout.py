@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+from os import fspath
 
 import pytest
 
@@ -20,6 +21,30 @@ def _guard_runners(monkeypatch):
 
 def test_real_source_checkout():
     assert cli.REPO is t0.REPO
+    assert cli._source_checkout(t0.REPO)
+
+
+def test_source_checkout_git_root_alias(tmp_path, monkeypatch):
+    alias = tmp_path / "root-alias"
+    alias.symlink_to(t0.REPO, target_is_directory=True)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(
+        a[0], 0, stdout=str(alias) + "\n"))
+    # Model realpath retaining different spellings on a case-insensitive filesystem.
+    monkeypatch.setattr(cli.os.path, "realpath", fspath)
+    assert cli._source_checkout(t0.REPO)
+
+
+@pytest.mark.parametrize("operation", ["git", "samefile"])
+def test_source_checkout_oserror_defers_to_runner(monkeypatch, operation):
+    def unavailable(*args, **kwargs):
+        raise OSError("unavailable")
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(
+        a[0], 0, stdout=str(t0.REPO)))
+    if operation == "git":
+        monkeypatch.setattr(cli.subprocess, "run", unavailable)
+    else:
+        monkeypatch.setattr(cli.os.path, "samefile", unavailable)
     assert cli._source_checkout(t0.REPO)
 
 
