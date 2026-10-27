@@ -535,3 +535,13 @@ def test_compare_keeps_singletons_scored_in_every_arm():
         assert [x for x in arm['aggregates'] if x['track'] == 'Recall'][0]['score_milli'] == -750
     with pytest.raises(ValueError):
         compare(dict(system=(items, f['bundles']), wiped=(items, f['bundles'])))
+
+
+def test_compare_forwards_declared_duties():
+    omission = outcome(identity(item_id='duty'), ActionResult('OMISSION', False, 0, False, None, None))
+    twin = outcome(identity(item_id='twin'), ActionResult('PASS', False, 1000, True, None, None))
+    b = make_bundle(dict(bundle_id='b', cell_id=omission['cell_id'], life='l', twin_type='fork'), omission, twin)
+    arms = dict(system=([omission, twin], [b]), wiped=([omission, twin], [b]))
+    assert all(r['violations'][0]['harmful_omission'] == 0 for r in compare(arms).values())
+    assert all(r['violations'][0]['harmful_omission'] == 1
+               for r in compare(arms, duty_items={'duty'}).values())

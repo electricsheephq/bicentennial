@@ -195,8 +195,9 @@ def common_valid(arms) -> frozenset[str]:
     return frozenset.intersection(*(frozenset(s) for s in sets)) if sets else frozenset()
 
 
-def compare(arms, *, singleton_lives=None) -> dict:
-    """singleton_lives is shared by every arm; a singleton with no result in some arm is dropped from all."""
+def compare(arms, *, singleton_lives=None, duty_items=frozenset()) -> dict:
+    """singleton_lives and duty_items are shared by every arm; a singleton with no result in some arm
+    is dropped from all."""
     from bicentennial.contracts.run import validate
 
     identities, blocked, blocked_items, keep_items = None, set(), set(), set(singleton_lives or {})
@@ -211,5 +212,6 @@ def compare(arms, *, singleton_lives=None) -> dict:
         blocked_items.update(i["item_id"] for i in indexed.values() if i["failure_class"] == "BLOCKED")
     keep = common_valid(arms)
     return {name: reduce(items, bundles, keep=keep, blocked=blocked, blocked_items=blocked_items,
-                         singleton_lives=singleton_lives, keep_items=frozenset(keep_items))
+                         singleton_lives=singleton_lives, keep_items=frozenset(keep_items),
+                         duty_items=duty_items)
             for name, (items, bundles) in arms.items()}
