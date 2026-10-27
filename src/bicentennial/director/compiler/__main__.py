@@ -27,7 +27,9 @@ def main(argv=None):
             checkout=args.checkout, scratch=args.scratch, step_s=args.step_s)
     except PinMismatch:
         return 3
-    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error, SystemRefused):
+    except SystemRefused:
+        return 3
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
         return 2
     sys.stdout.buffer.write(canon(report) + b"\n")
     return 0 if report["ok"] else 1

@@ -655,6 +655,17 @@ def test_cli_bad_input_and_pin(tmp_path, monkeypatch):
     assert cli.main(args) == 3
 
 
+def test_cli_refused_system(tmp_path, monkeypatch):
+    from bicentennial.director.compiler import __main__ as cli
+    from bicentennial.systems.registry import SystemRefused
+
+    def refused(*args, **kwargs):
+        raise SystemRefused("fixture")
+
+    monkeypatch.setattr(cli, "check_compile", refused)
+    assert cli.main(cli_args(tmp_path / "missing", tmp_path / "runs", tmp_path)) == 3
+
+
 def test_envwire_recovery(worlds, tmp_path):
     from bicentennial.harness.hermes.envwire import EnvWiring, derived_seed
     from bicentennial.sandbox.envserver.state import state_hash
