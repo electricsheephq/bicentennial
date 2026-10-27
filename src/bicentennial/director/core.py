@@ -52,12 +52,13 @@ class Director:
                  run_values, write_prompt=None, on_hold=None, *, schedule=None):
         validate("script", script)
         for turn in (t for s in script["sessions"] for t in s["turns"]):
-            if turn["tool_calls"]:
-                raise ValueError("scripted tool calls need the tool-call compiler")
+            if turn["kind"] == "probe" and turn["tool_calls"]:
+                raise ValueError("probe tool calls are the reader's")
             if turn["kind"] == "replay" and turn["assistant"] is None:
                 raise ValueError("a replay turn needs assistant text")
         self.turns = tuple({"session": s["index"], "turn": t["n"], "kind": t["kind"], "user": t["user"],
-                            "assistant": t["assistant"]} for s in script["sessions"] for t in s["turns"])
+                            "assistant": t["assistant"], "tool_calls": t["tool_calls"]}
+                           for s in script["sessions"] for t in s["turns"])
         self.ctx = roles.Context(expected=[{"kind": t["kind"], "hash": roles.h16(t["user"].strip())}
                                            for t in self.turns])
         for task in AUX_TASKS:
@@ -238,14 +239,22 @@ class Director:
             rec["sim_now"] = self.clock.sim_t_s
         if role in ("replay_main", "write_turn"):  # the scripted turn: its cursor, a retry, or its tool results
             text, calls, rec["served"] = turn["assistant"], (), "script_retry" if sub == "retry" else "script"
+            issued = ("write_turn", "tool_results", "write_turn", turn)
             if role == "replay_main" and sub == "cursor" and _tool_names(wire, body) & set(self.write_tools):
                 calls = self._write_turn(wire, body, cursor, rec)
                 if calls is None:
                     return _refuse(rec, 503, "identity_mismatch", "served model identity mismatch", body)
                 if calls:
                     text, rec["served"] = "", "write_tool_calls"
-            return self._answer(wire, body, text, calls, ("write_turn", "tool_results", "write_turn", turn), rec,
-                                hold=not calls)
+            if turn["tool_calls"]:
+                if role == "replay_main" and sub == "tool_results":
+                    turn["script_done"] = True
+                if not calls and not turn.get("script_done"):
+                    calls = tuple({"name": c["name"], "arguments": canon(c["args"]).decode()}
+                                  for c in turn["tool_calls"])
+                    text, rec["served"] = "", "script_tool_calls_retry" if sub == "retry" else "script_tool_calls"
+                    issued = ("replay_main", "tool_results", "replay_main", turn)
+            return self._answer(wire, body, text, calls, issued, rec, hold=not calls)
         reply = self._ask(Call(role, sub, wire, deepcopy(body), self._model(role, sub), cursor, self.attempt_id), rec)
         if reply is None:
             return _refuse(rec, 503, "identity_mismatch", "served model identity mismatch", body)

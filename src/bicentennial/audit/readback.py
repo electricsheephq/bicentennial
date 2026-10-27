@@ -301,7 +301,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     calls, drafts, issued = [], [], 0
     issued_at = {}  # each call id served to the harness, by the record that served it
     for r in rows:
-        if r.get("served") == "write_tool_calls" and not refused(r, blobs.get(r.get("resp"))):
+        if r.get("served") in {"write_tool_calls", "script_tool_calls", "script_tool_calls_retry"} and not refused(r, blobs.get(r.get("resp"))):
             for tc in output(blobs[r["resp"]], wire)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
     minted = _minted_ids(rows, blobs) if fmt == "kit" else {}
