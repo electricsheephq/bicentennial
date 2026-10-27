@@ -284,22 +284,26 @@ def make_live(spend_path, *, auth, base_url, max_output_tokens, login=None, mode
     return bridge, holds
 
 
-def _normal_bytes(data, run_values):
+def _normal_bytes(data, run_values, *, same_length=False):
+    def placeholder(token, match):
+        return token.ljust(len(match[0]), b"_")[:len(match[0])] if same_length else token
+
     replacements = {run_values["sandbox_root"].encode(): b"<root>",
                     run_values["director_port"].encode(): b"<port>"}
     if any(not token for token in replacements):
         raise ValueError("nonempty run values required")
     pattern = re.compile(b"|".join(re.escape(token) for token in sorted(replacements, key=len, reverse=True)))
-    data = pattern.sub(lambda match: replacements[match[0]], data)
-    data = re.sub(UUID_RE.pattern.encode(), b"<uuid>", data)
-    return re.sub(TS_RE.pattern.encode(), b"<ts>", data)
+    data = pattern.sub(lambda match: placeholder(replacements[match[0]], match), data)
+    data = re.sub(UUID_RE.pattern.encode(), lambda match: placeholder(b"<uuid>", match), data)
+    return re.sub(TS_RE.pattern.encode(), lambda match: placeholder(b"<ts>", match), data)
 
 
 def _sql_value(value, run_values):
     if isinstance(value, float):
         return repr(value)
     if isinstance(value, bytes):
-        value = value.hex()
+        # Preserve pickle string lengths and frame sizes while masking raw bytes.
+        return _normal_bytes(value, run_values, same_length=True).hex()
     return _normal_bytes(value.encode(), run_values).decode() if isinstance(value, str) else value
 
 
@@ -312,11 +316,14 @@ def _file_export(path, run_values):
         sqlite = stream.read(16) == b"SQLite format 3\x00"
     if not sqlite:
         return {"sha256": sha256(_normal_bytes(path.read_bytes(), run_values)).hexdigest()}
-    tables = {}
+    tables, excluded_columns = {}, {}
     with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
         for (table,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
-            columns = [row[1] for row in db.execute(f"PRAGMA table_info({_quote(table)})")
-                       if not re.search(r"(?i)(time|date|_at$)", row[1])]
+            schema = [(r[1], r[2].upper()) for r in db.execute(f"PRAGMA table_info({_quote(table)})")]
+            excluded = ["id"] if table == "points" and schema == [("id", "TEXT"), ("point", "BLOB")] else []
+            if excluded:
+                excluded_columns[table] = excluded
+            columns = [name for name, _ in schema if name not in excluded and not re.search(r"(?i)(time|date|_at$)", name)]
             count = db.execute(f"SELECT count(*) FROM {_quote(table)}").fetchone()[0]
             if columns:
                 query = f"SELECT {', '.join(map(_quote, columns))} FROM {_quote(table)}"
@@ -324,7 +331,7 @@ def _file_export(path, run_values):
             else:
                 rows = [[] for _ in range(count)]
             tables[table] = [count, sha256(canon(sorted(rows, key=canon))).hexdigest()]
-    return {"tables": tables}
+    return dict(tables=tables, excluded_columns=excluded_columns) if excluded_columns else {"tables": tables}
 
 
 def _surface_files(cell):
@@ -635,13 +642,18 @@ def injection_blocks(body):
     unclosed recognized marker instead of silently comparing an empty injection.
     """
     text = effects.snapshot(body, "chat")
-    tags = r"mem0|memory|recalled_memories|relevant_memories|memory_context|prefetched_memories"
+    user = next((m.get("content", "") for m in reversed(body.get("messages", [])) if m.get("role") == "user"), "")
+    return _memory_blocks(text) + _memory_blocks("\n".join(effects.blocks(user)))
+
+
+def _memory_blocks(text):
+    tags = r"mem0|memory|recalled_memories|relevant_memories|memory_context|memory-context|prefetched_memories"
     xml = re.compile(rf"<({tags})(?:\s[^>]*)?>.*?</\1>", re.I | re.S)
     blocks = [m.group() for m in xml.finditer(text)]
     remainder = xml.sub("", text)
     if re.search(rf"<(?:{tags})(?:\s|>)", remainder, re.I):
         raise ValueError("injection_block_unclosed")
-    heading = re.compile(r"(?im)^#{1,6} (?:recalled|relevant|prefetched|persistent|mem0)?\s*memories?\s*[^\n]*\n")
+    heading = re.compile(r"(?im)^#{1,6} (?:recalled|relevant|prefetched|persistent|mem0)?\s*memor(?:y|ies)\s*[^\n]*\n")
     for match in heading.finditer(remainder):
         end = re.search(r"(?m)^#{1,6} ", remainder[match.end():])
         blocks.append(remainder[match.start():match.end() + end.start() if end else len(remainder)])
@@ -692,7 +704,7 @@ def pacing_result(arms, evidence, manifests, script):
         return {"status": "not_run", "reason": "mem0_blocked"}
     if any(arms[a]["stop_reason"] or len(arms[a]["sessions"]) != 10 for a in names):
         return {"status": "incomplete", "reason": "arm_incomplete"}
-    requests, injections = {}, {}
+    requests, injections, system_blocks = {}, {}, {}
     required = {(s["index"], t["n"]) for s in script["sessions"] for t in s["turns"]}
     for arm in names:
         first = _first_requests(*evidence[arm])
@@ -700,10 +712,17 @@ def pacing_result(arms, evidence, manifests, script):
             return {"status": "incomplete", "reason": "missing_cursor"}
         values = manifests[arm]["run_values"]
         requests[arm] = {c: normalized_request(b, values) for c, (_, b) in first.items()}
-        injections[arm] = {c: sha256(_normal_bytes(canon(injection_blocks(b)), values)).hexdigest()
+        injections[arm] = {c: [_normal_bytes(block.encode(), values).decode() for block in injection_blocks(b)]
                            for c, (_, b) in first.items()}
-    if not any(injection_blocks(b) for arm in names for _, b in _first_requests(*evidence[arm]).values()):
+        system_blocks[arm] = set.intersection(*(set(_normal_bytes(block.encode(), values).decode()
+            for block in _memory_blocks(effects.snapshot(b, "chat"))) for _, b in first.values()))
+    if not any(blocks for cursors in injections.values() for blocks in cursors.values()):
         return {"status": "incomplete", "reason": "injection_shape_unverified"}
+    # Provider instructions may differ by arm; current-user recall must match across all arms to be static.
+    static = set.intersection(*(set(b) for cursors in injections.values() for b in cursors.values()))
+    static.update(set().union(*system_blocks.values()))
+    injections = {a: {c: sha256(canon([b for b in blocks if b not in static])).hexdigest()
+                      for c, blocks in cursors.items()} for a, cursors in injections.items()}
     pairs = {}
     for left, right in (("P1", "U1"), ("P1", "U2"), ("P2", "U1"), ("P2", "U2"),
                         ("P1", "P2"), ("U1", "U2")):
@@ -720,7 +739,7 @@ def pacing_result(arms, evidence, manifests, script):
                               for s, t in sorted(required) if requests[left][s, t] != requests[right][s, t]}}
     def changed(pair):
         return bool(pair["cursor_diffs"] or pair["session_diffs"])
-    return {"status": "complete", "pairs": pairs,
+    return {"status": "complete", "pairs": pairs, "static_blocks": len(static),
             "consequence": any(changed(pairs[p]) for p in ("P1-U1", "P1-U2", "P2-U1", "P2-U2")),
             "noise": any(changed(pairs[p]) for p in ("P1-P2", "U1-U2")),
             "settle": {a: [dict(session=s["session"], **s["settle"]) for s in arms[a]["sessions"]] for a in names}}

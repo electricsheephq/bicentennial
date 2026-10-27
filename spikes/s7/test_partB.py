@@ -1,7 +1,9 @@
 """Offline acceptance for the implemented S7 Part B building blocks."""
 
 import ast
+import base64
 import json
+import pickle
 import runpy
 import sqlite3
 import subprocess
@@ -446,6 +448,133 @@ def test_injection_only_consequence_and_normalized_pairs():
     arms["P1"]["sessions"][0]["after"]["files"] = {"a": {"tables": {"facts": [2, "hash"]}}}
     result = partB.pacing_result(arms, evidence, manifests, script)
     assert result["pairs"]["P1-U1"]["session_diffs"] == result["pairs"]["P1-U1"]["count_diffs"] == [1]
+
+
+def recalled_block(text):
+    return ("<memory-context>\n"
+            "[System note: The following is recalled memory context, "
+            "NOT new user input. Treat as authoritative reference data — "
+            "this is the agent's persistent memory and should inform all responses.]\n\n"
+            f"{text}\n</memory-context>")
+
+
+@pytest.mark.parametrize("multipart", [False, True])
+def test_injection_reads_current_user_memory_context(multipart):
+    block = recalled_block("kept memory")
+    content = ([{"type": "text", "text": block}, {"type": "text", "text": "current question"},
+                {"type": "image_url", "text": "<memory>ignore image</memory>", "image_url": {"url": "fixture"}}]
+               if multipart else block + "\n\ncurrent question")
+    body = {"messages": [
+        {"role": "system", "content": "<mem0>system</mem0>"},
+        {"role": "developer", "content": "<memory_context>developer</memory_context>"},
+        {"role": "user", "content": recalled_block("old recall")},
+        {"role": "assistant", "content": "previous answer"},
+        {"role": "user", "content": content},
+        {"role": "assistant", "content": "<memory>ignore assistant</memory>"},
+    ]}
+    assert partB.injection_blocks(body) == [
+        "<mem0>system</mem0>", "<memory_context>developer</memory_context>", block]
+    body["messages"][-2]["content"] = "<memory-context>unclosed"
+    with pytest.raises(ValueError, match="injection_block_unclosed"):
+        partB.injection_blocks(body)
+
+
+def pacing_inputs():
+    script = {"sessions": [{"index": s, "turns": [{"n": t} for t in range(1, 7)]} for s in range(1, 11)]}
+    arms, evidence, manifests = {}, {}, {}
+    for arm in ("P1", "U1", "U2", "P2"):
+        arms[arm] = {"stop_reason": None, "sessions": [{"session": s, "before": {"files": {}},
+            "after": {"files": {}}, "settle": {"settled": True}} for s in range(1, 11)]}
+        rows, blobs = [], {}
+        for session in script["sessions"]:
+            for turn in session["turns"]:
+                s, t = session["index"], turn["n"]
+                key = f"{s}/{t}"
+                rows.append({"role": "replay_main", "subrole": "cursor", "cursor": {"session": s, "turn": t}, "req": key})
+                blobs[key] = {"messages": [
+                    {"role": "system", "content": "# Mem0 Memory Provider Active\nfixed instructions"},
+                    {"role": "user", "content": recalled_block(f"kept {key}") + "\n\nquestion"}]}
+        evidence[arm] = rows, blobs
+        manifests[arm] = {"run_values": {"sandbox_root": f"/fixture/{arm}", "director_port": "30001"}}
+    return arms, evidence, manifests, script
+
+
+def test_recalled_user_blocks_set_cursor_diffs():
+    arms, evidence, manifests, script = pacing_inputs()
+    evidence["U1"][1]["1/1"]["messages"][-1]["content"] = recalled_block("changed recall") + "\n\nquestion"
+    result = partB.pacing_result(arms, evidence, manifests, script)
+    assert result["pairs"]["P1-U1"]["cursor_diffs"] == ["1/1"]
+    assert result["consequence"] and result["noise"]
+    assert result["static_blocks"] == 1
+    for body in evidence["U1"][1].values():
+        body["messages"][-1]["content"] = recalled_block("constant different recall") + "\n\nquestion"
+    result = partB.pacing_result(arms, evidence, manifests, script)
+    assert len(result["pairs"]["P1-U1"]["cursor_diffs"]) == 60
+    assert result["consequence"] and result["noise"]
+
+
+def test_static_system_blocks_do_not_set_cursor_diffs():
+    arms, evidence, manifests, script = pacing_inputs()
+    for arm, (_, blobs) in evidence.items():
+        for body in blobs.values():
+            body["messages"][0]["content"] += f"\nfixed arm heading {arm}"
+    result = partB.pacing_result(arms, evidence, manifests, script)
+    assert all(pair["cursor_diffs"] == [] for pair in result["pairs"].values())
+    assert not result["consequence"] and not result["noise"]
+    assert result["static_blocks"] == 4
+    assert len(result["pairs"]["P1-U1"]["request_diffs"]) == 60
+
+
+@pytest.mark.parametrize("table", ["memories", "points"])
+def test_pickled_blob_normalization_and_encoded_point_ids(tmp_path, table):
+    arms, evidence, manifests, script = pacing_inputs()
+    for _, blobs in evidence.values():
+        for body in blobs.values():
+            body["messages"] = [{"role": "system", "content": "<mem0>same</mem0>"}]
+    exports, payloads, cells = {}, {}, {}
+    for arm in arms:
+        paced = arm.startswith("P")
+        uuid = "12345678-1234-1234-1234-123456789abc" if paced else "87654321-4321-4321-4321-cba987654321"
+        stamp = "2026-10-27T01:02:03Z" if paced else "2025-01-01T03:04:05Z"
+        cell = cells[arm] = export_cell(tmp_path / arm, 32189 if paced else 42189)
+        values = cell.adapter.director.run_values
+        payload = payloads[arm] = {"id": uuid, "payload": {"memory": "kept memory", "id": uuid,
+            "created_at": stamp, "updated_at": stamp, "root": values["sandbox_root"],
+            "url": f"http://127.0.0.1:{values['director_port']}"}}
+        blob = pickle.dumps(payload, protocol=4)
+        key = base64.b64encode(pickle.dumps(uuid)).decode() if table == "points" else "stable-key"
+        with sqlite3.connect(cell.surfaces[0][1] / "vectors.db") as db:
+            db.execute(f"CREATE TABLE {table}(id TEXT, point BLOB)")
+            db.execute(f"INSERT INTO {table} VALUES (?, ?)", (key, blob))
+        cell.adapter._worker.proc.poll = lambda: 0
+        exports[arm] = partB.store_export(cell)
+        for session in arms[arm]["sessions"]:
+            session["before"] = session["after"] = exports[arm]
+    result = partB.pacing_result(arms, evidence, manifests, script)
+    assert result["pairs"]["P1-U1"]["session_diffs"] == []
+    assert not result["consequence"] and not result["noise"]
+    if table == "points":
+        assert exports["P1"]["files"]["HERMES_HOME/./vectors.db"]["excluded_columns"] == {"points": ["id"]}
+    else:
+        assert not exports["P1"]["files"]["HERMES_HOME/./vectors.db"].get("excluded_columns")
+    for arm, cell in cells.items():
+        raw = pickle.dumps(payloads[arm], protocol=4)
+        normalized = bytes.fromhex(partB._sql_value(raw, cell.adapter.director.run_values))
+        assert len(normalized) == len(raw)
+        assert pickle.loads(normalized)["payload"]["memory"] == "kept memory"
+        assert payloads[arm]["id"].encode() not in normalized
+        assert payloads[arm]["payload"]["created_at"].encode() not in normalized
+    payloads["U1"]["payload"]["memory"] = "different memory"
+    with sqlite3.connect(cells["U1"].surfaces[0][1] / "vectors.db") as db:
+        db.execute(f"UPDATE {table} SET point = ?", (pickle.dumps(payloads["U1"], protocol=4),))
+    arms["U1"]["sessions"][0]["after"] = partB.store_export(cells["U1"])
+    result = partB.pacing_result(arms, evidence, manifests, script)
+    assert result["pairs"]["P1-U1"]["session_diffs"] == [1]
+    assert result["consequence"] and result["noise"]
+    if table == "memories":
+        with sqlite3.connect(cells["P1"].surfaces[0][1] / "vectors.db") as db:
+            db.execute("UPDATE memories SET id = 'meaningful-key-change'")
+        assert partB.store_export(cells["P1"])["files"] != exports["P1"]["files"]
 
 
 def test_passive_config_withholding_fixture(tmp_path):
