@@ -353,8 +353,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
         if receipts[arm]["spend_micro_usd"] > 0:
             raise SpendRefused(receipts[arm]["spend_micro_usd"])
     verify(packs_dir, pack_hash=pack_hash, lock=ctx.current_lock(), expected_lock=ctx.lock)
-    staging = publication.staging
-    staging.mkdir()
+    staging = publication.begin()
     for arm in GATED:
         directory = staging / arm
         directory.mkdir(parents=True)

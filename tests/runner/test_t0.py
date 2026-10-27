@@ -1194,6 +1194,24 @@ def test_pack_move_failure_rolls_back_preserves_cache(installed, tmp_path, monke
     assert (cache / "keep").read_bytes() == b"cache"
 
 
+def test_cache_at_staging_survives_failure(installed, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    cache = out / "staging"
+    real_controls = t0._controls
+
+    def controls(pack, index, cache):
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "keep").write_bytes(b"cache")
+        return real_controls(pack, index, cache)
+
+    monkeypatch.setattr(t0, "_controls", controls)
+    # The cache occupies the staging path, so staging cannot start; the cache must survive.
+    assert run(installed, out, cache=cache) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert_no_results(out)
+    assert (cache / "keep").read_bytes() == b"cache"
+
+
 @pytest.mark.parametrize("changes,code", [
     (dict(system="nomemory"), "unknown_system"), (dict(system="no-memory"), "harness_not_hermes"),
     (dict(system="hermes-native"), "unmeasured:fresh_install_hash"),

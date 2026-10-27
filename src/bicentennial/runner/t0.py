@@ -783,7 +783,13 @@ def _remove_output(path):
 
 class _Publication:
     def __init__(self, out):
-        self.out, self.staging, self.moved = out, out / "staging", []
+        self.out, self.staging, self.moved, self.created = out, out / "staging", [], False
+
+    def begin(self):
+        self.staging.mkdir()
+        # Only a staging directory this run created is ours to remove (a --cache may sit there).
+        self.created = True
+        return self.staging
 
     def publish(self, entries):
         for name in entries:
@@ -802,7 +808,8 @@ class _Publication:
             except Exception:
                 continue
             _remove_output(path)
-        _remove_output(self.staging)
+        if self.created:
+            _remove_output(self.staging)
 
 
 def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication):
@@ -870,8 +877,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                 raise SpendRefused(report["receipt"]["spend_micro_usd"])
         for pack in selected:
             verify(packs_dir, pack_hash=pack_hash, lock=locks[pack.rel], expected_lock=locks[pack.rel])
-        staging = publication.staging
-        staging.mkdir()
+        staging = publication.begin()
         for rel, report in sorted(reports.items()):
             directory = staging / rel
             directory.mkdir(parents=True)

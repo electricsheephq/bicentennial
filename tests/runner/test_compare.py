@@ -242,6 +242,24 @@ def test_write_failure_cleans_results(synth, installed, tmp_path, monkeypatch, c
     assert not (out / "staging").exists() and not (out / "refusal.json").exists()
 
 
+def test_cache_at_staging_survives_failure(synth, installed, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    cache = out / "staging"
+    real_controls = compare._controls
+
+    def controls(ctx, cache):
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "keep").write_bytes(b"cache")
+        return real_controls(ctx, cache)
+
+    monkeypatch.setattr(compare, "_controls", controls)
+    # The cache occupies the staging path, so staging cannot start; the cache must survive.
+    assert invoke(installed, out, cache=cache) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    no_results(out)
+    assert (cache / "keep").read_bytes() == b"cache"
+
+
 def test_publication_order_and_bytes(synth, installed, tmp_path, monkeypatch):
     out, moves, staged = tmp_path / "out", [], {}
     real = compare.os.replace
