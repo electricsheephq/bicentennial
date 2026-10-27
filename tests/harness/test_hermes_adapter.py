@@ -379,3 +379,30 @@ def test_worker_imports_only_the_standard_library():
         mods += [f"{n.module}.{a.name}" for n in ast.walk(ast.parse(path.read_text()))
                  if isinstance(n, ast.ImportFrom) and n.module for a in n.names]
         assert not [m for m in mods if m.endswith("hermes.worker") or m == "worker"], path
+
+
+def test_before_shutdown_observes_final_turn_before_end(tmp_path, monkeypatch):
+    """The optional observation hook runs once, after drain and before worker end."""
+    from types import SimpleNamespace
+
+    order = []
+    a = make(tmp_path, "observation", faults=[], before_shutdown=lambda: order.append("before"))
+    # Exercise run_session's actual ordering without relying on host process permissions.
+    monkeypatch.setattr(a, "_gate", lambda readings: None)
+    monkeypatch.setattr(a, "_spawn_open", lambda *args: ("sid", 0, False))
+    monkeypatch.setattr(a, "_drain", lambda: order.append("drain") or 0)
+    replies = {turn["user"]: turn["assistant"] for turn in SCRIPT["sessions"][0]["turns"]}
+    a._worker = SimpleNamespace(call=lambda **kw: order.append("turn") or {
+        "ok": True, "final": replies[kw["text"]], "history": 0},
+        kill=lambda: None)
+    monkeypatch.setattr(a, "_end", lambda: order.append("end") or ())
+    try:
+        result = session(a, 1)
+        assert order[-3:] == ["drain", "before", "end"]
+        assert order.count("before") == 1 and order.count("turn") == result.turns_ok == 5
+        order.clear()
+        a.before_shutdown = None
+        session(a, 1)
+        assert "before" not in order and order[-1] == "end"
+    finally:
+        a.close()
