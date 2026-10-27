@@ -273,6 +273,14 @@ def test_labels_t0_and_singleton_pass():
     assert empty["diagnostics"] == []
 
 
+@pytest.mark.parametrize("gate", ["FAIL", "INVALID"])
+def test_t1_refuses_the_t0_wiped_sentinel(gate):
+    args = inputs()
+    args["controls"]["wiped_store"] = "not run at T0"
+    with pytest.raises(ValueError, match="T0-only wiped sentinel"):
+        finalize(assemble(**args), gate)
+
+
 @pytest.mark.parametrize("change", [dict(tier="T2"), dict(mode="live"), dict(pins={}),
                                     dict(controls={})])
 def test_assembler_rejects_bad_inputs(change):
