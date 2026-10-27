@@ -151,7 +151,7 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "55452884432007fea63dd48529feafbf32800d2e9a394c96b6a2c2bea3694689",
+   "entry_sha256": "0a7456b8d238e4bcd5b60495023bf40c43d57f232c019c235fd32c089bf17e3a",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -160,7 +160,7 @@
     "primary_key": "chain_depth",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "chain_depth",
      "rungs": "uncalibrated (v0.2)",
      "value": 1
@@ -170,7 +170,7 @@
    "ref": "drift-chain-fault-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/drift_chain.py": "3f8bd7af3ad8a113f2b3dac3b7dc74bb0dc1891c98bd147854d4a96957e09aea"
    },
    "template": {
@@ -236,7 +236,7 @@
     }
    ],
    "direction": "recency",
-   "entry_sha256": "8880e964b3e07ec8654150020d2e0b28a27f22e3652b78ca71d76ed5db5a3f02",
+   "entry_sha256": "c190ca334e579b5a077335e765b94d969f9dfb0fce6e7971849021fee437a172",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -245,7 +245,7 @@
     "primary_key": "chain_depth",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "chain_depth",
      "rungs": "uncalibrated (v0.2)",
      "value": 1
@@ -255,7 +255,7 @@
    "ref": "drift-chain-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/drift_chain.py": "3f8bd7af3ad8a113f2b3dac3b7dc74bb0dc1891c98bd147854d4a96957e09aea"
    },
    "template": {
@@ -330,7 +330,7 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "516e482cb44e7f27bebe8342f07d0401143e4cfc4c9d773acca1ec3bf2b3438b",
+   "entry_sha256": "01bd0d0f42ddb3ed4420d83f02970ea98669ff3560ad6f3c7c9a146da038e258",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -339,7 +339,7 @@
     "primary_key": "chain_depth",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "chain_depth",
      "rungs": "uncalibrated (v0.2)",
      "value": 1
@@ -349,7 +349,7 @@
    "ref": "drift-config-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/drift_action.py": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d"
    },
    "template": {
@@ -502,7 +502,7 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "967b08f2bd3267135ac438bb1b588a1a00630a09df1c1169dae71e7dc847a139",
+   "entry_sha256": "ab8174bde389b41155d70280b8305763ece8e622f7a7904fc48892da9972bdcf",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -511,7 +511,7 @@
     "primary_key": "chain_depth",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "chain_depth",
      "rungs": "uncalibrated (v0.2)",
      "value": 0
@@ -521,7 +521,7 @@
    "ref": "drift-quote-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/drift_action.py": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d"
    },
    "template": {
@@ -867,7 +867,7 @@
    "class_source_sha256": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee",
    "decision_tables": [],
    "direction": "verbatim retention",
-   "entry_sha256": "55777f9eabc1b38e98cbf1c967a66ac638ecc15eaf95f139a73ac0e7f830993a",
+   "entry_sha256": "62db1b3f316c23a568d5c00ecb59a28851f355344c1bcb98ede1185c9e824c26",
    "genre": "g1",
    "kind": "qa",
    "lever_mix": {
@@ -876,7 +876,7 @@
     "primary_key": "distance_sessions",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "distance_sessions",
      "rungs": "uncalibrated (v0.2)",
      "value": null
@@ -886,7 +886,7 @@
    "ref": "recall-value-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/recall_value.py": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee"
    },
    "template": {
@@ -1071,7 +1071,7 @@
     }
    ],
    "direction": "retrieval breadth",
-   "entry_sha256": "87834ec4ff140a5702d6c9aefc3905b18b40a16a886e523b5b18b8f251688cb7",
+   "entry_sha256": "d4e0217e35d652313c1b561bba2f13f9a37f08d04a49ab01c10d83283ffe77b5",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -1080,7 +1080,7 @@
     "primary_key": "distance_sessions",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "distance_sessions",
      "rungs": "uncalibrated (v0.2)",
      "value": null
@@ -1090,7 +1090,7 @@
    "ref": "tue-ticket-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/tuesday_trigger.py": "1aced78135ffa385609fce62ce1210541267d78d054b413a696ee8722434cadc"
    },
    "template": {
@@ -1167,7 +1167,7 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "e4f91734b30185021bbd8bdb7cf2211a78baadab8d3c5be3c2398788c8d25483",
+   "entry_sha256": "3719aab984f47fecc9ed774b8958390a0e7ce6ba889cfce468775db1e9d1b19d",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -1176,7 +1176,7 @@
     "primary_key": "wake_events",
     "template": {
      "label": "provisional pending PREREG-v0.5",
-     "others": "neutral",
+     "others": "not neutralised at v0.1",
      "primary": "wake_events",
      "rungs": "uncalibrated (v0.2)",
      "value": null
@@ -1186,7 +1186,7 @@
    "ref": "wake-loop-v1",
    "source_sha256": {
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
-    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/recall_value.py": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee",
     "items/templates/g1/wake_open_loop.py": "bdd293e209591bfc109785bfcb26605c1cb74c4a9f5f73c854ffd0ac49e72a1f"
    },
@@ -1217,7 +1217,7 @@
   }
  },
  "entry_hash": "sha256 of the canonical JSON (sorted keys, no spaces) of the entry without entry_sha256",
- "file_sha256_of_entries": "9c8681e9cad0cd385db7c996e419c94232f817c462bbaf68c0649890ff94c1d1",
+ "file_sha256_of_entries": "36b011094851fd2e7f133af3faf75be24b85c3bcaad50698a0b0d5b902de7a1c",
  "keyed_by": "template ref (template_id-vN)",
  "slot": "C-7",
  "status": "partial, provisional (Ring 0 v0.1)"
