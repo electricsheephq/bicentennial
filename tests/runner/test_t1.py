@@ -26,6 +26,8 @@ from bicentennial.packs.build import build_tier
 from bicentennial.packs.install import install
 from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.probe.scripted_reader import read
+from bicentennial.report.card import assemble
+from bicentennial.report.t1_gate import t1_gate
 from bicentennial.runner import t1
 from bicentennial.runner.hermes_score import MISSING, Infra, score_item
 from bicentennial.runner.life import STEP_S, LifeRun
@@ -483,6 +485,158 @@ def test_infra_reruns(policy, replay, persistent):
     if persistent:
         assert result.arms["system"].outcomes[iid]["failure_class"] == "BLOCKED"
         assert result.arms["system"].labels[iid] == ("INFRA_FAILURE", "void")
+
+
+def pairing_gate(result):
+    arm = result.arms["system"]
+    card = assemble(tier="T1", mode="hermes", system_entry=result.ctx.entry,
+        run_status="COMPLETE", pins=result.ctx.pins, ledger_records=[],
+        run_values=dict(sandbox_root="/sandbox/root", director_port="43210"),
+        items=arm.outcomes, bundles=arm.bundles, singleton_lives=result.singleton_lives,
+        duty_items=result.duty_items, controls=dict(full_history=1000, no_memory_floor=0,
+            oracle_evidence=1000, naive_rag="not run in v0.1", wiped_store="FAIL"))
+    return t1_gate(card, None, [dict(case_id="pairing", status="PASS", reason="", first_diff=None)],
+        invariants=arm.verdicts, crossing=result.crossing)
+
+
+def pairing_request(ids, wire, *, drop=False):
+    if wire == "chat":
+        body = {"messages": [dict(role="assistant", tool_calls=[dict(id=i, type="function",
+            function=dict(name="tool", arguments="{}")) for i in ids]),
+            *[dict(role="tool", tool_call_id=i, content="ok") for i in ids if not drop]]}
+    else:
+        body = {"input": [*[dict(type="function_call", call_id=i, name="tool", arguments="{}") for i in ids],
+            *[dict(type="function_call_output", call_id=i, output="ok") for i in ids if not drop]]}
+    return ((wire, body),)
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("label,plugin,mixed,status,gate", [
+    ("startup_timeout", False, False, "INFRA_FAILURE", "BLOCKED"),
+    ("open_timeout", False, False, "INFRA_FAILURE", "BLOCKED"),
+    ("turn_timeout", False, False, "FAIL", "FAIL"),
+    ("startup_timeout", False, True, "FAIL", "FAIL"),
+    ("turn_timeout", True, False, "INFRA_FAILURE", "BLOCKED"),
+    (None, False, False, "PASS", "CONFORMANCE_PASS"),
+])
+def test_pairing_stop_policy(policy, replay, wire, label, plugin, mixed, status, gate):
+    ctx = replace(policy.ctx, entry=measured("holographic"), plugin_source="test-only") if plugin else policy.ctx
+    pack = next(p for p in ctx.packs if p.genre == "G1")
+    cls = "SYSTEM_FAILURE" if label == "turn_timeout" else "INFRA_FAILURE"
+
+    def mutate(run):
+        if run.life != pack.life or run.arm not in (("system", "no_memory") if plugin else ("system",)):
+            return run
+        ids = (f"{run.branch}-a", f"{run.branch}-b")
+        run = replace(run, expected_call_ids=ids, post_restart_requests=pairing_request(ids, wire))
+        if label and run.branch == "B0":
+            return replace(run, stopped=(cls, label, 11), post_restart_requests=(), results={},
+                envelopes={}, act={}, classes={i["item_id"]: (cls, label) for i in pack.items["B0"]})
+        if mixed:
+            return replace(run, post_restart_requests=pairing_request(ids, wire, drop=True))
+        return run
+
+    result = replay.run(mutate, ctx)
+    arm = result.arms["system"]
+    pair = next(v for v in arm.verdicts if v.invariant == "INV-PAIR")
+    assert pair.status == status
+    infra = label is not None and (cls == "INFRA_FAILURE" or plugin)
+    assert pair.infra == (("expected-1", "expected-2") if infra else ())
+    assert bool(pair.failed) == (status == "FAIL")
+    unit = next(u for u in arm.units if (u.life, u.branch) == (pack.life, "B0"))
+    assert len(unit.runs) == (3 if infra else 1)
+    if label:
+        assert all(arm.outcomes[i["item_id"]]["failure_class"] ==
+            ("BLOCKED" if infra else "SYSTEM_FAILURE") for i in pack.items["B0"])
+    evaluated = pairing_gate(result)
+    assert evaluated.verdict == gate
+    assert ("invariant:INV-PAIR" in evaluated.blocked) == infra
+    if label is None:
+        assert projection(result) == projection(replay.run(mutate, ctx))
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("broken", [False, True])
+def test_pairing_infra_stop_checks_carried_ids(policy, replay, wire, broken):
+    pack = next(p for p in policy.ctx.packs if p.genre == "G1")
+
+    def mutate(run):
+        if (run.life, run.arm, run.branch) == (pack.life, "system", "B0"):
+            return replace(run, stopped=("INFRA_FAILURE", "startup_timeout", 11),
+                expected_call_ids=("a-carried", "b-absent"),
+                post_restart_requests=pairing_request(("a-carried",), wire, drop=broken),
+                classes={i["item_id"]: ("INFRA_FAILURE", "startup_timeout") for i in pack.items["B0"]})
+        return run
+
+    pair = next(v for v in replay.run(mutate).arms["system"].verdicts if v.invariant == "INV-PAIR")
+    assert pair.status == ("FAIL" if broken else "INFRA_FAILURE")
+    assert pair.infra == (("expected-1", "expected-2") if broken else ("expected-2",))
+    assert pair.failed == (("req-1",) if broken else ())
+
+
+def test_pairing_reclassification_is_final_attempt_only(policy, replay):
+    ctx = replace(policy.ctx, entry=measured("holographic"), plugin_source="test-only")
+    pack = next(p for p in ctx.packs if p.genre == "G1")
+
+    def mutate(run):
+        if run.life == pack.life and run.branch == "B0" and run.arm in ("system", "no_memory"):
+            label = "turn_timeout" if run.attempt == 0 else "resume_failed"
+            return replace(run, expected_call_ids=("absent",), post_restart_requests=(),
+                stopped=("SYSTEM_FAILURE", label, 11), results={}, envelopes={}, act={},
+                classes={i["item_id"]: ("SYSTEM_FAILURE", label) for i in pack.items["B0"]})
+        return run
+
+    arm = replay.run(mutate, ctx).arms["system"]
+    unit = next(u for u in arm.units if (u.life, u.branch) == (pack.life, "B0"))
+    assert len(unit.runs) == 2 and unit.reclassified
+    pair = next(v for v in arm.verdicts if v.invariant == "INV-PAIR")
+    assert pair.status == "FAIL" and pair.infra == () and pair.failed == ("expected-1",)
+
+
+@pytest.mark.parametrize("label,mixed,status,gate", [
+    ("startup_timeout", False, "INFRA_FAILURE", "BLOCKED"),
+    ("turn_timeout", False, "FAIL", "FAIL"),
+    ("startup_timeout", True, "FAIL", "FAIL"),
+])
+def test_pairing_stop_fake_worker(completed, tmp_path, monkeypatch, label, mixed, status, gate):
+    ctx = completed.ctx
+    pack = next(p for p in ctx.packs if p.genre == "G1")
+    real, spawn = t1.run_life, adapter.HermesAdapter._spawn_open
+
+    def stop(self, reason, sid, timings):
+        if reason == "kill":
+            raise adapter.HarnessFailed(label)
+        return spawn(self, reason, sid, timings)
+
+    def drive(**kw):
+        life = json.loads((kw["life_dir"] / "life.json").read_bytes())["life"]
+        if (life, kw["arm"], kw["branch"]) == (pack.life, "system", "B0"):
+            run = real(**kw)
+            assert run.stopped == ("SYSTEM_FAILURE" if label == "turn_timeout" else "INFRA_FAILURE", label, 11)
+            assert run.kill == (11, 1) and run.expected_call_ids and not run.post_restart_requests
+            return run
+        run = replace(completed.cache[life, kw["arm"], kw["branch"]], attempt=kw["attempt"],
+            stored_roots={}, retained_roots={}, _root=None)
+        if mixed and (life, run.arm, run.branch) == (pack.life, "system", "B1"):
+            run = replace(run, post_restart_requests=pairing_request(run.expected_call_ids, "chat", drop=True))
+        return run
+
+    monkeypatch.setattr(adapter.HermesAdapter, "_spawn_open", stop)
+    monkeypatch.setattr(t1, "run_life", drive)
+    result = t1.run_arms(ctx, scratch=tmp_path / "stopped")
+    arm = result.arms["system"]
+    unit = next(u for u in arm.units if (u.life, u.branch) == (pack.life, "B0"))
+    infra = label == "startup_timeout"
+    if infra:
+        assert len(unit.runs) == 3
+    pair = next(v for v in arm.verdicts if v.invariant == "INV-PAIR")
+    assert pair.status == status
+    ids = sorted({i for u in arm.units for i in u.runs[-1].expected_call_ids})
+    assert pair.infra == (tuple(sorted(f"expected-{n}" for n, i in enumerate(ids, 1)
+        if i in unit.runs[-1].expected_call_ids)) if infra else ())
+    evaluated = pairing_gate(result)
+    assert evaluated.verdict == gate
+    assert ("invariant:INV-PAIR" in evaluated.blocked) == infra
 
 
 @pytest.mark.parametrize("audit_failure", [False, True])
