@@ -3,11 +3,14 @@
 import ast
 import json
 import os
+import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,7 +25,7 @@ from bicentennial.world import (
 )
 from bicentennial.world import db as writers
 from bicentennial.world.lineage import Ev, closure, record
-from bicentennial.world.processes import forget, plants
+from bicentennial.world.processes import forget, plants, token_value
 from bicentennial.world.processes.forget import forget_request, request_forget, verify
 from bicentennial.world.processes.plants import (
     PLANT_KINDS,
@@ -227,7 +230,7 @@ def test_write_plant_refusals(tmp_path):
     for change in ({'kind': 'nope'}, {'kind': 'poisoned_tool_output', 'carrier': ev(s3[0], 'tool_result')},
                    {'kind': 'forged_agreement', 'carrier': ev(s3[0], 'tool_result')},
                    {'kind': 'forged_agreement', 'current': Current('subject', 'now', 'v')},
-                   {'speech_act': 'hedge'}, {'object': 7}, {'predicate': 'forget'},
+                   {'speech_act': 'hedge'}, {'object': 7}, {'predicate': 'forget'}, {'predicate': 'forget_ref'},
                    {'predicate': 'authorised_for'}, {'carrier': ev(s3[0], audience=('principal',))},
                    {'carrier': ev(s3[-1] + 10 ** 6)}):
         refused(db, write_plant, db, **(good | change))
@@ -356,7 +359,27 @@ def test_forget_property_loop(tmp_path):
     mutations = set()
     for c in range(CASES):
         db, event, predicates, expected = forget_case(tmp_path / f'f{c}.db', c)
+        before = sqlite3.connect(':memory:')
+        before.deserialize(db.serialize())
+        expected_marker = token_value(before, SimpleNamespace(seed=f'g04-{c}', life=LIFE),
+                                      'forget', 'forget', 'marker', 0, 'REQ')
+        before.close()
         fr = request(db, event, predicates)
+        mint = lineage.ids(db, LIFE, 'forget', 'forget')
+        assert fr.marker_fact_id == mint(len(predicates) + 1)
+        assert dict(db.execute('SELECT * FROM fact WHERE id = ?', (fr.marker_fact_id,)).fetchone()) == dict(
+            id=fr.marker_fact_id, subject_id='subject', predicate='forget_ref', object=json.dumps(fr.marker),
+            polarity='affirm', modality='stated', strength=1000, speech_act='assert')
+        assert [tuple(r) for r in db.execute('SELECT * FROM link WHERE fact_id = ?', (fr.marker_fact_id,))] == [
+            (fr.event_id, fr.marker_fact_id, 'assert')]
+        assert tuple(db.execute('SELECT * FROM locked_token WHERE fact_id = ?', (fr.marker_fact_id,)).fetchone()) == (
+            mint(len(predicates) + 2), fr.marker_fact_id, 'code', fr.marker)
+        assert re.fullmatch(r'REQ-[0-9]{6}', fr.marker) and fr.marker == expected_marker
+        assert fr.marker not in fr.selector
+        assert fr.marker_fact_id not in (*fr.covered, *fr.neighbours, *fr.request_fact_ids)
+        assert not db.execute('SELECT 1 FROM fact_surface WHERE fact_id = ?', (fr.marker_fact_id,)).fetchone()
+        assert not db.execute('SELECT 1 FROM lineage WHERE source_fact_id = ? OR artifact_id = ?',
+                              (fr.marker_fact_id, fr.marker_fact_id)).fetchone()
         assert {name: getattr(fr, name) for name in expected} == expected
         assert fr.selector == tuple(sorted(f'TOK-{c}-{f}' for f in expected['covered']))
         assert fr.predicates == tuple(sorted(predicates)) and fr.subject_id == 'subject'
@@ -388,6 +411,50 @@ def test_forget_refusals_and_verify(tmp_path):
     g01(db, 'e-again', event.t_sim - 1, fr.covered[0])
     with pytest.raises(ValueError):
         verify(db)
+
+
+def test_forget_marker_refusals(tmp_path):
+    db, event, predicates, _ = forget_case(tmp_path / 'collision.db', 0)
+    refused(db, request, db, event, ('forget_ref',))
+    writers.insert_locked_token(db, token_id='collision', fact_id='c0', kind='code', value='REQ-')
+    refused(db, request, db, event, predicates)
+
+
+@pytest.mark.parametrize('case', ['second-event', 'orphan', 'plain', 'shape', 'object', 'no-token', 'two-tokens'])
+def test_forget_marker_verify(tmp_path, case):
+    db, event, predicates, _ = forget_case(tmp_path / 'w.db', 0)
+    fr = request(db, event, predicates)
+    if case == 'second-event':
+        g01(db, 'extra', event.t_sim + 1, fr.marker_fact_id, role='mention')
+    elif case == 'orphan':
+        writers.insert_fact(db, id='orphan', subject_id='subject', predicate='forget_ref', object='REQ-123456',
+                            polarity='affirm', modality='stated', strength=1000, speech_act='assert')
+        writers.insert_locked_token(db, token_id='orphan-token', fact_id='orphan', kind='code', value='REQ-123456')
+    elif case == 'plain':
+        g01(db, fr.event_id, event.t_sim, 'extra', predicate='plain', object='extra')
+    elif case in ('shape', 'object'):
+        field, value = ('strength', 999) if case == 'shape' else ('object', '"wrong"')
+        db.execute('DROP TRIGGER fact_UPDATE')
+        db.execute(f'UPDATE fact SET {field} = ? WHERE id = ?', (value, fr.marker_fact_id))
+    elif case == 'no-token':
+        db.execute('DROP TRIGGER locked_token_DELETE')
+        db.execute('DELETE FROM locked_token WHERE fact_id = ?', (fr.marker_fact_id,))
+    else:
+        writers.insert_locked_token(db, token_id='extra-token', fact_id=fr.marker_fact_id, kind='code', value='EXTRA')
+    with pytest.raises(ValueError):
+        verify(db)
+
+
+def test_marker_is_never_a_neighbour(tmp_path):
+    db, (s1, _, s3) = base(tmp_path / 'w.db', 'two-requests')
+    for i in range(3):
+        g01(db, f'e{i}', s1[i], f'f{i}', predicate=f'p{i}', object=f'v{i}')
+        writers.insert_locked_token(db, token_id=f't{i}', fact_id=f'f{i}', kind='code', value=f'TOK-{i}')
+    first = request(db, ev(s3[0]), ('p0',), key='first')
+    second = request(db, ev(s3[1]), ('p1',), key='second')
+    assert first.marker_fact_id not in second.neighbours
+    assert second.neighbours == ('f0', 'f2')
+    verify(db)
 
 
 def test_forget_verify_recomputes_coverage(tmp_path):
