@@ -485,7 +485,7 @@ def test_mem0_settle_before_session(tmp_path, monkeypatch):
         a.close()
 
 
-@pytest.mark.parametrize("failure", ["plugin_inactive", "end_failed"])
+@pytest.mark.parametrize("failure", ["worker_start", "end_failed"])
 def test_mem0_failed_session_clears_end_observation(tmp_path, monkeypatch, failure):
     repo, digest, _ = plugin_repo(tmp_path, "mem0-oss")
     a, cell = make(tmp_path, "failed", "mem0-oss", digest)
@@ -494,7 +494,7 @@ def test_mem0_failed_session_clears_end_observation(tmp_path, monkeypatch, failu
         cell.install(repo, alias="bicentennial-main")
         assert session(a, 1).end_threads == a.end_threads == ()
         assert cell.settle().settled
-        if failure == "plugin_inactive":
+        if failure == "worker_start":
             a.plugin = "inactive"
         else:
             (a.paths["hermes_home"] / ".fake-end").write_bytes(canon({"ok": False}))
