@@ -4,6 +4,7 @@ import ast
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import unicodedata
@@ -423,9 +424,15 @@ def test_query_leaks_exact_minima_200_cases():
     assert query_leaks("cafe\u0301", "", ["café"]) == ("a", "c", "f", "é")
 
 
-@pytest.mark.parametrize("case", ["cancel-span", "forget-span", "rejection-span",
-                                  "required-forbidden", "required-outside-oracle", "second-plant"])
-def test_evidence_refusals(tmp_path, case):
+@pytest.mark.parametrize(("case", "message"), {
+    "cancel-span": "conflicting keys or missing required span",
+    "forget-span": "conflicting keys or missing required span",
+    "rejection-span": "conflicting keys or missing required span",
+    "required-forbidden": "conflicting keys or missing required span",
+    "required-outside-oracle": "invalid oracle evidence or recall query",
+    "second-plant": "multiple decisive plants",
+}.items())
+def test_evidence_refusals(tmp_path, case, message):
     kind = "lure" if case.startswith("cancel") else "rejection" if case == "rejection-span" else (
         "genuine" if case == "second-plant" else "trigger")
     branch = "B1" if case.startswith("cancel") or case == "required-outside-oracle" else "B0"
@@ -452,10 +459,29 @@ def test_evidence_refusals(tmp_path, case):
         record = meta | dict(item_id=item["item_id"], branch=branch, life=LIFE,
                              bundle_id="bundle" if t.twin_type else None)
         twin = item | {"item_id": "other-item"} if t.twin_type else None
-        with pytest.raises(ValueError) as exc:
+        identity = "detail" if case == "second-plant" else item["item_id"]
+        with pytest.raises(ValueError, match=rf"^{re.escape(f'{message}: {identity}')}$") as exc:
             reader_keys(db, s, c, item, record, twin=twin)
         for (token,) in db.execute("SELECT value FROM locked_token"):
             assert token not in str(exc.value)
+    finally:
+        db.close()
+
+
+def test_gold_span_not_visible_to_agent(tmp_path):
+    db, s = world(tmp_path / "unseen.db")
+    try:
+        event(db, s, "event-detail", (1, 2), audience=("principal",))
+        fact(db, "detail", "WINDOW-7401")
+        insert_link(db, event_id="event-detail", fact_id="detail", role="assert")
+        c = make_cut(db, s)
+        item, meta = compile_branch(db, s, c, [template([qa_instance()])]).entries[0]
+        assert item["gold_spans"] == ["event-detail"]
+        row = next(r for r in c.rows if r["event_id"] == "event-detail")
+        assert row["audience"] == ["principal"]
+        record = meta | dict(item_id=item["item_id"], branch="B0", life=LIFE, bundle_id=None)
+        with pytest.raises(ValueError, match=rf"^gold span not visible to the agent: {re.escape(item['item_id'])}$"):
+            reader_keys(db, s, c, item, record)
     finally:
         db.close()
 
@@ -478,6 +504,7 @@ def test_a1_overrides_old_cancel_token_refusal(tmp_path):
 
 @pytest.mark.parametrize("case", ["world", "branch", "missing-twin", "extra-twin", "same-twin", "schedule", "cut-life", "record-life", "item-id"])
 def test_identity_refusals(tmp_path, case):
+    # The rejection fixture has no bundle, so the default twin is the extra input.
     kind = "rejection" if case == "extra-twin" else "fork"
     with fixture_worlds(tmp_path / "ids", kind) as (s, worlds, compiled):
         record = next(r for r in compiled.records if r["branch"] == "B0")
@@ -500,12 +527,20 @@ def test_identity_refusals(tmp_path, case):
             record = record | {"life": "other"}
         elif case == "item-id":
             record = record | {"item_id": "other"}
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=rf"^reader identity mismatch: {re.escape(item['item_id'])}$"):
             reader_keys(db, s, c, item, record, twin=twin)
 
 
-@pytest.mark.parametrize("case", ["branch", "cut-branch", "life", "missing-record", "extra-record", "duplicate-record", "duplicate-item"])
-def test_life_refusals(tmp_path, case):
+@pytest.mark.parametrize(("case", "message"), {
+    "branch": "reader life or branch mismatch",
+    "cut-branch": "reader life or branch mismatch",
+    "life": "reader life or branch mismatch",
+    "missing-record": "reader item and record mismatch",
+    "extra-record": "reader item and record mismatch",
+    "duplicate-record": "reader item and record mismatch",
+    "duplicate-item": "reader item and record mismatch",
+}.items())
+def test_life_refusals(tmp_path, case, message):
     with fixture_worlds(tmp_path / "life", "fork") as (s, worlds, compiled):
         if case == "branch":
             del worlds["B1"]
@@ -521,7 +556,7 @@ def test_life_refusals(tmp_path, case):
             compiled = replace(compiled, records=(*compiled.records, compiled.records[0]))
         else:
             compiled = replace(compiled, items=(*compiled.items, compiled.items[0]))
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=rf"^{re.escape(message)}$"):
             life_keys(compiled, s, worlds)
 
 
@@ -529,22 +564,31 @@ def registry():
     return json.loads((ROOT / "tests/fixtures/reader_keys/contracts.json").read_bytes())["contracts"]["reader_keys"]
 
 
-@pytest.mark.parametrize("delta", [
-    {"required": ["ZZZZ-1234", "AAAA-1234"]}, {"required": ["VALUE-1234"] * 2},
-    {"forbidden": ["ZZZZ-1234", "AAAA-1234"]}, {"forbidden": ["ERASE-7712"] * 2},
-    {"competing": [{"token": "STALE-5600", "kind": "stale"}] * 2},
-    {"competing": [{"token": "ZZZZ-1234", "kind": "stale"}, {"token": "AAAA-1234", "kind": "twin"}]},
-    {"forbidden": ["VALUE-1234"]}, {"competing": [{"token": "VALUE-1234", "kind": "twin"}]},
-    {"competing": [{"token": "ERASE-7712", "kind": "planted"}]},
-    {"competing": [{"token": "STALE-5600", "kind": "decoy"}]}, {"required": ["ABC"]},
-    {"recall_query": "Find VALUE-1234"}, {"extra": None}, {"oracle_spans": ["event"] * 2},
-    {"required": ["CAFE\u0301-1234"]}, {"recall_query": "Find STALE-5600"}, {"recall_query": "Find ERASE-7712"},
-    {"required": ["CAFÉ-1234"], "recall_query": "Find CAFE\u0301-1234"},
+@pytest.mark.parametrize(("delta", "message"), [
+    ({"required": ["ZZZZ-1234", "AAAA-1234"]}, "reader keys: token lists must strictly increase"),
+    ({"required": ["VALUE-1234"] * 2}, "reader keys: token lists must strictly increase"),
+    ({"forbidden": ["ZZZZ-1234", "AAAA-1234"]}, "reader keys: token lists must strictly increase"),
+    ({"forbidden": ["ERASE-7712"] * 2}, "reader keys: token lists must strictly increase"),
+    ({"competing": [{"token": "STALE-5600", "kind": "stale"}] * 2}, "reader keys: token lists must strictly increase"),
+    ({"competing": [{"token": "ZZZZ-1234", "kind": "stale"}, {"token": "AAAA-1234", "kind": "twin"}]},
+     "reader keys: token lists must strictly increase"),
+    ({"forbidden": ["VALUE-1234"]}, "reader keys: overlapping token sets"),
+    ({"competing": [{"token": "VALUE-1234", "kind": "twin"}]}, "reader keys: overlapping token sets"),
+    ({"competing": [{"token": "ERASE-7712", "kind": "planted"}]}, "reader keys: overlapping token sets"),
+    ({"competing": [{"token": "STALE-5600", "kind": "decoy"}]}, '$["competing"][0]["kind"]: invalid enum value'),
+    ({"required": ["ABC"]}, '$["required"][0]: pattern mismatch'),
+    ({"recall_query": "Find VALUE-1234"}, "reader keys: non-NFC token or token in query"),
+    ({"extra": None}, "$: missing=[], extra=['extra']"),
+    ({"oracle_spans": ["event"] * 2}, "reader keys: duplicate oracle span"),
+    ({"required": ["CAFE\u0301-1234"]}, "reader keys: non-NFC token or token in query"),
+    ({"recall_query": "Find STALE-5600"}, "reader keys: non-NFC token or token in query"),
+    ({"recall_query": "Find ERASE-7712"}, "reader keys: non-NFC token or token in query"),
+    ({"required": ["CAFÉ-1234"], "recall_query": "Find CAFE\u0301-1234"}, "reader keys: non-NFC token or token in query"),
 ])
-def test_contract_refusals(delta):
+def test_contract_refusals(delta, message):
     value = copy.deepcopy(registry())
     value.update(delta)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=rf"^{re.escape(message)}$"):
         validate("reader_keys", value)
 
 

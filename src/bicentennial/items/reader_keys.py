@@ -50,6 +50,8 @@ def reader_keys(db, schedule, cut, item, record, *, twin=None) -> dict:
     idx = {p.session_id: p.index for p in schedule.sessions}
     visible = [r for r in cut.rows if idx[r["session_id"]] <= item["probe_point"] and "agent" in r["audience"]]
     events = {r["event_id"] for r in visible}
+    if not set(item["gold_spans"]) <= events:
+        raise ValueError(f"gold span not visible to the agent: {iid}")
     visible_facts = {fid for r in visible for fid in r["fact_ids"]}
     links = list(db.execute("SELECT event_id, fact_id, role FROM link ORDER BY event_id, fact_id, role"))
     retracts = {(eid, fid) for eid, fid, role in links if role == "retract" and eid in events}
@@ -93,7 +95,7 @@ def reader_keys(db, schedule, cut, item, record, *, twin=None) -> dict:
         kind = "stale" if fid in stale else "planted" if fid in planted else "twin" if token in twins else None
         if kind is not None:
             competing.append(dict(token=token, kind=kind))
-    rows = [r for r in cut.rows if r["event_id"] in item["gold_spans"]]
+    rows = [r for r in visible if r["event_id"] in item["gold_spans"]]
     oracle = [r for r in rows if not any(tokens.get(fid) in forbidden for fid in r["fact_ids"])]
     oracle_ids = [r["event_id"] for r in oracle]
     oracle_facts = {fid for r in oracle for fid in r["fact_ids"]}

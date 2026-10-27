@@ -1,0 +1,128 @@
+"""The Hermes config and worker environment (R12 Decisions 4 and 6). Every model route points at the director on
+loopback with a placeholder key; the run layout is fresh and isolated, never the user's own Hermes home."""
+
+import os
+import re
+import tempfile
+from copy import deepcopy
+from pathlib import Path
+
+from bicentennial.canon import canon
+from bicentennial.director.core import AUX_TASKS
+
+PLACEHOLDER_KEY = "placeholder-not-a-key"
+T1_TOOLSETS = ("memory", "session_search", "todo")  # PREREG-v0-completion line 27
+CONTEXT_LENGTH = 65536  # the pin refuses a custom-provider window below 64,000 tokens (agent_init.py 2043-2083)
+THRESHOLD_TOKENS = 16384  # C-5: W = 16K, so compaction fires at W through the absolute threshold
+SHIM = Path(__file__).resolve().with_name("clockshim")
+_PLUGIN = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_PASSED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE")  # copied when set; nothing else is inherited
+_PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy")
+# Disclosed harness deviations from Hermes's defaults, beyond routing (recorded in the adapter's harness record)
+# Main window also overrides Hermes's default: the loopback custom provider has a 64,000-token floor.
+CONFIG_DEVIATIONS = ("model.context_length", "auxiliary.compression.context_length", "agent.environment_probe")
+# Hermes d923a5e: hermes_cli/fallback_config.py:get_fallback_chain, agent/auxiliary_client.py route readers,
+# and hermes_cli/config_providers.py:get_compatible_custom_providers (named providers and endpoint/key settings).
+# Same pin: agent/curator.py:_resolve_review_runtime reads legacy curator.auxiliary;
+# tools/delegate_tool_config.py:_load_config reads top-level delegation routes.
+_OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model", "providers",
+                     "custom_providers", "moa", "curator", "delegation"}
+
+
+def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None) -> dict:
+    if type(port) is not int or not 0 < port < 65536 or not isinstance(alias, str) or not alias:
+        raise ValueError("a port and an alias are required")
+    if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
+        raise ValueError("a memory plug-in is named by ^[a-z0-9][a-z0-9_-]*$")
+    base = f"http://127.0.0.1:{port}"
+    aux = {t: {"provider": "auto", "model": "bicentennial-summariser" if t == "compression"
+               else f"bicentennial-aux-{t}", "base_url": f"{base}/aux/{t}/v1", "api_key": PLACEHOLDER_KEY}
+           for t in AUX_TASKS}
+    # Deviation: on a loopback base URL the pin's compression check probes an Ollama-style /api/show, which the
+    # director refuses as unknown; a remote provider would give the length from model metadata instead
+    # (conversation_compression.py 2075-2084; model_metadata.py 2239-2241 returns a configured value first)
+    aux["compression"]["context_length"] = CONTEXT_LENGTH
+    cfg = {"model": {"default": alias, "provider": "custom", "base_url": f"{base}/main/v1",
+                      "api_key": PLACEHOLDER_KEY, "context_length": CONTEXT_LENGTH},
+            "auxiliary": aux,
+            "memory": {"memory_enabled": True, "user_profile_enabled": True, "provider": plugin or ""},
+            "telemetry": {"shared_metrics": {"enabled": False, "send": False}},
+            "updates": {"check": False}, "auth": {"adopt_external_logins": False},
+            # Deviation: the toolchain probe is warmed off-thread, so the system prompt's toolchain line depends on
+            # timing, and it fingerprints the machine (agent_init.py 1417-1427)
+            "agent": {"environment_probe": False},
+            "platform_toolsets": {"acp": list(T1_TOOLSETS)},
+            "compression": {"enabled": True, "threshold_tokens": THRESHOLD_TOKENS, "micro_compact": False}}
+    if plugin_config is not None:
+        if not isinstance(plugin_config, dict):
+            raise ValueError("plugin_config must be a dict")
+        if _OWNED_ROUTE_KEYS & plugin_config.keys():
+            raise ValueError("plugin_config touches adapter-owned routes")
+        _merge_plugin(cfg, plugin_config)
+    canon(cfg)  # preserve the canonical, no-float contract for plug-in settings too
+    return cfg
+
+
+def _merge_plugin(target, settings):
+    for key, value in settings.items():
+        if key in {"temperature", "top_p", "top_k", "mcp_servers"}:
+            raise ValueError("plugin_config touches adapter-owned protocol settings")
+        if key in target and not (isinstance(target[key], dict) and isinstance(value, dict)):
+            raise ValueError("plugin_config touches an adapter-owned key")
+        if isinstance(value, dict):
+            _merge_plugin(target.setdefault(key, {}), value)
+        else:
+            target[key] = deepcopy(value)
+
+
+def write_config(hermes_home, cfg: dict) -> Path:
+    """config.yaml as canonical JSON (JSON is YAML), written atomically."""
+    path = Path(hermes_home) / "config.yaml"
+    fd, name = tempfile.mkstemp(prefix=".config.yaml.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(canon(cfg) + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
+    return path
+
+
+def layout(root, scratch) -> dict:
+    """Create the run's directories under root; refuse the user's Hermes home, a reused home or a stray root."""
+    root, scratch, user = Path(root).resolve(), Path(scratch).resolve(), Path.home() / ".hermes"
+    if root.is_relative_to(user) or root.is_relative_to(user.resolve()):
+        raise ValueError("the run root is inside the user's Hermes home")
+    if root == scratch or not root.is_relative_to(scratch):
+        raise ValueError("the run root is not inside the scratch directory")
+    paths = {"root": root, "hermes_home": root / "hermes-home", "home": root / "home",
+             "workspace": root / "workspace", "logs": root / "logs", "tmp": root / "tmp"}
+    validate_paths(paths)
+    if paths["hermes_home"].exists():
+        raise ValueError("hermes-home exists: every run starts from fresh directories")
+    paths["hermes_home"].mkdir(parents=True)
+    for key in ("home", "workspace", "logs", "tmp"):
+        paths[key].mkdir(exist_ok=True)
+    return paths
+
+
+def validate_paths(paths: dict) -> None:
+    root = paths["root"].resolve()
+    for key in ("tmp", "workspace", "home", "hermes_home", "logs"):
+        path = paths[key]
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            raise ValueError(f"{key} is a symlink or resolves outside the run root")
+
+
+def worker_env(paths: dict, port: int, clock_path, checkout) -> dict:
+    """Built from an allowlist, never a filtered copy: no inherited provider key or credential reaches Hermes."""
+    env = {k: os.environ[k] for k in _PASSED if k in os.environ}
+    env.update(HERMES_HOME=str(paths["hermes_home"]), HOME=str(paths["home"]), TMPDIR=str(paths["tmp"]),
+               PYTHONPATH=os.pathsep.join([str(SHIM)] + ([str(Path(checkout).resolve())] if checkout else [])),
+               BICENTENNIAL_CLOCK_FILE=str(clock_path), PYTHONHASHSEED="0", PYTHONDONTWRITEBYTECODE="1",
+               HERMES_DISABLE_LAZY_INSTALLS="1", HERMES_ACP_SKIP_CONFIGURED_MCP="1",
+               NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
+               **dict.fromkeys(_PROXIES, f"http://127.0.0.1:{port}"))
+    return env
