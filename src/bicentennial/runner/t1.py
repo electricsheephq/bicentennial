@@ -288,7 +288,7 @@ def _unit(ctx, pack, arm, b, scratch, voids, floor):
                 if relabel and (cls, label) == ("SYSTEM_FAILURE", run.stopped[1]):
                     cls = "INFRA_FAILURE"
                     reclassified.add(iid)
-                if run.audit.get("status") != "OK" and cls != "SYSTEM_FAILURE":
+                if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
                     cls, label = "INFRA_FAILURE", "audit:" + ",".join(sorted(run.audit.get("failures", ("missing",))))
                 scored = score_item(item, cls=cls, label=label,
                     result=run.results.get(iid, MISSING), envelope=run.envelopes.get(iid, MISSING),
@@ -332,7 +332,7 @@ def _arm(arm, packs, units, scores, labels, voids):
             result = None if cls in ("SYSTEM_FAILURE", "BLOCKED") else reader
             evidence.append(ItemEvidence(item, pack.records[iid], pack.keys[iid], result, cls, crosses, None, None))
             if arm == "system" and crosses and type(scores[iid]["score_milli"]) is int:
-                recall[iid] = reader is not None and reader.in_context is True
+                recall[iid] = result is not None and result.in_context is True
     for pack in packs:
         for bundle in sorted(pack.pack["bundles"], key=lambda b: b["bundle_id"]):
             a, b = bundle["items"]

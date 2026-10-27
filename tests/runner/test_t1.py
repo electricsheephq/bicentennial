@@ -698,9 +698,24 @@ def test_recall_with_system_failure(policy, replay, has_reader):
             if t1._crosses(p, i):
                 key = i["item_id"]
                 result = policy.cache[p.life, "system", p.records[key]["branch"]].results[key]
-                expected[key] = has_reader if key == iid else result.in_context is True
+                expected[key] = False if key == iid else result.in_context is True
     assert arm.recall == tuple(expected[key] for key in sorted(expected))
     assert arm.outcomes[iid]["failure_class"] == "SYSTEM_FAILURE"
+
+
+def test_missing_audit_keeps_infra_cause(policy, replay):
+    pack = policy.ctx.packs[0]
+    ids = [i["item_id"] for i in pack.items["B0"]]
+
+    def mutate(run):
+        if (run.life, run.arm, run.branch) != (pack.life, "system", "B0"):
+            return run
+        return replace(run, audit={}, classes={iid: ("INFRA_FAILURE", "worker_start") for iid in ids})
+
+    arm = replay.run(mutate).arms["system"]
+    for iid in ids:
+        assert arm.labels[iid] == ("INFRA_FAILURE", "worker_start")
+        assert arm.outcomes[iid]["failure_class"] == "BLOCKED"
 
 
 @pytest.mark.parametrize("genre", ["G1", "G2"])
