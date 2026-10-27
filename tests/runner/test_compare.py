@@ -1,0 +1,611 @@
+"""T1 ordered gates, offline corpus attribution and publication acceptance."""
+
+import ast
+import json
+import os
+import runpy
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from bicentennial import cli
+from bicentennial.api.adapters.reference_store import ReferenceStore
+from bicentennial.canon import canon
+from bicentennial.contracts.run import validate
+from bicentennial.controls.cache import ControlsTampered
+from bicentennial.corpus.run import CaseResult
+from bicentennial.harness.hermes import adapter, plugin_host
+from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
+from bicentennial.harness.hermes.plugin_host import GateRefused
+from bicentennial.keyed import choice
+from bicentennial.ledger import LedgerBusy, stable_digest
+from bicentennial.packs.manifest import PinnedArtifactChanged
+from bicentennial.report.determinism import determinism_check
+from bicentennial.report.receipt import loop_time
+from bicentennial.runner import compare, t0, t1
+from bicentennial.runner.lock import LockMismatch
+from bicentennial.score.classes import IDENTITY, outcome
+from bicentennial.score.invariants import GATED_T1, INVARIANTS, Verdict
+from bicentennial.systems.controls import WIPED_LABEL
+from bicentennial.systems.registry import SystemRefused
+
+# Reuse the installed real packs, compiled fake worker and executed policy evidence.
+shared = runpy.run_path(str(Path(__file__).with_name("test_t1.py")))
+installed, policy, replay = (shared[k] for k in ("installed", "policy", "replay"))
+measured = shared["measured"]
+SUBSET = ("g1-recall-value-dir-2.wipe_on_restart", "g2-drift-asof-dir-1.stale_wins")
+STABLE = ("card.json", "junit.xml", "invariants.json", "corpus.json", "controls.json")
+RESULTS = (*STABLE, "receipt.json")
+
+
+@pytest.fixture(autouse=True)
+def environment(monkeypatch):
+    monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
+    monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
+    monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
+    monkeypatch.setattr(plugin_host, "assert_niced", lambda pid: None)
+    monkeypatch.setattr(t1, "check_compile", lambda *a, **kw: {"ok": True})
+
+
+@pytest.fixture(scope="module")
+def cases():
+    all_cases = compare.load_corpus(compare.CORPUS_PATH)
+    result = tuple(c for c in all_cases if c.case_id in SUBSET)
+    assert len(result) == 2
+    return result
+
+
+def fake_case(case, factory, **kwargs):
+    assert kwargs["infra"] == compare.INFRA
+    return CaseResult(case.case_id, "PASS", "", None) if factory.arm == "system" else CaseResult(
+        case.case_id, "FAIL", "mismatch", case.items[0])
+
+
+def invoke(installed, out, **kwargs):
+    return compare.run_t1(**(dict(system="hermes-native", packs_dir=installed.root,
+        pack_hash=installed.digest, out=out, entry=measured(), worker_argv=installed.worker) | kwargs))
+
+
+def read(out, arm="system", name="card.json"):
+    return json.loads((out / arm / name).read_bytes())
+
+
+def properties(out, arm):
+    root = ET.parse(out / arm / "junit.xml").getroot()
+    return {p.attrib["name"]: p.attrib["value"] for p in root[0].findall("properties/property")}
+
+
+def valid(out):
+    for arm in compare.GATED:
+        card, receipt = read(out, arm), read(out, arm, "receipt.json")
+        validate("card_ring0", card)
+        validate("receipt", receipt)
+        assert card["run_status"] == receipt["run_status"]
+
+
+def no_results(out):
+    assert not any(p.name in RESULTS for p in out.rglob("*") if p.is_file())
+    assert not (out / "work").exists() and not (out / "corpus-work").exists()
+
+
+@pytest.fixture(scope="module")
+def completed(installed, cases, tmp_path_factory):
+    root = tmp_path_factory.mktemp("compare-full")
+    patch = pytest.MonkeyPatch()
+    patch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
+    patch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
+    patch.setattr(adapter, "assert_niced", lambda pid: None)
+    patch.setattr(plugin_host, "assert_niced", lambda pid: None)
+    patch.setattr(t1, "check_compile", lambda *a, **kw: {"ok": True})
+    patch.setattr(compare, "load_corpus", lambda path: cases)
+    patch.setattr(compare, "run_case", fake_case)
+    real, runs, gates = t1.run_life, [], []
+    gate = compare.t1_gate
+
+    def drive(**kwargs):
+        result = real(**kwargs)
+        runs.append(result)
+        return result
+
+    def gated(*args, **kwargs):
+        result = gate(*args, **kwargs)
+        gates.append(result.to_obj())
+        return result
+
+    patch.setattr(t1, "run_life", drive)
+    patch.setattr(compare, "t1_gate", gated)
+    try:
+        for name in ("one", "two"):
+            out = root / name
+            code = invoke(installed, out)
+            assert code == 0, gates[-2:]
+            assert read(out)["gate_verdict"] == "CONFORMANCE_PASS", gates[-2:]
+            assert read(out, "wiped")["gate_verdict"] == "FAIL", gates[-2:]
+            assert read(out, "system", "controls.json")["floor_mismatches"] == [], gates[-2:]
+            assert not (out / "work").exists() and not (out / "corpus-work").exists()
+        assert len(runs) == 24
+        for arm in compare.GATED:
+            for name in STABLE:
+                left, right = ((root / p / arm / name).read_bytes() for p in ("one", "two"))
+                if left != right:
+                    detail = determinism_check(left, right) if name == "card.json" else name
+                    pytest.fail(f"STOP: stable output differs: {detail}")
+            card = (root / "one" / arm / "card.json").read_bytes()
+            print(f"compare {arm} card_sha256={sha256(card).hexdigest()}", flush=True)
+        yield SimpleNamespace(root=root, runs=runs, gates=gates)
+    finally:
+        patch.undo()
+
+
+def test_full_run(completed, installed, cases):
+    out = completed.root / "one"
+    valid(out)
+    expected = {i["item_id"] for p in t1.prepare(system="hermes-native", packs=installed.root,
+        pack_hash=installed.digest, entry=measured(), worker_argv=installed.worker).packs
+        for i in p.pack["items"]}
+    for arm in compare.GATED:
+        card = read(out, arm)
+        assert {i["item_id"] for i in card["items"]} == expected
+        assert card["run_status"] == "COMPLETE" and card["controls"]["wiped_store"] == "FAIL"
+        assert "scripted_model" in card["labels"]
+        invariants = read(out, arm, "invariants.json")
+        assert [v["invariant"] for v in invariants] == list(INVARIANTS)
+        assert read(out, arm, "corpus.json") == [fake_case(c, SimpleNamespace(arm=arm),
+            infra=compare.INFRA).to_obj() for c in cases]
+        controls = read(out, arm, "controls.json")
+        assert set(controls) == {"canary", "label", "wipes", "floor_mismatches"}
+        assert len(controls["wipes"]) == 4 and controls["floor_mismatches"] == []
+        ms, busy = loop_time(read(out, arm, "receipt.json"))
+        assert ms > 0 and busy is False
+        suites = ET.parse(out / arm / "junit.xml").getroot()
+        names = [s.attrib["name"] for s in suites]
+        prefix = f"ring0.T1.hermes-native.{arm}"
+        assert names == [prefix, prefix + ".invariants", prefix + ".corpus"] + (
+            ["ring0.T1.hermes-native.no_memory"] if arm == "system" else [])
+        props = properties(out, arm)
+        assert all(props[k] == v for k, v in compare.DISCLOSURES)
+        assert not any(k in props for k, _ in compare.PLUGIN_DISCLOSURES)
+        assert all(props[k] == "0" for k in ("isolation.unknown_requests", "isolation.forwarded",
+                                             "no_memory.gold_in_context"))
+        if arm == "wiped":
+            assert props["wiped.label"] == WIPED_LABEL
+        records = [r for f in completed.runs[:12] if f.arm == arm
+                   for r in compare._masked(f.records, f.run_values)]
+        first = next(f for f in completed.runs if f.arm == arm)
+        assert stable_digest(records, first.run_values) == card["masked_ledger_digest"]
+    for name in ("one", "two"):
+        for path in (completed.root / name).rglob("*.json"):
+            stack = [json.loads(path.read_bytes())]
+            while stack:
+                value = stack.pop()
+                assert type(value) is not float, path
+                if isinstance(value, dict):
+                    stack.extend(value.values())
+                elif isinstance(value, list):
+                    stack.extend(value)
+
+
+def verdicts(arm, changes=None):
+    changes = changes or {}
+    return tuple(Verdict(name, changes.get(name, "NOT_EXERCISED" if name == "INV-FORGET" else
+        "PASS" if arm == "system" else "FAIL"), 0, 0, (), (), (), ()) for name in INVARIANTS)
+
+
+@pytest.fixture
+def synth(replay, monkeypatch, cases):
+    run = replay.run()
+    arms = {a: replace(r, verdicts=verdicts(a)) if a in compare.GATED else r
+            for a, r in run.arms.items()}
+    run = replace(run, arms=arms)
+    monkeypatch.setattr(t1, "prepare", lambda **kwargs: run.ctx)
+    monkeypatch.setattr(compare, "run_arms", lambda ctx, **kwargs: replace(run, ctx=ctx))
+    monkeypatch.setattr(compare, "load_corpus", lambda path: cases)
+    monkeypatch.setattr(compare, "run_case", fake_case)
+    return run
+
+
+def set_run(monkeypatch, run):
+    monkeypatch.setattr(compare, "run_arms", lambda ctx, **kwargs: run)
+
+
+def change_arm(run, arm, **changes):
+    return replace(run, arms=run.arms | {arm: replace(run.arms[arm], **changes)})
+
+
+@pytest.mark.parametrize("changes,code,verdict,status", [
+    ({}, 0, "CONFORMANCE_PASS", "COMPLETE"),
+    ({"INV-VERB": "FAIL"}, 1, "FAIL", "COMPLETE"),
+    ({"INV-NEW": "INFRA_FAILURE"}, 2, "BLOCKED", "BLOCKED"),
+    ({"INV-VERB": "FAIL", "INV-NEW": "INFRA_FAILURE"}, 1, "FAIL", "BLOCKED"),
+])
+def test_gate_matrix(synth, installed, monkeypatch, tmp_path, changes, code, verdict, status):
+    set_run(monkeypatch, change_arm(synth, "system", verdicts=verdicts("system", changes)))
+    out = tmp_path / "out"
+    assert invoke(installed, out) == code
+    valid(out)
+    assert (read(out)["gate_verdict"], read(out)["run_status"]) == (verdict, status)
+
+
+def test_baseline_order_and_refusals(synth, installed, monkeypatch, tmp_path, capsys):
+    first, second = tmp_path / "one", tmp_path / "two"
+    assert invoke(installed, first) == 0
+    baseline = first / "system/card.json"
+    order, raw = [], compare.check_baseline
+    monkeypatch.setattr(compare, "check_baseline", lambda *a, **kw: (order.append("baseline"), raw(*a, **kw))[1])
+    monkeypatch.setattr(compare, "run_arms", lambda *a, **kw: (order.append("arms"), synth)[1])
+    assert invoke(installed, second, baseline=baseline) == 0
+    assert order == ["baseline", "arms"] and read(second)["gate_verdict"] == "PASS"
+    for name, data, code in (("mismatch", canon(read(first) | {"pins": read(first)["pins"] |
+            {"pack_hash": "f" * 64}}), "baseline_mismatch"),
+            ("invalid", baseline.read_bytes() + b"\n", "baseline_invalid")):
+        path, out = tmp_path / f"{name}.json", tmp_path / name
+        path.write_bytes(data)
+        order.clear()
+        assert invoke(installed, out, baseline=path) == 3
+        assert order == ["baseline"] and not out.exists()
+        assert code in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_corpus_retry(synth, installed, monkeypatch, tmp_path, cases, persistent):
+    calls = []
+
+    def case(c, factory, **kwargs):
+        if c == cases[0] and factory.arm == "system":
+            calls.append(c.case_id)
+            if persistent or len(calls) == 1:
+                return CaseResult(c.case_id, "INFRA_FAILURE", "infra", None)
+        return fake_case(c, factory, **kwargs)
+
+    monkeypatch.setattr(compare, "run_case", case)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == (2 if persistent else 0)
+    assert len(calls) == (3 if persistent else 2)
+    valid(out)
+
+
+def test_corpus_failure_wins_over_blocked_item(synth, installed, monkeypatch, tmp_path):
+    outcomes = dict(synth.arms["system"].outcomes)
+    iid = next(iter(outcomes))
+    outcomes[iid] = outcome({k: outcomes[iid][k] for k in sorted(IDENTITY)}, None,
+                            cause="INFRA_FAILURE", infra_reruns=2)
+    # Rebuild bundles so all aggregate inputs remain consistent.
+    from bicentennial.score.bundle import make_bundle
+    bundles = []
+    for pack in synth.ctx.packs:
+        for b in pack.pack["bundles"]:
+            ident = {k: b[k] for k in ("bundle_id", "cell_id", "twin_type")}
+            bundles.append(make_bundle(ident | {"life": pack.life}, *(outcomes[i] for i in b["items"])))
+    set_run(monkeypatch, change_arm(synth, "system", outcomes=outcomes,
+        bundles=tuple(sorted(bundles, key=lambda b: b["bundle_id"]))))
+    monkeypatch.setattr(compare, "run_case", lambda c, f, **kw: CaseResult(c.case_id, "FAIL", "mismatch", c.items[0]))
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 1
+    valid(out)
+    assert read(out)["run_status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("mode", ["wiped_pass", "no_recall", "wiped_blocked", "both"])
+def test_wiped_control(synth, installed, monkeypatch, tmp_path, mode):
+    run = synth
+    if mode == "no_recall":
+        run = change_arm(run, "system", recall=(False,))
+    else:
+        changes = {n: "PASS" for n in GATED_T1}
+        if mode in ("wiped_blocked", "both"):
+            changes["INV-VERB"] = "INFRA_FAILURE"
+            monkeypatch.setattr(compare, "control_status", lambda *a: pytest.fail("BLOCKED control called"))
+        run = change_arm(run, "wiped", verdicts=verdicts("wiped", changes))
+        monkeypatch.setattr(compare, "run_case", lambda c, f, **kw: CaseResult(c.case_id, "PASS", "", None))
+        if mode == "both":
+            run = change_arm(run, "system", verdicts=verdicts("system", {"INV-VERB": "FAIL"}))
+    set_run(monkeypatch, run)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == (2 if mode == "wiped_blocked" else 1)
+    valid(out)
+    assert read(out)["gate_verdict"] == dict(wiped_pass="INVALID", no_recall="FAIL",
+        wiped_blocked="BLOCKED", both="FAIL")[mode]
+    if mode == "wiped_pass":
+        assert read(out, "wiped")["gate_verdict"] == "CONFORMANCE_PASS"
+    else:
+        assert read(out)["controls"]["wiped_store"] == "uninformative"
+
+
+@pytest.mark.parametrize("arm,blocked", [("system", False), ("no_memory", False), ("system", True)])
+def test_honeypot(synth, installed, monkeypatch, tmp_path, arm, blocked):
+    run = change_arm(synth, arm, honeypot_hits=1)
+    if blocked:
+        run = change_arm(run, "system", verdicts=verdicts("system", {"INV-NEW": "INFRA_FAILURE"}))
+    set_run(monkeypatch, run)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 1
+    valid(out)
+    assert all(read(out, a)["gate_verdict"] == "INVALID" for a in compare.GATED)
+
+
+def test_plugin_disclosures(synth, installed, monkeypatch, tmp_path):
+    ctx = replace(synth.ctx, entry=measured("holographic"), plugin_source=tmp_path / "plugin")
+    run = replace(synth, ctx=ctx)
+    monkeypatch.setattr(t1, "prepare", lambda **kw: ctx)
+    set_run(monkeypatch, run)
+    out = tmp_path / "out"
+    assert invoke(installed, out, system="holographic", entry=ctx.entry, plugin_source=ctx.plugin_source) == 0
+    for a in compare.GATED:
+        assert all(properties(out, a)[k] == v for k, v in compare.PLUGIN_DISCLOSURES)
+
+
+def test_spend_preflight(synth, installed, monkeypatch, tmp_path, capsys):
+    raw, calls = compare.build_receipt, []
+
+    def receipt(**kwargs):
+        calls.append(1)
+        return raw(**kwargs) | {"spend_micro_usd": int(len(calls) == 2)}
+
+    monkeypatch.setattr(compare, "build_receipt", receipt)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 3
+    assert "SpendRefused" in capsys.readouterr().err
+    no_results(out)
+
+
+@pytest.mark.parametrize("where", ["final", "earlier", "floor", "forwarded", "scripted"])
+def test_isolation_refusal(synth, installed, monkeypatch, tmp_path, where, capsys):
+    arm = "no_memory" if where == "floor" else "system"
+    units = list(synth.arms[arm].units)
+    f = units[0].runs[-1]
+    row = {"served_by": "live"} if where in ("final", "earlier", "floor") else {
+        "upstream": [{"served_by": "scripted" if where == "scripted" else "live"}]}
+    # Isolation executes before report assembly; the passing row needs no digest fields.
+    row["type"] = "diagnostic"
+    bad = replace(f, records=(row,), run_values=dict(sandbox_root=str(tmp_path), director_port="32109"))
+    units[0] = replace(units[0], runs=(bad, f) if where == "earlier" else (bad,))
+    set_run(monkeypatch, change_arm(synth, arm, units=tuple(units)))
+    out = tmp_path / "out"
+    assert invoke(installed, out) == (0 if where == "scripted" else 3)
+    if where != "scripted":
+        no_results(out)
+        assert "upstream_record" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("during", [False, True])
+def test_lock_refusal(synth, installed, monkeypatch, tmp_path, during):
+    fields = ["analysis_commit", "benchmark_commit", "director_commit"]
+    if during:
+        def refused(*args, **kwargs):
+            raise LockMismatch(fields)
+        monkeypatch.setattr(compare, "run_arms", refused)
+    else:
+        monkeypatch.setattr(t1, "_commit", lambda: "f" * 40)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 3
+    assert json.loads((out / "refusal.json").read_bytes()) == dict(code="lock_mismatch", fields=fields)
+    no_results(out)
+
+
+@pytest.mark.parametrize("error,code", [(GateRefused("gate"), "gate_refused"),
+    (PinMismatch("pin"), "pin_mismatch"), (ControlsTampered("controls"), "pinned_artifact_changed"),
+    (PinnedArtifactChanged(["artifact"]), "pinned_artifact_changed"),
+    (SystemRefused(["z", "a"]), "a,z")])
+def test_refusal_mapping(synth, installed, monkeypatch, tmp_path, capsys, error, code):
+    def refused(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(compare, "run_arms", refused)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 3
+    assert code in capsys.readouterr().err
+    no_results(out)
+
+
+def test_preconditions(installed, tmp_path, capsys):
+    out = tmp_path / "out"
+    assert invoke(installed, out, system="nomemory", entry=None) == 3
+    assert not out.exists() and "unknown_system" in capsys.readouterr().err
+    out.mkdir()
+    assert invoke(installed, out) == 3
+    assert "out_exists" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("fault,status,reason,attempts", [
+    (None, "PASS", "", 1), (HarnessFailed("query_failed"), "FAIL", "system_failure", 1),
+    (HarnessFailed("ipc"), "INFRA_FAILURE", "infra", 3),
+    (LedgerBusy("busy"), "INFRA_FAILURE", "infra", 3),
+    (OSError("construction"), "INFRA_FAILURE", "infra", 3),
+])
+def test_corpus_attribution(policy, cases, monkeypatch, tmp_path, fault, status, reason, attempts):
+    constructed = []
+
+    class Host(ReferenceStore):
+        def __init__(self, *args, **kwargs):
+            constructed.append(self)
+            if isinstance(fault, OSError):
+                raise fault
+            super().__init__()
+
+        def query(self, *args):
+            if fault:
+                raise fault
+            return super().query(*args)
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    for c in cases:
+        constructed.clear()
+        got = compare.corpus(policy.ctx, "system", (c,), catalogue=catalogue(), work=tmp_path / c.case_id)
+        assert [(r.status, r.reason) for r in got] == [(status, reason)]
+        # Successful cases construct extra hosts at their scheduled restarts.
+        if fault:
+            assert len(constructed) >= attempts
+            assert len(list((tmp_path / c.case_id).rglob("a*"))) == 0
+    assert compare.SYSTEM_CAUSES is t0.SYSTEM_CAUSES
+
+
+def catalogue():
+    return compare.load_catalogue(compare.REPO / compare.CATALOGUE[0],
+        c7_path=compare.REPO / compare.CATALOGUE[1], tier_path=compare.REPO / compare.CATALOGUE[2])
+
+
+def test_wiped_reference(policy, cases, monkeypatch, tmp_path):
+    calls = []
+
+    class Host(ReferenceStore):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def reset(self):
+            calls.append("reset")
+            super().reset()
+
+        def restore(self, data):
+            pytest.fail("wiped restore reached underlying store")
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    c = next(c for c in cases if c.case_id == SUBSET[0])
+    raw = compare._WipedHost.__getattr__
+    restores = []
+
+    def attr(self, name):
+        value = raw(self, name)
+        if name == "restore":
+            def restore(data):
+                before = len(calls)
+                value(data)
+                assert calls[before:] == ["reset"]
+                restores.append(data)
+            return restore
+        return value
+
+    monkeypatch.setattr(compare._WipedHost, "__getattr__", attr)
+    result = compare.corpus(policy.ctx, "wiped", (c,), catalogue=catalogue(), work=tmp_path / "work")
+    assert result[0].status == "FAIL" and restores
+    assert not hasattr(compare._Host(Host(), []), "begin_session")
+    assert not hasattr(compare._Host(Host(), []), "probe")
+
+
+def test_corpus_held_refusal(synth, installed, monkeypatch, tmp_path, capsys):
+    calls = []
+
+    class Host(ReferenceStore):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def reset(self):
+            # ReferenceStore construction calls reset too; refuse during drive only.
+            if hasattr(self, "events"):
+                calls.append("refused")
+                raise GateRefused("gate")
+            super().reset()
+
+    raw = compare.run_case
+    from bicentennial.corpus.run import run_case
+
+    def observe(*args, **kwargs):
+        result = run_case(*args, **kwargs)
+        calls.append("returned")
+        return result
+
+    assert raw is fake_case
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    monkeypatch.setattr(compare, "run_case", observe)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 3
+    assert calls == ["refused", "returned"]
+    assert "gate_refused" in capsys.readouterr().err
+    no_results(out)
+
+
+def test_corpus_stub(policy, cases, tmp_path, monkeypatch):
+    write_tree = runpy.run_path(str(compare.REPO / "tests/harness/hermes_stub.py"))["write_tree"]
+    stub = write_tree(tmp_path / "stub", log=tmp_path / "calls.jsonl", mode="none")
+    raw, hosts, calls = compare.HermesMemoryHost, [], []
+
+    class Host(raw):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            hosts.append(self)
+
+        def begin_session(self, index):
+            result = super().begin_session(index)
+            calls.append((id(self), "begin"))
+            return result
+
+        def reset(self):
+            calls.append((id(self), "reset"))
+            return super().reset()
+
+        def close(self):
+            calls.append((id(self), "close"))
+            return super().close()
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    for arm in compare.GATED:
+        for c in cases:
+            before = len(calls)
+            start = time.monotonic_ns()
+            result = compare.corpus(policy.ctx, arm, (c,), catalogue=catalogue(),
+                work=tmp_path / arm / c.case_id,
+                host=dict(checkout=stub, worker_argv=[sys.executable, str(plugin_host.WORKER)]))
+            ms = (time.monotonic_ns() - start) // 1_000_000
+            print(f"corpus_stub arm={arm} case={c.case_id} status={result[0].status} "
+                  f"reason={result[0].reason} wall_ms={ms}", flush=True)
+            assert len(result) == 1
+            if arm == "wiped":
+                log = calls[before:]
+                assert all(log[n + 1] == (host, "reset") for n, (host, action) in enumerate(log)
+                           if action == "begin")
+    assert hosts and all(calls.count((id(h), "close")) == 1 for h in hosts)
+
+
+def test_cli(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "reexec_niced", lambda argv: calls.append(argv))
+    monkeypatch.setattr(cli, "run_t1", lambda **kw: calls.append(kw) or 2)
+    monkeypatch.setattr(cli, "run_t0", lambda **kw: calls.append(kw) or 0)
+    args = ["t1", "--system", "s", "--packs", "p", "--pack-hash", "h", "--out", "o"]
+    assert cli.main(args) == 2
+    assert calls == [["-m", "bicentennial.cli", *args], dict(system="s", packs_dir="p",
+        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, cache=None)]
+    assert cli.main(["t0", "--system", "s", "--pack", "all", "--packs", "p",
+                     "--pack-hash", "h", "--out", "o"]) == 0
+
+
+@pytest.mark.parametrize("args,seed,code", [(["t1", "--bogus"], "0", "usage"),
+    (["t1"], "0", "usage"), (["t1", "--system", "s", "--packs", "p", "--pack-hash", "h",
+                             "--out", "o"], "random", "hashseed")])
+def test_cli_process(args, seed, code):
+    result = subprocess.run([sys.executable, "-m", "bicentennial.cli", *args],
+        env=dict(os.environ, PYTHONHASHSEED=seed), capture_output=True, text=True)
+    assert result.returncode == 3 and code in result.stderr
+
+
+def test_purity_and_masking():
+    tree = ast.parse(Path(compare.__file__).read_text())
+    forbidden = ("socket", "ssl", "http", "urllib", "requests", "random", "bicentennial.director.upstream")
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module]
+            assert not any(n == f or n.startswith(f + ".") for n in names for f in forbidden)
+        if isinstance(node, ast.Name):
+            assert "l" + "cm" not in node.id.lower()
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            assert "l" + "cm" not in node.value.lower()
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in ("os.environ.get", "os.getenv"):
+            assert node.args[0].value == "PYTHONHASHSEED"
+    # Seeded K10 draws cover digest substrings equal to a director port.
+    for n in range(30):
+        port = str(choice("compare-mask", ("mask",), n, "port", tuple(range(10000, 10100))))
+        digest = (port + "a" * 64)[:64]
+        values = dict(sandbox_root=f"/sandbox/{n}", director_port=port)
+        row = dict(req=digest, resp=digest, req_masked_sha256=digest, resp_masked_sha256=digest,
+                   note=f"{values['sandbox_root']}:{port}")
+        masked = compare._masked([row], values)[0]
+        assert masked["req_masked_sha256"] == masked["resp_masked_sha256"] == digest
+        assert port not in masked["note"] and values["sandbox_root"] not in masked["note"]
+    assert compare._isolated([{"upstream": [{"error": "refused"}]}], {})
+    assert not compare._isolated([{"upstream": [{"served_by": "scripted", "diagnostics": ["bad"]}]}], {})
+    assert not compare._isolated([], {"non_loopback": ["remote"]})
