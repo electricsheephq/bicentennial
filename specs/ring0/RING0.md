@@ -249,7 +249,7 @@ The T0 and T1 runners use these exit codes:
 | 2 | BLOCKED: benchmark infrastructure failed after its reruns, with no known failure (PREREG §7) |
 | 3 | guard refused: the busy marker, the load guard, a pinned-artifact hash mismatch, `PYTHONHASHSEED` not 0, or a refused system (§12) |
 
-- Any other code means the tool itself failed, and no result exists. For example, `keyed.assert_hashseed` exits 70 when a library process starts without the seed, and an uncaught exception exits 1 by Python's convention. The runners therefore check their own preconditions before work and exit 3.
+- The runners exit 70 when an unexpected exception stops them, print `tool_failure` first on stderr, and leave no result file. `keyed.assert_hashseed` also exits 70 when a library process starts without the seed. Any other code still means the tool itself failed, and no result exists. The runners check their own preconditions before work and exit 3.
 - A result file is written only for codes 0-2.
 
 ## 9. Windows and the token estimator
@@ -307,6 +307,7 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 - **E3. The gate's verdicts and exit codes** (§6, §8). INVALID, when the wiped control passed, exits 1. BLOCKED, when infrastructure failed after its reruns with no known failure, exits 2. A known failure wins over a blocked entry, so a rerunnable fault never masks a known failure. The card's `gate_verdict` accepts `BLOCKED` only with run status `BLOCKED`.
 - **E4. The fresh-install hash masks the director port** (§5). Hermes' `config.yaml` and Mem0's `mem0.json` are benchmark-written and carry the run's director port, which differs on every run. In the reported fresh-install hash (the registry pin), every `127.0.0.1:<director port>` that is not followed by another digit, in a `config.yaml` or `mem0.json` at a surface's root, is replaced by `127.0.0.1:{DIRECTOR_PORT}`, and that file's size and content hash are taken from the masked bytes. Nothing else is masked. Verified empty compares each surface with the unmasked tree hash taken earlier in the same run. Card disclosure: "fresh-install hash: director port masked in config.yaml and mem0.json".
 - **E5. The T0 Hermes-replay fallback ships in v0.2** (§7). Every v0.1 system runs T0 in the default memory-layer mode: the API references through the adapter contract, and Hermes native, Holographic and Mem0 through the in-process memory host, which also drives each one's deletion surface. The fallback would inherit T1's forgetting limit (§6: the scripted model only adds), so it would certify less than the default mode, and it misses the 60 s target by design. In v0.1, `bicentennial t0 --mode hermes` refuses with exit 3 and code `mode_unavailable:hermes`. When the fallback ships, INV-FORGET, KEEP-FORGET and KEEP-NEIGH are "not exercised" in it, as at T1, and a timeout is charged to the system unless the ledger shows a benchmark-owned fault (PREREG §7).
+- **E6. A runner failure exits 70** (§8). An unexpected exception inside `bicentennial t0` or `bicentennial t1` exits 70, not Python's 1, so it cannot read as a gate FAIL. Results are written to `staging/` and moved into place only when every file is written (T1 moves the system arm last), so a failed run leaves no result file.
 
 ## References
 

@@ -672,6 +672,8 @@ def test_reference_whole_run(installed, tmp_path, monkeypatch):
     monkeypatch.setattr(t0, "_branches", branches)
     monkeypatch.setattr(t0, "_report_pack", report)
     assert run(installed, out) == 0
+    assert {p.name for p in out.iterdir()} == {
+        "pack", "adapter_invariants.json", "relations.json", "relations.xml"}
     validate_outputs(out, installed)
     assert all(v["status"] == "PASS" for v in json.loads((out / "adapter_invariants.json").read_bytes()))
     assert len(times) == 7 and all(ms < 60_000 for ms in times.values())
@@ -1038,6 +1040,158 @@ def test_invariant_construction_infrastructure(fake_hosts, monkeypatch, fault):
 
 def assert_no_results(out):
     assert not any(p.name in {"card.json", "receipt.json", "junit.xml"} for p in out.rglob("*"))
+
+
+@pytest.mark.parametrize("error", [OSError, KeyboardInterrupt, SystemExit])
+def test_write_failure_cleans_results(installed, tmp_path, monkeypatch, capsys, error):
+    out, calls = tmp_path / "out", []
+    real = t0.write_run
+
+    def write(directory, **kwargs):
+        calls.append(directory)
+        if len(calls) == 2:
+            raise error("second pack")
+        return real(directory, **kwargs)
+
+    monkeypatch.setattr(t0, "write_run", write)
+    if error is OSError:
+        assert run(installed, out) == 70
+        stderr = capsys.readouterr().err
+        assert stderr.splitlines()[0] == "tool_failure"
+        assert "Traceback (most recent call last):" in stderr and "OSError: second pack" in stderr
+    else:
+        with pytest.raises(error, match="second pack"):
+            run(installed, out)
+    assert len(calls) == 2
+    assert_no_results(out)
+    assert not (out / "staging").exists() and not (out / "refusal.json").exists()
+
+
+@pytest.mark.parametrize("error", [OSError, KeyboardInterrupt])
+def test_pack_move_failure_rolls_back(installed, tmp_path, monkeypatch, capsys, error):
+    out, moves = tmp_path / "out", []
+    real = t0.os.replace
+
+    def move(source, target):
+        source, target = Path(source), Path(target)
+        if source.parent == out / "staging":
+            moves.append(source.name)
+            if source.name == "pack":
+                raise error("pack move")
+        return real(source, target)
+
+    monkeypatch.setattr(t0.os, "replace", move)
+    if error is OSError:
+        assert run(installed, out) == 70
+        assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    else:
+        with pytest.raises(error, match="pack move"):
+            run(installed, out)
+    assert moves == ["adapter_invariants.json", "relations.json", "relations.xml", "pack"]
+    assert_no_results(out)
+    assert not any(out.iterdir())
+
+
+def test_publication_order_and_bytes(installed, tmp_path, monkeypatch):
+    out, moves, staged = tmp_path / "out", [], {}
+    real = t0.os.replace
+
+    def move(source, target):
+        source, target = Path(source), Path(target)
+        if source.parent == out / "staging":
+            moves.append(source.name)
+            assert target == out / source.name
+            files = source.rglob("*") if source.is_dir() else (source,)
+            staged.update({p.relative_to(out / "staging"): p.read_bytes()
+                           for p in files if p.is_file()})
+        return real(source, target)
+
+    monkeypatch.setattr(t0.os, "replace", move)
+    assert run(installed, out) == 0
+    assert moves == ["adapter_invariants.json", "relations.json", "relations.xml", "pack"]
+    assert {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()} == staged
+    assert not (out / "staging").exists()
+
+
+def test_preflight_tool_failure(installed, tmp_path, monkeypatch, capsys):
+    def broken(**kwargs):
+        raise RuntimeError("preflight failed")
+
+    monkeypatch.setattr(t0, "_preflight", broken)
+    out = tmp_path / "out"
+    assert run(installed, out) == 70
+    stderr = capsys.readouterr().err
+    assert stderr.splitlines()[0] == "tool_failure"
+    assert "RuntimeError: preflight failed" in stderr
+    assert not out.exists()
+
+
+def test_refusal_write_failure_cleans_results(installed, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    real = Path.write_bytes
+
+    def refused(*args, **kwargs):
+        raise t0.T0Refused("test_refusal")
+
+    def write(path, data):
+        if path == out / "refusal.json":
+            real(path, data[:1])
+            raise OSError("refusal write")
+        return real(path, data)
+
+    monkeypatch.setattr(t0, "_execute", refused)
+    monkeypatch.setattr(Path, "write_bytes", write)
+    assert run(installed, out) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert not any(out.iterdir())
+
+
+def test_pack_move_failure_rolls_back_despite_cleanup_failure(installed, tmp_path, monkeypatch, capsys):
+    out, cache = tmp_path / "out", tmp_path / "cache"
+    cache.mkdir()
+    (cache / "keep").write_bytes(b"cache")
+    real_move, real_remove = t0.os.replace, t0.shutil.rmtree
+
+    def move(source, target):
+        if Path(source) == out / "staging/pack":
+            raise OSError("pack move")
+        return real_move(source, target)
+
+    def remove(path, *args, **kwargs):
+        if Path(path) == out / "staging":
+            raise OSError("cleanup failed")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(t0.os, "replace", move)
+    monkeypatch.setattr(t0.shutil, "rmtree", remove)
+    assert run(installed, out, cache=cache) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert {p.name for p in out.iterdir()} == {"staging"}
+    assert (cache / "keep").read_bytes() == b"cache"
+
+
+def test_pack_move_failure_rolls_back_preserves_cache(installed, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    cache = out / "pack"
+    real_controls, real_move = t0._controls, t0.os.replace
+
+    def controls(pack, index, cache):
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "keep").write_bytes(b"cache")
+        return real_controls(pack, index, cache)
+
+    def move(source, target):
+        if Path(source) == out / "staging/pack":
+            raise OSError("pack move")
+        return real_move(source, target)
+
+    monkeypatch.setattr(t0, "_controls", controls)
+    monkeypatch.setattr(t0.os, "replace", move)
+    assert run(installed, out, cache=cache) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert_no_results(out)
+    assert {p.name for p in out.iterdir()} == {"pack"}
+    assert (cache / "keep").read_bytes() == b"cache"
 
 
 @pytest.mark.parametrize("changes,code", [
