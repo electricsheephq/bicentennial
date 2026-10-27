@@ -562,6 +562,39 @@ def test_repeated_holds_share_one_call_budget(setup):
     assert [d["held_ms"] for d in reply.upstream if d["kind"] == "hold"] == [60000, 60000]
 
 
+def test_inherited_quota_hold_names_its_reason(setup):
+    clock, polls = Clock(), []
+
+    def sleep(seconds):
+        polls.append(seconds)
+        clock.sleep(seconds)
+        if len(polls) == 2:
+            holds.release("attempt-1")
+
+    holds = Holds(clock=clock, sleep=sleep)
+    holds.hold("attempt-1", "quota")
+    r, server, _, _ = setup([(200, {}, completed())], clock=clock, holds=holds)
+    reply = r.respond(call())
+    assert reply.status == 200 and len(server.seen) == 1
+    assert [d for d in reply.upstream if d["kind"] == "hold"] == [{"kind": "hold", "reason": "quota", "held_ms": 120000}]
+    assert holds.at_boundary("attempt-1") == {"reasons": ["quota"], "held_ms": 120000}
+
+
+def test_stop_during_wait_writes_no_glm_diag(setup):
+    clock = Clock()
+    holds = Holds(clock=clock, sleep=lambda seconds: (clock.sleep(seconds), r.stop("wait_stop")))
+    holds.hold("attempt-1", "quota")
+    r, server, _, _ = setup(clock=clock, holds=holds)
+    reply = r.respond(call())
+    assert reply.served == "live_stopped" and server.seen == []
+    assert [d for d in reply.upstream if d["kind"] == "hold"] == [{"kind": "hold", "reason": "quota", "held_ms": 60000}]
+    r, server, _, _ = setup(holds=Holds())
+    real = r.holds._wait
+    r.holds._wait = lambda *a, **kw: (r.pacer.stop.set(), real(*a, **kw))[1]
+    reply = r.respond(call())
+    assert reply.served == "live_stopped" and server.seen == [] and reply.upstream == ()
+
+
 def test_spend_refusal_latches(setup):
     r, server, _, up = setup([(200, {}, completed())] * 2, cap=1000)
     assert [r.respond(call()).status for _ in range(2)] == [200, 200]
@@ -748,6 +781,46 @@ def test_response_items_and_chat_tools(setup):
     reply = r.respond(call("chat", body={"max_tokens": 50}))
     assert reply.status == 200 and reply.text == "" and reply.tool_calls == ({"name": "tool", "arguments": "{}"},)
     assert tries(reply)[0]["reserved"] == 20 and tries(reply)[0]["charged"] == 40
+
+
+def test_chat_null_tool_calls_forward(setup):
+    raw = json.dumps({"model": "probe-model", "choices": [{"message": {
+        "role": "assistant", "content": "hello", "tool_calls": None}, "finish_reason": "stop"}]}).encode()
+    r, _, _, _ = setup([(200, {}, raw)], wire="chat")
+    reply = r.respond(call("chat"))
+    assert reply.status == 200 and reply.text == "hello" and reply.tool_calls == ()
+    assert tries(reply)[0]["category"] is None and r.state()["unparsed_streak"] == 0
+
+
+def test_responses_null_fields_forward(setup):
+    raw = frames({"type": "response.output_text.delta", "delta": None},
+                 {"type": "response.output_item.done", "item": {"type": "message", "content": None}},
+                 {"type": "response.output_item.done", "item": {"type": "message", "content": [
+                     {"type": "output_text", "text": None}, {"type": "output_text", "text": "kept"}]}},
+                 {"type": "response.completed", "response": {"model": "probe-model"}})
+    r, _, _, _ = setup([(200, {}, raw), (200, {}, frames(
+        {"type": "response.output_text.delta", "delta": None},
+        {"type": "response.completed", "response": {"model": "probe-model"}}))])
+    assert r.respond(call()).text == "kept"
+    reply = r.respond(call())
+    assert reply.status == 200 and reply.text == "" and not r.state()["stopped"]
+
+
+@pytest.mark.parametrize("item", [{"type": "function_call", "arguments": "{}"},
+                                  {"type": "message", "content": ["not-a-part"]}])
+def test_responses_malformed_items_are_unparsed(setup, item):
+    r, _, _, _ = setup([(200, {}, frames({"type": "response.output_item.done", "item": item},
+                                         {"type": "response.completed", "response": {"model": "probe-model"}}))])
+    reply = r.respond(call())
+    assert reply.status == 503 and tries(reply)[0]["category"] == "unparsed"
+    assert not str(r.state()["stop_reason"] or "").startswith("responder_error")
+
+
+@pytest.mark.parametrize("message", ["rate limit exceeded, slow down", "missing message field"])
+def test_chat_string_error_is_unparsed(setup, message):
+    r, _, _, _ = setup([(200, {}, json.dumps({"error": message}).encode())], wire="chat")
+    reply = r.respond(call("chat"))
+    assert reply.status == 503 and tries(reply)[0]["category"] == "unparsed"
 
 
 def test_auth_exception_and_corrupt_spend_never_raise(setup):

@@ -30,7 +30,7 @@ class Holds:
             return {"reasons": sorted(reasons), "held_ms": held}
 
     def wait(self, run_key, *, glm_plan, stop):
-        return self._wait(run_key, glm_plan=glm_plan, stop=stop, max_hold_s=self.max_hold_s)
+        return self._wait(run_key, glm_plan=glm_plan, stop=stop, max_hold_s=self.max_hold_s)[0]
 
     def _wait(self, run_key, *, glm_plan, stop, max_hold_s):
         start, reasons = self.clock(), set()
@@ -52,16 +52,16 @@ class Holds:
                     if "rate" in active and now - active["rate"] >= self.rate_hold_s:
                         del active["rate"]
                     if not active:
-                        return round((now - start) * 1000)
+                        return round((now - start) * 1000), reasons
                     reasons.update(active)
                     remaining = max_hold_s - (now - start)
                     if remaining <= 0:
-                        return None
+                        return None, reasons
                     delay = min(self.poll_s, remaining)
                     if "rate" in active:
                         delay = min(delay, self.rate_hold_s - (now - active["rate"]))
                 (self.sleep or stop.wait)(delay)
-            return None
+            return None, reasons
         finally:
             with self.lock:
                 prior, held = self.receipts.get(run_key, (set(), 0))

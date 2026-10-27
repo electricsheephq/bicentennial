@@ -63,7 +63,7 @@ class LiveResponder:
             return self._reply(call, "live_stopped", diags)
 
     def _respond(self, call, diags):
-        up, reason, held_total = self.upstreams.get(call.model), "glm", 0
+        up, held_total = self.upstreams.get(call.model), 0
         if self.state()["stopped"] or self.state()["spend_stopped"] or up is None or call.wire != up.wire:
             served = "live_stopped" if self.state()["stopped"] else "live_spend_stop" if self.state()["spend_stopped"] else "live_no_upstream" if up is None else "live_unsupported"
             d = self._diag(up, 1)
@@ -75,11 +75,10 @@ class LiveResponder:
         while True:
             for wait in (5, 15, 45, None):
                 t0 = self.pacer.clock()
-                held = self.holds._wait(call.run_key, glm_plan=up.glm_plan, stop=self.pacer.stop, max_hold_s=max(0, self.holds.max_hold_s - held_total / 1000))
+                held, reasons = self.holds._wait(call.run_key, glm_plan=up.glm_plan, stop=self.pacer.stop, max_hold_s=max(0, self.holds.max_hold_s - held_total / 1000))
                 elapsed = round((self.pacer.clock() - t0) * 1000)
                 held_total += elapsed
-                if elapsed or held is None:
-                    diags.append(dict(kind="hold", reason=reason, held_ms=elapsed))
+                diags.extend(dict(kind="hold", reason=reason, held_ms=elapsed) for reason in sorted(reasons))
                 if held is None:
                     if not self.state()["stopped"]:
                         self._failure()
@@ -121,8 +120,7 @@ class LiveResponder:
                         return self._reply(call, "live_stopped", diags)
                     self.sleep(1)
             if not self.state()["stopped"] and d["category"] in ("quota", "rate"):
-                reason = d["category"]
-                self.holds.hold(call.run_key, reason)
+                self.holds.hold(call.run_key, d["category"])
                 continue
             if d["sent"] and d["category"] != "unparsed":
                 self._failure()

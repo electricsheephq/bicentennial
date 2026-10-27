@@ -129,21 +129,23 @@ def send(up, data, headers):
         elif errors or any(e.get("type") == "response.failed" for e in events) or terminal.get("type") not in ("response.completed", "response.incomplete"):
             result["category"] = next((c for c in ("quota", "concurrency", "rate", "overload") if c in errors), "other")
         else:
-            items = [e["item"] for e in events if e.get("type") == "response.output_item.done" and isinstance(e.get("item"), dict)]
-            messages = [i for i in items if i.get("type") == "message"]
-            result["text"] = "".join(p.get("text", "") for i in messages for p in i.get("content", []) if p.get("type") == "output_text") if messages else "".join(e.get("delta", "") for e in events if e.get("type") == "response.output_text.delta")
-            result["tool_calls"] = tuple({"name": i["name"], "arguments": i.get("arguments") if isinstance(i.get("arguments"), str) else "{}"} for i in items if i.get("type") == "function_call")
-            result["n_dropped_items"] = sum(i.get("type") not in ("message", "function_call") for i in items)
-            result["forward"] = True
+            try:
+                items = [e["item"] for e in events if e.get("type") == "response.output_item.done" and isinstance(e.get("item"), dict)]
+                messages = [i for i in items if i.get("type") == "message"]
+                text = "".join(p.get("text") or "" for i in messages for p in i.get("content") or [] if p.get("type") == "output_text") if messages else "".join(e.get("delta") or "" for e in events if e.get("type") == "response.output_text.delta")
+                calls = tuple({"name": i["name"], "arguments": i.get("arguments") if isinstance(i.get("arguments"), str) else "{}"} for i in items if i.get("type") == "function_call")
+                result.update(text=text, tool_calls=calls, n_dropped_items=sum(i.get("type") not in ("message", "function_call") for i in items), forward=True)
+            except (TypeError, KeyError, AttributeError):
+                result["category"], result["n_unparsed"] = "unparsed", 1
     else:
         try:
             body = json.loads(raw)
-            if isinstance(body, dict) and body.get("error"):
+            if isinstance(body, dict) and isinstance(body.get("error"), dict) and body["error"]:
                 error = body["error"]
                 result["category"] = sol_category(0, json.dumps({k: error[k] for k in ERROR_FIELDS if k in error}))
             else:
                 msg = body["choices"][0]["message"]
-                result.update(text=msg.get("content") or "", tool_calls=tuple({"name": t["function"]["name"], "arguments": t["function"]["arguments"]} for t in msg.get("tool_calls", [])), forward=True)
+                result.update(text=msg.get("content") or "", tool_calls=tuple({"name": t["function"]["name"], "arguments": t["function"]["arguments"]} for t in msg.get("tool_calls") or []), forward=True)
         except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             body, result["category"], result["n_unparsed"] = {}, "unparsed", 1
     usage = body.get("usage") if isinstance(body, dict) else None
