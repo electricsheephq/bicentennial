@@ -28,6 +28,18 @@ def _id(seed, life, process, parts):
     return mint_id(canon([seed, *unit(life, process, canon(parts).decode())]).decode(), 0)
 
 
+def _string_leaves(value):
+    if isinstance(value, str):
+        yield unicodedata.normalize("NFC", value)
+    elif isinstance(value, dict):
+        for key in sorted(value):
+            yield from _string_leaves(key)
+            yield from _string_leaves(value[key])
+    elif isinstance(value, list):
+        for child in value:
+            yield from _string_leaves(child)
+
+
 def _options(db, schedule, cut, template, instance, item_id):
     if not instance.options or any(type(o.key) is not str or not o.key for o in instance.options):
         raise ValueError("nonempty option keys required")
@@ -54,8 +66,9 @@ def _options(db, schedule, cut, template, instance, item_id):
             if o.envelope is not None or type(o.plan) is not dict or set(o.plan) != {"steps"}:
                 raise ValueError("act requires exactly a plan")
             payload, text = {"plan": o.plan}, canon(o.plan).decode()
-        normal, own = unicodedata.normalize("NFC", text), {unicodedata.normalize("NFC", t) for t in tokens}
-        if any(token in normal and token not in own for _, token in world_tokens):
+        texts = [unicodedata.normalize("NFC", text), *_string_leaves(json.loads(text))]
+        own = {unicodedata.normalize("NFC", t) for t in tokens}
+        if any(token not in own and any(token in text for text in texts) for _, token in world_tokens):
             raise ValueError(f"foreign token in option: {o.key}")
         options[o.key] = dict(option_id=_id(schedule.seed, cut.life, "option", [template.ref, instance.key, o.key]),
                               tokens=tokens, **json.loads(canon(payload)))

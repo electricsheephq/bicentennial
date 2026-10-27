@@ -321,13 +321,17 @@ def test_lever_golden(tmp_path, wake, wakes, proximity, crossed):
 
 
 @pytest.mark.parametrize("anchor,k,expected,wakes,proximity", [
-    ((2, 1), 20, ["compaction", "crash", "swap"], 20, 9),
-    ((5, 1), 10, [], 6, None), ((3, 1), 10, ["compaction"], 8, 4),
-    ((14, 1), 20, ["swap"], 7, None),
+    ((2, 1), 20, ["compaction", "crash", "swap"], 20, 14),
+    ((5, 1), 10, [], 6, None), ((3, 1), 10, ["compaction"], 8, 9),
+    ((14, 1), 20, ["compaction", "swap"], 7, 4),
+    ((4, 1), 10, ["compaction"], 7, 4),
+    ((4, 5), 10, ["compaction"], 7, 0),
 ])
 def test_t1_levers(tmp_path, anchor, k, expected, wakes, proximity):
     db, schedule = world(tmp_path / "world.db", scale=named("t1"))
     assert [p.index for p in schedule.sessions if p.long_sprint] == [4, 14]
+    assert [(s, n) for kind, s, n in wake_points(schedule) if kind == "compaction"] == [
+        (p.index, len(p.turn_t)) for p in schedule.sessions if p.long_sprint]
     assert ("kill", 11, 1) in wake_points(schedule) and ("swap", 15, 0) in wake_points(schedule)
     assert [(kind, s) for kind, s, _ in wake_points(schedule) if kind == "gap"] == [("gap", 3), ("gap", 14)]
     s, n = anchor

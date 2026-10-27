@@ -12,7 +12,7 @@ LEVERS = tuple(sorted(("distance_sessions", "distance_s", "distance_tokens_est",
 
 def wake_points(schedule):
     return tuple(sorted([(kind, s, t or 0) for kind, s, t in schedule.wakes() if kind != "restart"]
-                        + [("compaction", p.index, 0) for p in schedule.sessions if p.long_sprint]))
+                        + [("compaction", p.index, len(p.turn_t)) for p in schedule.sessions if p.long_sprint]))
 
 
 def compute(db, schedule, cut, *, gold_spans, decisive_fact_id, probe_point):
@@ -24,10 +24,14 @@ def compute(db, schedule, cut, *, gold_spans, decisive_fact_id, probe_point):
     indices = {p.session_id: p.index for p in plans}
     spans = [r for r in cut.rows if r["event_id"] in gold_spans]
     anchor = spans[-1]
-    s_a, n_a = indices[anchor["session_id"]], int(anchor["turn_key"].rsplit("/t", 1)[1])
+    positions = [(indices[r["session_id"]], int(r["turn_key"].rsplit("/t", 1)[1])) for r in spans]
+    s_a, n_a = positions[-1]
     k, t_p = probe_point, plans[probe_point - 1].t_end
-    points = [(kind, s, t) for kind, s, t in wake_points(schedule) if (s_a, n_a) <= (s, t) and s <= k]
-    crossed = tuple(sorted({STRESS_TAGS[kind] for kind, _, _ in points if kind in STRESS_TAGS}))
+    stresses = [(kind, s, t) for kind, s, t in wake_points(schedule) if s <= k]
+    points = [(kind, s, t) for kind, s, t in stresses if (s_a, n_a) <= (s, t)]
+    # Stress tags cover every required span; distance levers retain the latest anchor.
+    crossed = tuple(sorted({STRESS_TAGS[kind] for kind, s, t in stresses
+                            if kind in STRESS_TAGS and any(pos <= (s, t) for pos in positions)}))
 
     def ordinal(s, n):
         return sum(len(p.turn_t) for p in plans[:s - 1]) + n

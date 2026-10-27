@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.keyed import draw
+from bicentennial.score.answer_types import matches
 from bicentennial.world import unit
 
 from .compile import _id
@@ -57,7 +58,11 @@ def compile_life(b0, b1) -> Compiled:
         # QA confidence is derived from tokens; only type/value constitute the answer.
         if payload == "envelope":
             golds = [{k: g[k] for k in ("type", "value")} for g in golds]
-        if canon(golds[0]) == canon(golds[1]):
+        same = canon(golds[0]) == canon(golds[1])
+        if payload == "envelope":
+            same = same or any(g["type"] != "unknown" and matches(g, a)
+                               for g, a in ((golds[0], golds[1]), (golds[1], golds[0])))
+        if same:
             raise ValueError("twins require different gold actions or answers")
         bid = _id(b0.seed, b0.life, "bundle", [f"{key[0]}-v{m0['template_version']}", key[1]])
         bundle = dict(canary=CANARY, bundle_id=bid, cell_id=i0["cell_id"], twin_type=m0["twin_type"],
