@@ -257,6 +257,31 @@ def test_resume_lock(installed):
         assert lock["analysis_commit"] == lock["benchmark_commit"] == lock["director_commit"]
 
 
+@pytest.mark.parametrize("system", sorted(t0.REFERENCE_SYSTEMS))
+def test_reference_lock_tracks_inherited_code(installed, tmp_path, monkeypatch, system):
+    _, index, digest = installed
+    pack = packs(installed)[0]
+    files = ("api/contract.py", "api/adapters/reference_store.py", "api/adapters/bm25.py",
+             "api/adapters/mutants.py", "director/scripted.py")
+    for relative in files:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "src/bicentennial" / relative, target)
+    original_hash = t0.code_sha256
+    monkeypatch.setattr(t0, "code_sha256", lambda paths: original_hash(paths, root=tmp_path))
+    entry = dict(name=system, surfaces=[])
+    before = t0._lock(index, pack, entry, digest, False)["system_artifacts"]
+    module = system if system in ("reference_store", "bm25") else "mutants"
+    paths = ("api/contract.py", f"api/adapters/{module}.py")
+    if system != "reference_store":
+        paths += ("api/adapters/reference_store.py",)
+    assert before[0]["sha256"] == original_hash(paths, root=tmp_path)
+    reference = tmp_path / "api/adapters/reference_store.py"
+    reference.write_bytes(reference.read_bytes() + b"\n# changed inherited query\n")
+    after = t0._lock(index, pack, entry, digest, False)["system_artifacts"]
+    assert after[0]["sha256"] != before[0]["sha256"]
+
+
 def test_corpus_equality_deferred(installed, tmp_path):
     corpus = pytest.importorskip("bicentennial.corpus.run", reason="S12 not on base")
     catalogue = load_catalogue(ROOT / "packs/catalogue-v0.toml",
