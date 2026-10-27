@@ -230,7 +230,7 @@ class HermesAdapter:
         self.egress = Egress()
         self.egress.start()
 
-    def run_session(self, index, *, sim_t_s, lock_hash, attempt_id) -> SessionResult:
+    def run_session(self, index, *, sim_t_s, lock_hash, attempt_id, resume_session_id=None) -> SessionResult:
         self._session_index = index
         session, d = next(s for s in self.script["sessions"] if s["index"] == index), self.director
         gate, restarts, finals, compaction, self._wiped = [], [], [], False, False
@@ -241,7 +241,7 @@ class HermesAdapter:
             with self.egress.forking:  # no sampler fork may hold the ledger's flock while it is reopened
                 d.start_session(index, sim_t_s, lock_hash, attempt_id, self.paths["root"] / "ledger")
             self._alias = d.route["alias"]  # a swap reaches Hermes's config at session start (RING0 §6)
-            sid, history, _ = self._spawn_open("session_start", None, t)
+            sid, history, _ = self._spawn_open("session_start", resume_session_id, t)
             failures, turns_ok, matched = d.control()["write_failures"], 0, 0
             for turn in session["turns"]:
                 n, faults = turn["n"], self.schedule.at(index, turn["n"])
