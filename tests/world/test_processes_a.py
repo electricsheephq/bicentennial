@@ -25,6 +25,7 @@ from bicentennial.world import (
     world_hash,
 )
 from bicentennial.world.db import (
+    TABLES,
     insert_entity,
     insert_event,
     insert_fact,
@@ -310,11 +311,14 @@ def test_keyed_independence(tmp_path):
 
 
 def test_twin_flips(tmp_path):
-    for i, seed in enumerate(SEEDS):
+    for i, seed in enumerate([*SEEDS, "g03-11577"]):  # g03-11577: commit1's cancel number is commit7's lure draw
         a, b, c = mixes()
         flipped = [replace(x, cancelled=not x.cancelled) for x in b]
         one = build(tmp_path / f"{seed}-x.db", seed, (a, b, c))[0]
         two = build(tmp_path / f"{seed}-y.db", seed, (a, flipped, c))[0]
+        for sql in ("SELECT id, object FROM fact", "SELECT token_id, value FROM locked_token"):
+            x, y = (dict(db.execute(sql).fetchall()) for db in (one, two))
+            assert {k: x[k] for k in x.keys() & y.keys()} == {k: y[k] for k in x.keys() & y.keys()}, seed
         diff = rows(non_filler(one) ^ non_filler(two))
         schedule = build_schedule(seed, LIFE, named("t1"))
         def ident(x, table, part, schedule=schedule):
@@ -376,6 +380,22 @@ def refuse(tmp_path, call, scale=None, schedule_seed=None):
 ])
 def test_chain_refusals(tmp_path, spec):
     refuse(tmp_path, lambda db, s: write_corrections(db, s, [Chain(**CHAIN | spec)], principal=PRINCIPAL))
+
+
+@pytest.mark.parametrize("values", [("same", "same"), ("same", "xsamex"), ("xsamex", "same"), ("VALUE-1", "PRE-0")])
+def test_explicit_values_refused_before_insert(tmp_path, values):
+    db, schedule = world(tmp_path / "w.db", "g03-refuse")
+    insert_event(db, id="ev", t_sim=0, kind="statement", channel="chat", actor_id=PRINCIPAL,
+                 audience_json=["agent"], visibility="shared", salience=500, payload_json={})
+    insert_fact(db, id="f0", subject_id=PRINCIPAL, predicate="p", object="x", polarity="affirm",
+                modality="stated", strength=HARD, speech_act="assert")
+    insert_locked_token(db, token_id="t0", fact_id="f0", kind="code", value="PRE-0")
+    counts = {t: db.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in TABLES}
+    before = export_jsonl(db)
+    with pytest.raises(ValueError):
+        write_corrections(db, schedule, [Chain(**CHAIN | dict(mention=None, values=values))], principal=PRINCIPAL)
+    assert {t: db.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in TABLES} == counts
+    assert export_jsonl(db) == before
 
 
 def test_writer_level_refusals(tmp_path):
