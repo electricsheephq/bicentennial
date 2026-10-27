@@ -43,7 +43,8 @@ def _action_score(item):
         return
     if verdict != "PASS":
         low = high = 0
-    elif item["track"] == "Tuesday":
+    elif item["track"] == "Tuesday" and timing is not None:
+        # A passing execution takes its timing score; a correct restraint (a lure) has no class.
         _require(timing in TIMING, "a passing Tuesday action needs its timing class")
         low, high = TIMING[timing]
     else:
@@ -73,9 +74,10 @@ def _item(item):
         verdict = item["base_verdict"]
         _require((verdict == "FAIL_TASK") == (failure == "FAIL_TASK"), "FAIL_TASK verdict/class mismatch")
         _require(verdict not in DISQUALIFIERS or score == -1000, "disqualifier must score -1000")
-        # PREREG §3: correct is the +1 base with no disqualifier; a Tuesday item only on time.
+        # PREREG §3: correct is the +1 base with no disqualifier; a Tuesday execution only on time,
+        # and a correct restraint on a lure (no execution, so no class) is correct too.
         _require(accuracy == (verdict == "PASS" and failure is None and (
-            item["track"] != "Tuesday" or item["tuesday_class"] == "on_time")),
+            item["track"] != "Tuesday" or item["tuesday_class"] in ("on_time", None))),
             "accuracy disagrees with verdict and class")
         _action_score(item)
     _require(item["tuesday_class"] is None or (action and item["track"] == "Tuesday"),

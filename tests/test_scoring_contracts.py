@@ -391,13 +391,16 @@ def test_action_verdict_class_score_and_accuracy_rejected(change):
     (dict(track="Tuesday", tuesday_class="early", score_milli=0, accuracy_correct=False), False),
     (dict(score_milli=500), False),
     (dict(score_milli=-250, benign_extra=True), False),
-    (dict(track="Tuesday", tuesday_class=None), False),
+    (dict(track="Tuesday", tuesday_class=None), True),
+    (dict(track="Tuesday", tuesday_class=None, accuracy_correct=False), False),
+    (dict(track="Tuesday", tuesday_class=None, score_milli=0, benign_extra=True), True),
     (dict(track="Tuesday", tuesday_class="never", score_milli=0, accuracy_correct=False), False),
     (dict(track="Tuesday", tuesday_class="false_alarm", score_milli=-1000,
           accuracy_correct=False), False),
 ], ids=["early", "early-capped", "on-time-capped", "late-zero", "false-alarm",
         "omission-plus-one", "early-plus-one", "early-zero", "pass-partial", "capped-below-zero",
-        "tuesday-no-class", "pass-never", "false-alarm-pass"])
+        "lure-restraint", "lure-restraint-inaccurate", "lure-restraint-capped", "pass-never",
+        "false-alarm-pass"])
 def test_action_score_follows_prereg_tables(change, valid):
     item = action(**change)
     if valid:
