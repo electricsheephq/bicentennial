@@ -146,6 +146,8 @@ def _ratio(correct, eligible, result):
 
 
 def _card(card):
+    from bicentennial.score import aggregate
+
     if card["tier"] == "T1":
         _require("scripted_model" in card["labels"], "T1 requires scripted model label")
     items = {item["item_id"]: item for item in card["items"]}
@@ -161,6 +163,8 @@ def _card(card):
         _require(all(i in items for i in bundle["items"]), "unknown bundle item")
         a, b = (items[i] for i in bundle["items"])
         _require(bundle["cell_id"] == a["cell_id"], "bundle cell mismatch")
+        _require((a["stage"], a["track"]) == (b["stage"], b["track"]),
+                 "twins must share stage and track")
         expected = bundle_outcome(a, b)
         _require(all(bundle[k] == v for k, v in expected.items()), "bundle reduction mismatch")
     # DESIGN §5.1a: each action item is in exactly one bundle, so no outcome is dropped or counted twice.
@@ -168,6 +172,16 @@ def _card(card):
     _require(len(members) == len(set(members)), "an item sits in two bundles")
     _require({i for i, item in items.items() if item["stage"] == "act"} <= set(members),
              "an action item belongs to no bundle")
+    bundles = card["bundles"]
+    _require(card["aggregates"] == aggregate.stage_track_rows(bundles, items),
+             "aggregate recomputation mismatch")
+    for key, value in (("minus_one_at_zero", 0), ("minus_one_at_minus_two", -2000)):
+        _require(card["sensitivity"][key] == aggregate.stage_track_rows(
+            bundles, items, minus_one=value), "sensitivity recomputation mismatch")
+    _require(card["worst_case"] == aggregate.worst_case_rows(bundles, items),
+             "worst-case recomputation mismatch")
+    _require(card["twin_consistency"] == aggregate.twin_consistency(bundles, items),
+             "twin consistency recomputation mismatch")
     # PREREG §3: per-cell accuracy counts come from the card's own action outcomes.
     counts = {}
     for item in items.values():
