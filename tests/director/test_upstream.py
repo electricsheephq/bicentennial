@@ -772,8 +772,8 @@ def test_response_items_and_chat_tools(setup):
                  {"type": "response.completed", "response": {"model": "probe-model"}})
     r, _, _, _ = setup([(200, {}, raw)])
     reply = r.respond(call())
-    assert reply.text == "first second" and reply.tool_calls == ({"name": "tool", "arguments": "{}"},)
-    assert tries(reply)[0]["n_dropped_items"] == 1
+    assert reply.status == 503 and reply.text == "" and reply.tool_calls == ()
+    assert tries(reply)[0]["category"] == "unparsed" and tries(reply)[0]["n_unparsed"] == 1
     raw = json.dumps({"model": "probe-model", "choices": [{"message": {"content": None, "tool_calls": [
         {"function": {"name": "tool", "arguments": "{}"}}]}, "finish_reason": "length"}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 100, "cost": 1.5}}).encode()
@@ -951,3 +951,58 @@ def test_urllib_imports_only_in_forward():
         modules += [node.module or "" for node in ast.walk(ast.parse(path.read_text())) if isinstance(node, ast.ImportFrom)]
         if any(m.split(".")[0] == "urllib" for m in modules):
             assert path.name == "forward.py"
+
+
+@pytest.mark.parametrize("body", [{}, {"max_output_tokens": 50}, {"max_output_tokens": 0}])
+def test_send_cap_false_reserves_maximum_without_sending_cap(setup, body):
+    r, server, _, up = setup([(200, {}, completed())], send_cap=False)
+    reply = r.respond(call(body=body))
+    request = server.seen[0]
+    assert reply.status == 200 and "max_output_tokens" not in request["body"]
+    assert tries(reply)[0]["reserved"] == up.price.cost(len(request["raw"]), up.max_output_tokens)
+
+
+def test_readmission_rereads_auth_after_last_wait(setup):
+    r, server, clock, _ = setup([(200, {}, completed())], rate=180)
+    reads, admissions = [], []
+    token = ["fake-before-readmit"]
+    def auth():
+        reads.append(clock.now)
+        if len(reads) == 1:
+            clock.sleep(1)
+        return {"Authorization": "Bearer " + token[0]}
+    def acquire():
+        admissions.append(1)
+        if len(admissions) == 2:
+            clock.sleep(30)
+            token[0] = "fake-after-readmit"
+        return 0
+    r.auth, r.pacer.acquire = auth, acquire
+    reply = r.respond(call())
+    assert reply.status == 200 and reads == [0, 31] and len(admissions) == 2
+    assert server.seen[0]["headers"]["Authorization"] == "Bearer fake-after-readmit"
+    assert tries(reply)[0]["t_sent_ms"] == 31000
+
+
+@pytest.mark.parametrize("arguments", [None, {}, [], 1, False])
+def test_responses_present_nonstring_arguments_are_unparsed(setup, arguments):
+    raw = frames({"type": "response.output_item.done", "item": {
+        "type": "function_call", "name": "tool", "arguments": arguments}},
+        {"type": "response.completed", "response": {"model": "probe-model"}})
+    r, _, _, _ = setup([(200, {}, raw)])
+    reply = r.respond(call())
+    assert reply.status == 503 and reply.tool_calls == ()
+    assert tries(reply)[0]["category"] == "unparsed" and tries(reply)[0]["n_unparsed"] == 1
+
+
+def test_responses_absent_arguments_keep_empty_object_default(setup):
+    raw = frames({"type": "response.output_item.done", "item": {"type": "function_call", "name": "tool"}},
+                 {"type": "response.completed", "response": {"model": "probe-model"}})
+    r, _, _, _ = setup([(200, {}, raw)])
+    reply = r.respond(call())
+    assert reply.status == 200 and reply.tool_calls == ({"name": "tool", "arguments": "{}"},)
+
+
+def test_send_cap_requires_bool(setup):
+    with pytest.raises(ValueError, match="invalid upstream"):
+        setup(send_cap=1)
