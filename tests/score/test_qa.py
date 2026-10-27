@@ -295,6 +295,33 @@ def test_parse_envelope_unwraps_one_fence_and_defaults_citation():
     assert score(known_item("number", "0.1250"), decimal).score_milli == 1000
 
 
+@pytest.mark.parametrize("text", [
+    '{"type": "set", "value": [0.5], "confidence_milli": 1000}',  # the connector's case
+    '{"type": "ordered_list", "value": [1.5, 2], "confidence_milli": 1000}',
+    '{"type": "env_state", "value": {"level": 2.5}, "confidence_milli": 1000}',
+    '{"type": "env_state", "value": {"levels": [{"x": 1.0}]}, "confidence_milli": 1000}',
+    '{"type": "entity", "value": 0.5, "confidence_milli": 1000}',
+    '{"type": "span", "value": 2.50, "confidence_milli": 1000}',
+    '{"type": "number", "value": [2.5], "confidence_milli": 1000}',
+    '{"type": "entity", "value": "WINDOW-7401", "confidence_milli": 800.0}',
+    '{"type": "number", "value": 2.5, "confidence_milli": 800.0}',
+    '{"type": "entity", "value": "e", "confidence_milli": 1000,'
+    ' "citation": {"quote": "q", "context_offset": 0.0}}',
+])
+def test_a_float_outside_a_number_scalar_is_malformed(text):
+    assert parse_envelope(text) is None
+
+
+def test_a_number_float_keeps_its_source_text():
+    parsed = parse_envelope('{"type": "number", "value": 2.50, "confidence_milli": 1000}')
+    assert parsed == env("number", "2.50") and type(parsed["value"]) is str
+    assert score(known_item("number", "2.50"), parsed).score_milli == 1000
+    # The connector's set case cannot score against a string gold any more.
+    gold = known_item("set", ["0.5"])
+    text = '{"type": "set", "value": [0.5], "confidence_milli": 1000}'
+    assert score(gold, parse_envelope(text)) == QAResult(None, -1000, None, None)
+
+
 # --- Calibration (PREREG §3; DESIGN §7.2): a hand-computed 20-item fixture.
 CALIBRATION = [
     (1000, True), (1000, True), (950, True), (900, False),  # bin 9 (1000 joins bin 9)

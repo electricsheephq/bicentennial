@@ -23,8 +23,26 @@ class QAResult:
     correct: bool | None  # null for unknown, missing and system failure
 
 
+class _Float(str):
+    """A JSON float's source text; only a number envelope's scalar value may hold one."""
+
+
 def _refuse(constant):
     raise ValueError(f"non-finite number: {constant}")
+
+
+def _float_free(node) -> bool:
+    stack = [node]
+    while stack:  # iterative, so depth never recurses
+        node = stack.pop()
+        if type(node) is _Float:
+            return False
+        if type(node) is dict:
+            stack.extend(node.keys())
+            stack.extend(node.values())
+        elif type(node) is list:
+            stack.extend(node)
+    return True
 
 
 def _unique_keys(pairs):
@@ -78,11 +96,15 @@ def parse_envelope(text: str) -> dict | None:
         fenced = FENCE.fullmatch(body)
         if fenced is not None:  # at most one surrounding fence is unwrapped
             body = fenced.group(1)
-        envelope = json.loads(body, parse_float=str, parse_constant=_refuse,
+        envelope = json.loads(body, parse_float=_Float, parse_constant=_refuse,
                               object_pairs_hook=_unique_keys)
         if type(envelope) is not dict or not REQUIRED <= envelope.keys() <= REQUIRED | {"citation"}:
             return None
         envelope = {"citation": None, **envelope}
+        if envelope["type"] == "number" and type(envelope["value"]) is _Float:
+            envelope["value"] = str(envelope["value"])  # a decimal keeps its source text
+        if not _float_free(envelope):  # a float anywhere else is malformed
+            return None
         return envelope if valid_envelope(envelope) else None
     except Exception:  # never raise on agent text
         return None
