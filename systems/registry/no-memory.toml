@@ -1,0 +1,15 @@
+name = "no-memory"
+licence = "MIT"
+harness = "none"
+# Versioned empty-context control; artifact is the empty byte string.
+artifact = {name = "empty-context", version = "v0.1.0", sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+write_tools = []
+read_tools = []
+surfaces = []
+# K13 tree_hash([]): sha256(canon([])), not sha256 of an empty byte string.
+fresh_install_hash = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+own_model_routes = []
+structured_formats = {}
+settle = {kind = "none", bound_s = 0}
+machine_class = "light"
+benchmark_operator_runs = true
