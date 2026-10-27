@@ -22,7 +22,7 @@ def _ratio(n, d):
 
 
 def _rows(bundles, items, *, keep=None, minus_one=None, mode="bundle", blocked=frozenset(),
-          singletons=()):
+          singletons=(), keep_items=None):
     if keep is not None and set(keep) - {b["bundle_id"] for b in bundles}:
         raise ValueError("keep names an unknown bundle")
     groups, counts = {}, {}
@@ -47,6 +47,9 @@ def _rows(bundles, items, *, keep=None, minus_one=None, mode="bundle", blocked=f
         key = (item["stage"], item["track"])
         lives = groups.setdefault(key, {})
         counts.setdefault(key, 0)
+        if keep_items is not None and item["item_id"] not in keep_items and not (
+                mode == "worst" and item["failure_class"] == "SYSTEM_FAILURE"):  # A1, with A3's override
+            continue
         score = item["worst_case_milli" if mode == "worst" else "score_milli"]
         if score is not None:
             if minus_one is not None and score == -1000:
@@ -63,12 +66,12 @@ def _rows(bundles, items, *, keep=None, minus_one=None, mode="bundle", blocked=f
     return rows
 
 
-def stage_track_rows(bundles, items, *, keep=None, minus_one=None):
-    return _rows(bundles, items, keep=keep, minus_one=minus_one)
+def stage_track_rows(bundles, items, *, keep=None, minus_one=None, singletons=()):
+    return _rows(bundles, items, keep=keep, minus_one=minus_one, singletons=singletons)
 
 
-def worst_case_rows(bundles, items, *, keep=None, blocked=frozenset()):
-    return _rows(bundles, items, keep=keep, blocked=blocked, mode="worst")
+def worst_case_rows(bundles, items, *, keep=None, blocked=frozenset(), singletons=()):
+    return _rows(bundles, items, keep=keep, blocked=blocked, mode="worst", singletons=singletons)
 
 
 def single_item_rows(bundles, items, *, keep=None):
@@ -161,7 +164,7 @@ def _validated(items, bundles, validate):
 
 
 def reduce(items, bundles, *, keep=None, blocked=frozenset(), blocked_items=frozenset(),
-           singleton_lives=None, duty_items=frozenset()) -> dict:
+           singleton_lives=None, duty_items=frozenset(), keep_items=None) -> dict:
     from bicentennial.contracts.run import validate
 
     items, unbundled = _validated(items, bundles, validate)
@@ -173,7 +176,8 @@ def reduce(items, bundles, *, keep=None, blocked=frozenset(), blocked_items=froz
     if (set(blocked) - {b["bundle_id"] for b in bundles}
             or (set(blocked_items) | set(duty_items)) - items.keys()):
         raise ValueError("exclusion or duty names an unknown identity")
-    options = dict(keep=keep, singletons=[(items[i], singleton_lives[i]) for i in sorted(unbundled)])
+    options = dict(keep=keep, keep_items=keep_items,
+                   singletons=[(items[i], singleton_lives[i]) for i in sorted(unbundled)])
     return dict(aggregates=_rows(bundles, items, **options),
                 sensitivity=dict(minus_one_at_zero=_rows(bundles, items, minus_one=0, **options),
                                  minus_one_at_minus_two=_rows(bundles, items, minus_one=-2000, **options)),
@@ -191,12 +195,14 @@ def common_valid(arms) -> frozenset[str]:
     return frozenset.intersection(*(frozenset(s) for s in sets)) if sets else frozenset()
 
 
-def compare(arms) -> dict:
+def compare(arms, *, singleton_lives=None) -> dict:
+    """singleton_lives is shared by every arm; a singleton with no result in some arm is dropped from all."""
     from bicentennial.contracts.run import validate
 
-    identities, blocked, blocked_items = None, set(), set()
+    identities, blocked, blocked_items, keep_items = None, set(), set(), set(singleton_lives or {})
     for items, bundles in arms.values():
         indexed, _ = _validated(items, bundles, validate)
+        keep_items -= {i for i in keep_items if i in indexed and indexed[i]["score_milli"] is None}
         identity = {b["bundle_id"]: (b["life"], b["cell_id"], b["items"]) for b in bundles}
         if identities is not None and identity != identities:
             raise ValueError("comparison arms must share bundle identities, lives, cells and items")
@@ -204,5 +210,6 @@ def compare(arms) -> dict:
         blocked.update(b["bundle_id"] for b in bundles if b["failure_class"] == "BLOCKED")
         blocked_items.update(i["item_id"] for i in indexed.values() if i["failure_class"] == "BLOCKED")
     keep = common_valid(arms)
-    return {name: reduce(items, bundles, keep=keep, blocked=blocked, blocked_items=blocked_items)
+    return {name: reduce(items, bundles, keep=keep, blocked=blocked, blocked_items=blocked_items,
+                         singleton_lives=singleton_lives, keep_items=frozenset(keep_items))
             for name, (items, bundles) in arms.items()}

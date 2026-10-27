@@ -172,13 +172,18 @@ def _card(card):
     _require(len(members) == len(set(members)), "an item sits in two bundles")
     _require({i for i, item in items.items() if item["stage"] == "act"} <= set(members),
              "an action item belongs to no bundle")
-    bundles = card["bundles"]
-    _require(card["aggregates"] == aggregate.stage_track_rows(bundles, items),
+    # S06 A2: an unbundled QA item is its own unit, so the card names its life.
+    ids = [s["item_id"] for s in card.get("singletons", [])]
+    _require(ids == sorted(set(ids)), "singletons must be unique and sorted by item id")
+    _require(set(ids) == {i for i, item in items.items() if item["stage"] != "act"} - set(members),
+             "every unbundled QA item needs exactly one singleton entry")
+    bundles, singles = card["bundles"], [(items[s["item_id"]], s["life"]) for s in card.get("singletons", [])]
+    _require(card["aggregates"] == aggregate.stage_track_rows(bundles, items, singletons=singles),
              "aggregate recomputation mismatch")
     for key, value in (("minus_one_at_zero", 0), ("minus_one_at_minus_two", -2000)):
         _require(card["sensitivity"][key] == aggregate.stage_track_rows(
-            bundles, items, minus_one=value), "sensitivity recomputation mismatch")
-    _require(card["worst_case"] == aggregate.worst_case_rows(bundles, items),
+            bundles, items, minus_one=value, singletons=singles), "sensitivity recomputation mismatch")
+    _require(card["worst_case"] == aggregate.worst_case_rows(bundles, items, singletons=singles),
              "worst-case recomputation mismatch")
     _require(card["twin_consistency"] == aggregate.twin_consistency(bundles, items),
              "twin consistency recomputation mismatch")

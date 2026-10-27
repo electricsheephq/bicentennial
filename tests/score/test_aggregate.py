@@ -466,3 +466,72 @@ def test_fresh_process_import_orders(aggregate_first):
     r = subprocess.run([sys.executable, '-c', code], input=canon(card()).decode(), cwd=ROOT,
                        env=env, text=True, capture_output=True, check=True)
     assert r.stdout.strip() == 'card validated'
+
+
+def qa_singleton(item_id=None, stage='remember', track='Recall', failure=False):
+    item = load('schemas/fixtures/gen/item.json')
+    ident = identity(item_id=item_id or item['item_id'], stage=stage, track=track, cell_id=item['cell_id'],
+                     selected_option=None if failure else item['options'][0]['option_id'])
+    if failure:
+        return outcome(ident, None, cause='SYSTEM_FAILURE')
+    return outcome(ident, score_qa(item, dict(item['options'][0]['envelope'], citation=None), evidence_texts=[]))
+
+
+def singleton_card(single, life='life-g1'):
+    f = fixture()
+    items = sorted(f['items'] + [single], key=lambda i: i['item_id'])
+    r = reduce(items, f['bundles'], singleton_lives={single['item_id']: life})
+    c = card()
+    c.update(items=items, singletons=[{'item_id': single['item_id'], 'life': life}],
+             aggregates=r['aggregates'], sensitivity=r['sensitivity'], worst_case=r['worst_case'],
+             twin_consistency=r['twin_consistency'], per_item_accuracy=r['accuracy']['cells'])
+    return c, r
+
+
+def test_card_carries_singleton_qa_units():
+    # A2: the unbundled Recall item scores 1000 in life g1: ((-500+1000)/2 + -1000)/2 = -375.
+    c, r = singleton_card(qa_singleton())
+    assert [x for x in r['aggregates'] if x['track'] == 'Recall'][0]['score_milli'] == -375
+    validate('card_ring0', c)
+    bundle_only = reduce(fixture()['items'], fixture()['bundles'])
+    for tamper in (
+        lambda c: c.pop('singletons'),
+        lambda c: c.update(singletons=[]),
+        lambda c: c.update(singletons=c['singletons'] * 2),
+        lambda c: c['singletons'][0].update(life='life-g2'),
+        lambda c: c.update(aggregates=bundle_only['aggregates']),
+        lambda c: c['singletons'].append({'item_id': c['bundles'][0]['items'][0], 'life': 'life-g1'}),
+    ):
+        bad = copy.deepcopy(c)
+        tamper(bad)
+        with pytest.raises(ValueError):
+            validate('card_ring0', bad)
+
+
+def test_card_cannot_hide_an_unbundled_system_failure():
+    c, r = singleton_card(qa_singleton('zz-unbundled-sf', 'survive', 'Faults', failure=True))
+    assert {(x['track'], x['score_milli']) for x in r['worst_case']} >= {('Faults', -1000)}
+    validate('card_ring0', c)
+    hidden = copy.deepcopy(c)
+    hidden.update(singletons=[], worst_case=reduce(fixture()['items'], fixture()['bundles'])['worst_case'])
+    with pytest.raises(ValueError):
+        validate('card_ring0', hidden)
+
+
+def test_compare_keeps_singletons_scored_in_every_arm():
+    f, single = fixture(), qa_singleton()
+    items = sorted(f['items'] + [single], key=lambda i: i['item_id'])
+    lives = {single['item_id']: 'life-g1'}
+    out = compare(dict(system=(items, f['bundles']), wiped=(items, f['bundles'])), singleton_lives=lives)
+    assert out['system']['aggregates'] == reduce(items, f['bundles'], keep=common_valid(
+        dict(a=(items, f['bundles']))), singleton_lives=lives)['aggregates']
+    item = load('schemas/fixtures/gen/item.json')
+    na = outcome(identity(item_id=single['item_id'], stage='remember', track='Recall', cell_id=item['cell_id'],
+                          selected_option=None), None, cause='N/A_EXPOSURE')
+    assert na['score_milli'] is None
+    other = sorted(f['items'] + [na], key=lambda i: i['item_id'])
+    out = compare(dict(system=(items, f['bundles']), wiped=(other, f['bundles'])), singleton_lives=lives)
+    for arm in out.values():  # no result in one arm, so neither arm counts the singleton: (-500-1000)/2
+        assert [x for x in arm['aggregates'] if x['track'] == 'Recall'][0]['score_milli'] == -750
+    with pytest.raises(ValueError):
+        compare(dict(system=(items, f['bundles']), wiped=(items, f['bundles'])))
