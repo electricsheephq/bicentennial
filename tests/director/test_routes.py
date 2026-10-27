@@ -139,11 +139,14 @@ def test_unknown_or_invalid_session_refused(session):
         segment_of(session, FaultLite.load([], script()))
 
 
-def test_probe_without_preceding_replay_refused():
+def test_probe_without_preceding_replay_uses_base_segment():
     obj = script()
     obj["sessions"] = [obj["sessions"][10]]
-    with pytest.raises(ValueError, match="preceding replay"):
-        segment_of(21, FaultLite.load([], obj))
+    schedule = FaultLite.load([], obj)
+    assert schedule.replay_prefix(21) == ()
+    assert segment_of(21, schedule) == "seg0"
+    with pytest.raises(ValueError, match="not in the script"):
+        segment_of(1, schedule)
 
 
 def test_table_roundtrip_and_snapshot_isolation():
