@@ -189,7 +189,7 @@ class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
-                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None):
+                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None):
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -202,8 +202,8 @@ class HermesAdapter:
             raise ValueError("a restart, kill or compaction needs a turn")
         self.toolsets, self.env_server = T1_TOOLSETS if toolsets is None else toolsets, env_server
         hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory,
-                      toolsets=self.toolsets)
-        self.memory = memory
+                      toolsets=self.toolsets, window=window)
+        self.memory, self.window = memory, window
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
         self.commit = None
@@ -329,7 +329,7 @@ class HermesAdapter:
         toolsets = self.toolsets + ((ENV_SERVER,) if servers and ENV_SERVER not in self.toolsets else ())
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
                                                             plugin_config=self.plugin_config, memory=self.memory,
-                                                            toolsets=toolsets, mcp_servers=servers))
+                                                            toolsets=toolsets, mcp_servers=servers, window=self.window))
         t0 = time.monotonic()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),

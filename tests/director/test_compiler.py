@@ -39,7 +39,10 @@ from bicentennial.director.serve import serve, shutdown
 from bicentennial.genres.g1_software.diffs import (
     CALLS,
     EMPTY_TREE_HASH,
+    PATHS,
     Read,
+    read_state,
+    render,
     repo_tree_hashes,
     write_reads,
 )
@@ -55,6 +58,7 @@ from bicentennial.harness import normalize
 from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.harness.hermes.config import layout, worker_env
 from bicentennial.items.tags import check_precondition, precondition
+from bicentennial.items.templates.g1.common import apply_steps, step
 from bicentennial.keyed import uniform_int
 from bicentennial.render.session_cut import cut
 from bicentennial.render.stream import _canary, seal, stream_bytes, write_branch
@@ -322,6 +326,61 @@ def test_dialect_and_normalization_keyed_200():
         step_call({"tool": {"name": "write_file", "args": {"path": "README.md", "content": text}}})
 
 
+@pytest.mark.parametrize("path", PATHS.values())
+@pytest.mark.parametrize("entries,name", [
+    ({"retry": "old value", "retry limit": "limit value"}, "retry limit"),
+    ({"retry": "old value", "retry limit": "limit value"}, "alpha"),
+    ({"alpha": "first value", "retry": "old value", "retry limit": "limit value"}, "middle"),
+    ({"retry": "old value", "retry limit": "limit value"}, "zulu"),
+    ({"retry": "old value"}, "retry limit"),
+    ({"retry limit": "limit value"}, "retry"),
+    ({}, "retry limit"),
+    ({"retry": "old value", "retry limit": "limit value", "retry_limit": "underscore"}, "retry  limit"),
+], ids=["replace", "before", "between", "after", "insert-longer-prefix", "insert-prefix", "empty", "spaces"])
+@pytest.mark.parametrize("value", ["0042", "  Bob's $(false); [a-z] %s = : !  ",
+                                   "".join(chr(c) for c in range(32, 127) if c not in (34, 92))])
+def test_step_call_set_entry(tmp_path, path, entries, name, value):
+    state = {p: {"other entry": "untouched ' % : value"} for p in PATHS.values()}
+    state[path] = entries
+    before = render(state)
+    for p, data in before.items():
+        target = tmp_path / p
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    plan_step = step(path, name, value)
+    original = copy.deepcopy(plan_step)
+    call = step_call(plan_step)
+    assert call == step_call(plan_step)
+    assert plan_step == original
+    assert set(call) == {"name", "arguments"} and call["name"] == "terminal"
+    args = json.loads(call["arguments"])
+    assert set(args) == {"command"} and type(args["command"]) is str
+    assert call["arguments"] == canon(args).decode()
+    assert "\n" not in args["command"]
+    subprocess.run(["sh", "-c", args["command"]], cwd=tmp_path, check=True)
+    expected = apply_steps(state, [plan_step])
+    assert {p: (tmp_path / p).read_bytes() for p in PATHS.values()} == render(expected)
+    assert read_state(tmp_path) == expected
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()) == sorted(before)
+
+
+@pytest.mark.parametrize("args", [
+    {"path": "../outside.toml", "name": "retry", "value": "valid value"},
+    {"path": "README.md", "name": "retry", "value": "valid value"},
+    {"path": "config/flags.toml", "name": "retry", "value": "valid value", "extra": True},
+    *({k: v for k, v in {"path": "config/flags.toml", "name": "retry", "value": "valid value"}.items()
+       if k != missing} for missing in ("path", "name", "value")),
+    *({"path": "config/flags.toml", "name": name, "value": "valid value"}
+      for name in ("a", "Retry", "retry:", 'retry"', "retry\n", "retry1", "rétry", "retry_", None, 123)),
+    *({"path": "config/flags.toml", "name": "retry", "value": value}
+      for value in ("abc", 'bad"value', "bad\\value", "bad\nvalue", "café", None, 123)),
+    None, [], "args", 123,
+])
+def test_step_call_set_entry_invalid(args):
+    with pytest.raises(ValueError, match="^invalid plan step$"):
+        step_call({"tool": {"name": "set_entry", "args": args}})
+
+
 @pytest.mark.parametrize("retry", [False, True])
 @pytest.mark.parametrize("n_calls", [0, 1])
 def test_director_scripted_calls_and_audit(tmp_path, retry, n_calls):
@@ -442,7 +501,7 @@ def test_relative_scratch_adapter(tmp_path, monkeypatch):
 
 
 def test_import_boundaries():
-    allowed = {"json", "shlex", "dataclasses", "bicentennial.canon", "bicentennial.contracts.run",
+    allowed = {"json", "re", "shlex", "dataclasses", "bicentennial.canon", "bicentennial.contracts.run",
                "bicentennial.render.stream", "bicentennial.genres.g1_software.diffs",
                "bicentennial.sandbox.envserver.tools_g2"}
     for module, imports in ((compiler, allowed), (normalize, {
@@ -763,7 +822,7 @@ def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
     a = object.__new__(adapter.HermesAdapter)
     a.before_spawn, a._wiped, a._session_index, a._alias = None, False, 22, "bicentennial-main"
     a.paths, a.server, a.clock = paths, SimpleNamespace(port=4321), SimpleNamespace(path=root / "clock.json")
-    a.env_server, a.toolsets, a.memory = hook, config.HERMES_TOOLSETS, False
+    a.env_server, a.toolsets, a.memory, a.window = hook, config.HERMES_TOOLSETS, False, None
     a.plugin, a.plugin_config, a.checkout = None, {}, None
     a.argv, a.egress, a.pids = [], None, []
     timings = dict(spawn=[], open=[])

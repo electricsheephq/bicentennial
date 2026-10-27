@@ -1,12 +1,13 @@
 """Read-only stream compiler for the pinned Hermes dialect."""
 
 import json
+import re
 import shlex
 from dataclasses import dataclass
 
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.run import scan_script, validate
-from bicentennial.genres.g1_software.diffs import CALLS, REPO_FILES
+from bicentennial.genres.g1_software.diffs import CALLS, EXPLICIT, PATHS, REPO_FILES
 from bicentennial.render.stream import verify_branch
 from bicentennial.sandbox.envserver.tools_g2 import SEARCH_TOOLS, SEED_TOOLS
 
@@ -62,13 +63,32 @@ def wire_call(name, args):
 
 
 def step_call(step):
-    """S04 callback: only literal config-file replacements extend replay's read dialect."""
+    """S04 callback: config edits extend replay's read dialect."""
     if type(step) is not dict or set(step) != {"tool"} or type(step["tool"]) is not dict:
         raise ValueError("invalid plan step")
     tool = step["tool"]
     if set(tool) != {"name", "args"}:
         raise ValueError("invalid plan step")
     name, args = tool["name"], tool["args"]
+    if name == "set_entry":
+        if type(args) is not dict or set(args) != {"path", "name", "value"}:
+            raise ValueError("invalid plan step")
+        p, n, v = args["path"], args["name"], args["value"]
+        if (p not in PATHS.values() or type(n) is not str or not re.fullmatch(r"[a-z][a-z_ ]*[a-z]", n)
+                or type(v) is not str or not EXPLICIT.fullmatch(v)):
+            raise ValueError("invalid plan step")
+        if p.endswith(".md"):
+            fmt, parse = r'"- %s: %s\n"', 'key = substr($0, 3); sub(/:.*/, "", key)'
+        else:
+            fmt, parse = r'"\"%s\" = \"%s\"\n"', 'key = substr($0, 2); sub(/".*/, "", key)'
+        program = (f"function emit() {{ printf {fmt}, n, v; done = 1 }} "
+                   "NR == 1 { print; next } "
+                   f"{{ {parse}; if (!done && n <= key) emit(); if (key != n) print }} "
+                   "END { if (!done) emit() }")
+        temp = p + ".set-entry.tmp"
+        cmd = "LC_ALL=C " + shlex.join(["awk", "-v", f"n={n}", "-v", f"v={v}", program, p])
+        cmd += f" > {shlex.quote(temp)} && mv {shlex.quote(temp)} {shlex.quote(p)}"
+        return {"name": "terminal", "arguments": canon({"command": cmd}).decode()}
     if name == "write_file" and type(args) is dict and set(args) == {"path", "content"}:
         p, text = args["path"], args["content"]
         if p in REPO_FILES and (p.endswith(".toml") or p == "docs/decisions.md") and type(text) is str:
