@@ -126,6 +126,15 @@ with no repeated key; the validator rejects any other order.
 | `card.volatile_surface_paths` | stable | RING0 §5; order: (`surface`, `path`) |
 | `card.volatile_surface_paths[].surface` | stable | RING0 §5 |
 | `card.volatile_surface_paths[].path` | stable | RING0 §5 (registry `surfaces[].volatile_paths`) |
+| `card.voids` | stable | PREREG §7 (l.549, l.560); a disclosure, not a coverage term |
+| `card.voids.checked` | stable | PREREG §7 (l.549, l.560); a disclosure, not a coverage term |
+| `card.voids.voided` | stable | PREREG §7 (l.549, l.560); a disclosure, not a coverage term |
+| `card.voids.void_milli` | stable | PREREG §7 (l.549, l.560); a disclosure, not a coverage term |
+| `card.violations` | stable | PREREG §7 (harmful-actions panel); order: `track` |
+| `card.violations[].track` | stable | PREREG §7 (harmful-actions panel); order: `track` |
+| `card.violations[].fail_memory` | stable | PREREG §7 (harmful-actions panel); order: `track` |
+| `card.violations[].harmful_extra` | stable | PREREG §7 (harmful-actions panel); order: `track` |
+| `card.violations[].harmful_omission` | stable | PREREG §7 (harmful-actions panel); order: `track` |
 | `card.gate_verdict` | stable | RING0 §4; RING0 §1/§6 |
 | `receipt.canary` | volatile | RING0 §4 |
 | `receipt.run_status` | volatile | RING0 §4 |
@@ -143,3 +152,16 @@ with no repeated key; the validator rejects any other order.
 | `receipt.ports` | volatile | RING0 §4 |
 | `receipt.temporary_paths` | volatile | RING0 §4 |
 | `receipt.raw_body_digest` | volatile | RING0 §4 |
+| `receipt.tokens_by_role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.tokens_by_role[].role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.tokens_by_role[].input` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.tokens_by_role[].output` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.runtime_by_role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.runtime_by_role[].role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.runtime_by_role[].ms` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
+| `receipt.latency_summary` | volatile | RING0 §4 |
+| `receipt.latency_summary.n` | volatile | RING0 §4 |
+| `receipt.latency_summary.p50` | volatile | RING0 §4 |
+| `receipt.latency_summary.p90` | volatile | RING0 §4 |
+| `receipt.latency_summary.p95` | volatile | RING0 §4 |
+| `receipt.latency_summary.max` | volatile | RING0 §4 |
