@@ -1,0 +1,89 @@
+# Golden G1 world "tidewater": the synthetic S6a micro-life (facts F1-F6, commitment C1,
+# correction F1b; a kill after turn 2 of session 5; the long session 6; the three-week gap
+# before session 8). Every value is invented.
+name = "tidewater"
+seed = "6101"
+life = "tidewater"
+principal = "lead"
+
+[schedule]
+sessions = 10
+turns = [5, 5, 5, 5, 5, 15, 5, 5, 5, 5]
+kill = [5, 2]
+sprint = 6
+long_gap = 8
+long_gap_s = 1814400
+checkpoints = [10]
+
+[entities]
+lead = ["person", "lead developer"]
+staging_db = ["environment", "staging Postgres"]
+deploys = ["constraint", "deploys"]
+ci = ["constraint", "CI"]
+log_lines = ["constraint", "log lines"]
+quiet_retry = ["flag", "quiet_retry"]
+commit_subjects = ["constraint", "commit subjects"]
+rotation = ["commitment", "cache-key rotation checklist"]
+release_freeze = ["milestone", "release freeze"]
+
+[[chain]]
+facts = ["F1", "F1b"]
+subject = "staging_db"
+key = "port"
+stem = "PORT"
+token_kind = "number"
+values = ["6432", "6543"]
+at = [[1, 2], [5, 1]]
+
+[[statement]]
+fact = "F2"
+subject = "deploys"
+key = "source_branch"
+value = "release/ember"
+token_kind = "name"
+at = [1, 3]
+
+[[statement]]
+fact = "F3"
+subject = "ci"
+key = "runtime"
+value = "Python 3.12"
+token_kind = "name"
+at = [2, 1]
+
+[[statement]]
+fact = "F4"
+subject = "log_lines"
+key = "format"
+value = "JSON lines"
+token_kind = "name"
+at = [2, 2]
+
+[[statement]]
+fact = "F5"
+subject = "quiet_retry"
+key = "setting"
+value = "defaults to off"
+token_kind = "code"
+at = [2, 3]
+
+[[statement]]
+fact = "F6"
+subject = "commit_subjects"
+key = "length"
+value = "under 50 characters"
+token_kind = "code"
+at = [3, 1]
+
+[[commitment]]
+fact = "C1"
+subject = "rotation"
+predicate = "deliver"
+stem = "ROTATION"
+trigger = "event"
+cue_subject = "release_freeze"
+cue_key = "status"
+cue_stem = "FREEZE"
+sender = "lead"
+made = [3, 2]
+due = [7, 1]
