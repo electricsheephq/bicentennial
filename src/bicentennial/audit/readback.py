@@ -206,6 +206,17 @@ def _n_calls(obj):
         len(v) if k == "tool_calls" and isinstance(v, list) else _n_calls(v) for k, v in obj.items())
 
 
+def _minted_ids(rows, blobs):
+    """Kit mint budgets: scripted turns share the attempt seed; other records use their ledger role."""
+    budget = Counter()
+    for r in rows:
+        attempt = r.get("attempt_id")
+        if isinstance(attempt, str):
+            seed = attempt if r.get("cursor") is not None else canon([attempt, r["role"]]).decode()
+            budget[seed] += 1 + _n_calls(blobs.get(r.get("resp")))
+    return {mint_id(seed, k): (seed, k) for seed, n in budget.items() for k in range(1, n + 1)}
+
+
 def _items(body, wire):
     """A request's history items. A string input is one user message; token ids and other non-object
     items (an embeddings request's input) carry no history, and their strings stay in the other channel."""
@@ -293,12 +304,8 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
         if r.get("served") == "write_tool_calls" and not refused(r, blobs.get(r.get("resp"))):
             for tc in output(blobs[r["resp"]], wire)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
-    minted, last_k, served_ids = {}, {}, set()  # kit: each mintable id -> (attempt id, counter)
-    if fmt == "kit":
-        budget = Counter()
-        for r in rows:
-            budget[r.get("attempt_id")] += 1 + _n_calls(blobs.get(r.get("resp")))
-        minted = {mint_id(a, k): (a, k) for a, n in budget.items() if isinstance(a, str) for k in range(1, n + 1)}
+    minted = _minted_ids(rows, blobs) if fmt == "kit" else {}
+    last_k, served_ids = {}, set()  # each namespace's last served counter; ids served once in the ledger
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
         attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
