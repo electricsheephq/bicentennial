@@ -44,6 +44,7 @@ from bicentennial.systems.hermes_plugin import (
 )
 from bicentennial.systems.registry import (
     REGISTRY,
+    ZERO_HASH,
     SystemRefused,
     admit_system,
     check,
@@ -74,7 +75,9 @@ def test_entries_exact(name):
     expected = {
         "name": name, "licence": "Apache-2.0" if mem else "MIT", "harness": "hermes",
         "artifact": {"name": "hermes-plugin-mem0" if mem else "hermes-plugin-holographic",
-                     "version": "1.3.0" if mem else "0.13.0", "sha256": "0" * 64},
+                     "version": "1.3.0" if mem else "0.13.0",
+                     "sha256": "bcdeee0243eb5367fdfdb5589c8025ae13d9198954f793fb5b8e1ae212ac8465" if mem else
+                     "22a2c514fa6b4141e3bcb75f4ac6e5ddbb4028244a73a95503d8900a92ce2fc1"},
         "write_tools": [{"tool": t, "actions": []} for t in ("mem0_add", "mem0_update", "mem0_delete")] if mem else [
             {"tool": "fact_store", "actions": ACTIONS},
             {"tool": "fact_feedback", "actions": ["helpful", "unhelpful", "confirmed"]}],
@@ -82,7 +85,8 @@ def test_entries_exact(name):
         "recall": {"tool": "mem0_search" if mem else "fact_store", "argument_template": {
             "query": "{prompt}", **({} if mem else {"action": "search"})}},
         "surfaces": [SURFACE, *([{"root": "SANDBOX_HOME", "relative": ".mem0", "volatile_paths": []}] if mem else [])],
-        "fresh_install_hash": "0" * 64,
+        "fresh_install_hash": "a2591a33006ad2ec3dc65eac9ed0aac78cda3e4aae23e1f7d2f7ee76ef02f486" if mem else
+        "37f634904b04f0e315983382c5afec0e367c00d1bd32b1083e99dd70b8843fa9",
         "own_model_routes": [{"role": r, "alias": f"bicentennial-{r}"} for r in ("extraction", "embeddings")] if mem else [],
         "structured_formats": {}, "embedding_dim": 1536 if mem else None,
         "settle": {"kind": "hook" if mem else "none", "bound_s": 5 if mem else 0},
@@ -100,8 +104,11 @@ def test_entries_exact(name):
         ]}
         expected["structured_formats"] = {"extraction": {"kind": "json", "schema": schema}}
     assert e == expected and check(e) == []
+    assert admit_system(e, operator="benchmark") is None
+    unmeasured = deepcopy(e)
+    unmeasured["artifact"]["sha256"] = unmeasured["fresh_install_hash"] = ZERO_HASH
     with pytest.raises(SystemRefused) as refused:
-        admit_system(e, operator="benchmark")
+        admit_system(unmeasured, operator="benchmark")
     assert refused.value.reasons == ("unmeasured:artifact.sha256", "unmeasured:fresh_install_hash")
     measured = deepcopy(e)
     measured["artifact"]["sha256"], measured["fresh_install_hash"] = "a" * 64, "b" * 64

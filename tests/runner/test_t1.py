@@ -36,7 +36,7 @@ from bicentennial.sandbox.envserver.state import State
 from bicentennial.score.check_selftest import _score, score_plan
 from bicentennial.score.invariants import GATED_T1, INVARIANTS
 from bicentennial.score.qa import score_qa
-from bicentennial.systems.registry import REGISTRY, SystemRefused, load
+from bicentennial.systems.registry import REGISTRY, ZERO_HASH, SystemRefused, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
 from bicentennial.world.schedule import build_schedule
@@ -129,8 +129,9 @@ def test_system_preflight(installed, monkeypatch, system, code):
 
 def test_unmeasured_and_missing_input(installed, monkeypatch):
     monkeypatch.setattr(adapter.HermesAdapter, "__init__", lambda *a, **kw: pytest.fail("adapter constructed"))
+    entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash=ZERO_HASH)
     with pytest.raises(SystemRefused) as caught:
-        prepare(installed, entry=None)
+        prepare(installed, entry=entry)
     assert any(r.startswith("unmeasured:") for r in caught.value.reasons)
     with pytest.raises(t1.T1Refused, match="missing_input"):
         prepare(installed, worker_argv=None)

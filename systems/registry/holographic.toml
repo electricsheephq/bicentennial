@@ -1,8 +1,8 @@
 name = "holographic"
 licence = "MIT"
-# Catalog a6d009315bc72a7c4e68d6a0e60a6eeed68080fd; unmeasured:
+# Catalog a6d009315bc72a7c4e68d6a0e60a6eeed68080fd; artifact.sha256 measured 2026-10-27 by:
 # git archive --format=tar a6d009315bc72a7c4e68d6a0e60a6eeed68080fd | shasum -a 256
-artifact = {name = "hermes-plugin-holographic", version = "0.13.0", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
+artifact = {name = "hermes-plugin-holographic", version = "0.13.0", sha256 = "22a2c514fa6b4141e3bcb75f4ac6e5ddbb4028244a73a95503d8900a92ce2fc1"}
 write_tools = [
     {tool = "fact_store", actions = ["add", "change", "end", "correct", "revert", "merge", "forget", "update", "remove", "alias", "rename", "delete_entity", "split", "rebuild_entities"]},
     {tool = "fact_feedback", actions = ["helpful", "unhelpful", "confirmed"]},
@@ -14,6 +14,7 @@ structured_formats = {}
 settle = {kind = "none", bound_s = 0}
 harness = "hermes"
 surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
-fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+# Measured 2026-10-27: the T0 memory-layer host's fresh-install hash (RING0 §13 E4 port mask), equal on two director ports.
+fresh_install_hash = "37f634904b04f0e315983382c5afec0e367c00d1bd32b1083e99dd70b8843fa9"
 machine_class = "light"
 benchmark_operator_runs = true
