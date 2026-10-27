@@ -395,6 +395,32 @@ def test_input_errors(tree, capsys, name, expected):
     assert not tree.out.exists() or (name == "out_exists" and not list(tree.out.iterdir()))
 
 
+@pytest.mark.parametrize("args", [("-h",), ("--help",), ("valid", "--help")])
+def test_help_is_usage_refusal(tree, args):
+    args = [*argv(tree), args[-1]] if args[0] == "valid" else list(args)
+    result = subprocess.run([sys.executable, str(SCRIPT), *args],
+                            capture_output=True, text=True)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert result.stderr.startswith("usage: ")
+    assert result.stderr.endswith("usage arguments\n")
+    assert not tree.out.exists()
+
+
+@pytest.mark.parametrize("status", [0, 2])
+def test_parser_exit_is_usage_refusal(tree, monkeypatch, capsys, status):
+    def exit_during_parse(parser, args):
+        parser.exit(status, "parser exit\n")
+
+    monkeypatch.setattr(accept.Parser, "parse_args", exit_during_parse)
+    assert accept.main(argv(tree)) == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("usage: ")
+    assert captured.err.endswith("usage arguments\n")
+    assert not tree.out.exists()
+
+
 def test_hashseed_subprocess(tree):
     result = subprocess.run([sys.executable, str(SCRIPT), *argv(tree)], capture_output=True, text=True,
                             env=dict(os.environ, PYTHONHASHSEED="random"))

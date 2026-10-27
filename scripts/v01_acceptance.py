@@ -56,6 +56,9 @@ class Parser(argparse.ArgumentParser):
         self.print_usage(sys.stderr)
         raise InputError("usage", "arguments")
 
+    def exit(self, status=0, message=None):
+        self.error(message)
+
 
 @dataclass
 class Run:
@@ -589,7 +592,7 @@ def render(m, api):
 
 
 def main(argv=None) -> int:
-    parser = Parser(description=__doc__)
+    parser = Parser(description=__doc__, add_help=False)
     for name in ("runs", "t0-packs", "t0-pack-hash", "t1-pack-hash", "commit", "out"):
         parser.add_argument("--" + name, required=True)
     try:
