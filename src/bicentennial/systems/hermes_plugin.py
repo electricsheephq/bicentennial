@@ -20,6 +20,7 @@ from bicentennial.harness.hermes.config import (
 from bicentennial.sandbox.spansearch import span_search
 from bicentennial.sandbox.surfaces import (
     clone_tree,
+    install_hash,
     surface_hash,
     verify_empty,
     wipe_to_fresh,
@@ -102,6 +103,9 @@ class PluginCell:
             snapshot.parent.mkdir(exist_ok=True)
             clone_tree(directory, snapshot)
             self.snapshots.append((snapshot, surface_hash(directory, surface["volatile_paths"])))
+        hashes = [{"relative": s["relative"], "root": s["root"],
+                   "tree_hash": install_hash(d, s["volatile_paths"], port)} for s, d in self.surfaces]
+        self.fresh_install_hash = hashes[0]["tree_hash"] if len(hashes) == 1 else sha256(canon(hashes)).hexdigest()
         self.baseline = self._listing()
         return self.surface_hash()
 

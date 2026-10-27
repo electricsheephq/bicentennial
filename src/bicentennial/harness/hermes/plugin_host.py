@@ -40,6 +40,7 @@ from bicentennial.runner.guard import admit, assert_niced, read_marker
 from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.surfaces import (
     clone_tree,
+    install_hash,
     surface_hash,
     verify_empty,
     wipe_to_fresh,
@@ -149,7 +150,8 @@ class HermesMemoryHost(Adapter):
                 digest = surface_hash(directory, surface["volatile_paths"])
                 self._surfaces.append((directory, surface["volatile_paths"]))
                 self._fresh.append((fresh, digest, self._listing(i)))
-                hashes.append({"relative": surface["relative"], "root": surface["root"], "tree_hash": digest})
+                hashes.append({"relative": surface["relative"], "root": surface["root"],
+                               "tree_hash": install_hash(directory, surface["volatile_paths"], self.server.port)})
             self.fresh_install_hash = hashes[0]["tree_hash"] if len(hashes) == 1 else sha256(canon(hashes)).hexdigest()
             self.egress = Egress()
             self.egress.start()

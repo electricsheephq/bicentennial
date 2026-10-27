@@ -403,3 +403,66 @@ def test_budget_only_k100(label):
     assert apply_budget(101, 100, "K100")
     with pytest.raises(NotImplementedError, match="^v0.2$"):
         apply_budget(0, 100, label)
+
+
+def test_install_hash_hermes_config_is_port_stable(tmp_path):
+    from bicentennial.harness.hermes.config import hermes_config, write_config
+
+    roots = [home(tmp_path / str(port)) for port in (40001, 40002)]
+    for root, port in zip(roots, (40001, 40002), strict=True):
+        write_config(root, hermes_config(port, "bicentennial-main"))
+    first = surfaces.install_hash(roots[0], [], 40001)
+    assert first == surfaces.install_hash(roots[1], [], 40002)
+    assert surface_hash(roots[0], []) != surface_hash(roots[1], [])
+    config = roots[0] / "config.yaml"
+    original = config.read_bytes()
+    changed = original.replace(b"bicentennial-main", b"bicentennial-Main")
+    assert sum(a != b for a, b in zip(original, changed, strict=True)) == 1
+    config.write_bytes(changed)
+    assert surfaces.install_hash(roots[0], [], 40001) != first
+
+
+@pytest.mark.parametrize("filename", ["config.yaml", "mem0.json"])
+def test_install_hash_masks_all_exact_port_matches(tmp_path, filename):
+    from hashlib import sha256
+
+    assert surfaces.PORT_FILES == ("config.yaml", "mem0.json")
+    raw = b"http://127.0.0.1:8080/a 127.0.0.1:8080 127.0.0.1:80801 127.0.0.1:8082"
+    masked = (b"http://127.0.0.1:{DIRECTOR_PORT}/a 127.0.0.1:{DIRECTOR_PORT} "
+              b"127.0.0.1:80801 127.0.0.1:8082")
+    (tmp_path / filename).write_bytes(raw)
+    listing = tree_listing(tmp_path, [])
+    listing[0].update(size=len(masked), sha256=sha256(masked).hexdigest())
+    cached = surfaces._LISTINGS.copy()
+    assert surfaces.install_hash(tmp_path, [], 8080) == tree_hash(listing)
+    assert surfaces._LISTINGS == cached
+    assert (tmp_path / filename).read_bytes() == raw
+
+
+@pytest.mark.parametrize("filename", [None, "config.yaml", "mem0.json", "sub/config.yaml", "other.json"])
+def test_install_hash_preserves_unmasked_rows(tmp_path, monkeypatch, filename):
+    if filename is not None:
+        target = tmp_path / filename
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(b"127.0.0.1:80801" if filename in surfaces.PORT_FILES else b"127.0.0.1:8080")
+    listing = tree_listing(tmp_path, [])
+    expected = surface_hash(tmp_path, [])
+    observed = []
+    def capture(rows):
+        observed.extend(rows)
+        return tree_hash(rows)
+    monkeypatch.setattr(surfaces, "tree_hash", capture)
+    assert surfaces.install_hash(tmp_path, [], 8080) == expected
+    assert observed == listing
+
+
+def test_install_hash_respects_volatile_paths_and_symlinks(tmp_path):
+    (tmp_path / "config.yaml").write_bytes(b"127.0.0.1:8080")
+    (tmp_path / "mem0.json").symlink_to("config.yaml")
+    assert surfaces.install_hash(tmp_path, ["config.yaml"], 8080) == surface_hash(tmp_path, ["config.yaml"])
+
+
+@pytest.mark.parametrize("port", [0, 65536, "8080", True])
+def test_install_hash_rejects_invalid_port(tmp_path, port):
+    with pytest.raises(ValueError):
+        surfaces.install_hash(tmp_path, [], port)
