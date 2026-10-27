@@ -54,8 +54,13 @@ class SimClock:
         """Publish one logical step before the director answers its turn."""
         self._write(self.sim_t_s + self.step_s)
 
-    def set_session(self, sim_t_s: int) -> None:
+    def set_session(self, sim_t_s: int, step_s: int | None = None) -> None:
         """Publish the scheduled instant at an idle session boundary."""
+        if step_s is not None:
+            self._integer(step_s)
+            if step_s <= 0:
+                raise ValueError("step_s must be positive")
+            self.step_s = step_s
         self._write(sim_t_s)
 
     @classmethod

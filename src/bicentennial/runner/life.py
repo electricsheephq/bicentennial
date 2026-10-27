@@ -1,0 +1,404 @@
+"""One scripted Hermes life attempt; scoring and reruns belong to the caller."""
+
+import json
+import shutil
+from contextlib import ExitStack, closing
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+
+from bicentennial.audit.effects import hermes as hermes_effects
+from bicentennial.audit.readback import (
+    audit,
+    failures,
+    life_ids,
+    route_models,
+    run_status,
+    turns_from_script,
+)
+from bicentennial.audit.readback import (
+    load as load_ledger,
+)
+from bicentennial.canon import sha256_canon
+from bicentennial.contracts.items import reader_view
+from bicentennial.contracts.surfaces import tree_listing
+from bicentennial.director.compiler.check import expected_probe_env, precondition_holds
+from bicentennial.director.compiler.hermes import compile_script, step_call
+from bicentennial.director.routes import RouteTable
+from bicentennial.director.scripted import ScriptedResponder
+from bicentennial.genres.g1_software.diffs import (
+    EMPTY_TREE_HASH,
+    end_boundary,
+    read_state,
+    start_boundary,
+)
+from bicentennial.genres.g1_software.repo import materialize, workspace_hash
+from bicentennial.genres.g2_assistant.envseed import envseed, probe_envseed
+from bicentennial.harness.hermes.adapter import (
+    HarnessFailed,
+    HermesAdapter,
+    PinMismatch,
+)
+from bicentennial.harness.hermes.config import HERMES_TOOLSETS
+from bicentennial.harness.hermes.envwire import EnvWiring
+from bicentennial.harness.hermes.plugin_host import GateRefused
+from bicentennial.ledger import BlobStore, Guard
+from bicentennial.probe.probe_responder import ProbeResponder
+from bicentennial.runner.lock import LockMismatch
+from bicentennial.runtime.clock import SimClock
+from bicentennial.runtime.faultlite import FaultLite
+from bicentennial.sandbox.surfaces import clone_tree, surface_hash, swap_in
+from bicentennial.score.qa import parse_envelope
+from bicentennial.systems.controls import (
+    WAKE_REASONS,
+    WIPED_LABEL,
+    WipeOnWake,
+    no_memory_cell,
+)
+from bicentennial.systems.hermes_plugin import MARKER, PROVIDERS, PluginCell
+from bicentennial.systems.registry import REGISTRY, SystemRefused, load
+from bicentennial.world.db import open_world
+from bicentennial.world.scale import TURN_S, named
+from bicentennial.world.schedule import build_schedule
+from bicentennial.world.targeted import expected_state
+
+ARMS = ("system", "wiped", "no_memory")
+STEP_S = 60
+PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
+SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
+CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
+    "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "end_failed", "exit_timeout")) + tuple(
+    (label, "INFRA_FAILURE") for label in (
+        "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout"))
+TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only compiled workspace commands; "
+                       "a live model could reach the Hermes home")
+
+
+@dataclass(frozen=True)
+class LifeRun:
+    arm: str
+    life: str
+    branch: str
+    attempt: int
+    results: dict = field(default_factory=dict)
+    envelopes: dict = field(default_factory=dict)
+    transforms: tuple = ()
+    classes: dict = field(default_factory=dict)
+    stored_roots: dict = field(default_factory=dict)
+    retained_roots: dict = field(default_factory=dict)
+    act: dict = field(default_factory=dict)
+    kill: tuple | None = None
+    expected_call_ids: tuple = ()
+    post_restart_requests: tuple = ()
+    audit: dict = field(default_factory=dict)
+    sessions: tuple = ()
+    stopped: tuple | None = None
+    records: tuple = ()
+    run_values: dict = field(default_factory=dict)
+    stable_digest: str = ""
+    honeypot_hits: int = 0
+    egress: dict = field(default_factory=dict)
+    hooks: tuple = ()
+    harness_record: dict = field(default_factory=dict)
+    verified_empty: dict = field(default_factory=dict)
+    _root: Path | None = field(default=None, repr=False)
+
+    def cleanup(self):
+        """Release this attempt after its evidence has been scored."""
+        if self._root is not None and self._root.exists():
+            shutil.rmtree(self._root)
+
+
+class PluginWake:
+    """Wipe the cell at its canonical paths, which may currently hold clones."""
+
+    label = WIPED_LABEL
+
+    def __init__(self):
+        self.cell, self._records = None, []
+
+    def __call__(self, reason):
+        wake = bool(self._records)
+        if reason not in WAKE_REASONS or (not wake and reason != "session_start"):
+            raise ValueError("invalid wake reason")
+        if self.cell is None:
+            raise ValueError("plug-in cell is not installed")
+        if wake:
+            self.cell.wipe()
+        rows = [{"root": s["root"], "relative": s["relative"], "fresh_install_hash": fresh,
+                 "post_wipe_hash": surface_hash(directory, s["volatile_paths"]) if wake else None}
+                for (s, directory), (_, fresh) in zip(self.cell.surfaces, self.cell.snapshots, strict=True)]
+        self._records.append(dict(call=len(self._records) + 1, reason=reason, wake=wake, surfaces=rows))
+        return wake
+
+    def records(self):
+        return tuple(json.loads(json.dumps(self._records)))
+
+
+def _cause(error):
+    label = str(error) if isinstance(error, HarnessFailed) else type(error).__name__
+    return dict(CAUSES).get(label, "INFRA_FAILURE"), label
+
+
+def _rows(root):
+    path = root / "ledger.jsonl"
+    return [json.loads(line) for line in path.read_bytes().split(b"\n")[:-1]] if path.exists() else []
+
+
+def _earlier(root, session):
+    rows = [r for r in _rows(root) if r.get("role") == "probe_main"
+            and (r.get("cursor") or {}).get("session") == session]
+    highest = max((r["cursor"]["turn"] for r in rows), default=0)
+    store = BlobStore(root / "blobs", Guard([]))
+    return tuple(store.get(r[key]) for r in sorted(rows, key=lambda r: r["seq"])
+                 if r["cursor"]["turn"] < highest for key in ("req", "resp") if r.get(key))
+
+
+def _probe_code(rows, attempt_id):
+    for r in rows:
+        if r.get("attempt_id") != attempt_id:
+            continue
+        for upstream in r.get("upstream", []):
+            if upstream.get("error") in PROBE_INFRA_CODES:
+                return upstream["error"]
+        if r.get("role") == "unknown" and r.get("status") == 400:
+            return "unknown_400"
+    return None
+
+
+def _pair_inputs(root, rows, kill, genre):
+    if kill is None:
+        return (), ()
+    cursor = dict(session=kill[0], turn=kill[1])
+    store = BlobStore(root / "blobs", Guard([]))
+    ids, requests = [], []
+    last = max((r["seq"] for r in rows if r.get("cursor") == cursor), default=0)
+    for row in sorted(rows, key=lambda r: r["seq"]):
+        if genre == "G1" and row.get("cursor") == cursor and row.get("served") == "script_tool_calls":
+            body = json.loads(store.get(row["resp"]))
+            ids.extend(c["id"] for c in body["choices"][0]["message"]["tool_calls"])
+        if last and row["seq"] > last and row.get("type") == "request":
+            path = row.get("path", "")
+            wire = "chat" if path.endswith("/chat/completions") else (
+                "responses" if path.endswith("/responses") else None)
+            if wire is not None:
+                requests.append((wire, json.loads(store.get(row["req"]))))
+    return tuple(sorted(ids)), tuple(requests)
+
+
+def _audit(adapter, table, faults, script, items, records, plugin):
+    try:
+        rows, blobs, _ = load_ledger(adapter.paths["root"] / "ledger", "kit")
+        model_for, mode = route_models(table, adapter.entry["name"], faults)
+        report = audit(rows, blobs, turns_from_script(script), "chat", fmt="kit", model_for=model_for,
+                       suffix=None, write_tools=tuple(t["tool"] for t in adapter.entry["write_tools"]),
+                       id_needles=life_ids({"items": list(items), "records": list(records)}),
+                       effects=None if plugin else hermes_effects(adapter.paths["hermes_home"]))
+        codes = failures(report)
+        status = "OK" if plugin and not [c for c in codes if c != "A4.no_effects_hook"] else run_status(report, mode)
+        return dict(status=status, failures=codes, **(
+            {"a4": "not audited for plug-in providers at v0.1"} if plugin else {}))
+    except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+        raise
+    except Exception:
+        return {"status": "INFRA_FAILURE", "failures": ["audit_exception"]}
+
+
+def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
+             gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
+             worker_argv=None, visible=None, honeypot_token=None, schedule=None) -> LifeRun:
+    """Run in script list order, restoring every canonical surface after each probe."""
+    if arm not in ARMS or branch not in ("B0", "B1"):
+        raise ValueError("invalid arm or branch")
+    life_dir, scratch = Path(life_dir), Path(scratch)
+    life = json.loads((life_dir / "life.json").read_bytes())
+    schedule = schedule if schedule is not None else build_schedule(life["seed"], life["life"], named(life["scale"]))
+    root = scratch / arm / life["life"] / branch / f"a{attempt}"
+    root.mkdir(parents=True, exist_ok=True)
+    evidence = LifeRun(arm, life["life"], branch, attempt, _root=root)
+    sessions, transforms, adapter = [], [], None
+    stopped, hooks, verified = None, (), {}
+    with closing(open_world(life_dir / f"world.{branch}.db", readonly=True)) as db:
+        seed, genre = db.execute("SELECT seed, genre FROM meta").fetchone()
+        if seed != life["seed"]:
+            raise ValueError("world seed mismatch")
+        compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=STEP_S)
+        script = compiled.script
+        if arm == "no_memory":
+            script = dict(script, sessions=[s for s in script["sessions"] if s["kind"] == "probe"])
+        faults = FaultLite.load([] if arm == "no_memory" else schedule.fault_lite(), script)
+        kill = next(((f["session"], f["turn"]) for f in schedule.fault_lite() if f["kind"] == "kill"), None)
+        entry_r = load(REGISTRY / "hermes-native.toml") if arm == "no_memory" else entry
+        reader = load(REGISTRY / "no-memory.toml") if arm == "no_memory" else entry
+        table = RouteTable.load({"routes": [dict(system=entry_r["name"], segment=s, probe_model="probe-model",
+            summariser="summary-model", alias=a, vision=None, served_by="scripted") for s, a in SEGMENTS]})
+        probes = {p.index: p for p in compiled.probes}
+        by_id = {i["item_id"]: i for i in items}
+        responder = ProbeResponder(ScriptedResponder(entry_r), reader,
+            {iid: (p.index, n) for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)},
+            {iid: (reader_view(by_id[iid]), keys[iid]) for iid in sorted(by_id)},
+            earlier=lambda run_key, session: _earlier(root / "run" / "ledger", session), step_call=step_call)
+        clock = SimClock(root / "clock.json", schedule.sessions[0].turn_t[0] - TURN_S, TURN_S)
+        seeds = ({p.index: envseed(db, p.index).seed for p in schedule.sessions} | {
+            p.index: probe_envseed(db, p.index, p.checkpoint).seed for p in compiled.probes}) if genre == "G2" else {}
+        wiring = EnvWiring(root / "envwire", seeds, clock.path) if genre == "G2" else None
+        plugin = arm != "no_memory" and entry["name"] in PROVIDERS
+        hook = (PluginWake() if plugin else WipeOnWake(entry, {"HERMES_HOME": root / "run" / "hermes-home"},
+                root / "control")) if arm == "wiped" else None
+        hooks = (hook,) if hook is not None else ()
+        common = dict(script=script, route_table=table, schedule=faults, responder=responder, clock=clock,
+            root=root / "run", scratch=scratch, life=life["life"], branch=branch, run=run,
+            checkout=hermes, harness_pin=harness_pin, worker_argv=worker_argv,
+            toolsets=HERMES_TOOLSETS, env_server=wiring)
+        try:
+            adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
+                plugin=PROVIDERS[entry["name"]] if plugin else None, before_spawn=hook, **common))
+            paths = adapter.paths
+            roots = {"HERMES_HOME": paths["hermes_home"], "SANDBOX_HOME": paths["home"]}
+            surfaces = [(s, roots[s["root"]] / s["relative"]) for s in adapter.entry["surfaces"]]
+            pack = paths["home"] / "pack"
+            if any(pack.resolve().is_relative_to(p.resolve()) or p.resolve().is_relative_to(pack.resolve())
+                   for p in [paths["workspace"], *(p for _, p in surfaces)]):
+                raise SystemRefused(["visible_pack_overlaps_surface"])
+            for rel, content in sorted((visible or {}).items()):
+                target = pack / rel
+                if not target.resolve().is_relative_to(pack.resolve()):
+                    raise SystemRefused(["visible_path_escape"])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            for _, directory in surfaces:
+                directory.mkdir(parents=True, exist_ok=True)
+                if not (directory / MARKER).exists():
+                    (directory / MARKER).write_bytes(b"")
+            cell = PluginCell(entry, adapter) if plugin else None
+            if cell is not None:
+                installed = cell.install(plugin_source, alias=table.resolve(entry["name"],
+                    script["sessions"][0]["index"], faults)["alias"])
+                if hook is not None:
+                    hook.cell = cell
+                empty = not cell.audit() and cell.surface_hash() == installed
+            else:
+                empty = all([r["path"] for r in tree_listing(p, s["volatile_paths"])] == [MARKER]
+                            for s, p in surfaces)
+            listing = [tree_listing(p, s["volatile_paths"]) for s, p in surfaces]
+            verified = dict(taken="before configuration", listing_sha256=sha256_canon(listing[0] if len(listing) == 1 else listing))
+            if not empty:
+                raise HarnessFailed("not_empty")
+            expected = expected_state(genre, schedule)(db)
+            unsettled, checkpoints = [], []
+
+            def settle_checkpoint(checkpoint):
+                if cell is not None and not cell.settle().settled:
+                    unsettled.append(checkpoint)
+                    evidence.classes.update((iid, ("SYSTEM_FAILURE", "unsettled"))
+                        for iid in sorted(by_id) if by_id[iid]["probe_point"] == checkpoint)
+
+            for session in script["sessions"]:
+                index, probe = session["index"], probes.get(session["index"])
+                attempt_id = None
+                try:
+                    lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
+                    if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
+                        shutil.rmtree(paths["workspace"])
+                        boundary = end_boundary(schedule, probe.checkpoint) if probe else start_boundary(schedule, index)
+                        materialize(db, schedule, branch=branch, boundary=boundary, root=paths["workspace"])
+                        if probe and workspace_hash(paths["workspace"]) != expected[probe.checkpoint]["repo_tree_hash"]:
+                            raise HarnessFailed("workspace_state")
+                    instant = probe.sim_t_s if probe else schedule.sessions[index - 1].turn_t[0] - TURN_S
+                    clock.set_session(instant, step_s=STEP_S if probe else TURN_S)
+                    with ExitStack() as stack:
+                        clones = []
+                        if probe:
+                            checkpoints.append(probe.checkpoint)
+                            settle_checkpoint(probe.checkpoint)
+                            for n, canonical in enumerate([*(p for _, p in surfaces), paths["workspace"]]):
+                                clone = root / "probe" / str(index) / str(n)
+                                clone.parent.mkdir(parents=True, exist_ok=True)
+                                clone_tree(canonical, clone)
+                                clones.append(clone)
+                            for iid in probe.item_ids:
+                                holds = precondition_holds(by_id[iid],
+                                    repo_tree_hash=workspace_hash(clones[-1]) if genre == "G1" else EMPTY_TREE_HASH,
+                                    env_state_hash=sha256_canon(seeds[index]["state"] if genre == "G2" else {}),
+                                    probe_env_state_hash=expected_probe_env(db, genre, index, probe.checkpoint))
+                                voids.record(iid, arm, holds)
+                                if not holds:
+                                    evidence.classes[iid] = ("INFRA_FAILURE", "void")
+                                evidence.retained_roots[iid] = tuple(clones[:-1])
+                            for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
+                                stack.enter_context(swap_in(clone, canonical))
+                        before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
+                        result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)
+                        sessions.append(result)
+                        if not probe:
+                            if result.finals_matched != len(session["turns"]):
+                                raise HarnessFailed("final_mismatch")
+                            if genre == "G1" and workspace_hash(paths["workspace"]) != before:
+                                raise HarnessFailed("workspace_changed")
+                            if genre == "G2":
+                                ends = [r for r in wiring.records(index) if r.get("type") == "boundary" and r.get("kind") == "session_end"]
+                                if not ends or ends[-1]["state_hash"] != expected[index]["env_state_hash"]:
+                                    raise HarnessFailed("env_state")
+                        elif by_id[probe.item_ids[0]]["stage"] == "act":
+                            for iid in probe.item_ids:
+                                evidence.act[iid] = read_state(paths["workspace"]) if genre == "G1" else {
+                                    "records": wiring.records(index)}
+                    if probe:
+                        code = _probe_code(adapter.records(), attempt_id)
+                        for n, final in result.finals:
+                            iid = probe.item_ids[n - 1]
+                            if iid in responder.results() and responder.results()[iid].kind == "qa":
+                                env = evidence.envelopes[iid] = parse_envelope(final)
+                                if env != responder.results()[iid].envelope:
+                                    transforms.append(iid)
+                            if code:
+                                evidence.classes[iid] = ("INFRA_FAILURE", code)
+                            if probe.checkpoint in unsettled:
+                                evidence.classes[iid] = ("SYSTEM_FAILURE", "unsettled")
+                    else:
+                        needed = [r["item_id"] for r in records if r["evidence_session"] == index]
+                        if needed:
+                            stored = []
+                            for n, (_, canonical) in enumerate(surfaces):
+                                clone = root / "stored" / str(index) / str(n)
+                                clone.parent.mkdir(parents=True, exist_ok=True)
+                                clone_tree(canonical, clone)
+                                stored.append(clone)
+                            evidence.stored_roots.update((iid, tuple(stored)) for iid in needed)
+                        if any(p.checkpoint == index for p in compiled.probes):
+                            settle_checkpoint(index)
+                except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+                    raise
+                except Exception as error:
+                    cause = _cause(error)
+                    code = _probe_code(adapter.records(), attempt_id) if probe else None
+                    if code:
+                        cause = ("INFRA_FAILURE", code)
+                    stopped = (*cause, index)
+                    for iid in sorted(by_id):
+                        if probe and iid in probe.item_ids:
+                            if code and probe.checkpoint not in unsettled:
+                                evidence.classes[iid] = cause
+                            else:
+                                evidence.classes.setdefault(iid, cause)
+                        elif iid not in responder.results():
+                            evidence.classes.setdefault(iid, cause)
+                    break
+        except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+            raise
+        except Exception as error:
+            cause = _cause(error)
+            stopped = (*cause, script["sessions"][0]["index"])
+            evidence.classes.update((iid, cause) for iid in sorted(by_id))
+        finally:
+            if adapter is not None:
+                egress = adapter.close()
+        if adapter is None:
+            return replace(evidence, stopped=stopped)
+        rows = tuple(adapter.records())
+        ids, requests = _pair_inputs(root / "run" / "ledger", rows, kill, genre)
+        return replace(evidence, results=dict(sorted(responder.results().items())), transforms=tuple(sorted(transforms)),
+            classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
+            post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin),
+            sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
+            stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
+            egress=egress, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified)
