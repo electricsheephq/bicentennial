@@ -2,6 +2,8 @@
 
 import copy
 import json
+import subprocess
+import sys
 from hashlib import sha256
 from pathlib import Path
 
@@ -14,10 +16,25 @@ from bicentennial.contracts.surfaces import tree_hash, tree_listing
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "run"
 CANARY = "c168e5f8-3948-4553-8554-7aa162054723"
+# Each unit keeps a contracts.json registry beside its own fixtures, so a later
+# schema needs no edit here; every contract name must appear in exactly one.
+REGISTRIES = sorted([*ROOT.glob("tests/fixtures/*/contracts.json"),
+                     *ROOT.glob("schemas/fixtures/*/contracts.json")])
 
 
 def fixture(name):
-    return json.loads((FIXTURES / "contracts.json").read_bytes())["contracts"][name]
+    found = [registry["contracts"][name] for registry in
+             (json.loads(path.read_bytes()) for path in REGISTRIES)
+             if name in registry["contracts"]]
+    assert len(found) == 1, f"{name}: {len(found)} fixture registry entries, expected 1"
+    return found[0]
+
+
+def test_every_registry_carries_the_canary_and_known_names():
+    for path in REGISTRIES:
+        registry = json.loads(path.read_bytes())
+        assert registry["canary"] == CANARY, path.parent.name
+        assert set(registry["contracts"]) <= NAMES, path.parent.name
 
 
 def compile_micro_life(life):
@@ -337,3 +354,14 @@ def test_run_value_masks_name_known_values_only():
     masks = [{"name": "m", "kind": "run_value", "target": "home_dir", "placeholder": "{X}"}]
     with pytest.raises(ValueError, match="run value"):
         validate("masks", masks)
+
+
+def test_validate_loads_every_registering_module_itself():
+    # A caller that imports only run must still get every sibling module's checks.
+    script = ("import sys\nfrom bicentennial.contracts import run\n"
+              "assert 'bicentennial.contracts.surfaces' not in sys.modules\n"
+              "run.validate('lock', __import__('json').loads(sys.argv[1]))\n"
+              "print(sorted(m for m in sys.modules if m.startswith('bicentennial.contracts.')))")
+    out = subprocess.run([sys.executable, "-c", script, json.dumps(fixture("lock"))],
+                         capture_output=True, text=True, check=True, timeout=10).stdout
+    assert "bicentennial.contracts.surfaces" in out
