@@ -29,19 +29,31 @@ def mint(schedule, process, unit_id, table, part, n) -> str:
     return mint_id(canon([schedule.seed, schedule.life, process, unit_id, table, part]).decode(), n)
 
 
-def token_value(db, schedule, process, unit_id, part, n, stem) -> str:
-    """Mint STEM-dddddd, retrying only while the number is already some token's number."""
+def pair(schedule, d) -> int:
+    """The number a commitment's made token reserves for its cancellation, in both twins."""
+    return uniform_int(schedule.seed, unit(schedule.life, "commitments", "pair"), 0, f"pair:{d}", 100000, 999999)
+
+
+def token_value(db, schedule, process, unit_id, part, n, stem, *, paired=False) -> str:
+    """Mint STEM-dddddd, retrying only while the number is taken: some token's number, or one reserved
+    for a cancellation by a commitment's made token, so a cancel flip moves no other draw."""
     if type(stem) is not str or not STEM.fullmatch(stem):
         raise ValueError("token stem must match ^[A-Z]{2,12}$")
     taken = {d for (v,) in db.execute("SELECT value FROM locked_token") for d in NUMBER.findall(v)}
+    taken |= {str(pair(schedule, int(d))) for (v,) in db.execute(
+        "SELECT t.value FROM commitment c JOIN locked_token t ON t.fact_id = c.fact_id") for d in NUMBER.findall(v)}
     key, attempt = unit(schedule.life, process, unit_id), 0
-    while str(d := uniform_int(schedule.seed, key, attempt, f"token:{part}:{n}", 100000, 999999)) in taken:
+    while (str(d := uniform_int(schedule.seed, key, attempt, f"token:{part}:{n}", 100000, 999999)) in taken
+           or paired and (pair(schedule, d) == d or str(pair(schedule, d)) in taken)):
         attempt += 1
     return f"{stem}-{d}"
 
 
 def check_tokens(db) -> None:
-    values = [v for (v,) in db.execute("SELECT value FROM locked_token ORDER BY value")]
+    check_values([v for (v,) in db.execute("SELECT value FROM locked_token ORDER BY value")])
+
+
+def check_values(values) -> None:
     if any(unicodedata.normalize("NFC", v) != v or len(v) < 4 for v in values):
         raise ValueError("locked token is not NFC or shorter than 4 characters")
     if len(set(values)) != len(values) or any(a != b and a in b for a in values for b in values):

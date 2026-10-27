@@ -6,7 +6,7 @@ from bicentennial.keyed import choice, shuffle
 
 from ..db import insert_commitment
 from ..scale import TURNS
-from . import Unit, check_common, check_tokens, slot
+from . import NUMBER, Unit, check_common, check_tokens, pair, slot, token_value
 
 TRIGGERS = ("time", "event", "cue")
 
@@ -68,10 +68,15 @@ def write_commitments(db, schedule, commitments, *, principal) -> None:
         raise ValueError("commitments need at least two sessions")
     units = [Unit(db, schedule, "commitments", c) for c in commitments]
     for w, (t_c, t_open, t_close, t_b, t_x, t_lures) in zip(units, [_plan(w, w.spec) for w in units], strict=True):
-        c, lure_ids = w.spec, []
+        c = w.spec
+        lure_ids = [w.id("event", "lure", j) for j in range(len(c.lures))]
         e_c = w.event("made", 0, t_c, kind="statement", channel=c.channel, actor=principal)
-        f_c = w.fact("made", 0, c.subject, c.predicate, c.stem)[0]
+        f_c, v_c = w.fact("made", 0, c.subject, c.predicate, c.stem,
+                          value=token_value(db, schedule, "commitments", c.id, "made", 0, c.stem, paired=True))
         w.link(e_c, f_c, "assert", c.surfaces)
+        # the row reserves pair(v_c) for the cancellation before any other draw, cancelled or not
+        insert_commitment(db, fact_id=f_c, trigger_kind=c.trigger, window_open_t=t_open,
+                          window_close_t=t_close, lures_json=lure_ids)
         if c.trigger != "time":
             f_t = w.fact("cue", 0, c.cue_subject, c.cue_key, c.cue_stem)[0]
             if c.trigger == "event":
@@ -83,13 +88,12 @@ def write_commitments(db, schedule, commitments, *, principal) -> None:
             e_t = w.event("trigger", 0, t_open, kind="notice", channel=c.notice_channel, actor=c.sender)
             w.link(e_t, f_t, "mention")
             for j, (t, subject) in enumerate(zip(t_lures, c.lures, strict=True)):
-                lure_ids.append(w.event("lure", j, t, kind="notice", channel=c.notice_channel, actor=c.sender))
-                w.link(lure_ids[-1], w.fact("lure", j, subject, c.cue_key, c.cue_stem)[0], "assert")
-        insert_commitment(db, fact_id=f_c, trigger_kind=c.trigger, window_open_t=t_open,
-                          window_close_t=t_close, lures_json=lure_ids)
-        if c.cancelled:  # written last, so the flip leaves every other token draw unchanged
+                e_l = w.event("lure", j, t, kind="notice", channel=c.notice_channel, actor=c.sender)
+                w.link(e_l, w.fact("lure", j, subject, c.cue_key, c.cue_stem)[0], "assert")
+        if c.cancelled:  # its number was reserved in both twins, so the flip moves no other token
             w.link(e_x := w.event("cancel", 0, t_x, kind="statement", channel=c.channel, actor=principal),
                    f_c, "retract")
-            w.link(e_x, w.fact("cancel", 0, c.subject, c.predicate, c.stem, polarity="negate")[0],
+            w.link(e_x, w.fact("cancel", 0, c.subject, c.predicate, c.stem, polarity="negate",
+                               value=f"{c.stem}-{pair(schedule, int(NUMBER.findall(v_c)[0]))}")[0],
                    "assert", c.surfaces)
     check_tokens(db)
