@@ -26,6 +26,11 @@ def check_pack(value):
         if any(i not in by_id or by_id[i]["cell_id"] != bundle["cell_id"]
                for i in bundle["items"]):
             raise ValueError("pack: bundle item missing or from a different cell")
+    # DESIGN §5.1a: each action item is in exactly one twin bundle. Survive bundles may hold QA items.
+    members = [i for bundle in value["bundles"] for i in bundle["items"]]
+    unique(members, "bundle items")
+    if {item["item_id"] for item in value["items"] if item["stage"] == "act"} - set(members):
+        raise ValueError("pack: every action item belongs to a bundle")
     for control in value["controls"].values():
         if isinstance(control, str) and control != "not run in v0.1":
             raise ValueError("pack: invalid control placeholder")

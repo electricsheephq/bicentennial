@@ -1,19 +1,21 @@
 """Sealed events and session schedules, never harness-visible script data."""
 
 from dataclasses import dataclass
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from functools import cache
+from zoneinfo import available_timezones
 
 from .run import register_check
 from .world import Contract, unique
+
+_zones = cache(available_timezones)
 
 
 def check_stream(value):
     if ("text" in value) == ("payload" in value):
         raise ValueError("stream: exactly one of text or payload is required")
-    try:
-        ZoneInfo(value["tz"])
-    except (ValueError, ZoneInfoNotFoundError) as error:
-        raise ValueError("stream: tz must be an IANA zone name") from error
+    # Exact membership: a case-insensitive filesystem would otherwise accept "europe/paris".
+    if value["tz"] not in _zones():
+        raise ValueError("stream: tz must be an IANA zone name")
     if value["tool"] is not None and not value["call_id"]:
         raise ValueError("stream: a tool call needs a call_id")
     unique(value["fact_ids"], "fact_ids")

@@ -171,6 +171,11 @@ def test_golden_priority_uses_keyed_competitor_order_and_minted_ids():
     ("pack", lambda v: v["hashes"].update(world="bad")),
     ("pack", lambda v: v["bundles"][0]["items"].__setitem__(0, "missing")),
     ("pack", lambda v: v["items"][0]["options"][0].update(tokens=["abc"])),
+    ("pack", lambda v: v["bundles"].clear()),
+    ("pack", lambda v: v["bundles"].append(dict(v["bundles"][0], bundle_id="bcw-second"))),
+    ("stream", lambda v: v.update(tz="europe/paris")),
+    ("stream", lambda v: v.update(tz="EUROPE/PARIS")),
+    ("stream", lambda v: v.update(tz="posixrules")),
 ])
 def test_structural_and_registered_semantic_rejections(name, edit):
     value = fixture(name)
@@ -240,3 +245,12 @@ sys.stdout.buffer.write(canon(result))
                               check=True, capture_output=True).stdout for _ in range(2)]
     expected = {name: fixture(name) for name in (*CLASSES, "act-item", "unknown-item", "payload-stream")}
     assert outputs[0] == outputs[1] == canon(expected)
+
+
+def test_a_prompt_may_span_lines_but_not_be_empty():
+    item = fixture("item")
+    item["prompt"] = "Earlier you said:\nwhich seat?"
+    validate("item", item)
+    item["prompt"] = ""
+    with pytest.raises(ValueError):
+        validate("item", item)
