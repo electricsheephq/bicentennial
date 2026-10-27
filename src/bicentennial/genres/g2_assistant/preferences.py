@@ -97,6 +97,14 @@ def write_preferences(db, schedule, prefs, *, principal) -> dict[str, str]:
         write_corrections(db, schedule, [Chain(
             id=f"pref-{p.id}", subject=out[p.id], key="value", stem=p.stem, depth=p.depth, mention=p.mention,
             third_party=p.third_party, strength=p.strength, at=p.at) for p in stated], principal=principal)
+        # Reserve unlinked inventory decoys before diagnostic preferences can affect token draws.
+        for p in stated:
+            value = token_value(db, schedule, "g2-preferences", p.id, "decoy", 0, p.stem)
+            fact_id = mint(schedule, "g2-preferences", p.id, "fact", "decoy", 0)
+            rows.insert_fact(db, id=fact_id, subject_id=out[p.id], predicate="inventory_decoy", object=value,
+                             polarity="affirm", modality="observed", strength=HARD, speech_act="assert")
+            rows.insert_locked_token(db, token_id=mint(schedule, "g2-preferences", p.id, "token", "decoy", 0),
+                                     fact_id=fact_id, kind="code", value=value)
         anchors = {p.id: mint(schedule, "corrections", f"pref-{p.id}", "event", "event", 0) for p in stated}
         for p in prefs:
             if p.provenance == "stated":

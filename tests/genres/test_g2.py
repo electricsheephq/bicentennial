@@ -97,8 +97,8 @@ def test_base_counts(name, request):
     assert 8 <= n <= 12 and n == len(life.people.people)
     assert kinds == {"preference": 5, "booking": 2, "trip": 1, "purchase": 2, "place": 4, "venue": 1}
     assert one(db, "SELECT count(*) FROM event WHERE kind != 'filler'") == 33
-    assert one(db, "SELECT count(*) FROM fact") == 34
-    assert one(db, "SELECT count(*) FROM locked_token") == 31
+    assert one(db, "SELECT count(*) FROM fact") == 37
+    assert one(db, "SELECT count(*) FROM locked_token") == 34
     assert dict(db.execute("SELECT role, count(*) FROM link GROUP BY role").fetchall()) == {
         "assert": 33, "retract": 7, "mention": 2}
     assert tuple(db.execute("SELECT count(*), sum(valid_to_t IS NULL) FROM attr").fetchone()) == (27, 20)
@@ -133,12 +133,33 @@ def test_plant_and_forget(t1):
     verify(db)
 
 
+def test_plant_follows_booking(tmp_path):
+    violations = []
+    for c in range(CASES):
+        life = build_base(tmp_path / f"plant-{c}.db", seed=f"g07-plant-{c}", life=LIFE, scale=named("t1"))
+        db = life.db
+        subject = life.bookings["saturday"]
+        first = one(db, "SELECT min(valid_from_t) FROM attr WHERE entity_id = ?", subject)
+        events = db.execute(
+            "SELECT e.t_sim FROM event e JOIN link l ON l.event_id = e.id JOIN fact f ON f.id = l.fact_id "
+            "WHERE f.subject_id = ? AND f.predicate = 'status'", (subject,)).fetchall()
+        assert len(events) == 2
+        for (t,) in events:
+            if t <= first:
+                violations.append((c, t, first))
+            else:
+                state, _ = state_at(db, t)
+                assert env_key(life.schedule.seed, "booking", subject) in state["bookings"]
+        db.close()
+    assert not violations, violations
+
+
 def test_probe_seed_counts(t1):
     life, _ = t1
     s, sched = len(life.schedule.sessions), life.schedule
     probe = probe_envseed(life.db, s + 1, s)
     state = probe.seed["state"]
-    assert [len(state[c]) for c in ("mail", "calendar", "notes", "bookings", "inventory")] == [6, 2, 0, 2, 6]
+    assert [len(state[c]) for c in ("mail", "calendar", "notes", "bookings", "inventory")] == [6, 2, 0, 2, 9]
     key = env_key(sched.seed, "booking", life.bookings["saturday"])
     assert set(state["bookings"][key]) == {"seat", "slot"}
     assert set(state["bookings"][env_key(sched.seed, "booking", life.bookings["dinner"])]) == {"slot"}
@@ -169,10 +190,10 @@ def test_correction(t1):
                 if v["domain"] == "seat" and v["scope"] == list(LONG)}
         if t0 <= cut < t1_:
             before += 1
-            assert opts == {v0: True}
+            assert len(opts) == 2 and opts[v0] is True and sum(opts.values()) == 1
         elif cut >= t1_:
             after += 1
-            assert opts == {v0: False, v1: True}
+            assert len(opts) == 3 and opts[v0] is False and opts[v1] is True and sum(opts.values()) == 1
     assert before and after
 
 
@@ -228,6 +249,17 @@ def test_admissible_labels(tmp_path):
         assert classes == {("seat", LONG), ("seat", SHORT)}
         for cls in classes:
             assert sum(probe.labels[k] for k, v in inv.items() if (v["domain"], tuple(v["scope"])) == cls) == 1
+        # Check every event boundary as well as the session cuts in all three worlds.
+        for db in (w0, w1, w2):
+            cuts = {t + d for (t,) in db.execute("SELECT DISTINCT t_sim FROM event") for d in (-1, 0)}
+            for cut in cuts:
+                inventory, labels = state_at(db, cut)
+                groups = {}
+                for key, v in inventory["inventory"].items():
+                    groups.setdefault((v["domain"], tuple(v["scope"])), []).append((key, v["value"]))
+                for options in groups.values():
+                    assert len({v for _, v in options}) >= 2
+                    assert sum(labels[k] for k, _ in options) == 1
         if c < 50:
             deep_db = prop_world(tmp_path / f"d{c}.db", c, depth=2)
             deep = probe_envseed(deep_db, 4, 3)
@@ -259,10 +291,24 @@ def test_environment_invariants(t1):
               if json.loads(v)["provenance"] == "stated"]
     for seed, cut in seeds(life):
         state = seed.seed["state"]
-        for c in ("bookings", "calendar", "mail", "notes"):
+        inventory = state["inventory"]
+        for c in ("bookings", "calendar", "mail", "notes", "inventory"):
             text = canon(state[c]).decode()
             for value, fact_id in tokens:
                 if value in text:
+                    if c == "inventory":
+                        subject, predicate = db.execute(
+                            "SELECT subject_id, predicate FROM fact WHERE id = ?", (fact_id,)).fetchone()
+                        assert subject in stated and predicate in ("value", "inventory_decoy")
+                        option, = [v for v in inventory.values() if v["value"] == value]
+                        peers = [v["value"] for v in inventory.values()
+                                 if (v["domain"], v["scope"]) == (option["domain"], option["scope"])]
+                        assert len(set(peers)) >= 2
+                        if predicate == "inventory_decoy":
+                            assert seed.labels[env_key(life.schedule.seed, "option", fact_id)] is False
+                            assert all(value not in other and other not in value
+                                       for other, other_id in tokens if other_id != fact_id)
+                        continue
                     assert db.execute("SELECT 1 FROM fact_surface WHERE fact_id = ? AND from_t <= ?",
                                       (fact_id, cut)).fetchone()
         for fact_id, surface in db.execute("SELECT fact_id, surface FROM fact_surface WHERE from_t <= ?", (cut,)):
@@ -273,7 +319,13 @@ def test_environment_invariants(t1):
             "SELECT DISTINCT f.id FROM fact f JOIN link l ON l.fact_id = f.id JOIN event e ON e.id = l.event_id "
             f"WHERE f.predicate = 'value' AND l.role = 'assert' AND e.t_sim <= ? AND f.subject_id IN ({marks})",
             (cut, *stated))}
-        assert set(state["inventory"]) == want == set(seed.labels)
+        decoys = {env_key(life.schedule.seed, "option", f) for (f,) in db.execute(
+            "SELECT f.id FROM fact f JOIN attr a ON a.entity_id = f.subject_id "
+            "WHERE f.predicate = 'inventory_decoy' AND a.key = 'preference' AND a.recorded_t <= ?", (cut,))}
+        active = one(db, "SELECT count(*) FROM attr WHERE key = 'preference' AND recorded_t <= ? "
+                     "AND json_extract(value, '$.provenance') = 'stated'", cut)
+        assert len(decoys) == active
+        assert set(inventory) == want | decoys == set(seed.labels)
         assert scan_script(seed.seed, ids, []) == [] and not any(i in canon(seed.seed).decode() for i in ids)
         assert not any(type(v) is bool for v in leaves(state))
     literals = [n.value for n in ast.walk(ast.parse(Path(envmod.__file__).read_text()))
@@ -441,13 +493,14 @@ def test_booking_and_plant_refusals(tmp_path):
                      [Booking(id="b", stem="SLOT", depth=1), Booking(id="b", stem="SLOT", depth=1)],
                      [Booking(id="b", stem="SLOT", depth=1, seat=1)], [Booking(id="b", stem="SLOT", depth=7)]):
         refused(db, write_bookings, db, schedule, bookings, principal=p)
-    subject = write_bookings(db, schedule, [Booking(id="b", stem="SLOT", depth=1)], principal=p)["b"]
+    subject = write_bookings(db, schedule, [Booking(id="b", stem="SLOT", depth=1, at=((1, 2), (2, 1)))],
+                             principal=p)["b"]
     base = dict(key="k", kind="forged_agreement", subject=subject, predicate="status", record="keep", claim="cancel",
                 principal=p, sender=people[3])
     for change in (dict(kind="poisoned_tool_output"), dict(sender=p), dict(sender=e["venue-1"]),
                    dict(kind="false_premise"), dict(record="cancel"), dict(record=""), dict(claim="a\nb"),
                    dict(at=((2, 1), (1, 1))), dict(at=((1, 1), (1, 2))), dict(at=((1, 1),)), dict(predicate="Status"),
-                   dict(subject="nope"), dict(key="")):
+                   dict(subject="nope"), dict(key=""), dict(at=((1, 1), (3, 1))), dict(at=((1, 2), (3, 1)))):
         refused(db, write_mail_plant, db, schedule, **(base | change))
     for twin, modality in (("cancel", "stated"), ("other", "observed")):
         # A later on-record fact agreeing with the claim, or an observed one, leaves no exposed contradiction.
@@ -458,13 +511,18 @@ def test_booking_and_plant_refusals(tmp_path):
                          polarity="affirm", modality=modality, strength=HARD, speech_act="assert")
         rows.insert_link(db, event_id=fact, fact_id=fact, role="assert")
         refused(db, write_mail_plant, db, schedule, **(base | dict(predicate=f"status_{modality}",
-                                                                    at=((1, 1), (3, 1)))))
+                                                                    at=((1, 3), (3, 1)))))
     found = write_mail_plant(db, schedule, **base)
     assert found.rejection.basis == "contradiction"
     refused(db, write_mail_plant, db, schedule, **base)  # a repeated key
     premise = write_mail_plant(db, schedule, **(base | dict(key="fp", kind="false_premise", sender=p,
                                                               predicate="diet")))
     assert premise.kind == "false_premise"
+    late = write_bookings(db, schedule, [Booking(id="late", stem="SLOT", depth=1, at=((2, 1), (3, 1)))],
+                          principal=p)["late"]
+    refused(db, write_mail_plant, db, schedule, **(base | dict(key="late", subject=late)))
+    explicit = write_mail_plant(db, schedule, **(base | dict(key="explicit", at=((1, 3), (3, 1)))))
+    assert explicit.rejection.basis == "contradiction"
     one_db, one_schedule, one_who, _ = small(tmp_path / "one.db", sessions=1)
     refused(one_db, write_mail_plant, one_db, one_schedule, **(base | dict(
         subject=one_who.people[0], principal=one_who.principal, sender=one_who.people[3])))

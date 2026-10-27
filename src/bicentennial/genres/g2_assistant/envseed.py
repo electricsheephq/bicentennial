@@ -80,12 +80,19 @@ def state_at(db, cut) -> tuple[dict, dict[str, bool]]:
         scope = [kind, None if kind == "global" else ref if kind == "context" else names[ref]]
         current = as_known(db, entity_id, "value", cut)
         for fact_id, obj in db.execute(
+                "SELECT id, object FROM fact WHERE subject_id = ? AND predicate = 'inventory_decoy'",
+                (entity_id,)).fetchall():
+            key = env_key(seed, "option", fact_id)
+            state["inventory"][key] = {"domain": meta["domain"], "scope": scope, "value": json.loads(obj)}
+            labels[key] = False
+        for fact_id, obj in db.execute(
                 "SELECT DISTINCT f.id, f.object FROM fact f JOIN link l ON l.fact_id = f.id JOIN event e "
                 "ON e.id = l.event_id WHERE f.subject_id = ? AND f.predicate = 'value' AND l.role = 'assert' "
                 "AND e.t_sim <= ? ORDER BY f.id", (entity_id, cut)).fetchall():
             key, value = env_key(seed, "option", fact_id), json.loads(obj)
             state["inventory"][key] = {"domain": meta["domain"], "scope": scope, "value": value}
             labels[key] = value == current
+    state["inventory"] = dict(sorted(state["inventory"].items()))
     return state, labels
 
 

@@ -64,10 +64,13 @@ def _check_at(schedule, at, n) -> None:
         slot(schedule, *p)
 
 
-def _placed(schedule, process, key, m, turns) -> tuple[tuple[int, int], ...]:
+def _placed(schedule, process, key, m, turns, *, after=None) -> tuple[tuple[int, int], ...]:
     """Keyed pairs over m distinct ascending sessions; turns lists (session position, draw name)."""
     u = unit(schedule.life, process, key)
-    sessions = sorted(shuffle(schedule.seed, u, 0, "sessions", range(1, len(schedule.sessions) + 1))[:m])
+    eligible = [s.index for s in schedule.sessions if after is None or s.t_start > after]
+    if len(eligible) < m:
+        raise ValueError("too few sessions after the subject's first event")
+    sessions = sorted(shuffle(schedule.seed, u, 0, "sessions", eligible)[:m])
     return tuple((sessions[i], uniform_int(schedule.seed, u, 0, name, 1, TURNS)) for i, name in turns)
 
 
@@ -167,13 +170,16 @@ def write_mail_plant(db, schedule, *, key, kind, subject, predicate, record, cla
             raise ValueError("bad key, subject or predicate")
         if len(schedule.sessions) < 2:
             raise ValueError("a mail plant needs two sessions")
+        first = db.execute("SELECT min(valid_from_t) FROM attr WHERE entity_id = ?", (subject,)).fetchone()[0]
         if at is None:
-            at = _placed(schedule, "g2-plants", key, 2, [(0, "turn:0"), (1, "turn:1")])
+            at = _placed(schedule, "g2-plants", key, 2, [(0, "turn:0"), (1, "turn:1")], after=first)
         else:
             _check_at(schedule, at, 2)
             if at[0][0] >= at[1][0]:
                 raise ValueError("plant sessions must strictly increase")
         t0, t1 = (slot(schedule, *p) for p in at)
+        if first is not None and t0 <= first:
+            raise ValueError("a mail plant must follow the subject's first event")
         event_id = mint(schedule, "g2-plants", key, "event", "record", 0)
         _event(db, event_id, t0, kind="statement", actor=principal)
         _fact(db, mint(schedule, "g2-plants", key, "fact", "record", 0), event_id, subject, predicate, record)
