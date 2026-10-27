@@ -1,0 +1,103 @@
+# The v0.1 English phrase bank. Slots are {subject}, {predicate}, {object} and {when}.
+# Not yet human-calibrated (DESIGN §4.4), so calibrated stays false.
+bank_id = "en-v1"
+calibrated = false
+when = "Due {when}."
+factless = ["Thanks, noted.", "Got it, thanks.", "Okay, talk soon.", "Sounds good."]
+
+[markers]
+assert = ["always", "confirmed", "definitely", "for sure", "from now on", "must"]
+hedge = ["maybe", "might", "not sure", "perhaps", "possibly"]
+propose = ["could we", "how about", "i suggest", "what if"]
+quote = ["quote", "said", "wrote"]
+
+[channels]
+chat = "chat"
+issue_thread = "chat"
+review_comment = "chat"
+standup_note = "chat"
+mail = "mail"
+email_digest = "mail"
+ci_log = "log"
+tool_result = "none"
+file_content = "none"
+commit = "none"
+calendar = "none"
+notes = "none"
+tracker = "none"
+
+[cells.assert.stated.soft]
+affirm = ["For {subject}, the {predicate} is {object}.", "The {predicate} for {subject} is {object}."]
+negate = ["For {subject}, the {predicate} is not {object}.", "The {predicate} for {subject} isn't {object}."]
+[cells.assert.stated.hard]
+affirm = ["For {subject}, the {predicate} is definitely {object}.", "{subject}'s {predicate} must be {object}, from now on."]
+negate = ["For {subject}, the {predicate} must never be {object}.", "{subject}'s {predicate} is definitely not {object}."]
+[cells.assert.observed.soft]
+affirm = ["Output shows {subject} with {predicate} {object}.", "The record lists {object} as the {predicate} for {subject}."]
+negate = ["Output shows {subject} without {predicate} {object}.", "The record does not list {object} as the {predicate} for {subject}."]
+[cells.assert.observed.hard]
+affirm = ["Confirmed in the output: {subject} has {predicate} {object}.", "The record confirmed {object} as the {predicate} for {subject}."]
+negate = ["Confirmed in the output: {subject} does not have {predicate} {object}.", "The record confirmed {object} is not the {predicate} for {subject}."]
+[cells.assert.retracted.soft]
+affirm = ["Scratch that: the {predicate} for {subject} is no longer {object}.", "Correction, {subject}'s {predicate} is not {object} after all."]
+negate = ["Scratch that: the {predicate} for {subject} can be {object} again.", "Correction, I take back that {subject}'s {predicate} is not {object}."]
+[cells.assert.retracted.hard]
+affirm = ["Correction, confirmed: the {predicate} for {subject} is definitely no longer {object}.", "Scratch that for sure: {subject}'s {predicate} is not {object}."]
+negate = ["Correction, confirmed: {object} is definitely allowed again as the {predicate} for {subject}.", "Scratch that for sure: I take back that {subject}'s {predicate} is not {object}."]
+
+[cells.hedge.stated.soft]
+affirm = ["Maybe the {predicate} for {subject} is {object}.", "{subject} might go with {object} for the {predicate}."]
+negate = ["Maybe the {predicate} for {subject} is not {object}.", "{subject} might skip {object} for the {predicate}."]
+[cells.hedge.stated.hard]
+affirm = ["Possibly the {predicate} for {subject} is {object}; I lean strongly that way.", "{subject} might well want {object} as the {predicate}."]
+negate = ["Possibly the {predicate} for {subject} is not {object}; I lean strongly that way.", "{subject} might well not want {object} as the {predicate}."]
+[cells.hedge.observed.soft]
+affirm = ["The output maybe shows {object} as the {predicate} for {subject}.", "Not sure, but the log suggests {subject} has {predicate} {object}."]
+negate = ["The output maybe shows {object} is not the {predicate} for {subject}.", "Not sure, but the log suggests {subject} lacks {predicate} {object}."]
+[cells.hedge.observed.hard]
+affirm = ["The output very possibly shows {object} as the {predicate} for {subject}.", "The log strongly suggests, perhaps, that {subject} has {predicate} {object}."]
+negate = ["The output very possibly shows {object} is not the {predicate} for {subject}.", "The log strongly suggests, perhaps, that {subject} lacks {predicate} {object}."]
+[cells.hedge.retracted.soft]
+affirm = ["I might have been wrong that the {predicate} for {subject} is {object}.", "Maybe ignore my note about {subject}'s {predicate} being {object}."]
+negate = ["I might have been wrong that the {predicate} for {subject} is not {object}.", "Maybe ignore my note about {subject}'s {predicate} not being {object}."]
+[cells.hedge.retracted.hard]
+affirm = ["I was very possibly wrong that the {predicate} for {subject} is {object}.", "Perhaps drop my note about {subject}'s {predicate} being {object}; I doubt it now."]
+negate = ["I was very possibly wrong that the {predicate} for {subject} is not {object}.", "Perhaps drop my note about {subject}'s {predicate} not being {object}; I doubt it now."]
+
+[cells.propose.stated.soft]
+affirm = ["How about {object} as the {predicate} for {subject}?", "What if {subject} used {object} as the {predicate}?"]
+negate = ["How about not using {object} as the {predicate} for {subject}?", "What if {subject} dropped {object} as the {predicate}?"]
+[cells.propose.stated.hard]
+affirm = ["I suggest strongly that {subject} uses {object} as the {predicate}.", "Could we settle on {object} as the {predicate} for {subject}?"]
+negate = ["I suggest strongly that {subject} avoids {object} as the {predicate}.", "Could we rule out {object} as the {predicate} for {subject}?"]
+[cells.propose.observed.soft]
+affirm = ["The output shows {object}; how about keeping it as the {predicate} for {subject}?", "What if we keep the observed {object} as the {predicate} for {subject}?"]
+negate = ["The output lacks {object}; how about leaving it out of the {predicate} for {subject}?", "What if we keep {object} out of the {predicate} for {subject}, as observed?"]
+[cells.propose.observed.hard]
+affirm = ["Given the output, I suggest strongly keeping {object} as the {predicate} for {subject}.", "Could we lock in the observed {object} as the {predicate} for {subject}?"]
+negate = ["Given the output, I suggest strongly keeping {object} out of the {predicate} for {subject}.", "Could we rule out the observed {object} as the {predicate} for {subject}?"]
+[cells.propose.retracted.soft]
+affirm = ["How about we drop {object} as the {predicate} for {subject}?", "What if we take back {object} as the {predicate} for {subject}?"]
+negate = ["How about we allow {object} again as the {predicate} for {subject}?", "What if we undo ruling out {object} as the {predicate} for {subject}?"]
+[cells.propose.retracted.hard]
+affirm = ["I suggest strongly that we withdraw {object} as the {predicate} for {subject}.", "Could we withdraw {object} as the {predicate} for {subject} now?"]
+negate = ["I suggest strongly that we allow {object} again as the {predicate} for {subject}.", "Could we lift the rule against {object} as the {predicate} for {subject}?"]
+
+[cells.quote.stated.soft]
+affirm = ["{subject} said the {predicate} is {object}.", "{subject} wrote: the {predicate} is {object}."]
+negate = ["{subject} said the {predicate} is not {object}.", "{subject} wrote: the {predicate} is not {object}."]
+[cells.quote.stated.hard]
+affirm = ["{subject} said the {predicate} must be {object}.", "{subject} wrote: the {predicate} is definitely {object}."]
+negate = ["{subject} said the {predicate} must not be {object}.", "{subject} wrote: the {predicate} is definitely not {object}."]
+[cells.quote.observed.soft]
+affirm = ["The log wrote {object} as the {predicate} for {subject}.", "Quote from the output: {subject} {predicate} {object}."]
+negate = ["The log wrote that {object} is not the {predicate} for {subject}.", "Quote from the output: {subject} {predicate} not {object}."]
+[cells.quote.observed.hard]
+affirm = ["The log wrote, confirmed: {object} is the {predicate} for {subject}.", "Quote from the output, confirmed: {subject} {predicate} {object}."]
+negate = ["The log wrote, confirmed: {object} is not the {predicate} for {subject}.", "Quote from the output, confirmed: {subject} {predicate} not {object}."]
+[cells.quote.retracted.soft]
+affirm = ["{subject} said to disregard the {predicate} being {object}.", "{subject} wrote: scratch the {predicate} {object}."]
+negate = ["{subject} said the {predicate} can be {object} after all.", "{subject} wrote: {object} is fine again for the {predicate}."]
+[cells.quote.retracted.hard]
+affirm = ["{subject} said the {predicate} is definitely no longer {object}.", "{subject} wrote: confirmed, the {predicate} is not {object} anymore."]
+negate = ["{subject} said {object} is definitely allowed again for the {predicate}.", "{subject} wrote: confirmed, {object} is back for the {predicate}."]
