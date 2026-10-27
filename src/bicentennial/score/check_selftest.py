@@ -194,11 +194,17 @@ def g2_cases(compiled, worlds, schedule, templates, *, life):
             if len(windows) != 1:
                 raise ValueError(item["item_id"])
             window = tuple(windows[0])
+        t_sim = window[0] if window else schedule.sessions[k - 1].t_end
         later = any(db.execute("SELECT 1 FROM locked_token t JOIN fact f ON f.id=t.fact_id "
                                "JOIN link l ON l.fact_id=f.id JOIN event e ON e.id=l.event_id "
-                               "WHERE t.value=? AND (f.speech_act IN ('hedge','quote') OR "
+                               "WHERE t.value=? AND e.t_sim < ? AND EXISTS "
+                               "(SELECT 1 FROM json_each(e.audience_json) WHERE value='agent') "
+                               "AND e.t_sim > (SELECT min(d.t_sim) FROM event d JOIN link dl "
+                               "ON dl.event_id=d.id WHERE dl.fact_id=? AND dl.role='assert') "
+                               "AND (f.speech_act IN ('hedge','quote') OR "
                                "(f.speech_act='assert' AND l.role='assert' AND e.actor_id!=f.subject_id "
-                               "AND e.actor_id!=?))", (token, cut.principal_id)).fetchone()
+                               "AND e.actor_id!=?))",
+                               (token, t_sim, rec["decisive_fact_id"], cut.principal_id)).fetchone()
                     for token in item["options"][0]["tokens"])
         bundle = bundles.get(rec["bundle_id"])
         result.append(Case(life=life, item=item, record=rec, bundle=bundle,
@@ -207,7 +213,7 @@ def g2_cases(compiled, worlds, schedule, templates, *, life):
                            roles=option_roles(template, db, schedule)[rec["instance_key"]] if table else {},
                            seed=probe_envseed(db, len(schedule.sessions) + 1, k).seed if table else None,
                            state0=None, checks=None, window=window,
-                           t_sim=window[0] if window else schedule.sessions[k - 1].t_end,
+                           t_sim=t_sim,
                            history="".join(content(r) for r in cut.rows
                                            if idx[r["session_id"]] <= k and "agent" in r["audience"]),
                            later_mention=later))

@@ -226,6 +226,70 @@ def test_battery_scores_and_shares(cases):
     assert canon(report.to_obj())
 
 
+@pytest.mark.parametrize("branches", [("B0", "B1"), ("B0",), ("B1",)])
+def test_shares_exclude_environment_recoverable_pairs(cases, branches):
+    baseline = run_battery(cases)
+    assert baseline.ok
+    assert baseline.shares["Keep"]["restraint"] == 1
+    assert baseline.shares["Keep"]["bundles"] == 3
+    changed = tuple(replace(c, item=c.item | {"memory_tag": "env_recoverable"})
+                    if c.record["template_id"] == "keep-forget" and c.record["branch"] in branches
+                    else c for c in cases)
+    report = run_battery(changed)
+    assert report.shares["Keep"]["restraint"] == 0
+    assert report.shares["Keep"]["bundles"] == 2
+    assert report.shares["Keep"]["directions"] == {"retrieval breadth": 1, "verbatim retention": 1}
+    assert report.shares["pooled"] == {"restraint": 1, "bundles": 3}
+    assert not report.ok
+    assert report.failures == ["share:restraint:Keep"]
+
+
+@pytest.mark.parametrize("when,visible,expected", [
+    ("after_probe", True, False), ("at_probe", True, False),
+    ("before_decisive", True, False), ("at_decisive", True, False),
+    ("between", True, True), ("between", False, False),
+])
+def test_later_mention_is_visible_between_decisive_assertion_and_probe(tmp_path, when, visible, expected):
+    life = G15.make_life(tmp_path / "drift", "drift")
+    dbs = []
+    try:
+        worlds = {f"B{b}": (db, life.cuts[b]) for b, db in enumerate(life.dbs)}
+        original = g2_cases(life.compiled, worlds, life.schedule, life.templates, life="mention-test")
+        booking = [c for c in original if c.record["template_id"] == "drift-booking"]
+        assert len(booking) == 2 and all(not c.later_mention for c in booking)
+        for branch, source in enumerate(life.dbs):
+            db = G15.rows.create_world(tmp_path / f"mention-B{branch}.db",
+                                      dict(source.execute("SELECT * FROM meta").fetchone()))
+            dbs.append(db)
+            source.backup(db)
+            c = next(c for c in booking if c.record["branch"] == f"B{branch}")
+            fact_id, subject = db.execute("SELECT f.id, f.subject_id FROM fact f JOIN locked_token t "
+                                         "ON t.fact_id=f.id WHERE t.value=?",
+                                         (c.item["options"][0]["tokens"][0],)).fetchone()
+            decisive_t = db.execute("SELECT e.t_sim FROM event e JOIN link l ON l.event_id=e.id "
+                                    "WHERE l.fact_id=? AND l.role='assert'",
+                                    (c.record["decisive_fact_id"],)).fetchone()[0]
+            assert decisive_t + 1 < c.t_sim
+            t = {"after_probe": c.t_sim + 1, "at_probe": c.t_sim,
+                 "before_decisive": decisive_t - 1, "at_decisive": decisive_t,
+                 "between": decisive_t + 1}[when]
+            actor = db.execute("SELECT id FROM entity WHERE id NOT IN (?, ?) ORDER BY id LIMIT 1",
+                               (subject, life.principal)).fetchone()[0]
+            G15.rows.insert_event(db, id="third-party-mention", t_sim=t, kind="statement", channel="chat",
+                                  actor_id=actor, audience_json=["agent"] if visible else [],
+                                  visibility="shared", salience=500, payload_json={})
+            G15.rows.insert_link(db, event_id="third-party-mention", fact_id=fact_id, role="assert")
+        changed = g2_cases(life.compiled, {f"B{b}": (db, life.cuts[b]) for b, db in enumerate(dbs)},
+                           life.schedule, life.templates, life="mention-test")
+        observed = [c for c in changed if c.record["template_id"] == "drift-booking"]
+        assert [c.history for c in observed] == [c.history for c in booking]
+        assert [c.t_sim for c in observed] == [c.t_sim for c in booking]
+        assert [c.later_mention for c in observed] == [expected, expected]
+    finally:
+        for db in (*dbs, *life.dbs):
+            db.close()
+
+
 def test_qa_unknown_and_missing(cases):
     assert UNKNOWN == {"type": "unknown", "value": None, "confidence_milli": 0, "citation": None}
     qa = next(c for c in cases if genre(c.item) == "qa")

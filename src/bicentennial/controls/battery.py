@@ -130,7 +130,8 @@ def _construction(pairs):
 
 def _shares(pairs, not_exercised):
     shares, unmet, failures, pooled, total = {}, [], [], 0, 0
-    act = [p for p in pairs if genre(p[0].item) != "qa"]
+    act = [p for p in pairs if genre(p[0].item) != "qa"
+           and all(c.item["memory_tag"] == "memory_exclusive" for c in p)]
     for track in sorted({p[0].item["track"] for p in act} | {"Rachael", "Keep", "Tuesday"}):
         ps = [p for p in act if p[0].item["track"] == track]
         n = len(ps)
