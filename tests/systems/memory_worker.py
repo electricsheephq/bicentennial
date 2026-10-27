@@ -20,8 +20,8 @@ def post(cfg, messages):
     url = urlsplit(model["base_url"])
     conn = http.client.HTTPConnection(url.hostname, url.port, timeout=60)
     tools = [{"type": "function", "function": {"name": name}}
-             for name in ("memory", "session_search") if name in cfg["platform_toolsets"]["acp"]
-             and (name != "memory" or cfg["memory"]["memory_enabled"])]
+             for name in cfg["platform_toolsets"]["acp"]
+             if name != "memory" or cfg["memory"]["memory_enabled"]]
     body = {"model": model["default"], "messages": messages, "tools": tools}
     conn.request("POST", url.path + "/chat/completions", json.dumps(body),
                  {"Content-Type": "application/json", "Authorization": f"Bearer {model['api_key']}"})
