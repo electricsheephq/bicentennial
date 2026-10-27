@@ -34,7 +34,7 @@ class Diff:
 def write_commit(db, schedule, *, unit_id, n, fact_id, author) -> str:
     """One commit event that mentions the fact and surfaces it in the repository."""
     with atomic(db):
-        asserts = db.execute("SELECT e.t_sim FROM link l JOIN event e ON e.id = l.event_id "
+        asserts = db.execute("SELECT e.t_sim, e.id FROM link l JOIN event e ON e.id = l.event_id "
                              "WHERE l.fact_id = ? AND l.role = 'assert'", (fact_id,)).fetchall()
         if len(asserts) != 1:
             raise ValueError("a committed fact needs exactly one asserting event")
@@ -48,7 +48,8 @@ def write_commit(db, schedule, *, unit_id, n, fact_id, author) -> str:
         end = db.execute("SELECT t_end FROM session WHERE t_start <= ?1 AND ?1 < t_end", (asserts[0][0],)).fetchone()
         if end is None or t >= end[0]:
             raise ValueError("a commit must land inside its statement's session")
-        eid = mint(schedule, PROCESS, unit_id, "event", "commit", n)
+        # A nonempty suffix sorts after its prefix in G09's (t_sim, id) order.
+        eid = asserts[0][1] + ":commit:" + mint(schedule, PROCESS, unit_id, "event", "commit", n)
         insert_event(db, id=eid, t_sim=t, kind="commit", channel="commit", actor_id=author, audience_json=["agent"],
                      visibility="shared", salience=SALIENCE, payload_json={})
         insert_link(db, event_id=eid, fact_id=fact_id, role="mention")

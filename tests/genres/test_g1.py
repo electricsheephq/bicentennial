@@ -55,7 +55,7 @@ from bicentennial.world.db import (
     insert_link,
     insert_locked_token,
 )
-from bicentennial.world.processes import check_tokens, mint
+from bicentennial.world.processes import HARD, SOFT, check_tokens, mint
 from bicentennial.world.scale import WORLD_TZ, named
 from bicentennial.world.schedule import build_schedule, write_sessions
 
@@ -371,6 +371,19 @@ def test_diffs(keyed):
             assert state == expected
 
 
+def test_commits_sort_after_statements(keyed, golden):
+    worlds = [golden[:2], *((db, schedule) for _, db, schedule, _ in keyed)]
+    checked = 0
+    for db, _ in worlds:
+        for commit in db.execute("SELECT id, t_sim FROM event WHERE kind = 'commit'"):
+            fact_id = scalar(db, "SELECT fact_id FROM link WHERE event_id = ?", commit["id"])
+            statement = asserting(db, fact_id)
+            assert commit["t_sim"] == statement["t_sim"]
+            assert (statement["t_sim"], statement["id"]) < (commit["t_sim"], commit["id"])
+            checked += 1
+    assert checked == 200 * 9
+
+
 def tiny(tmp_path, *, channel="commit", links=1, second=False):
     db = new_db(tmp_path, "tiny", 1)
     insert_entity(db, id="P", kind="person", canonical_name="Heron", aliases_json=[], created_t=0, retired_t=None)
@@ -417,16 +430,29 @@ def test_write_commit_refusals(tmp_path):
 
 # --- whole worlds -----------------------------------------------------------------------------------------------
 
-def check_whole(db, schedule):
+def check_whole(db, schedule, *, principal, team, notice_actors=None):
     check_tokens(db)
+    cancel_facts = {r[0] for r in db.execute(
+        "SELECT a.fact_id FROM link a JOIN link r ON r.event_id = a.event_id "
+        "JOIN commitment c ON c.fact_id = r.fact_id JOIN fact original ON original.id = c.fact_id "
+        "JOIN fact cancel ON cancel.id = a.fact_id WHERE a.role = 'assert' AND r.role = 'retract' "
+        "AND cancel.subject_id = original.subject_id AND cancel.predicate = original.predicate")}
     for fact in db.execute("SELECT * FROM fact").fetchall():
         asserting(db, fact["id"])
         tokens = [r[0] for r in db.execute("SELECT value FROM locked_token WHERE fact_id = ?", (fact["id"],))]
-        assert fact["modality"] == "stated" and fact["speech_act"] in ("assert", "hedge", "quote")
+        shape = (fact["speech_act"], fact["strength"], fact["polarity"])
+        allowed = {("assert", HARD, "affirm"), ("hedge", SOFT, "affirm"), ("quote", HARD, "affirm")}
+        if fact["id"] in cancel_facts:
+            assert kind_of(db, fact["id"]) == "commitment"
+            allowed = {("assert", HARD, "negate")}
+        assert fact["modality"] == "stated" and shape in allowed
         assert len(tokens) == 1 and json.loads(fact["object"]) == tokens[0]
-        assert fact["polarity"] == "affirm" or kind_of(db, fact["id"]) == "commitment"
     for e in db.execute("SELECT * FROM event").fetchall():
-        assert e["channel"] != "tool_result" and e["kind"] in ("statement", "commit", "filler", "notice")
+        assert (e["kind"], e["channel"]) in {
+            ("statement", "chat"), ("commit", "commit"), ("filler", "chat"), ("notice", "chat")}
+        actors = {"statement": (principal,), "commit": team, "filler": (principal,),
+                  "notice": team[1:] if notice_actors is None else notice_actors}
+        assert e["actor_id"] in actors[e["kind"]]
         assert (e["payload_json"], e["audience_json"], e["visibility"]) == ("{}", '["agent"]', "shared")
         assert scalar(db, "SELECT kind FROM entity WHERE id = ?", e["actor_id"]) == "person"
         session_of(schedule, e["t_sim"])
@@ -434,9 +460,45 @@ def check_whole(db, schedule):
 
 
 def test_whole_world(keyed, golden):
-    for _, db, schedule, _ in keyed:
-        check_whole(db, schedule)
-    check_whole(*golden[:2])
+    for _, db, schedule, world in keyed:
+        check_whole(db, schedule, principal=world.principal, team=world.team)
+    spec = load_golden(FIXTURE)
+    schedule = golden[1]
+    ids = {key: mint(schedule, PROCESS, "entities", "entity", key, 0) for key in spec.entities}
+    principal = ids[spec.principal]
+    # The binding tidewater fixture has a single person, also its explicit notice sender.
+    senders = tuple(ids[c["sender"]] for c in spec.commitment)
+    check_whole(*golden[:2], principal=principal, team=(principal,), notice_actors=senders)
+
+
+@pytest.mark.parametrize("table, where, field, value", [
+    ("event", "kind = 'statement'", "channel", "mail"),
+    ("event", "kind = 'commit'", "channel", "chat"),
+    ("event", "kind = 'filler'", "channel", "mail"),
+    ("event", "kind = 'notice'", "channel", "mail"),
+    ("event", "kind = 'statement'", "actor_id", "teammate"),
+    ("event", "kind = 'commit'", "actor_id", "outsider"),
+    ("event", "kind = 'notice'", "actor_id", "principal"),
+    ("fact", "speech_act = 'assert'", "strength", 500),
+    ("fact", "speech_act = 'hedge'", "strength", 1000),
+    ("fact", "speech_act = 'quote'", "strength", 500),
+    ("fact", "id IN (SELECT fact_id FROM commitment)", "polarity", "negate"),
+    ("fact", "polarity = 'negate'", "speech_act", "quote"),
+], ids=["statement-channel", "commit-channel", "filler-channel", "notice-channel", "statement-actor",
+        "commit-actor", "notice-actor", "assert-strength", "hedge-strength", "quote-strength",
+        "negated-made", "quoted-cancel"])
+def test_whole_rejects_invalid_shapes(tmp_path, table, where, field, value):
+    db, schedule, world = keyed_world(tmp_path, "g05-0")
+    insert_entity(db, id="outsider", kind="person", canonical_name="Visitor", aliases_json=[],
+                  created_t=schedule.sessions[0].t_start, retired_t=None)
+    check_whole(db, schedule, principal=world.principal, team=world.team)
+    value = {"teammate": world.team[1], "principal": world.principal}.get(value, value)
+    row_id = scalar(db, f"SELECT id FROM {table} WHERE {where} LIMIT 1")
+    # Corrupt a built world deliberately; normal writers retain append-only enforcement.
+    db.execute(f"DROP TRIGGER {table}_UPDATE")
+    db.execute(f"UPDATE {table} SET {field} = ? WHERE id = ?", (value, row_id))
+    with pytest.raises(AssertionError):
+        check_whole(db, schedule, principal=world.principal, team=world.team)
 
 
 # --- statements -------------------------------------------------------------------------------------------------
@@ -548,7 +610,7 @@ def test_mix_and_scale(tmp_path):
     assert export_jsonl(db) == meta_only
     # A3's constant-0 mention makes a third event; on two sessions only the depth-0 constant carries one.
     db, schedule, world = keyed_world(tmp_path, "g05-micro", Mix(deadlines=(1,), mentions=(None, "quote")), scale)
-    check_whole(db, schedule)
+    check_whole(db, schedule, principal=world.principal, team=world.team)
     assert {t for (t,) in db.execute("SELECT t_sim FROM event")} == {t for p in schedule.sessions for t in p.turn_t}
     with pytest.raises(ValueError):
         build_g1(db, schedule)
@@ -621,6 +683,27 @@ def test_g08_renders_every_event(keyed, golden):
     for db, schedule in worlds:
         for (eid,) in db.execute("SELECT id FROM event ORDER BY id").fetchall():
             template.render_event(db, eid, life=schedule.life, tz=schedule.tz)
+
+
+def test_g09_commit_order(keyed, golden):
+    cutter = pytest.importorskip("bicentennial.render.session_cut")
+    stream = pytest.importorskip("bicentennial.render.stream")
+    db, schedule, _ = golden
+    spec = load_golden(FIXTURE)
+    principal = mint(schedule, PROCESS, "entities", "entity", spec.principal, 0)
+    worlds = [(db, schedule, principal), next((db, s, w.principal) for seed, db, s, w in keyed if seed == "g05-0")]
+    for db, schedule, principal in worlds:
+        result = cutter.cut(db, schedule, branch="B0", principal_id=principal, expected_state={
+            p.index: {"repo_tree_hash": "a" * 64, "env_state_hash": "b" * 64} for p in schedule.sessions})
+        assert stream.lint(db, result.rows) == []
+        positions = {r["event_id"]: i for i, r in enumerate(result.rows)}
+        for d in diffs(db):
+            assert positions[asserting(db, d.fact_id)["id"]] < positions[d.event_id]
+        if schedule.life == spec.life:
+            assert {r["turn_key"] for r in result.rows if r["session_id"] == schedule.sessions[5].session_id} == {
+                f"{schedule.sessions[5].session_id}/t{i}" for i in range(1, 16)}
+            assert result.sessions[4]["fault_points"] == [{"kind": "kill", "session": 5, "turn": 2}]
+            assert result.sessions[7]["wake_before"] == ["gap"]
 
 
 def test_imports():
