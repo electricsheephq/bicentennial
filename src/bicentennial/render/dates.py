@@ -38,13 +38,20 @@ def relative_date(anchor_t: int, target_t: int, tz: str) -> str:
     return f"in {d} days" if d > 0 else f"{-d} days ago"
 
 
+def _clock(d: datetime) -> str:
+    # A repeated fall-back hour names two instants; only there does the offset tell them apart.
+    if d.replace(fold=1 - d.fold).utcoffset() != d.utcoffset():
+        return f"{d:%H:%M %z}"
+    return f"{d:%H:%M}"
+
+
 def window(anchor_t: int, open_t: int, close_t: int, tz: str) -> str:
     """Both bounds as local HH:MM with their relative dates; a shared local date is said once."""
     start, end = _local(open_t, tz), _local(close_t, tz)
     if start.date() == end.date():
-        return f"between {start:%H:%M} and {end:%H:%M} {relative_date(anchor_t, open_t, tz)}"
-    return (f"from {start:%H:%M} {relative_date(anchor_t, open_t, tz)}"
-            f" until {end:%H:%M} {relative_date(anchor_t, close_t, tz)}")
+        return f"between {_clock(start)} and {_clock(end)} {relative_date(anchor_t, open_t, tz)}"
+    return (f"from {_clock(start)} {relative_date(anchor_t, open_t, tz)}"
+            f" until {_clock(end)} {relative_date(anchor_t, close_t, tz)}")
 
 
 def channel_stamp(t: int, tz: str, style: str) -> str:
