@@ -46,7 +46,7 @@ def hardcodes(root, path, value):
     _path(path, AST_PATHS)
     try:
         raw = (Path(root) / path).read_bytes()
-    except FileNotFoundError:
+    except OSError:
         return False
     try:
         texts = [c.value for c in ast.walk(ast.parse(raw.decode("utf-8")))
