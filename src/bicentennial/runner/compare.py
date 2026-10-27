@@ -172,6 +172,12 @@ def _isolated(records, egress):
             for a in r.get("upstream", ())) for r in records)
 
 
+def _forwarded(records):
+    # Count what _isolated forbids: a served attempt that the scripted responder did not serve.
+    return sum(a.get("served_by") != "scripted" and "error" not in a
+               for r in records for a in r.get("upstream", ()))
+
+
 def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None):
     """Retry corpus infrastructure faults, retaining isolation evidence before cleanup."""
     results = []
@@ -268,7 +274,7 @@ def _invariants(run, arm):
     return [v.to_obj() for v in run.arms[arm].verdicts]
 
 
-def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses):
+def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=()):
     a, name = run.arms[arm], run.ctx.entry["name"]
     extra = [*DISCLOSURES, *(PLUGIN_DISCLOSURES if name in PROVIDERS else ()),
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
@@ -278,6 +284,9 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses):
         ("controls.floor_mismatches", canon(list(fm)).decode()),
         ("controls.wiped_store", json.loads(card)["controls"]["wiped_store"]),
         ("gate", canon(gate.to_obj()).decode()), ("gate.final", final)]
+    if arm == "system":
+        # The wiped gate can block the system arm; name its entries here too (RING0 §6).
+        extra.append(("gate.wiped_blocked", canon(sorted(wiped_blocked)).decode()))
     if arm == "wiped":
         extra.append(("wiped.label", WIPED_LABEL))
         gaps = [f.audit["a4_gaps"] for f in _finals(a) if f.audit.get("a4_gaps")]
@@ -334,12 +343,12 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     fm = floor_mismatches(list(run.arms["wiped"].bundles), list(run.arms["no_memory"].bundles), run.crossing)
     controls = canon(control_report(tuple(h for u in run.arms["wiped"].units for h in u.runs[-1].hooks), fm))
     witnesses = (("isolation.unknown_requests", str(sum(r.get("role") == "unknown" for r in rows))),
-        ("isolation.forwarded", str(sum(a.get("served_by") != "scripted"
-            for r in rows for a in r.get("upstream", ())))),
+        ("isolation.forwarded", str(_forwarded(rows))),
         ("no_memory.gold_in_context", str(sum(r.in_context is True
             for f in _finals(run.arms["no_memory"]) for r in f.results.values()))))
     junit = {arm: _junit(run, arm, cards[arm], s if arm == "system" else w,
-        vs if arm == "system" else vw, cases, results[arm], fm, hits, witnesses) for arm in GATED}
+        vs if arm == "system" else vw, cases, results[arm], fm, hits, witnesses,
+        wiped_blocked=w.blocked) for arm in GATED}
     for arm in GATED:
         if receipts[arm]["spend_micro_usd"] > 0:
             raise SpendRefused(receipts[arm]["spend_micro_usd"])

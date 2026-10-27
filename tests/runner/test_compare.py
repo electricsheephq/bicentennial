@@ -313,10 +313,20 @@ def test_wiped_control(synth, installed, monkeypatch, tmp_path, mode):
     valid(out)
     assert read(out)["gate_verdict"] == dict(wiped_pass="INVALID", no_recall="FAIL",
         wiped_blocked="BLOCKED", both="FAIL")[mode]
+    blocked = json.loads(properties(out, "system")["gate.wiped_blocked"])
+    assert blocked == sorted(blocked)
+    assert ("invariant:INV-VERB" in blocked) == (mode in ("wiped_blocked", "both"))
     if mode == "wiped_pass":
         assert read(out, "wiped")["gate_verdict"] == "CONFORMANCE_PASS"
     else:
         assert read(out)["controls"]["wiped_store"] == "uninformative"
+
+
+def test_forwarded_witness_matches_isolation():
+    rows = [dict(upstream=[dict(role="summariser", req=1, error="ValueError")]),
+            dict(upstream=[dict(served_by="scripted")]), dict(), dict(upstream=[dict(served_by="upstream")])]
+    assert compare._isolated(rows[:3], {}) and compare._forwarded(rows[:3]) == 0
+    assert not compare._isolated(rows, {}) and compare._forwarded(rows) == 1
 
 
 @pytest.mark.parametrize("arm,blocked", [("system", False), ("no_memory", False), ("system", True)])
@@ -439,6 +449,7 @@ def test_corpus_attribution(policy, cases, monkeypatch, tmp_path, fault, status,
         constructed.clear()
         got = compare.corpus(policy.ctx, "system", (c,), catalogue=catalogue(), work=tmp_path / c.case_id)
         assert [(r.status, r.reason) for r in got] == [(status, reason)]
+        assert constructed  # the real factory path ran, so a faked run_case cannot pass this
         # Successful cases construct extra hosts at their scheduled restarts.
         if fault:
             assert len(constructed) >= attempts
