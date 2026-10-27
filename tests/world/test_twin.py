@@ -24,6 +24,7 @@ from bicentennial.render.stream import (
 )
 from bicentennial.world import db as writers
 from bicentennial.world import twin, unit
+from bicentennial.world.bitemporal import as_known, as_valid
 from bicentennial.world.export import export_jsonl, export_world, world_hash
 from bicentennial.world.lineage import Ev, record, write_event, write_fact
 from bicentennial.world.processes import (
@@ -496,6 +497,9 @@ def test_forget_removes_marker(tmp_path):
     verify(db)
     f = flip(db, s, "forget", fid)
     db1 = twin.apply(db, (f,), tmp_path / "twin.db")
+    request_t = db.execute("SELECT t_sim FROM event WHERE id=?", (event,)).fetchone()[0]
+    replacement, = db1.execute("SELECT kind FROM event WHERE t_sim=?", (request_t,)).fetchall()
+    assert replacement["kind"] == "filler"
     assert not db1.execute("SELECT 1 FROM fact WHERE predicate='forget_ref'").fetchall()
     assert not db1.execute("SELECT 1 FROM locked_token WHERE value LIKE 'REQ-%'").fetchall()
     assert not db1.execute("SELECT 1 FROM fact_surface WHERE fact_id=?", (fr.marker_fact_id,)).fetchall()
@@ -683,12 +687,55 @@ def test_source_refuses_payload_backed_evidence(tmp_path, stage):
     db.close()
 
 
+@pytest.mark.parametrize("stage", ("flip", "plan", "publish"))
+def test_source_refuses_attribute_backed_evidence(tmp_path, stage):
+    db, s = base(tmp_path / "base.db")
+    token_fact_id = detail(db, s)
+    fid = source(db, s, evidence=True)
+    t = slot(s, 1, 5)
+    writers.insert_attr(db, entity_id="epsilon", key="approval", value="declined", valid_from_t=t,
+                        valid_to_t=None, recorded_t=t, source_event_id="evidence-event")
+    finish(db, s)
+    before = export_jsonl(db)
+    p = plant(db, fid)
+    assert p.twin.evidence_fact_id == "evidence-fact"
+    assert p.rejection.basis == "contradiction"
+    assert as_known(db, "epsilon", "approval", t) == as_valid(db, "epsilon", "approval", t) == "declined"
+    c = cut(db, s, branch="B0", principal_id="principal", expected_state=state(db))
+    templates = [QA("source", fid, token_fact_id=token_fact_id)]
+    compiled = compile_branch(db, s, c, templates)
+    if stage == "flip":
+        with pytest.raises(ValueError) as error:
+            flip(db, s, "source", fid)
+        assert str(error.value) == fid
+    else:
+        with pytest.raises(twin.IndependenceError) as error:
+            if stage == "plan":
+                twin.plan(db, s, compiled, principal_id="principal")
+            else:
+                twin.twin_life(db, s, templates, world_path=tmp_path / "twin.db", out_dir=tmp_path / "branches",
+                               principal_id="principal", expected_state=state)
+        assert error.value.rejected == (("source", "one"),)
+        assert str(error.value) == compiled.entries[0][0]["item_id"]
+    assert export_jsonl(db) == before
+    assert not (tmp_path / "twin.db").exists()
+    assert not (tmp_path / "branches").exists()
+    db.close()
+
+
 def test_source_evidence_swap(tmp_path):
     db, s = base(tmp_path / "base.db")
     fid = source(db, s, evidence=True)
     finish(db, s)
     f = flip(db, s, "source", fid)
     db1 = twin.apply(db, (f,), tmp_path / "twin.db")
+    carrier_id = plant(db, fid).carrier_event_id
+    carrier = db.execute("SELECT * FROM event WHERE id=?", (carrier_id,)).fetchone()
+    replacement = db1.execute("SELECT * FROM event WHERE id=?", (carrier_id,)).fetchone()
+    assert replacement["actor_id"] != carrier["actor_id"]
+    assert replacement["t_sim"] == carrier["t_sim"]
+    assert db1.execute("SELECT count(*) FROM event").fetchone()[0] == db.execute("SELECT count(*) FROM event").fetchone()[0]
+    assert not db1.execute("SELECT 1 FROM event WHERE kind='filler' AND t_sim=?", (replacement["t_sim"],)).fetchall()
     assert "evidence-fact" in f.facts and "evidence-event" in f.events
     assert json.loads(db1.execute("SELECT object FROM fact WHERE id='evidence-fact'").fetchone()[0]) == "accepted"
     assert rejection(db1, fid, plant(db, fid).carrier_event_id) is None
