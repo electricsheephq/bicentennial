@@ -84,8 +84,8 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
     key = unit(life, "render", event_id)
     links = sorted(db.execute("SELECT fact_id, role FROM link WHERE event_id = ?", (event_id,)),
                    key=lambda r: (ROLES.index(r["role"]), r["fact_id"].encode()))
-    gold = db.execute("SELECT 1 FROM forget_request WHERE event_id = ? UNION ALL "
-                      "SELECT 1 FROM plant WHERE carrier_event_id = ?", (event_id, event_id)).fetchone() is not None
+    forget = db.execute("SELECT 1 FROM forget_request WHERE event_id = ?", (event_id,)).fetchone() is not None
+    gold = forget or db.execute("SELECT 1 FROM plant WHERE carrier_event_id = ?", (event_id,)).fetchone() is not None
     fact_ids: list[str] = []
     linked_tokens: list[str] = []
     clauses: list[tuple[Phrase, dict, str]] = []
@@ -94,11 +94,14 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
         fid = fact["id"]
         fact_ids += [] if fid in fact_ids else [fid]
         modality = "retracted" if link["role"] == "retract" else fact["modality"]
-        cell = bank.cell(fact["speech_act"], modality, fact["strength"], fact["polarity"])
         tokens = db.execute("SELECT token_id, value FROM locked_token WHERE fact_id = ?", (fid,)).fetchall()
         commitment = db.execute("SELECT trigger_kind, window_open_t FROM commitment WHERE fact_id = ?",
                                 (fid,)).fetchone()
         planted = db.execute("SELECT 1 FROM plant WHERE fact_id = ?", (fid,)).fetchone()
+        if (request := fact["predicate"] == "forget") and (link["role"], fact["speech_act"], modality, fact["strength"],
+                fact["polarity"], tokens, commitment, planted) != ("assert", "assert", "stated", 1000, "affirm", [], None, None):
+            raise ValueError(f"fact {fid}: a forget request names a predicate in a plain stated assert, never a value")
+        cell = bank.forget if request else bank.cell(fact["speech_act"], modality, fact["strength"], fact["polarity"])
         gold = gold or bool(tokens or commitment or planted) or link["role"] == "retract" or (
             fact["modality"] in ("retracted", "planted") or fact["speech_act"] in ("hedge", "propose", "quote"))
         if len(tokens) > 1:
@@ -107,7 +110,7 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
             obj = (tokens[0]["value"], tokens[0]["token_id"])
             linked_tokens.append(obj[0])
         elif type(value := json.loads(fact["object"])) is str:
-            obj = (value, None)
+            obj = (value.replace("_", " ") if request else value, None)
         else:
             raise ValueError(f"fact {fid}: a non-string object must be a locked token")
         subject = _one(db, "SELECT canonical_name FROM entity WHERE id = ?", fact["subject_id"])
@@ -117,6 +120,8 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
         if commitment is not None and commitment["trigger_kind"] == "time":
             when = relative_date(event["t_sim"], commitment["window_open_t"], tz)
             clauses.append((bank.when, {"when": (when, None)}, fid))
+    if forget != any(phrase in bank.forget for phrase, _, _ in clauses):
+        raise ValueError(f"event {event_id}: a forget_request row and a linked forget request fact go together")
     style = bank.channels[event["channel"]]
     stamp = channel_stamp(event["t_sim"], tz, style)
     prefix = {"chat": stamp + " ", "log": stamp + " ", "mail": stamp + "\n\n"}.get(style, "")
