@@ -84,7 +84,7 @@ def receipt(*, busy=False, ms=1000):
     return build_receipt(run_status="COMPLETE", wall_start_ms=100, wall_end_ms=100 + ms,
         latency_ms=[], load_milli=[0, 0, 0], busy_marker_readings=[busy], tokens_by_role={},
         runtime_by_role={}, spend_micro_usd=0, store_growth_bytes=0, process_ids=[12345],
-        ports=[43210], temporary_paths=["/private/transient-run"], raw_body_digest="a" * 64)
+        ports=[43210], temporary_paths=["/sandbox/transient-run"], raw_body_digest="a" * 64)
 
 
 @pytest.fixture
