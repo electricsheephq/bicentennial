@@ -330,9 +330,9 @@ def test_api_surfaced_failure_survives_snapshot_error():
 
     v = inv.adapter_invariants(mutants.forget_ignored, bound_s=5,
                                snapshot=broken_snapshot)["INV-FORGET"]
-    assert v.failed == ("forget-1", "forget-2")
-    assert v.infra == ("forget-store",)
-    assert (v.status, v.members, v.reasons) == ("FAIL", 3, ("infra", "surfaced"))
+    assert v.failed == ("forget-1", "forget-2", "forget-store")
+    assert v.infra == ()
+    assert (v.status, v.members, v.reasons) == ("FAIL", 3, ("store_hit", "surfaced"))
 
 
 @pytest.mark.parametrize("hit", [True, False])
@@ -494,3 +494,51 @@ if __name__ == "__main__":
         rows = scenarios(Path(directory))
         sys.stdout.buffer.write(canon({name: [v.to_obj() for v in row.values()]
                                        for name, row in sorted(rows.items())}) + b"\n")
+
+
+def test_api_checkpoint_hit_skips_broken_snapshot():
+    calls = 0
+
+    def broken_snapshot(adapter):
+        nonlocal calls
+        calls += 1
+        raise OSError("fixture snapshot error")
+
+    v = inv.adapter_invariants(mutants.forget_ignored, bound_s=5,
+                               snapshot=broken_snapshot)["INV-FORGET"]
+    assert calls == 0
+    assert v.failed == ("forget-1", "forget-2", "forget-store")
+    assert v.infra == ()
+    assert (v.status, v.reasons) == ("FAIL", ("store_hit", "surfaced"))
+
+
+def test_api_store_hit_survives_lazy_snapshot_error(tmp_path):
+    (tmp_path / "memory.txt").write_text(TOKEN)
+
+    def broken_snapshot(adapter):
+        assert not any(n in adapter.checkpoint() for n in inv.needles_for([TOKEN]))
+        yield tmp_path
+        raise OSError("fixture later snapshot error")
+
+    v = inv.adapter_invariants(ReferenceStore, bound_s=5,
+                               snapshot=broken_snapshot)["INV-FORGET"]
+    assert v.failed == ("forget-store",)
+    assert v.infra == ()
+    assert (v.status, v.reasons) == ("FAIL", ("store_hit",))
+
+
+def test_api_snapshot_error_without_checkpoint_hit_is_infra():
+    calls = 0
+
+    def broken_snapshot(adapter):
+        nonlocal calls
+        calls += 1
+        assert not any(n in adapter.checkpoint() for n in inv.needles_for([TOKEN]))
+        raise OSError("fixture snapshot error")
+
+    v = inv.adapter_invariants(ReferenceStore, bound_s=5,
+                               snapshot=broken_snapshot)["INV-FORGET"]
+    assert calls == 1
+    assert v.failed == ()
+    assert v.infra == ("forget-store",)
+    assert (v.status, v.reasons) == ("INFRA_FAILURE", ("infra",))
