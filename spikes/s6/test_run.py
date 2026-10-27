@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -393,7 +394,7 @@ def test_recovery_timing_and_own_probe_measurements():
             for a, role in [("r", "write_turn"), ("p", "probe_main")]]
     t, metrics = s6.measurements(dict(sessions=sessions), rows,
         {"blob": {"usage": dict(prompt_tokens=10, completion_tokens=3)}},
-        {"sessions": [dict(index=201, kind="probe", turns=[{}, {}])]},
+        {"sessions": [dict(index=110, kind="replay"), dict(index=201, kind="probe", turns=[{}, {}])]},
         [dict(index=110, long_sprint=True)])
     assert t.R.wall_ms == 213
     assert t.e_probe.wall_ms == 100  # fixed 60 + (turn 100 - hold 20) / 2
@@ -474,6 +475,9 @@ def test_fake_responses_worker_and_summary(built, tmp_path, responses_server, mo
     full, plans, starts, _, raw = s6.life_inputs(built[0])
     script = dict(full, sessions=[full["sessions"][0], full["sessions"][1], dict(full["sessions"][-1], index=3)])
     starts[3] = starts[201]
+    life = tmp_path / "life"
+    shutil.copytree(built[0], life)
+    (life / "script.json").write_bytes(canon(script))
     validate("script", script)
     root = tmp_path / "p06-hermes-native"
     root.mkdir()
@@ -496,16 +500,19 @@ def test_fake_responses_worker_and_summary(built, tmp_path, responses_server, mo
     assert initial["baseline"] and not outbound
     rows, blobs, _ = s6.load_ledger(root / "ledger", "kit")
     by_role = s6.role_costs(rows, blobs, {r["attempt_id"]: r["session"] for r in result["sessions"]})
+    assert bodies
+    assert any(u.get("role") == "write_turn" and u.get("served_by") == "live"
+               for row in rows for u in row.get("upstream", []))
     assert len(bodies) == sum(c.requests for roles in by_role.values() for c in roles.values())
     assert all(u["role"] == "write_turn" for row in rows if row.get("role") == "replay_main"
                for u in row.get("upstream", []) if u.get("served_by") == "live")
     assert not any(r.get("role") == "unknown" for r in rows)
     result.update(credential_scan=dict(hits={}, unreadable=0), settled=0,
-                  inputs=dict(script_sha256=s6.digest(built[0] / "script.json"), sol_max_output=100,
+                  inputs=dict(script_sha256=s6.digest(life / "script.json"), sol_max_output=100,
                               sol_max_output_source="offline fixture", max_sends=2000))
     s6._arm_write(root, result)
     out = tmp_path / "s6.json"
-    assert s6.main(["summarise", "--scratch", str(tmp_path), "--life", str(built[0]), "--out", str(out)]) == 0
+    assert s6.main(["summarise", "--scratch", str(tmp_path), "--life", str(life), "--out", str(out)]) == 0
     obj = json.loads(out.read_bytes())
     assert canon(obj) == out.read_bytes()
     assert obj["arms"]["mem0-oss"] == dict(status="not_run", reason="mem0_blocked")
@@ -583,8 +590,7 @@ def test_run_cli_integrates_login_baseline_shutdown_and_summary(built, tmp_path,
     assert lanes["sol-1"]["cut_order"]["rows"][0]["fits"] == "undetermined: no occupancy projection"
     assert obj["terms"]["hermes-native"]["C_learn"]["status"] == "missing"
     assert obj["bytes"]["mem0-oss"] == dict(status="not_run", reason="mem0_blocked")
-    with pytest.raises(FileExistsError):
-        s6.main(summary_args)
+    assert s6.main(summary_args) == 3
     before = out.read_bytes()
     arm["credential_scan"]["hits"] = {"synthetic": 1}
     s6._arm_write(arm_path.parent, arm)
@@ -761,3 +767,179 @@ def test_reference_checkout_symlink_is_also_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: home)
     with pytest.raises(ValueError, match="isolated Hermes"):
         s6.safe_checkout(target / "checkout")
+
+
+@pytest.mark.parametrize("session", [dict(session=3, kind="probe"), dict(session=1, kind="probe"),
+                                    dict(session=201, kind="replay")])
+def test_measurements_refuse_session_script_disagreement(session):
+    session.update(attempt_id="attempt")
+    script = dict(sessions=[dict(index=1, kind="replay"), dict(index=201, kind="probe", turns=[{}])])
+    with pytest.raises(ValueError, match="^summary_session_mismatch$"):
+        s6.measurements(dict(sessions=[session]), [], {}, script, [])
+    with pytest.raises(ValueError, match="^summary_session_mismatch$"):
+        s6.measurements(dict(sessions=[], failed_attempt=session), [], {}, script, [])
+
+
+def test_summary_script_mismatch_is_named_refusal(built, tmp_path, capsys):
+    root = tmp_path / "p06-hermes-native"
+    root.mkdir()
+    life = tmp_path / "different-life"
+    shutil.copytree(built[0], life)
+    script = s6.read_json(life / "script.json")
+    script["sessions"][0]["turns"][0]["assistant"] = "Different scripted reply."
+    (life / "script.json").write_bytes(canon(script))
+    s6._arm_write(root, dict(status="complete", credential_scan=dict(hits={}, unreadable=0),
+                             inputs=dict(script_sha256=s6.digest(built[0] / "script.json"))))
+    args = SimpleNamespace(out=tmp_path / "summary.json", life=life, scratch=tmp_path)
+    with pytest.raises(ValueError, match="^summary_script_mismatch$"):
+        s6.summarise(args)
+    assert s6.main(["summarise", "--scratch", str(tmp_path), "--life", str(life),
+                    "--out", str(args.out)]) == 3
+    assert capsys.readouterr().err == "summary_script_mismatch\n"
+    assert not args.out.exists()
+
+
+@pytest.mark.parametrize("command,exception,code", [
+    ("run", s6.registry.SystemRefused(["private diagnostic"]), 3),
+    ("run", OSError("private diagnostic"), 4),
+    ("run", RuntimeError("private diagnostic"), 4),
+    ("run", ValueError("private diagnostic"), 4),
+    ("run", s6.HarnessFailed("private diagnostic"), 4),
+    ("summarise", ValueError("private diagnostic"), 3),
+    ("summarise", FileExistsError("private diagnostic"), 3),
+    ("run", s6.CredentialLeak("private diagnostic"), 1)])
+def test_cli_failure_codes_and_safe_diagnostics(tmp_path, monkeypatch, capsys, command, exception, code):
+    def fail(args):
+        raise exception
+
+    monkeypatch.setattr(s6, "run_command" if command == "run" else "summarise", fail)
+    args = run_args(tmp_path) if command == "run" else [
+        "summarise", "--scratch", str(tmp_path), "--life", str(tmp_path), "--out", str(tmp_path / "out")]
+    assert s6.main(args) == code
+    diagnostic = capsys.readouterr().err
+    assert "private diagnostic" not in diagnostic
+    assert ("credential_leak" if code == 1 else type(exception).__name__) in diagnostic
+
+
+@pytest.mark.parametrize("scratch_kind", ["missing", "file", "denied"])
+def test_unusable_scratch_is_preflight_refusal(tmp_path, monkeypatch, capsys, scratch_kind):
+    ready_preflight(monkeypatch)
+    scratch = tmp_path / "scratch"
+    if scratch_kind == "file":
+        scratch.touch()
+    elif scratch_kind == "denied":
+        scratch.mkdir()
+
+    def disk_usage(path):
+        raise PermissionError("private scratch path") if scratch_kind == "denied" else FileNotFoundError("private")
+
+    monkeypatch.setattr(s6.shutil, "disk_usage", disk_usage)
+    args = run_args(tmp_path)
+    args[args.index("--scratch") + 1] = str(scratch)
+    monkeypatch.setattr(s6, "open_login", lambda *a: pytest.fail("scratch refusal must precede login"))
+    with pytest.raises(SystemExit) as exc:
+        s6.main(args)
+    assert exc.value.code == 3
+    assert capsys.readouterr().err == "scratch_unusable\n"
+    assert not list(tmp_path.glob("p06-*"))
+
+
+@pytest.mark.parametrize("phase,exception,code,label", [
+    ("build_stack", RuntimeError("private diagnostic"), 4, "RuntimeError"),
+    ("HermesAdapter", s6.registry.SystemRefused(["private diagnostic"]), 3, "SystemRefused"),
+    ("HermesAdapter", OSError("private diagnostic"), 4, "OSError"),
+    ("initialise", OSError("private diagnostic"), 4, "OSError"),
+    ("initialise", s6.HarnessFailed("initial_settle_failed"), 4, "initial_settle_failed"),
+    ("initialise", s6.CredentialLeak("private diagnostic"), 1, "CredentialLeak")])
+def test_initialisation_failures_record_attempt_and_drain_login(
+        built, tmp_path, monkeypatch, capsys, phase, exception, code, label):
+    ready_preflight(monkeypatch)
+    pending = [dict(type="offline_login", label="synthetic")]
+
+    def drain():
+        rows = pending[:]
+        pending.clear()
+        return rows
+
+    login = SimpleNamespace(drain=drain)
+    monkeypatch.setattr(s6, "open_login", lambda *a: login)
+    monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, SimpleNamespace(login=login), None))
+    closed = []
+    adapter = SimpleNamespace(director=SimpleNamespace(guard=None), close=lambda: closed.append(True))
+    monkeypatch.setattr(s6, "HermesAdapter", lambda *a, **k: adapter)
+
+    def fail(*args, **kwargs):
+        raise exception
+
+    monkeypatch.setattr(s6, phase, fail)
+    args = run_args(tmp_path)
+    args[args.index("--life") + 1] = str(built[0])
+    assert s6.main(args) == code
+    assert "private diagnostic" not in capsys.readouterr().err
+    root = tmp_path / "p06-hermes-native"
+    result = s6.read_json(root / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "init_failed:" + label
+    assert result["inputs"]["script_sha256"] == s6.digest(built[0] / "script.json")
+    assert not pending
+    assert s6.read_json(root / "login.jsonl") == dict(type="offline_login", label="synthetic")
+    assert closed == ([True] if phase == "initialise" else [])
+    out = tmp_path / "summary.json"
+    summary_args = ["summarise", "--scratch", str(tmp_path), "--life", str(built[0]), "--out", str(out)]
+    assert s6.main(summary_args) == 1  # Even an init failure requires a credential scan.
+    assert not out.exists()
+    result["credential_scan"] = dict(hits={}, unreadable=0)
+    s6._arm_write(root, result)
+    assert s6.main(summary_args) == 0
+    reported = s6.read_json(out)["arms"]["hermes-native"]
+    assert reported["status"] == "stopped" and reported["stop_reason"] == "init_failed:" + label
+
+
+@pytest.mark.parametrize("mode", ["stop", "swap"])
+def test_real_stack_spend_stop_and_wiring_swap(tmp_path, responses_server, monkeypatch, mode):
+    base, bodies, outbound = responses_server
+    monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
+    monkeypatch.setattr(adapter_module, "DRAIN_QUIET_S", 0.01)
+    script = dict(canary=CANARY, life_id=s6.LIFE_ID, genre="G2", harness="hermes", sessions=[
+        dict(index=i, kind="replay", turns=[dict(n=n, kind="replay", user=f"session {i} turn {n}",
+                                               assistant="Noted.", tool_calls=[]) for n in (1, 2)])
+        for i in (1, 2)])
+    root = tmp_path / "worker"
+    root.mkdir()
+    entry = s6.load_entry("hermes-native")
+    routed, cred, holds = s6.build_stack(entry, root / "spend.json",
+        auth=lambda: {"Authorization": "Bearer t"}, base_url=base, max_output=100,
+        max_sends=1 if mode == "stop" else 20)
+    faults = [dict(kind="swap", session=2, turn=None)] if mode == "swap" else []
+    adapter = HermesAdapter(entry, script=script, route_table=RouteTable.load(s6.routes("hermes-native")),
+        schedule=FaultLite.load(faults, script), responder=routed,
+        clock=SimClock(root / "clock.json", 0, 60), root=root, scratch=tmp_path,
+        life=s6.LIFE_ID, branch="B0", run="p06-real-" + mode, window=131072,
+        worker_argv=[sys.executable, str(ROOT / "tests/harness/fake_worker.py")])
+    try:
+        s6.initialise(adapter, {1: 0, 2: 60}, "a" * 64)
+    except BaseException:
+        adapter.close()
+        raise
+    result = s6.run_arm("hermes-native", adapter, script, {1: 0, 2: 60},
+                        cred=cred, holds=holds, lock="a" * 64)
+    assert bodies and not outbound
+    rows, _, _ = s6.load_ledger(root / "ledger", "kit")
+    assert any(u.get("role") == "write_turn" and u.get("served_by") == "live"
+               for row in rows for u in row.get("upstream", []))
+    if mode == "stop":
+        assert result["status"] == "stopped" and result["stop_reason"] == "live_spend_stop"
+        assert result["sessions_run"] < 2
+        assert len(bodies) == cred.state()["sends"] == 1
+        # Call the same routed stack after the stop: it must refuse without another HTTP send.
+        from bicentennial.director.scripted import Call
+        reply = routed.respond(Call("write_turn", "write_turn", "chat", {"messages": []},
+                                    s6.MODEL, None, "after-stop"))
+        assert reply.status != 200 and len(bodies) == 1
+    else:
+        assert result["status"] == "complete" and result["sessions_run"] == 2
+        config = s6.read_json(adapter.paths["hermes_home"] / "config.yaml")
+        assert config["model"]["default"] == "bicentennial-swap"
+        assert len(bodies) == 4
+        assert any((row.get("cursor") or {}).get("session") == 2 and row.get("model_in") == "bicentennial-swap"
+                   and u.get("served_by") == "live" and any(d.get("sent") for d in u.get("diagnostics", []))
+                   for row in rows for u in row.get("upstream", []))

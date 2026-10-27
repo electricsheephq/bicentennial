@@ -13,6 +13,7 @@ from dataclasses import asdict, replace
 from fractions import Fraction
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 from bicentennial.audit.readback import load as load_ledger
 from bicentennial.canon import canon, milli, sha256_canon
@@ -68,7 +69,7 @@ from bicentennial.runner.spend import Price, Spend
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.bytes import allocated_bytes, apply_budget, store_bytes
-from bicentennial.systems import registry
+from bicentennial.systems import SystemRefused, registry
 from bicentennial.systems.hermes_plugin import PROVIDERS, PluginCell
 from bicentennial.systems.settle import settle
 from bicentennial.world.scale import FULL_WINDOW, named
@@ -349,7 +350,13 @@ def preflight(args):
                  "BICENTENNIAL_SOL_BASE_URL"):
         if not os.environ.get(name):
             raise Stop("missing:" + name)
-    if shutil.disk_usage(args.scratch).free < MIN_FREE_GB * 1_000_000_000:
+    try:
+        if not args.scratch.is_dir() or not os.access(args.scratch, os.W_OK | os.X_OK):
+            raise OSError
+        free = shutil.disk_usage(args.scratch).free
+    except OSError:
+        raise Stop("scratch_unusable") from None
+    if free < MIN_FREE_GB * 1_000_000_000:
         raise Stop("disk_floor")
     began, readings = time.monotonic(), []
     while True:
@@ -403,7 +410,10 @@ def run_command(args):
         if reason:
             print(reason)
             return 2
-    checkout = safe_checkout(args.hermes)
+    try:
+        checkout = safe_checkout(args.hermes)
+    except ValueError:
+        raise Stop("isolated_hermes_checkout_required") from None
     markers = preflight(args)
     script, plans, starts, faults, raw = life_inputs(args.life)
     table, script_hash = routes(args.arm), digest(args.life / "script.json")
@@ -416,14 +426,15 @@ def run_command(args):
                        os.environ["BICENTENNIAL_SOL_CLIENT_ID"], run)
     root.mkdir()
     spend_path = root / "spend.json"
-    responder, cred, holds = build_stack(entry, spend_path, auth=None,
-        base_url=os.environ["BICENTENNIAL_SOL_BASE_URL"], max_output=args.sol_max_output,
-        max_sends=args.max_sends, login=login)
+    cred = SimpleNamespace(login=login)
     adapter, cell, initial, began = None, None, None, time.monotonic()
     metadata = dict(run=run, lock=lock, routes=table, start_marker=markers,
                     sol_max_output=args.sol_max_output, sol_max_output_source=args.sol_max_output_source,
                     max_sends=args.max_sends, script_sha256=script_hash)
     try:
+        responder, cred, holds = build_stack(entry, spend_path, auth=None,
+            base_url=os.environ["BICENTENNIAL_SOL_BASE_URL"], max_output=args.sol_max_output,
+            max_sends=args.max_sends, login=login)
         adapter = HermesAdapter(entry, script=script, route_table=RouteTable.load(table),
             schedule=faults, responder=responder, clock=SimClock(root / "clock.json", starts[1], STEP_S),
             root=root, scratch=args.scratch, life=LIFE_ID, branch="B0", run=run, checkout=checkout,
@@ -434,19 +445,22 @@ def run_command(args):
             cell = PluginCell(entry, adapter)
             cell.install(args.mem0_source, alias="bicentennial-main")
         initial = initialise(adapter, starts, lock, cell)
-    except PinMismatch:
-        if adapter is not None:
-            adapter.close()
-        drain_login(cred, root)
-        if args.arm != "mem0-oss":
+    except BaseException as exc:
+        mem0_pin = isinstance(exc, PinMismatch) and args.arm == "mem0-oss"
+        label = ("initial_settle_failed" if isinstance(exc, HarnessFailed) and
+                 exc.args == ("initial_settle_failed",) else type(exc).__name__)
+        _arm_write(root, dict(status="not_run", reason="mem0_pin_mismatch", inputs=metadata) if mem0_pin else
+                   dict(status="stopped", stop_reason="init_failed:" + label, inputs=metadata))
+        try:
+            if adapter is not None:
+                adapter.close()
+        finally:
+            drain_login(cred, root)
+        if mem0_pin:
+            print("mem0_pin_mismatch")
+            return 2
+        if isinstance(exc, PinMismatch):
             raise Stop("hermes_pin_mismatch") from None
-        _arm_write(root, dict(status="not_run", reason="mem0_pin_mismatch", inputs=metadata))
-        print("mem0_pin_mismatch")
-        return 2
-    except BaseException:
-        if adapter is not None:
-            adapter.close()
-        drain_login(cred, root)
         raise
     result = run_arm(args.arm, adapter, script, starts, cred=cred, holds=holds, lock=lock,
                      cell=cell, raw=raw, wall_s=max(0, ARM_WALL_S - (time.monotonic() - began)))
@@ -473,6 +487,9 @@ def run_command(args):
 def measurements(result, rows, blobs, script, plans):
     sessions = result["sessions"]
     attempts = sessions + ([result["failed_attempt"]] if result.get("failed_attempt") else [])
+    kinds = {s["index"]: s["kind"] for s in script["sessions"]}
+    if any(s["session"] not in kinds or kinds[s["session"]] != s["kind"] for s in attempts):
+        raise ValueError("summary_session_mismatch")
     costs = role_costs(rows, blobs, {s["attempt_id"]: s["session"] for s in attempts})
     roles, probe_roles, per_session = {}, {}, {}
     replay, probes, fixed, own_turn, episode_cost = Cost(), [], [], [], Cost()
@@ -541,7 +558,10 @@ def term_table(t):
 def summarise(args):
     if args.out.exists():
         raise FileExistsError("summary exists")
-    script, plans, _, _, _ = life_inputs(args.life)
+    verify_branch(args.life, "B0")
+    script = read_json(args.life / "script.json")
+    FaultLite.load([], script)  # Validate the script without the unexecuted full-life faults.
+    plans = [json.loads(row) for row in (args.life / "sessions.B0.jsonl").read_bytes().splitlines()]
     inputs = dict(life=LIFE_ID, hashes={name: digest(args.life / name) for name in
                   ("world.B0.db", "script.json", "stream.B0.jsonl", "life.json")},
                   route_table_hashes={arm: sha256_canon(routes(arm)) for arm in SYSTEMS},
@@ -569,9 +589,14 @@ def summarise(args):
         if scan_result.get("hits") or scan_result.get("unreadable") or not scan_result:
             raise CredentialLeak("summary requires a clean credential scan")
         if result["inputs"]["script_sha256"] != digest(args.life / "script.json"):
-            raise ValueError("summary script mismatch")
-        if result["settled"]:
+            raise ValueError("summary_script_mismatch")
+        if result.get("settled", 0):
             raise ValueError("nonzero spend")
+        if result["status"] == "stopped" and "sessions" not in result:
+            obj["arms"][arm] = result
+            for key in ("bytes", "terms", "projection"):
+                obj[key][arm] = dict(status="not_run", reason="incomplete_life")
+            continue
         rows, blobs, ledger_hash = load_ledger(root / "ledger", "kit")
         t, metrics = measurements(result, rows, blobs, script, plans)
         obj["arms"][arm] = dict(result, **metrics, ledger_sha256=ledger_hash)
@@ -633,9 +658,13 @@ def main(argv=None) -> int:
         return 1
     except Stop as exc:
         exit_on_refusal(exc)
-    except HarnessFailed as exc:
-        print("harness_failed:" + str(exc), file=sys.stderr)
-        return 4
+    except Exception as exc:
+        refused = isinstance(exc, SystemRefused) or (args.command in ("summarise", "build") and
+                                                   isinstance(exc, (ValueError, FileExistsError)))
+        label = (exc.args[0] if args.command == "summarise" and isinstance(exc, ValueError) and
+                 exc.args in (("summary_script_mismatch",), ("summary_session_mismatch",)) else type(exc).__name__)
+        print(label, file=sys.stderr)
+        return 3 if refused else 4
 
 
 if __name__ == "__main__":
