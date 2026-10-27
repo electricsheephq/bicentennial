@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from bicentennial.canon import canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.run import validate
 from bicentennial.keyed import choice, uniform_int
 from bicentennial.ledger import BlobStore, Guard, Ledger
@@ -497,8 +497,9 @@ def test_load_spans_round_trip_and_tamper(tmp_path):
         value = fixture("session")
         value["index"] = index
         sessions.append(value)
+    expected_state = sha256_canon([value["expected_state"] for value in sessions])
     cut = Cut("life", "B0", rows, tuple(sessions), LOCK, LOCK, "bank", LOCK, False,
-              None, "principal", LOCK, LOCK)
+              None, "principal", expected_state, LOCK)
     write_branch(tmp_path, cut)
     assert load_spans(tmp_path, "B0", {F: (TOKEN,)}, [E, E2]) == spans(
         rows, [SID, "second"], {F: (TOKEN,)}, [E, E2])
