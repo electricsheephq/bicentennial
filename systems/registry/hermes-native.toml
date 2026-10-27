@@ -9,7 +9,8 @@ recall = {tool = "session_search", argument_template = {query = "{prompt}"}}
 # Only logs and locks are volatile: every subcommand writes HERMES_HOME/logs, and MCP
 # discovery creates .mcp-discovery.lock. R12 checkpoints WAL before measuring the tree.
 surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
-fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+# Measured 2026-10-27: the T0 memory-layer host's fresh-install hash (RING0 §13 E4 port mask), equal on two director ports.
+fresh_install_hash = "90b51b1eea5b9cf18300baebafe78eaa5547fe00a3531a4a1875c7fdbf8b07a8"
 own_model_routes = [
     {role = "compaction", alias = "bicentennial-compaction"},
     {role = "summariser", alias = "bicentennial-summariser"},
