@@ -1,8 +1,8 @@
 name = "mem0-oss"
 licence = "Apache-2.0"
-# Catalog 43849c6e9d4d773b83a8144b6373aedc67241a5d; unmeasured:
+# Catalog 43849c6e9d4d773b83a8144b6373aedc67241a5d; artifact.sha256 measured 2026-10-27 by:
 # git archive --format=tar 43849c6e9d4d773b83a8144b6373aedc67241a5d integrations/hermes-plugin-mem0 | shasum -a 256
-artifact = {name = "hermes-plugin-mem0", version = "1.3.0", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
+artifact = {name = "hermes-plugin-mem0", version = "1.3.0", sha256 = "bcdeee0243eb5367fdfdb5589c8025ae13d9198954f793fb5b8e1ae212ac8465"}
 write_tools = [{tool = "mem0_add", actions = []}, {tool = "mem0_update", actions = []}, {tool = "mem0_delete", actions = []}]
 read_tools = ["mem0_search"]
 recall = {tool = "mem0_search", argument_template = {query = "{prompt}"}}
@@ -12,7 +12,8 @@ embedding_dim = 1536
 settle = {kind = "hook", bound_s = 5}
 harness = "hermes"
 surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}, {root = "SANDBOX_HOME", relative = ".mem0", volatile_paths = []}]
-fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+# Measured 2026-10-27: the T0 memory-layer host's fresh-install hash (RING0 §13 E4 port mask), equal on two director ports.
+fresh_install_hash = "a2591a33006ad2ec3dc65eac9ed0aac78cda3e4aae23e1f7d2f7ee76ef02f486"
 machine_class = "light"
 benchmark_operator_runs = true
 
