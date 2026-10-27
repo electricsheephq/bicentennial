@@ -407,6 +407,58 @@ def test_ledger_carry_over_survives_compaction(wire):
     carry_rows(wire)
 
 
+@pytest.mark.parametrize("encoded", [False, True])
+@pytest.mark.parametrize("wire,field,role", [
+    ("chat", "messages", "system"),
+    ("chat", "messages", "developer"),
+    ("responses", "input", "system"),
+    ("responses", "input", "developer"),
+    ("responses", "instructions", None),
+])
+def test_ledger_carry_over_excludes_prompt_memory(wire, field, role, encoded):
+    items, _, _ = fixtures()
+    prior = body(wire, "Earlier probe.")
+    if field == "instructions":
+        prior[field] = "WINDOW-7401"
+    else:
+        prior[field].insert(0, {"role": role, "content": "WINDOW-7401"})
+    original = copy(prior)
+    history = [prior, {"text": "Earlier answer."}]
+    if encoded:
+        history = [canon(record) for record in history]
+    probe = responder(earlier=lambda run, session: tuple(history))
+    request = body(wire, items["qf0"]["prompt"])
+    reply = probe.respond(call_for(wire, request))
+    append_exchange(request, wire, reply.tool_calls[0], "WINDOW-7401")
+    probe.respond(call_for(wire, request, "tool_results"))
+    result = probe.results()["qf0"]
+    assert result.selected_option == "qf0-g"
+    assert result.carry_over is False
+    assert prior == original
+
+
+@pytest.mark.parametrize("prior", [
+    {"messages": [{"role": "user", "content": "WINDOW-7401"}]},
+    {"messages": [{"role": "assistant", "content": "WINDOW-7401"}]},
+    {"messages": [{"role": "tool", "content": "WINDOW-7401"}]},
+    {"input": [{"type": "function_call", "arguments": '{"note":"WINDOW-7401"}'}]},
+    {"input": [{"type": "function_call_output", "output": "WINDOW-7401"}]},
+    {"input": "WINDOW-7401"},
+    {"text": "WINDOW-7401"},
+    {"output": [], "instructions": "WINDOW-7401"},
+])
+def test_ledger_carry_over_keeps_exchange_content(prior):
+    items, _, _ = fixtures()
+    original = copy(prior)
+    probe = responder(earlier=lambda run, session: (prior,))
+    request = body("chat", items["qf0"]["prompt"])
+    reply = probe.respond(call_for("chat", request))
+    append_exchange(request, "chat", reply.tool_calls[0], "WINDOW-7401")
+    probe.respond(call_for("chat", request, "tool_results"))
+    assert probe.results()["qf0"].carry_over is True
+    assert prior == original
+
+
 def diagnostic_rows(tmp_path):
     items, keys, _ = fixtures()
     full = read(reader_view(items["kf0"]), keys["kf0"],

@@ -22,6 +22,17 @@ def plain_step(step):
     return {"name": step["tool"]["name"], "arguments": canon(step["tool"]["args"]).decode()}
 
 
+def _earlier_body(value):
+    if isinstance(value, bytes):
+        value = json.loads(value)
+    if not isinstance(value, dict) or not ("messages" in value or "input" in value):
+        return value
+    return {key: [item for item in content if not isinstance(item, dict) or
+                  item.get("role") not in ("system", "developer")]
+            if key in ("messages", "input") and isinstance(content, list) else content
+            for key, content in value.items() if key != "instructions"}
+
+
 def _calls(call):
     if call.wire not in ("chat", "responses"):
         raise ValueError("unsupported probe wire")
@@ -94,7 +105,7 @@ class ProbeResponder:
                 raise ValueError("decision exchange missing")
             view, keys = self.readers[iid]
             prior = self.earlier(call.run_key, position[0])
-            earlier = context_text([json.loads(v) if isinstance(v, bytes) else v for v in prior])
+            earlier = context_text([_earlier_body(v) for v in prior])
             self.decisions[key] = read(view, keys, context_text(call.body), mode="hermes", earlier=earlier)
         result = self.decisions[key]
         self.latest[iid] = result
