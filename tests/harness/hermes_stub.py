@@ -52,6 +52,8 @@ def search(query):
     ranked = [(len(words(query) & words(row["text"])),
                -row["t"] if MODE == "stale_wins" else row["t"], row["seq"], row) for row in read()]
     ranked = [r for r in ranked if r[0] > 0]
+    if MODE == "all_hits":
+        return [r[3] for r in sorted(ranked, key=lambda r: r[:3], reverse=True)]
     return [max(ranked, key=lambda r: r[:3])[3]] if ranked else []
 
 
@@ -234,7 +236,7 @@ class SessionDB:
 
 def write_tree(dest, *, log, mode="none", sync_ms=0):
     """Create exactly the Hermes import surfaces used by the file-launched worker."""
-    if mode not in {"none", "wipe_on_open", "keep_on_remove", "stale_wins", "missing", "delayed_sync"}:
+    if mode not in {"none", "wipe_on_open", "keep_on_remove", "stale_wins", "missing", "delayed_sync", "all_hits"}:
         raise ValueError("unknown stub mode")
     dest = Path(dest)
     source = COMMON.replace("__MODE__", repr(mode)).replace("__SYNC_MS__", str(sync_ms))

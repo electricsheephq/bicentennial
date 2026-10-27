@@ -116,6 +116,7 @@ class HermesMemoryHost(Adapter):
         self.paths = layout(root, scratch)
         self._worker, self.pids, self.gate, self.active_memory_providers = None, [], [], []
         self.events, self.session, self.turn, self.latency_ms = {}, 1, 0, 0
+        self.forget_ambiguous = 0
         self.settled, self._blocks, self._cache = True, (), None
         self.script = script = dict(canary=CANARY, life_id=life, genre="t0", harness="hermes", sessions=[])
         self.director = Director(script, route_table, self.name, life, branch, run,
@@ -222,17 +223,19 @@ class HermesMemoryHost(Adapter):
             call = self.events.get(e["call_id"], {}).get("event", {})
             if call.get("kind") != "tool_call" or call["t_sim"] > e["t_sim"]:
                 raise ValueError("tool_result requires an earlier tool_call")
-        self.events[e["event_id"]] = {"event": e, "session": self.session}
+        written = e["text"]
         if e["text"]:
             self.clock.set_session(self.sim_epoch_s + e["t_sim"])
             self._start()
             tool, fixed, key = WRITE_ARGS[self.name]
             schema = next((s for s in self.schemas if s["name"] == tool), {})
             limit = schema.get("parameters", {}).get("properties", {}).get(key, {}).get("maxLength")
+            written = e["text"][:limit]
             self.turn += 1
             self._call("ingest", n=self.turn, text=e["text"], write={"name": tool, "arguments": {
-                **fixed, key: e["text"][:limit]}})
+                **fixed, key: written}})
             self.settled = False
+        self.events[e["event_id"]] = {"event": e, "session": self.session, "written": written}
 
     def query(self, task, now):
         task_ids(task, now)
@@ -318,7 +321,8 @@ class HermesMemoryHost(Adapter):
             base = self._surfaces[row["surface"]][0]
             if not (base / path).resolve().is_relative_to(base):
                 raise ValueError("checkpoint escapes surface")
-        events = [{"event": event_copy(r["event"]), "session": r["session"]} for r in header["events"]]
+        events = [{"event": event_copy(r["event"]), "session": r["session"],
+                   "written": r.get("written", r["event"]["text"])} for r in header["events"]]
         self._wipe()
         for row in sorted(header["removed"], key=lambda r: r["path"], reverse=True):
             path = self._surfaces[row["surface"]][0] / row["path"]
@@ -342,6 +346,7 @@ class HermesMemoryHost(Adapter):
             wipe_to_fresh(directory, fresh)
             verify_empty(directory, volatile, digest)
         self._blocks, self._cache = (), None
+        self.forget_ambiguous = 0
 
     def reset(self):
         self._wipe()
@@ -360,9 +365,19 @@ class HermesMemoryHost(Adapter):
             raise ValueError("invalid event ids")
         targets = [r["event"] for r in self.events.values()
                    if r["event"]["event_id"] in ids or r["event"].get("call_id") in ids]
+        selected = {e["event_id"] for e in targets}
+        written = {i: r["written"] for i, r in self.events.items()}
+
+        def owns(hit):
+            exact = {i for i, text in written.items() if text == hit}
+            candidates = exact or {i for i, text in written.items() if text and (hit in text or text in hit)}
+            if not exact and candidates & selected and candidates - selected:
+                self.forget_ambiguous += 1
+            return bool(exact & selected) if exact else bool(candidates) and candidates <= selected
+
         search, args, query, listing, text_key, id_key, delete, fixed, key = FORGET[self.name]
         for event in targets:
-            text = event["text"]
+            text = written[event["event_id"]]
             if not text:
                 continue
             values = [text]
@@ -371,7 +386,7 @@ class HermesMemoryHost(Adapter):
                 try:
                     result = json.loads(raw)
                     values = [] if result.get("error") else [r[id_key] for r in result.get(listing, []) if isinstance(r.get(text_key), str)
-                              and r[text_key] and (r[text_key] in text or text in r[text_key])]
+                              and r[text_key] and owns(r[text_key])]
                 except (ValueError, TypeError, KeyError, AttributeError):
                     values = []
             for value in values:

@@ -4,6 +4,7 @@ import ast
 import json
 import os
 import random
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -412,6 +413,119 @@ def test_event_rules_and_character_cut(factory):
     for ids in ([""], [False], [1]):
         with pytest.raises(ValueError):
             host.forget(dict(event_ids=ids))
+
+
+@pytest.fixture(params=["unit", "worker"])
+def regression_host(request, factory, tmp_path, monkeypatch):
+    """Run the same cases against stub tools directly and the file worker."""
+    def make(name="hermes-native"):
+        if request.param == "worker":
+            return factory(name, mode="all_hits")
+        root = tmp_path / "unit-host"
+        root.mkdir()
+        surface, fresh = root / "surface", root / "fresh"
+        surface.mkdir()
+        (surface / plugin_host.MARKER).touch()
+        shutil.copytree(surface, fresh)
+        checkout = write_tree(root / "stub", log=root / "calls.jsonl", mode="all_hits")
+        stub = runpy.run_path(str(checkout / "_stub.py"))
+        # The unit double writes only to the test's declared surface.
+        stub["tool"].__globals__["path"] = lambda: surface / "stub_store.json"
+        host = HermesMemoryHost.__new__(HermesMemoryHost)
+        host.name, host.entry = name, load(REGISTRY / f"{name}.toml")
+        host.events, host.session, host.turn, host.forget_ambiguous = {}, 1, 0, 0
+        host._worker, host.settled, host._blocks, host._cache = None, True, (), None
+        host.paths = dict(hermes_home=surface)
+        host._surfaces = [(surface, [])]
+        host._fresh = [(fresh, plugin_host.surface_hash(surface, []), host._listing(0))]
+        host.clock, host.sim_epoch_s = SimClock(root / "clock.json", BASE, 60), BASE
+
+        def start():
+            host.schemas = [stub["schema"]("memory" if name == "hermes-native" else "fact_store")]
+
+        def call(kind, **args):
+            host._start()
+            if kind == "ingest":
+                write = args["write"]
+                return dict(result=stub["tool"](write["name"], write["arguments"]))
+            if kind == "query":
+                recall = args["recall"]
+                return dict(recall=stub["tool"](recall["name"], recall["arguments"]), prefetch="")
+            assert kind == "tool"
+            return dict(result=stub["tool"](args["name"], args["arguments"]))
+
+        monkeypatch.setattr(host, "_start", start)
+        monkeypatch.setattr(host, "_call", call)
+        return host
+    return make
+
+
+@pytest.mark.parametrize("restore_first", [False, True])
+def test_forget_removes_written_prefix(regression_host, restore_first):
+    host = regression_host()
+    text = "q" * 4001
+    host.ingest(event(text=text))
+    assert host.settle(5)
+    if restore_first:
+        host.restore(host.checkpoint())
+    host.forget(dict(event_ids=["e1"]))
+    assert host.settle(5)
+    assert text[:4000].encode() not in host.checkpoint()
+    for surface, _ in host.surfaces():
+        assert all(text[:4000].encode() not in p.read_bytes() for p in surface.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("selected", [1, 2])
+def test_forget_respects_exact_hit_owner(regression_host, selected):
+    host = regression_host("holographic")
+    events = [event(1), event(2, "new quartz")]
+    for e in events:
+        host.ingest(e)
+    host.forget(dict(event_ids=[f"e{selected}"]))
+    assert host.settle(5)
+    kept = events[2 - selected]
+    rows = json.loads((host.surfaces()[0][0] / "stub_store.json").read_text())
+    assert [r["text"] for r in rows] == [kept["text"]]
+    assert host.query(task(kept["text"]), 100) == answer([kept])
+
+
+@pytest.mark.parametrize("other,hit", [("quartz notes", "old quartz notes"),
+                                       ("new quartz", "old new quartz notes")])
+def test_forget_keeps_ambiguous_hit(regression_host, other, hit):
+    host = regression_host("holographic")
+    host.ingest(event())
+    host.ingest(event(2, other))
+    # Model a provider's merged fact without adding a host-owned event.
+    host._call("tool", name="fact_store", arguments=dict(action="add", content=hit))
+    host.forget(dict(event_ids=["e1"]))
+    assert host.settle(5)
+    rows = json.loads((host.surfaces()[0][0] / "stub_store.json").read_text())
+    assert [r["text"] for r in rows] == [other, hit]
+    assert host.forget_ambiguous == 1
+    host.restore(host.checkpoint())
+    assert host.forget_ambiguous == 0
+    host.forget_ambiguous = 3
+    host.reset()
+    assert host.forget_ambiguous == 0 and host.events == {}
+
+
+@pytest.mark.parametrize("failure", ["gate", "call"])
+def test_ingest_retry_after_failed_write(regression_host, monkeypatch, failure):
+    host = regression_host()
+    method = "_start" if failure == "gate" else "_call"
+    real = getattr(host, method)
+
+    def fail_once(*args, **kwargs):
+        monkeypatch.setattr(host, method, real)
+        raise GateRefused("one refusal") if failure == "gate" else HarnessFailed("ingest_failed")
+
+    monkeypatch.setattr(host, method, fail_once)
+    with pytest.raises(GateRefused if failure == "gate" else HarnessFailed):
+        host.ingest(event())
+    assert "e1" not in host.events
+    host.ingest(event())
+    assert host.settle(5)
+    assert host.query(task(), 100) == answer([event()])
 
 
 def test_decoded_quotes_corpus_order_and_time(factory, monkeypatch):
