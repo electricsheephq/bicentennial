@@ -12,11 +12,11 @@
    "class_source_sha256": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314",
    "decision_tables": [],
    "direction": "verbatim retention",
-   "entry_sha256": "82746e1d791f35ad32b9228400f737c6447764ac191705f0a2bf3e21c1ccb372",
+   "entry_sha256": "94ce6bd4e65e4d354980b72ebca8e3b6792919f1aed88ceb282b42c026e3162e",
    "genre": "g2",
    "kind": "qa",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -65,11 +65,11 @@
     }
    ],
    "direction": "recency",
-   "entry_sha256": "b2f92ebe1b951ef568f568b6807136777f2739265f3ba0580c52eefd295269ab",
+   "entry_sha256": "78d90f09729f3e5297b99e2724b78cee25e90e8c03e628b6f8a68fa21c9ddad8",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -137,11 +137,11 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "76e09b5863bc22a7ed509663a487c0cec5245480af5806d82558a25ca652d3f0",
+   "entry_sha256": "20b7ec867671b04977daf98fadd7611a8bf7c817ce23eb589a7398f3a9a11a7a",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -209,11 +209,11 @@
     }
    ],
    "direction": "recency",
-   "entry_sha256": "56b940fc7741984cb11febc43ddc3b4892c1108e7fb5e59aaa2ccd72b3311ac0",
+   "entry_sha256": "b87c80c3691abe6224b39b1bf3da7486ccf3d3f47a42f8b142b158d8ecf2424e",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -290,11 +290,11 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "6cf1460be5bda85cdc04501f27b025f72189cddafc283df762d752b862ee1bf3",
+   "entry_sha256": "46bfce100aa0db4d4fa53819c49657f95f17f7fae3eac585eb1e296716d73b7b",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -370,11 +370,11 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "460ad04e867bb6189a78611472c1d7a2f11531176b2842f930e6f356f7bc4c31",
+   "entry_sha256": "f5380eefc02a58213663cc663961c2bcc03c3b5429875ba95b33a9c66d5f1640",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -442,11 +442,11 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "45f9d8dc6465640418d00f419d276469a1ac6ef458421799234687c15b1c11c9",
+   "entry_sha256": "d57a64b426a3484f0d259bdfe94745dcd194298adc7c59970acbddb196bb9e76",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
     "value": "uncalibrated (v0.2)"
    },
@@ -522,11 +522,11 @@
     }
    ],
    "direction": "none",
-   "entry_sha256": "e28e56c0a49d0c2d0fefc017846ba9e48a651c02a9f18209c550c2e2dd5a5cf3",
+   "entry_sha256": "342b9a2fac8c59f791424b62787b9948349308fe73f873c2fe0033e4454faf93",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
     "value": "uncalibrated (v0.2)"
    },
@@ -604,11 +604,11 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "e09ae03bd8477b2d77ff04daaecbfd1ffe13a79ad0c1bf15288a357b6a1291dc",
+   "entry_sha256": "e20ce8c1936dd0e1c920011be015f29f86819deaa5150ac0c21516db67f369a0",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "incidental salience",
     "value": "uncalibrated (v0.2)"
    },
@@ -677,11 +677,11 @@
     }
    ],
    "direction": "retrieval breadth",
-   "entry_sha256": "ca31ab1da37da3731ee925e2852ad321b67847dc0acd168b316867af1019dbd9",
+   "entry_sha256": "ac8f88ea3a8a84b3836ec9cfd1ae9704e2d7829a4cf56ecb14772a0aa7afcd28",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "interference",
     "value": "uncalibrated (v0.2)"
    },
@@ -731,11 +731,11 @@
    "class_source_sha256": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314",
    "decision_tables": [],
    "direction": "retrieval breadth",
-   "entry_sha256": "10697dd0cc968e52d7ceaec55aefc86ecb2908ae08561f8cce12f848e309406b",
+   "entry_sha256": "0086c23655a255eb1872c509c0630cd911637e9d4600491c40a11665de7035f0",
    "genre": "g2",
    "kind": "qa",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "aggregation set size",
     "value": "uncalibrated (v0.2)"
    },
@@ -766,11 +766,11 @@
    "class_source_sha256": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee",
    "decision_tables": [],
    "direction": "verbatim retention",
-   "entry_sha256": "c3a12530727c968797f9921f03c73e7280bf686ab0f9ff0359826ee75f5dac94",
+   "entry_sha256": "24141d870b608990b6ec727b66b8ae8f712af866098ae904032f6a89db626e80",
    "genre": "g1",
    "kind": "qa",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
     "value": "uncalibrated (v0.2)"
    },
@@ -839,11 +839,11 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "a724df7cd3a70a300d1fa7fe869c84244f39cf20fdf2a4a096ff18e7e12ddf90",
+   "entry_sha256": "879e871c9f433632a7c177a68671ac699dcda9acb70431f54052e8de47627c26",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
     "value": "uncalibrated (v0.2)"
    },
@@ -950,11 +950,11 @@
     }
    ],
    "direction": "retrieval breadth",
-   "entry_sha256": "d29daed3b886b1e3d1d327d0d74edebb95f4fe880adf589463a92d15b26a7c59",
+   "entry_sha256": "08a18631431649bacb4ccb8d3b1fe4a53f46bbaa558ab021cee59da1da92ec7d",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
     "value": "uncalibrated (v0.2)"
    },
@@ -1033,11 +1033,11 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "2eb164698aa846a74fe93af2b4c7d8fbf7c241115ce54e7a94300f248592c7b2",
+   "entry_sha256": "67fb6a290659c905780fa7887f509fccb2b8ccb4de455e51e43e9266dae9c0cb",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
-    "other_levers": "neutral",
+    "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "wake events between evidence and item",
     "value": "uncalibrated (v0.2)"
    },
@@ -1069,7 +1069,7 @@
   }
  },
  "entry_hash": "sha256 of the canonical JSON (sorted keys, no spaces) of the entry without entry_sha256",
- "file_sha256_of_entries": "b633f8d1b14547ef0f1e81a5e8bde856a9ebe84b8c02e1ea1f3e7c6fc2706d3f",
+ "file_sha256_of_entries": "2e9347f3f9f676e966db1cb68decfe25d6fa953eb3869d9ea3a16831f12a8f3d",
  "keyed_by": "template ref (template_id-vN)",
  "slot": "C-7",
  "status": "partial, provisional (Ring 0 v0.1)"

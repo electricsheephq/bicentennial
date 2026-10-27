@@ -32,7 +32,7 @@ def test_every_template_has_an_entry_whose_hash_recomputes():
         body = {k: v for k, v in e.items() if k != "entry_sha256"}
         assert e["ref"] == ref and e["entry_sha256"] == sha256_canon(body)
         assert e["lever_mix"] == {"primary": e["cell"]["primary_lever"], "value": "uncalibrated (v0.2)",
-                                  "other_levers": "neutral"}
+                                  "other_levers": "not neutralised at v0.1; computed per item into each item's levers"}
     assert frozen["file_sha256_of_entries"] == sha256_canon(frozen["entries"])
 
 
@@ -42,6 +42,20 @@ def test_a_template_change_changes_its_entry(field, value):
     assert getattr(template, field) != value
     changed = c7.entry(dataclasses.replace(template, **{field: value}), "g1", cells)
     assert changed["entry_sha256"] != c7.entry(template, "g1", cells)["entry_sha256"]
+
+
+def test_every_inventory_cell_row_parses():
+    table = [line for line in (ROOT / "docs/inventory/CELLS-v0.md").read_text(encoding="utf-8").splitlines()
+             if c7._CELL_ID.match(line)]
+    rows = c7.cells(ROOT)
+    assert len(rows) == len(table) and rows["WAKE-SWAP"]["stage"] == "A"
+
+
+def test_an_unparsed_cell_row_is_refused(tmp_path):
+    (tmp_path / "docs/inventory").mkdir(parents=True)
+    (tmp_path / "docs/inventory/CELLS-v0.md").write_text("| WAKE-LOOP | Wake | broken |\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="unparsed cell row"):
+        c7.cells(tmp_path)
 
 
 def test_same_bytes_under_any_hash_seed():

@@ -17,7 +17,8 @@ from bicentennial.items.protocol import CANARY
 
 GENRES = ("g1", "g2")
 FREEZE = "specs/ring0/c7-partial.json"
-_CELL_ROW = re.compile(r"\| ([A-Z]+-[A-Z]+) \| (\w+) \|[^|]*\| ([A-Z]) \|[^|]*\|[^|]*\| ([^|]+) \|")
+_CELL_ROW = re.compile(r"\| ([A-Z]+-[A-Z]+) \| (\w+) \|[^|]*\| ([A-Z])(?: \([^|)]*\))? \|[^|]*\|[^|]*\| ([^|]+) \|")
+_CELL_ID = re.compile(r"\| [A-Z]+-[A-Z]+ \|")
 
 
 def cells(root) -> dict:
@@ -26,6 +27,8 @@ def cells(root) -> dict:
     for line in (Path(root) / "docs/inventory/CELLS-v0.md").read_text(encoding="utf-8").splitlines():
         if m := _CELL_ROW.match(line):
             rows[m[1]] = {"track": m[2], "stage": m[3], "primary_lever": m[4].strip()}
+        elif _CELL_ID.match(line):
+            raise ValueError(f"unparsed cell row: {line[:40]}")
     return rows
 
 
@@ -40,7 +43,8 @@ def entry(template, genre, cell_rows) -> dict:
         "class": f"{type(template).__module__}.{type(template).__qualname__}",
         "class_source_sha256": sha256(Path(inspect.getsourcefile(type(template))).read_bytes()).hexdigest(),
         "cell": cell,
-        "lever_mix": {"primary": cell["primary_lever"], "value": "uncalibrated (v0.2)", "other_levers": "neutral"},
+        "lever_mix": {"primary": cell["primary_lever"], "value": "uncalibrated (v0.2)",
+                      "other_levers": "not neutralised at v0.1; computed per item into each item's levers"},
     }))
     return {**body, "entry_sha256": sha256_canon(body)}
 

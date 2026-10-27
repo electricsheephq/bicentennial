@@ -84,13 +84,14 @@ The **write-turn prompt text** is open. Ring 0 runs with a scripted model and se
 | wake-loop-v1 | G1 | WAKE-LOOP | extraction and consolidation | act |
 
 **How the entries bind.**
-- The T0 and T1 runners refuse a real system on any template that has no entry here, or whose entry's hash does not match the template build (exit 3). Controls are not refused.
+- The T0 and T1 runners will refuse a real system on any template that has no entry here, or whose entry's hash does not match the template build (exit 3). Controls are not refused. Until those runners land, the only check is the repository test that fails when the committed file no longer matches the template build.
 - A template change that alters any recorded field is a new template version with its own entry, written before a real system runs on it.
 - T0 relation rows (the invariance and direction rows) sit at other distance and wake values as diagnostics, not rungs. Rungs come with calibration in v0.2.
 
 **Limits stated at the freeze.**
 - The direction cap (no label above 40% of a track's scored items in a pack) is a pack-level gate over both genres. At Ring 0 v0.1 it is reported, not met, for Wake and Tuesday, where v0.1 has one Wake template and two Tuesday templates, so one label holds 100% or 50% of the track.
-- No template declares duty items yet, so the harmful-omission count is 0 at v0.1.
+- Duty items are declared by `wake-loop-v1` and by both Tuesday templates (each live commitment). An omission on one of them counts as a harmful omission.
+- The lever-mix shape's neutral secondary levers are not enforced at v0.1. Lever values are computed per item and recorded in each item's `levers`. `keep-incidental-v1`, for example, places same-predicate decoys on other places, so its items carry non-zero interference. Each entry's `lever_mix.other_levers` says so.
 - Planted mutants are the generator-placed distractors. Mutants built from a world's planted material come later.
 - `keep-forget-v1`, `keep-neighbour-v1` and the two Tuesday templates are not exercised at T1. The Tuesday templates are structure-only until their trigger render lands.
 
