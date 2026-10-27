@@ -9,7 +9,7 @@ from bicentennial.canon import canon
 from bicentennial.items import Option, compile_branch, compile_life
 from bicentennial.score.answer_types import matches
 from bicentennial.score.qa import score_qa
-from tests.items.test_compile import (
+from .test_compile import (
     assertion,
     fact,
     make_cut,
