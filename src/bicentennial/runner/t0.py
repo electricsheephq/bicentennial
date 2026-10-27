@@ -310,10 +310,10 @@ def _surface_bytes(adapter):
 
 
 class _Capture:
-    """Retain refusals and infrastructure causes through S05's conversion."""
+    """Retain refusals and fault causes through S05's conversion."""
 
-    def __init__(self, host, refusals, infra):
-        self.host, self.refusals, self.infra = host, refusals, infra
+    def __init__(self, host, refusals, infra, system):
+        self.host, self.refusals, self.infra, self.system = host, refusals, infra, system
 
     def __getattr__(self, name):
         value = getattr(self.host, name)
@@ -327,7 +327,9 @@ class _Capture:
                 self.refusals.append(error)
                 raise
             except HarnessFailed as error:
-                if str(error) not in SYSTEM_CAUSES:
+                if str(error) in SYSTEM_CAUSES:
+                    self.system.append(error)
+                else:
                     self.infra.append(error)
                 raise
             except Exception as error:
@@ -340,8 +342,8 @@ class _Capture:
 class _OwnedHost(_Capture):
     """Own a successful construction; close the underlying host exactly once."""
 
-    def __init__(self, host, refusals, infra):
-        super().__init__(host, refusals, infra)
+    def __init__(self, host, refusals, infra, system):
+        super().__init__(host, refusals, infra, system)
         self.closed = False
         self.initial_bytes, self.growth = 0, 0
 
@@ -362,13 +364,15 @@ class _Factory:
         self.entry, self.lock, self.real = entry, lock, real
         self.host_options, self.hosts, self.refusals = dict(host_options or {}), [], []
         self.infra = []
+        self.system = []
         self.snapshots = 0
         self.unit.mkdir(parents=True)
 
     def __call__(self):
         try:
             if not self.real:
-                return _Capture(REFERENCE_SYSTEMS[self.entry["name"]](), self.refusals, self.infra)
+                return _Capture(REFERENCE_SYSTEMS[self.entry["name"]](), self.refusals,
+                                self.infra, self.system)
             n = len(self.hosts)
             root = self.unit / f"h{n}"
             root.mkdir()
@@ -379,7 +383,7 @@ class _Factory:
                                   self.pack.pack["pack_id"]]).decode(), 0),
                 lock_hash=lock_hash(self.lock), sim_epoch_s=0, **self.host_options)
             host = HermesMemoryHost(self.entry, **options)
-            owned = _OwnedHost(host, self.refusals, self.infra)
+            owned = _OwnedHost(host, self.refusals, self.infra, self.system)
             self.hosts.append(owned)
             owned.initial_bytes = _surface_bytes(host)
             target = host.paths["workspace"] / "pack"
@@ -444,17 +448,22 @@ class _Factory:
                         verdict = adapter_invariant(factory, invariant, bound_s=bound_s,
                             snapshot=factory.snapshot if self.real else None)
                     finally:
+                        infra_before_close = len(factory.infra)
+                        system_failed = bool(factory.system)
                         try:
                             factory.close()
                         except (*REFUSALS, T0Refused):
                             raise
                         except Exception as error:
                             factory.infra.append(error)
+                        if system_failed and not infra_before_close:
+                            # Closing a dead worker must preserve its system failure.
+                            del factory.infra[infra_before_close:]
                 finally:
                     # Keep the closed hosts available for audit until the parent unit is removed.
                     self.hosts.extend(factory.hosts)
                     self.refusals.extend(factory.refusals)
-                if not factory.infra:
+                if not factory.infra and verdict.status != "INFRA_FAILURE":
                     break
                 if attempt == 2:
                     ids = ADAPTER_PROBES[invariant]

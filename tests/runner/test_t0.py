@@ -793,11 +793,14 @@ def test_known_failure_wins_over_blocked(installed, tmp_path, monkeypatch, scena
 @pytest.mark.parametrize("fault,status,code,count", [
     (HarnessFailed("ipc"), "INFRA_FAILURE", 2, 3),
     (HarnessFailed("query_failed"), "FAIL", 1, 1),
+    (HarnessFailed("turn_timeout"), "FAIL", 1, 1),
     (ValueError("host decode"), "INFRA_FAILURE", 2, 3)])
+@pytest.mark.parametrize("close_fault", [False, True])
 def test_invariant_fault_attribution(fake_hosts, installed, tmp_path, monkeypatch,
-                                     fault, status, code, count):
+                                     fault, status, code, count, close_fault):
     factory, created = fake_hosts
     original = t0.HermesMemoryHost.query
+    original_close = t0.HermesMemoryHost.close
     failures = []
 
     def query(host, task, now):
@@ -806,7 +809,13 @@ def test_invariant_fault_attribution(fake_hosts, installed, tmp_path, monkeypatc
             raise fault
         return original(host, task, now)
 
+    def close(host):
+        original_close(host)
+        if close_fault and host.options["root"] in failures:
+            raise HarnessFailed("end_failed")
+
     monkeypatch.setattr(t0.HermesMemoryHost, "query", query)
+    monkeypatch.setattr(t0.HermesMemoryHost, "close", close)
     empty_audit = t0._audit([])
     monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
     out = tmp_path / "out"
@@ -831,6 +840,69 @@ def test_invariant_fault_attribution(fake_hosts, installed, tmp_path, monkeypatc
     validate("card_ring0", card)
     assert card["run_status"] == ("BLOCKED" if status == "INFRA_FAILURE" else "COMPLETE")
     assert card["gate_verdict"] == ("BLOCKED" if status == "INFRA_FAILURE" else "FAIL")
+    assert not (out / "work").exists()
+
+
+def test_invariant_close_refusal_after_system_fault(fake_hosts, monkeypatch):
+    factory, created = fake_hosts
+    original_query, original_close = t0.HermesMemoryHost.query, t0.HermesMemoryHost.close
+    failures = []
+
+    def query(host, task, now):
+        if task["task_id"] == "new-b":
+            failures.append(host.options["root"])
+            raise HarnessFailed("query_failed")
+        return original_query(host, task, now)
+
+    def close(host):
+        original_close(host)
+        if host.options["root"] in failures:
+            raise GateRefused("marker")
+
+    monkeypatch.setattr(t0.HermesMemoryHost, "query", query)
+    monkeypatch.setattr(t0.HermesMemoryHost, "close", close)
+    with pytest.raises(GateRefused):
+        factory.invariants(5)
+    assert len(failures) == 1
+    assert created and all(host.closed == 1 for host in created)
+    factory.refusals.clear()
+
+
+@pytest.mark.parametrize("always", [False, True])
+def test_invariant_snapshot_infrastructure(fake_hosts, installed, tmp_path, monkeypatch, always):
+    factory, created = fake_hosts
+    original = t0._Factory.snapshot
+    attempts = []
+
+    def snapshot(attempt, adapter):
+        if "INV-FORGET" in attempt.unit.parts:
+            attempts.append(attempt.unit)
+            if always or len(attempts) <= 2:
+                raise OSError("snapshot failed")
+        return original(attempt, adapter)
+
+    monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
+    empty_audit = t0._audit([])
+    monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
+    out = tmp_path / "out"
+    assert run(installed, out, system="hermes-native", packs=[factory.pack.rel], hermes=tmp_path,
+               entry=factory.entry | dict(fresh_install_hash="1" * 64)) == (2 if always else 0)
+    assert len(attempts) == len(set(attempts)) == 3
+    assert [p.name for p in attempts] == ["a0", "a1", "a2"]
+    verdicts = json.loads((out / "adapter_invariants.json").read_bytes())
+    expected = adapter_invariants(ReferenceStore, bound_s=5)
+    for verdict in verdicts:
+        assert Verdict(**verdict).to_obj() == verdict
+        if always and verdict["invariant"] == "INV-FORGET":
+            assert verdict == Verdict("INV-FORGET", "INFRA_FAILURE", 3, 0, (), (),
+                ("forget-1", "forget-2", "forget-store"), ("infra",)).to_obj()
+        else:
+            assert verdict == expected[verdict["invariant"]].to_obj()
+    assert created and all(host.closed == 1 for host in created)
+    card = json.loads((out / factory.pack.rel / "card.json").read_bytes())
+    validate("card_ring0", card)
+    assert card["run_status"] == ("BLOCKED" if always else "COMPLETE")
+    assert card["gate_verdict"] == ("BLOCKED" if always else "PASS")
     assert not (out / "work").exists()
 
 
