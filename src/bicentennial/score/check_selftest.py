@@ -195,17 +195,17 @@ def g2_cases(compiled, worlds, schedule, templates, *, life):
                 raise ValueError(item["item_id"])
             window = tuple(windows[0])
         t_sim = window[0] if window else schedule.sessions[k - 1].t_end
-        later = any(db.execute("SELECT 1 FROM locked_token t JOIN fact f ON f.id=t.fact_id "
+        later = bool(db.execute("SELECT 1 FROM fact d JOIN fact f ON f.subject_id=d.subject_id "
+                               "AND f.predicate=d.predicate AND f.id!=d.id AND f.object!=d.object "
                                "JOIN link l ON l.fact_id=f.id JOIN event e ON e.id=l.event_id "
-                               "WHERE t.value=? AND e.t_sim < ? AND EXISTS "
+                               "WHERE d.id=? AND l.role='assert' AND e.t_sim < ? AND EXISTS "
                                "(SELECT 1 FROM json_each(e.audience_json) WHERE value='agent') "
-                               "AND e.t_sim > (SELECT min(d.t_sim) FROM event d JOIN link dl "
-                               "ON dl.event_id=d.id WHERE dl.fact_id=? AND dl.role='assert') "
+                               "AND e.t_sim > (SELECT min(a.t_sim) FROM event a JOIN link dl "
+                               "ON dl.event_id=a.id WHERE dl.fact_id=d.id AND dl.role='assert') "
                                "AND (f.speech_act IN ('hedge','quote') OR "
                                "(f.speech_act='assert' AND l.role='assert' AND e.actor_id!=f.subject_id "
                                "AND e.actor_id!=?))",
-                               (token, t_sim, rec["decisive_fact_id"], cut.principal_id)).fetchone()
-                    for token in item["options"][0]["tokens"])
+                               (rec["decisive_fact_id"], t_sim, cut.principal_id)).fetchone())
         bundle = bundles.get(rec["bundle_id"])
         result.append(Case(life=life, item=item, record=rec, bundle=bundle,
                            twin=next((items[i] for i in bundle["items"] if i != item["item_id"]), None)

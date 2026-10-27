@@ -244,14 +244,48 @@ def test_shares_exclude_environment_recoverable_pairs(cases, branches):
     assert report.failures == ["share:restraint:Keep"]
 
 
-@pytest.mark.parametrize("when,visible,expected", [
-    ("after_probe", True, False), ("at_probe", True, False),
-    ("before_decisive", True, False), ("at_decisive", True, False),
-    ("between", True, True), ("between", False, False),
+@pytest.mark.parametrize("mention", ["hedge", "quote", "third_party"])
+def test_later_mention_from_generated_preference(tmp_path, monkeypatch, mention):
+    write_preferences = G15.write_preferences
+
+    def with_mention(db, schedule, prefs, *, principal):
+        actor = db.execute("SELECT id FROM entity WHERE kind='person' AND id!=? ORDER BY id LIMIT 1",
+                           (principal,)).fetchone()[0]
+        prefs = [replace(p, mention=mention, at=((1, 2), (2, 2), (3, 2)),
+                         third_party=actor if mention == "third_party" else None)
+                 if p.id == "seat-long" else p for p in prefs]
+        return write_preferences(db, schedule, prefs, principal=principal)
+
+    monkeypatch.setattr(G15, "write_preferences", with_mention)
+    life = G15.make_life(tmp_path / "drift", "drift")
+    try:
+        cases = g2_cases(life.compiled, {f"B{b}": (db, life.cuts[b]) for b, db in enumerate(life.dbs)},
+                         life.schedule, life.templates, life="generated-mention")
+        booking = [c for c in cases if c.record["template_id"] == "drift-booking"]
+        assert len(booking) == 2
+        assert all(c.record["levers"]["chain_depth"] == 1 for c in booking)
+        assert [c.later_mention for c in booking] == [True, True]
+    finally:
+        for db in life.dbs:
+            db.close()
+
+
+@pytest.mark.parametrize("when,visible,shape,expected", [
+    ("after_probe", True, "third_party", False), ("at_probe", True, "third_party", False),
+    ("before_decisive", True, "third_party", False), ("at_decisive", True, "third_party", False),
+    ("between", True, "third_party", True), ("between", False, "third_party", False),
+    ("between", True, "hedge", True), ("between", True, "quote", True),
+    ("after_probe", True, "hedge", False), ("between", False, "hedge", False),
+    ("between", True, "same_value", False), ("between", True, "other_subject", False),
+    ("between", True, "other_predicate", False), ("between", True, "subject_assert", False),
+    ("between", True, "principal_assert", False), ("between", True, "mention_link", False),
+    ("between", True, "same_fact", False), ("between", True, "missing_decisive", False),
 ])
-def test_later_mention_is_visible_between_decisive_assertion_and_probe(tmp_path, when, visible, expected):
+def test_later_mention_is_visible_between_decisive_assertion_and_probe(
+        tmp_path, monkeypatch, when, visible, shape, expected):
     life = G15.make_life(tmp_path / "drift", "drift")
     dbs = []
+    roles = {}
     try:
         worlds = {f"B{b}": (db, life.cuts[b]) for b, db in enumerate(life.dbs)}
         original = g2_cases(life.compiled, worlds, life.schedule, life.templates, life="mention-test")
@@ -262,10 +296,11 @@ def test_later_mention_is_visible_between_decisive_assertion_and_probe(tmp_path,
                                       dict(source.execute("SELECT * FROM meta").fetchone()))
             dbs.append(db)
             source.backup(db)
+            # Keep the compiled options fixed while probing classifier-only world additions.
+            roles[id(db)] = {t.template_id: G15.option_roles(t, source, life.schedule) for t in life.templates}
             c = next(c for c in booking if c.record["branch"] == f"B{branch}")
-            fact_id, subject = db.execute("SELECT f.id, f.subject_id FROM fact f JOIN locked_token t "
-                                         "ON t.fact_id=f.id WHERE t.value=?",
-                                         (c.item["options"][0]["tokens"][0],)).fetchone()
+            decisive = db.execute("SELECT * FROM fact WHERE id=?", (c.record["decisive_fact_id"],)).fetchone()
+            subject = decisive["subject_id"]
             decisive_t = db.execute("SELECT e.t_sim FROM event e JOIN link l ON l.event_id=e.id "
                                     "WHERE l.fact_id=? AND l.role='assert'",
                                     (c.record["decisive_fact_id"],)).fetchone()[0]
@@ -275,11 +310,32 @@ def test_later_mention_is_visible_between_decisive_assertion_and_probe(tmp_path,
                  "between": decisive_t + 1}[when]
             actor = db.execute("SELECT id FROM entity WHERE id NOT IN (?, ?) ORDER BY id LIMIT 1",
                                (subject, life.principal)).fetchone()[0]
+            fact_id = "later-fact"
+            act = "assert" if shape in ("third_party", "subject_assert", "principal_assert") else "hedge"
+            if shape == "quote":
+                act = "quote"
+            G15.rows.insert_fact(db, id=fact_id, subject_id=actor if shape == "other_subject" else subject,
+                                 predicate="other" if shape == "other_predicate" else decisive["predicate"],
+                                 object=json.loads(decisive["object"]) + ("" if shape == "same_value" else "-later"),
+                                 polarity="affirm", modality="stated", strength=500, speech_act=act)
+            if shape == "same_value":
+                G15.rows.insert_locked_token(db, token_id="repeated-gold", fact_id=fact_id, kind="code",
+                                             value=json.loads(decisive["object"]))
+            if shape == "same_fact":
+                fact_id = decisive["id"]
+            if shape in ("subject_assert", "principal_assert"):
+                actor = subject if shape == "subject_assert" else life.principal
             G15.rows.insert_event(db, id="third-party-mention", t_sim=t, kind="statement", channel="chat",
                                   actor_id=actor, audience_json=["agent"] if visible else [],
                                   visibility="shared", salience=500, payload_json={})
-            G15.rows.insert_link(db, event_id="third-party-mention", fact_id=fact_id, role="assert")
-        changed = g2_cases(life.compiled, {f"B{b}": (db, life.cuts[b]) for b, db in enumerate(dbs)},
+            G15.rows.insert_link(db, event_id="third-party-mention", fact_id=fact_id,
+                                 role="mention" if shape == "mention_link" else "assert")
+        compiled = life.compiled
+        if shape == "missing_decisive":
+            compiled = replace(compiled, records=[r | {"decisive_fact_id": None} for r in compiled.records])
+        monkeypatch.setattr("bicentennial.score.check_selftest.option_roles",
+                            lambda template, db, schedule: roles[id(db)][template.template_id])
+        changed = g2_cases(compiled, {f"B{b}": (db, life.cuts[b]) for b, db in enumerate(dbs)},
                            life.schedule, life.templates, life="mention-test")
         observed = [c for c in changed if c.record["template_id"] == "drift-booking"]
         assert [c.history for c in observed] == [c.history for c in booking]
