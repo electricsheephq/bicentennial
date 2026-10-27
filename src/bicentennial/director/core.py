@@ -64,6 +64,7 @@ class Director:
         for task in AUX_TASKS:
             self.ctx.path_aliases[f"/aux/{task}/"] = self.ctx.aliases[f"bicentennial-aux-{task}"] = _alias(task)
         self.ctx.aliases["bicentennial-summariser"] = roles.alias("compaction")
+        self.ctx.aliases["bicentennial-extraction"] = roles.alias("extraction")
         apply_masks({}, run_values)  # refuses incomplete run values before any request
         self.run_values = dict(run_values)
         self.table, self.schedule = route_table, schedule or FaultLite.load([], script)

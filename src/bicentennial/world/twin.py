@@ -205,6 +205,8 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
                 if any(find("event", id=link["event_id"])[0]["payload_json"] for link in evidence_links):
                     raise ValueError
                 evidence, = find("fact", id=tw.evidence_fact_id)
+                if find("attr", entity_id=evidence["subject_id"], key=evidence["predicate"], value=evidence["object"]):
+                    raise ValueError
                 swap("fact", evidence, evidence | {"object": tw.evidence_object, "polarity": tw.evidence_polarity})
         removed = [json.loads(line) for line in out]
         added = [json.loads(line) for line in into]
@@ -213,7 +215,7 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
         missing -= {(r["table"], r["row"]["id"]) for r in added if r["table"] in ("event", "fact")}
         if any(canon(fid) in canon(r) for _, fid in sorted(missing) for r in retained):
             raise ValueError
-        occupied = {r["row"]["t_sim"] for r in retained if r["table"] == "event"}
+        occupied = {r["row"]["t_sim"] for r in retained + added if r["table"] == "event"}
         vacated = {r["row"]["t_sim"] for r in removed if r["table"] == "event"} - occupied
         for k in range(1, len(schedule.sessions) + 1):
             for n in range(1, TURNS + 1):
