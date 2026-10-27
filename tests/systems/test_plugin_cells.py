@@ -25,7 +25,11 @@ from bicentennial.director.responder import Call
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import FORMATS, WRITE_ARGS, ScriptedResponder
 from bicentennial.harness.hermes import adapter
-from bicentennial.harness.hermes.adapter import HermesAdapter, PinMismatch
+from bicentennial.harness.hermes.adapter import (
+    HarnessFailed,
+    HermesAdapter,
+    PinMismatch,
+)
 from bicentennial.harness.hermes.config import PLACEHOLDER_KEY
 from bicentennial.ledger import BlobStore, Guard, verify
 from bicentennial.runtime.clock import SimClock
@@ -466,6 +470,39 @@ def test_mem0_telemetry_fault(tmp_path):
         (a.paths["hermes_home"] / ".env").unlink()
         session(a, 1)
         assert any(r.get("subrole") == "egress" for r in a.records())
+    finally:
+        a.close()
+
+
+def test_mem0_settle_before_session(tmp_path, monkeypatch):
+    a, cell = make(tmp_path, "unstarted", "mem0-oss", "a" * 64)
+    monkeypatch.setattr(hermes_plugin, "settle", wait)
+    try:
+        assert a.end_threads is None
+        barrier = cell.settle()
+        assert not barrier.settled and barrier.reason == "bound_reached"
+    finally:
+        a.close()
+
+
+@pytest.mark.parametrize("failure", ["plugin_inactive", "end_failed"])
+def test_mem0_failed_session_clears_end_observation(tmp_path, monkeypatch, failure):
+    repo, digest, _ = plugin_repo(tmp_path, "mem0-oss")
+    a, cell = make(tmp_path, "failed", "mem0-oss", digest)
+    monkeypatch.setattr(hermes_plugin, "settle", wait)
+    try:
+        cell.install(repo, alias="bicentennial-main")
+        assert session(a, 1).end_threads == a.end_threads == ()
+        assert cell.settle().settled
+        if failure == "plugin_inactive":
+            a.plugin = "inactive"
+        else:
+            (a.paths["hermes_home"] / ".fake-end").write_bytes(canon({"ok": False}))
+        with pytest.raises(HarnessFailed, match=f"^{failure}$"):
+            session(a, 2)
+        assert a.end_threads is None
+        barrier = cell.settle()
+        assert not barrier.settled and barrier.reason == "bound_reached"
     finally:
         a.close()
 

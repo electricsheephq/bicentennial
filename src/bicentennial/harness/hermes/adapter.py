@@ -193,6 +193,7 @@ class HermesAdapter:
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
+        self.end_threads = None
         self.director = Director(script, route_table, entry["name"], life, branch, run,
                                  tuple(t["tool"] for t in entry["write_tools"]), responder, clock, Guard([]),
                                  {"sandbox_root": str(self.paths["root"]), "director_port": "0"}, write_prompt,
@@ -206,6 +207,7 @@ class HermesAdapter:
     def run_session(self, index, *, sim_t_s, lock_hash, attempt_id) -> SessionResult:
         session, d = next(s for s in self.script["sessions"] if s["index"] == index), self.director
         gate, restarts, finals, compaction, self._wiped = [], [], [], False, False
+        self.end_threads = None
         t = {"spawn": [], "open": [], "turn": [], "drain": [], "resume": []}
         try:
             self._gate(gate)
