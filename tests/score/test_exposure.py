@@ -102,8 +102,8 @@ def append(writer, spec):
     return result
 
 
-def ledger(root, records, lock=LOCK):
-    writer = Ledger(root, Guard([]), lock_hash=lock, attempt_id="att-1")
+def ledger(root, records, lock=LOCK, attempt_id="att-1"):
+    writer = Ledger(root, Guard([]), lock_hash=lock, attempt_id=attempt_id)
     try:
         for spec in records:
             append(writer, spec)
@@ -112,12 +112,12 @@ def ledger(root, records, lock=LOCK):
     return root
 
 
-def score(roots, indexed=None, items=None, probes=None, recall=True):
+def score(roots, indexed=None, items=None, probes=None, recall=True, **kwargs):
     indexed = {E: Span(E, 1, 2, (TOKEN,))} if indexed is None else indexed
     items = [item()] if items is None else items
     probes = {i["item_id"]: (2, 1) for i in items} if probes is None else probes
     return exposure(roots, life="life", branch="B0", system="hermes",
-                    spans=indexed, items=items, probes=probes, recall=recall)
+                    spans=indexed, items=items, probes=probes, recall=recall, **kwargs)
 
 
 def verdict(report):
@@ -215,6 +215,9 @@ def test_empty_gold_is_unknown_even_with_probe(tmp_path):
     (True, [("tool_results", "absent", 200), ("tool_results", TOKEN, 200)], False),
     (False, [("cursor", TOKEN, 200), ("tool_results", "absent", 200)], True),
     (False, [("cursor", "absent", 200), ("cursor", TOKEN, 200)], False),
+    (False, [("cursor", "absent", 500), ("retry", TOKEN, 200)], True),
+    (False, [("cursor", "absent", 200), ("retry", TOKEN, 200)], False),
+    (False, [("retry", "absent", 200), ("cursor", TOKEN, 200)], False),
     (True, [("cursor", TOKEN, 200)], None),
     (True, [("tool_results", TOKEN, 503)], None),
     (True, [("tool_results", "absent", 503), ("tool_results", TOKEN, 200)], True),
@@ -254,6 +257,19 @@ def test_presence_nfc_exact_escape_and_boundaries():
 def test_invalid_presence_needles(needles):
     with pytest.raises(ValueError):
         present(needles, TOKEN)
+
+
+@pytest.mark.parametrize("needles", [(), ("",), ("a\x00b",), (TOKEN, "")])
+def test_invalid_span_needles_before_ledger_read(tmp_path, monkeypatch, needles):
+    root = ledger(tmp_path, [record(role="summariser", cursor=None)])
+    indexed = {E: Span(E, 1, 2, (TOKEN,)), E2: Span(E2, 1, 1, needles)}
+
+    def unexpected_read(root):
+        pytest.fail("ledger read before span validation")
+
+    monkeypatch.setattr(module, "verify", unexpected_read)
+    with pytest.raises(ValueError, match="invalid presence needle"):
+        score([root], indexed)
 
 
 def test_span_normalisation_fallback_and_frozen():
@@ -347,6 +363,28 @@ def test_mixed_lock_hashes(tmp_path):
              ledger(tmp_path / "b", [record(TOKEN)], "d" * 64)]
     with pytest.raises(ValueError, match="lock"):
         score(roots)
+
+
+@pytest.mark.parametrize("same_root", [True, False])
+def test_mixed_attempts_refused(tmp_path, same_root):
+    first = ledger(tmp_path / "a", [record(TOKEN, status=500)])
+    second = ledger(first if same_root else tmp_path / "b", [record()], attempt_id="att-2")
+    with pytest.raises(ValueError, match="^mixed attempts$"):
+        score([first] if same_root else [first, second])
+
+
+@pytest.mark.parametrize("attempt_id", ["att-1", "att-2"])
+def test_selected_attempt_isolates_history_and_probe(tmp_path, attempt_id):
+    root = ledger(tmp_path, [record(TOKEN), record(role="probe_main", cursor=(2, 1),
+                                                 subrole="tool_results")])
+    ledger(root, [record(cursor=(1, 3)), record(TOKEN, role="probe_main", cursor=(2, 1),
+                                              subrole="tool_results")], attempt_id="att-2")
+    report = score([root], attempt_id=attempt_id)
+    selected_first = attempt_id == "att-1"
+    assert report["spans"][E]["present"] == ([[1, 2]] if selected_first else [])
+    assert verdict(report)["cause"] == (None if selected_first else "N/A_EXPOSURE")
+    assert verdict(report)["in_context"] is (not selected_first)
+    assert verdict(report)["missing"] == ([E] if selected_first else [])
 
 
 @pytest.mark.parametrize("case", ["unknown", "missing-probe", "extra-probe", "zero", "bool", "float",

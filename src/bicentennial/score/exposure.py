@@ -110,8 +110,9 @@ def _cursor(value):
     return tuple(value)
 
 
-def exposure(roots, *, life, branch, system, spans, items, probes, recall) -> dict:
+def exposure(roots, *, life, branch, system, spans, items, probes, recall, attempt_id=None) -> dict:
     """Read one attempt in run order without retaining request bodies."""
+    needles = {eid: _needles(span.needles) for eid, span in spans.items()}
     roots = tuple(Path(root) for root in roots)
     if not roots:
         raise ValueError("empty ledger roots")
@@ -133,7 +134,8 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall) -> di
         at_probe.setdefault(cursor, []).append(iid)
     hits = {eid: set() for eid in sorted(spans)}
     observed, digests, lock_hash = {}, [], None
-    subrole = "tool_results" if recall else "cursor"
+    subroles = ("tool_results",) if recall else ("cursor", "retry")
+    attempts = set()
     for root in roots:
         counts = verify(root)
         if counts["records"] < 1 or any(counts[key] for key in (
@@ -146,6 +148,11 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall) -> di
             rec = json.loads(line)
             if rec["type"] != "request":
                 continue
+            if attempt_id is not None and rec["attempt_id"] != attempt_id:
+                continue
+            attempts.add(rec["attempt_id"])
+            if len(attempts) > 1:
+                raise ValueError("mixed attempts")
             if any(rec[key] != value for key, value in (
                     ("life", life), ("branch", branch), ("system", system))):
                 raise ValueError("foreign request identity")
@@ -157,19 +164,19 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall) -> di
                 continue
             cursor = (rec["cursor"]["session"], rec["cursor"]["turn"])
             history = rec["role"] in ("replay_main", "write_turn")
-            probe = (rec["role"] == "probe_main" and rec["subrole"] == subrole
+            probe = (rec["role"] == "probe_main" and rec["subrole"] in subroles
                      and cursor in at_probe and cursor not in observed)
             if not history and not probe:
                 continue
             text = context_text(json.loads(store.get(rec["req"])))
             if history:
                 for eid in hits:
-                    if present(spans[eid].needles, text):
+                    if all(needle in text for needle in needles[eid]):
                         hits[eid].add(cursor)
             if probe:
                 observed[cursor] = {
                     iid: sorted({eid for eid in indexed[iid]["gold_spans"]
-                                 if not present(spans[eid].needles, text)})
+                                 if not all(needle in text for needle in needles[eid])})
                     for iid in at_probe[cursor]}
             del text
     span_report = {}
