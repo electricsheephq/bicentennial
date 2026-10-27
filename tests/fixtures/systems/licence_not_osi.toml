@@ -1,0 +1,20 @@
+# canary: c168e5f8-3948-4553-8554-7aa162054723
+name = "licence_not_osi"
+licence = "Elastic-2.0"
+harness = "hermes"
+artifact = {name = "hermes-agent", version = "v0.22.2", sha256 = "5593518f908c97c32e0a144f291308674f38a6237995a12df504967e71c4101b"}
+write_tools = [{tool = "memory", actions = ["add", "patch", "remove"]}]
+read_tools = ["session_search"]
+recall = {tool = "session_search", argument_template = {query = "{prompt}"}}
+# Directory root includes memories/MEMORY.md, memories/USER.md, state.db and WAL/SHM.
+# No volatile exclusions; R12 checkpoints WAL before measuring this configured tree.
+surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = []}]
+fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+own_model_routes = [
+    {role = "compaction", alias = "bicentennial-compaction"},
+    {role = "summariser", alias = "bicentennial-summariser"},
+]
+structured_formats = {}
+settle = {kind = "none", bound_s = 0}
+machine_class = "light"
+benchmark_operator_runs = true
