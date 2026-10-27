@@ -35,8 +35,10 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         raise ValueError("a port and an alias are required")
     if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
         raise ValueError("a memory plug-in is named by ^[a-z0-9][a-z0-9_-]*$")
-    if not memory and plugin is not None:
-        raise ValueError("a memory plug-in requires memory enabled")
+    if type(memory) is not bool:
+        raise ValueError("memory is a bool")
+    if not memory and (plugin is not None or plugin_config):
+        raise ValueError("a memory plug-in or plugin_config requires memory enabled")
     base = f"http://127.0.0.1:{port}"
     aux = {t: {"provider": "auto", "model": "bicentennial-summariser" if t == "compression"
                else f"bicentennial-aux-{t}", "base_url": f"{base}/aux/{t}/v1", "api_key": PLACEHOLDER_KEY}

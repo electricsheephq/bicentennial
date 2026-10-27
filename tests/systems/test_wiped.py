@@ -391,6 +391,13 @@ def test_no_memory_config_and_cell_refusals():
     assert all(canon(value) == canon(default[key]) for key, value in disabled.items()
                if key not in ("memory", "platform_toolsets"))
     assert canon(default) == canon(hermes_config(4321, "bicentennial-main", memory=True))
+    with pytest.raises(ValueError, match="memory is a bool"):
+        hermes_config(4321, "bicentennial-main", memory="false")
+    with pytest.raises(ValueError, match="memory is a bool"):
+        hermes_config(4321, "bicentennial-main", memory=0)
+    with pytest.raises(ValueError, match="plugin_config requires memory enabled"):
+        hermes_config(4321, "bicentennial-main", plugin_config={"plugins": {"x": 1}}, memory=False)
+    assert hermes_config(4321, "bicentennial-main", plugin_config={}, memory=False) == disabled
     with pytest.raises(ValueError):
         hermes_config(4321, "bicentennial-main", plugin="holographic", memory=False)
     with pytest.raises(ValueError, match="probe-only"):
