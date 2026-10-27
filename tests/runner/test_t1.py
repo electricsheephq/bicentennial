@@ -356,9 +356,10 @@ def completed(installed, tmp_path_factory):
         assert len(checks) == 4
         assert not list(root.rglob("a[0-9]*"))
         print(f"T1 deterministic_sha256={sha256(projection(first)).hexdigest()}", flush=True)
-        yield SimpleNamespace(ctx=ctx, first=first, cache=cache, calls=calls[:12], expected=expected)
     finally:
+        # Undo before yielding: later tests (test_pairing_stop_fake_worker) call the real run_life.
         patch.undo()
+    yield SimpleNamespace(ctx=ctx, first=first, cache=cache, calls=calls[:12], expected=expected)
 
 
 def test_full_run(completed):
