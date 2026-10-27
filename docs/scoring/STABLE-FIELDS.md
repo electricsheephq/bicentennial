@@ -65,6 +65,7 @@ with no repeated key; the validator rejects any other order.
 | `card.bundles` | stable | RING0 §4; PREREG §3/§7; order: `bundle_id` |
 | `card.bundles[].bundle_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.bundles[].cell_id` | stable | RING0 §4; PREREG §3/§7 |
+| `card.bundles[].life` | stable | RING0 §4; PREREG §3/§7 |
 | `card.bundles[].twin_type` | stable | RING0 §4; PREREG §3/§7 |
 | `card.bundles[].items` | stable | RING0 §4; PREREG §3/§7; order: item id |
 | `card.bundles[].score_milli` | stable | RING0 §4; PREREG §3/§7 |
@@ -82,6 +83,19 @@ with no repeated key; the validator rejects any other order.
 | `card.sensitivity.minus_one_at_minus_two[].stage` | stable | RING0 §4; PREREG §3/§7 |
 | `card.sensitivity.minus_one_at_minus_two[].track` | stable | RING0 §4; PREREG §3/§7 |
 | `card.sensitivity.minus_one_at_minus_two[].score_milli` | stable | RING0 §4; PREREG §3/§7 |
+| `card.worst_case` | stable | RING0 §4; PREREG §3/§7; order: (`stage`, `track`) |
+| `card.worst_case[].stage` | stable | RING0 §4; PREREG §3/§7 |
+| `card.worst_case[].track` | stable | RING0 §4; PREREG §3/§7 |
+| `card.worst_case[].score_milli` | stable | RING0 §4; PREREG §3/§7 |
+| `card.worst_case[].blocked` | stable | RING0 §4; PREREG §3/§7 |
+| `card.twin_consistency` | stable | RING0 §4; PREREG §3/§7; order: `track` |
+| `card.twin_consistency[].track` | stable | RING0 §4; PREREG §3/§7 |
+| `card.twin_consistency[].consistent` | stable | RING0 §4; PREREG §3/§7 |
+| `card.twin_consistency[].scored` | stable | RING0 §4; PREREG §3/§7 |
+| `card.twin_consistency[].consistency_milli` | stable | RING0 §4; PREREG §3/§7 |
+| `card.singletons` | stable | RING0 §4; PREREG §2 (an unbundled QA item is its own unit); optional, absent means none; order: `item_id` |
+| `card.singletons[].item_id` | stable | RING0 §4; PREREG §2 |
+| `card.singletons[].life` | stable | RING0 §4; PREREG §2 |
 | `card.per_item_accuracy` | stable | RING0 §4; PREREG §3/§7; order: `cell_id` |
 | `card.per_item_accuracy[].cell_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.per_item_accuracy[].correct` | stable | RING0 §4; PREREG §3/§7 |

@@ -241,6 +241,10 @@ def test_nonresult_bundle_keeps_system_failure_in_item_and_worst_case():
     card["bundles"][0].update(score_milli=None, failure_class="N/A_EXPOSURE")
     card["coverage"].update(scored=0, na_exposure=1, coverage_milli=0)
     card["gate_verdict"] = "FAIL"
+    card["aggregates"][0]["score_milli"] = None
+    for rows in card["sensitivity"].values():
+        rows[0]["score_milli"] = None
+    card["worst_case"][0]["score_milli"] = -1000
     validate("card_ring0", card)
     assert card["items"][0]["worst_case_milli"] == -1000
     assert card["items"][0]["failure_class"] == "SYSTEM_FAILURE"
@@ -305,7 +309,9 @@ def test_k12_tracks_on_items_and_card_rows(track):
     item["track"] = track
     validate("item_outcome", item)
     card = example("card_ring0")
-    for row in (card["aggregates"][0], card["diagnostics"][0],
+    for card_item in card["items"]:
+        card_item["track"] = track
+    for row in (card["aggregates"][0], card["diagnostics"][0], card["worst_case"][0],
                 *(rows[0] for rows in card["sensitivity"].values())):
         row["track"] = track
     validate("card_ring0", card)
@@ -488,6 +494,12 @@ def accuracy_card():
     card["coverage"].update(assigned=3, scored=2, blocked=1, coverage_milli=667)
     card["per_item_accuracy"] = [dict(cell_id="act-1", correct=1, eligible=2, accuracy_milli=500,
                                       blocked=1, na_exposure=0, na_clock=1)]
+    rows = [dict(stage="act", track="Wake", score_milli=0),
+            dict(stage="remember", track="Wake", score_milli=1000)]
+    card["aggregates"] = copy.deepcopy(rows)
+    card["sensitivity"] = {key: copy.deepcopy(rows) for key in card["sensitivity"]}
+    card["worst_case"] = [dict(row, blocked=1 if row["stage"] == "act" else 0) for row in rows]
+    card["twin_consistency"] = [dict(track="Wake", consistent=0, scored=1, consistency_milli=0)]
     return card
 
 
