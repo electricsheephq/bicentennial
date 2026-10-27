@@ -19,6 +19,8 @@ def _visit(obj, tokens, entry):
         return entry["placeholder"]
     op, name = tokens[0]
     if isinstance(obj, dict):
+        if op == "[*]":  # RFC 9535: a wildcard selects object values as well as array elements
+            return {k: _visit(v, tokens[1:], entry) for k, v in obj.items()}
         out = {}
         for k, v in obj.items():
             if k == name:
