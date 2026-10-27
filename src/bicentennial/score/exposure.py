@@ -110,8 +110,9 @@ def _cursor(value):
     return tuple(value)
 
 
-def exposure(roots, *, life, branch, system, spans, items, probes, recall, attempt_id=None) -> dict:
-    """Read one attempt in run order without retaining request bodies."""
+def exposure(roots, *, life, branch, system, spans, items, probes, recall,
+             attempts: dict[int, str] | None = None) -> dict:
+    """Read one attempt per session in run order without retaining request bodies."""
     needles = {eid: _needles(span.needles) for eid, span in spans.items()}
     roots = tuple(Path(root) for root in roots)
     if not roots:
@@ -135,7 +136,7 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall, attem
     hits = {eid: set() for eid in sorted(spans)}
     observed, digests, lock_hash = {}, [], None
     subroles = ("tool_results",) if recall else ("cursor", "retry")
-    attempts = set()
+    seen_attempts = {}
     for root in roots:
         counts = verify(root)
         if counts["records"] < 1 or any(counts[key] for key in (
@@ -148,11 +149,15 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall, attem
             rec = json.loads(line)
             if rec["type"] != "request":
                 continue
-            if attempt_id is not None and rec["attempt_id"] != attempt_id:
-                continue
-            attempts.add(rec["attempt_id"])
-            if len(attempts) > 1:
-                raise ValueError("mixed attempts")
+            if rec["cursor"] is not None:
+                session = rec["cursor"]["session"]
+                if attempts is not None:
+                    if session not in attempts:
+                        raise ValueError(f"missing attempt for session {session}")
+                    if rec["attempt_id"] != attempts[session]:
+                        continue
+                elif seen_attempts.setdefault(session, rec["attempt_id"]) != rec["attempt_id"]:
+                    raise ValueError(f"mixed attempts in session {session}")
             if any(rec[key] != value for key, value in (
                     ("life", life), ("branch", branch), ("system", system))):
                 raise ValueError("foreign request identity")

@@ -352,10 +352,11 @@ def test_empty_ledger(tmp_path):
 
 
 @pytest.mark.parametrize("key", ["life", "branch", "system"])
-def test_foreign_identity_even_in_excluded_request(tmp_path, key):
+@pytest.mark.parametrize("attempts", [None, {}])
+def test_foreign_identity_even_in_excluded_request(tmp_path, key, attempts):
     root = ledger(tmp_path, [record(TOKEN, role="summariser", cursor=None, **{key: "foreign"})])
     with pytest.raises(ValueError, match="identity"):
-        score([root])
+        score([root], **({} if attempts is None else {"attempts": attempts}))
 
 
 def test_mixed_lock_hashes(tmp_path):
@@ -366,25 +367,79 @@ def test_mixed_lock_hashes(tmp_path):
 
 
 @pytest.mark.parametrize("same_root", [True, False])
-def test_mixed_attempts_refused(tmp_path, same_root):
-    first = ledger(tmp_path / "a", [record(TOKEN, status=500)])
-    second = ledger(first if same_root else tmp_path / "b", [record()], attempt_id="att-2")
-    with pytest.raises(ValueError, match="^mixed attempts$"):
+def test_distinct_attempts_across_sessions(tmp_path, same_root):
+    first = ledger(tmp_path / "a", [record(TOKEN)])
+    second = ledger(first if same_root else tmp_path / "b", [
+        record(TOKEN, role="probe_main", cursor=(2, 1), subrole="tool_results")], attempt_id="att-2")
+    report = score([first] if same_root else [first, second])
+    assert report["spans"][E]["first"] == [1, 2]
+    assert verdict(report) == dict(probe=[2, 1], cause=None, unexposed=[], in_context=True, missing=[])
+
+
+@pytest.mark.parametrize("same_root", [True, False])
+@pytest.mark.parametrize("session", [1, 2])
+def test_mixed_attempts_refused(tmp_path, same_root, session):
+    first = ledger(tmp_path / "a", [record(TOKEN, cursor=(session, 2), status=500)])
+    second = ledger(first if same_root else tmp_path / "b", [record(cursor=(session, 3))],
+                    attempt_id="att-2")
+    with pytest.raises(ValueError, match=f"^mixed attempts in session {session}$"):
         score([first] if same_root else [first, second])
 
 
-@pytest.mark.parametrize("attempt_id", ["att-1", "att-2"])
-def test_selected_attempt_isolates_history_and_probe(tmp_path, attempt_id):
-    root = ledger(tmp_path, [record(TOKEN), record(role="probe_main", cursor=(2, 1),
-                                                 subrole="tool_results")])
-    ledger(root, [record(cursor=(1, 3)), record(TOKEN, role="probe_main", cursor=(2, 1),
-                                              subrole="tool_results")], attempt_id="att-2")
-    report = score([root], attempt_id=attempt_id)
-    selected_first = attempt_id == "att-1"
-    assert report["spans"][E]["present"] == ([[1, 2]] if selected_first else [])
-    assert verdict(report)["cause"] == (None if selected_first else "N/A_EXPOSURE")
-    assert verdict(report)["in_context"] is (not selected_first)
-    assert verdict(report)["missing"] == ([E] if selected_first else [])
+@pytest.mark.parametrize("history_attempt", ["history-1", "history-2"])
+@pytest.mark.parametrize("probe_attempt", ["probe-1", "probe-2"])
+def test_selected_attempt_isolates_history_and_probe(tmp_path, history_attempt, probe_attempt):
+    root = ledger(tmp_path, [record(TOKEN)], attempt_id="history-1")
+    ledger(root, [record(role="probe_main", cursor=(2, 1), subrole="tool_results")],
+           attempt_id="probe-1")
+    ledger(root, [record(cursor=(1, 3))], attempt_id="history-2")
+    ledger(root, [record(TOKEN, role="probe_main", cursor=(2, 1), subrole="tool_results")],
+           attempt_id="probe-2")
+    attempts = {1: history_attempt, 2: probe_attempt}
+    report = score([root], attempts=attempts)
+    assert attempts == {1: history_attempt, 2: probe_attempt}
+    selected_history = history_attempt == "history-1"
+    selected_probe = probe_attempt == "probe-2"
+    assert report["spans"][E]["present"] == ([[1, 2]] if selected_history else [])
+    assert verdict(report)["cause"] == (None if selected_history else "N/A_EXPOSURE")
+    assert verdict(report)["in_context"] is selected_probe
+    assert verdict(report)["missing"] == ([] if selected_probe else [E])
+
+
+@pytest.mark.parametrize("spec", [record(cursor=(2, 1)), record(cursor=(2, 1), status=503),
+                                  record(cursor=(2, 1), role="aux")])
+@pytest.mark.parametrize("attempts", [{}, {1: "att-1"}])
+def test_missing_session_attempt_refused(tmp_path, spec, attempts):
+    root = ledger(tmp_path, [record(), spec])
+    missing_session = 2 if attempts else 1
+    with pytest.raises(ValueError, match=f"^missing attempt for session {missing_session}$"):
+        score([root], attempts=attempts)
+
+
+@pytest.mark.parametrize("attempts", [None, {}])
+def test_cursorless_requests_do_not_require_attempt_selection(tmp_path, attempts):
+    root = ledger(tmp_path, [record(TOKEN, cursor=None, role="summariser")])
+    ledger(root, [record(TOKEN, cursor=None, role="memory_write")], attempt_id="att-2")
+    report = score([root], **({} if attempts is None else {"attempts": attempts}))
+    assert report["lock_hash"] == LOCK
+    assert report["spans"][E]["present"] == []
+    assert verdict(report)["in_context"] is None
+
+
+@pytest.mark.parametrize("key", ["life", "branch", "system", "lock_hash"])
+@pytest.mark.parametrize("discarded_first", [True, False])
+def test_unselected_attempt_skipped_before_identity_checks(tmp_path, key, discarded_first):
+    selected = [record(TOKEN), record(TOKEN, role="probe_main", cursor=(2, 1),
+                                     subrole="tool_results")]
+    foreign = [record(TOKEN, **({key: "foreign"} if key != "lock_hash" else {}))]
+    roots = [tmp_path / "selected", tmp_path / "discarded"]
+    ledger(roots[0], selected)
+    ledger(roots[1], foreign, lock="d" * 64 if key == "lock_hash" else LOCK, attempt_id="att-2")
+    report = score(list(reversed(roots)) if discarded_first else roots,
+                   attempts={1: "att-1", 2: "att-1"})
+    assert report["lock_hash"] == LOCK
+    assert report["spans"][E]["present"] == [[1, 2]]
+    assert verdict(report)["in_context"] is True
 
 
 @pytest.mark.parametrize("case", ["unknown", "missing-probe", "extra-probe", "zero", "bool", "float",
