@@ -12,6 +12,7 @@ from bicentennial.director.core import AUX_TASKS
 
 PLACEHOLDER_KEY = "placeholder-not-a-key"
 T1_TOOLSETS = ("memory", "session_search", "todo")  # PREREG-v0-completion line 27
+HERMES_TOOLSETS = T1_TOOLSETS + ("terminal",)
 CONTEXT_LENGTH = 65536  # the pin refuses a custom-provider window below 64,000 tokens (agent_init.py 2043-2083)
 THRESHOLD_TOKENS = 16384  # C-5: W = 16K, so compaction fires at W through the absolute threshold
 SHIM = Path(__file__).resolve().with_name("clockshim")
@@ -30,13 +31,15 @@ _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model
 
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None,
-                  memory: bool = True) -> dict:
+                  memory: bool = True, toolsets=T1_TOOLSETS, mcp_servers=None) -> dict:
     if type(port) is not int or not 0 < port < 65536 or not isinstance(alias, str) or not alias:
         raise ValueError("a port and an alias are required")
     if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
         raise ValueError("a memory plug-in is named by ^[a-z0-9][a-z0-9_-]*$")
     if type(memory) is not bool:
         raise ValueError("memory is a bool")
+    if type(toolsets) is not tuple or any(type(t) is not str or not re.fullmatch(r"[a-z0-9_-]+", t) for t in toolsets):
+        raise ValueError("toolsets must be a tuple of toolset names")
     if not memory and (plugin is not None or plugin_config):
         raise ValueError("a memory plug-in or plugin_config requires memory enabled")
     base = f"http://127.0.0.1:{port}"
@@ -56,7 +59,7 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
             # Deviation: the toolchain probe is warmed off-thread, so the system prompt's toolchain line depends on
             # timing, and it fingerprints the machine (agent_init.py 1417-1427)
             "agent": {"environment_probe": False},
-            "platform_toolsets": {"acp": list(T1_TOOLSETS)},
+            "platform_toolsets": {"acp": list(toolsets)},
             "compression": {"enabled": True, "threshold_tokens": THRESHOLD_TOKENS, "micro_compact": False}}
     if plugin_config is not None:
         if not isinstance(plugin_config, dict):
@@ -66,7 +69,9 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         _merge_plugin(cfg, plugin_config)
     if not memory:
         cfg["memory"] = {"memory_enabled": False, "user_profile_enabled": False, "provider": ""}
-        cfg["platform_toolsets"] = {"acp": [t for t in T1_TOOLSETS if t not in ("memory", "session_search")]}
+        cfg["platform_toolsets"] = {"acp": [t for t in toolsets if t not in ("memory", "session_search")]}
+    if mcp_servers is not None:
+        cfg["mcp_servers"] = deepcopy(mcp_servers)
     canon(cfg)  # preserve the canonical, no-float contract for plug-in settings too
     return cfg
 
