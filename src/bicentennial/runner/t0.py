@@ -514,18 +514,24 @@ def _verb_member(pack, item):
     return record["direction"] == VERBATIM and bool(set(record["crossed"]) & set(STRESSES)) and bool(key["required"])
 
 
-def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts, *, baseline_infra=()):
+def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts, *,
+                     baseline_infra=(), session_wakes=False):
     evidence = []
     intrinsic = pack.template.fault if hasattr(pack.template, "fault") else False
     for item in sorted(pack.pack["items"], key=lambda i: i["item_id"]):
         iid, record = item["item_id"], pack.records[item["item_id"]]
         earlier = record["evidence_session"]
-        crosses = earlier is not None and any(kind in ("restart", "kill")
-            and earlier < session <= item["probe_point"] for kind, session, _ in pack.schedule.wakes())
+        # Registry hosts restart their worker on existing state at every session start.
+        crosses = earlier is not None and (session_wakes and earlier < item["probe_point"] or
+            any(kind in ("restart", "kill") and earlier < session <= item["probe_point"]
+                for kind, session, _ in pack.schedule.wakes()))
         evidence.append(ItemEvidence(item, record, pack.keys[iid], results.get(iid),
             outcomes[iid]["failure_class"], crosses, False if intrinsic else baseline.get(iid),
             roots[record["branch"]]))
-    verdicts = run_invariants(evidence, tier="T0")
+    for _ in range(3):
+        verdicts = run_invariants(evidence, tier="T0")
+        if not any("infra" in v.reasons for v in verdicts.values()):
+            break
     if baseline_infra:
         verb = verdicts["INV-VERB"]
         verdicts["INV-VERB"] = replace(verb,
@@ -706,7 +712,7 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
                for b in sorted(pack.pack["bundles"], key=lambda b: b["bundle_id"])]
     all_verdicts = [*adapter, *verdicts]
     status = "BLOCKED" if (any(i["failure_class"] == "BLOCKED" for i in items) or
-        any(v["status"] == "INFRA_FAILURE" for v in all_verdicts)) else "COMPLETE"
+        any(v["status"] == "INFRA_FAILURE" or v["infra"] for v in all_verdicts)) else "COMPLETE"
     hit_count = hits(pack.meta["honeypot_token"], audit["texts"])
     known_failure = (
         any(v["status"] == "FAIL" for v in all_verdicts) or
@@ -805,7 +811,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers):
                     baseline_infra = [i for i, twin_id in _baseline_members(pack, twin).items()
                                       if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
                 verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
-                                           baseline_infra=baseline_infra)
+                                           baseline_infra=baseline_infra, session_wakes=real)
                 audit = _audit(made)
                 # Audit every auxiliary host too; only the selected drive enters its card digest.
                 auxiliary = _audit([f for f in factories if f not in made])
