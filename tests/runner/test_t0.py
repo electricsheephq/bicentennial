@@ -28,7 +28,7 @@ from bicentennial.packs.catalogue import load_catalogue
 from bicentennial.packs.install import install
 from bicentennial.runner import t0
 from bicentennial.score.invariants import SystemFault, Verdict, adapter_invariants
-from bicentennial.systems.registry import REGISTRY, load
+from bicentennial.systems.registry import REGISTRY, ZERO_HASH, load
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -496,7 +496,8 @@ def test_preflight_resolves_packs(installed):
     (dict(system="nomemory"), "unknown_system"),
     (dict(system="../outside"), "unknown_system"),
     (dict(system="no-memory"), "harness_not_hermes"),
-    (dict(system="hermes-native"), "unmeasured:fresh_install_hash"),
+    (dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
+          dict(fresh_install_hash=ZERO_HASH)), "unmeasured:fresh_install_hash"),
     (dict(selected=["unknown"]), "unknown_pack"),
     (dict(selected=["all", "unknown"]), "unknown_pack"),
     (dict(mode="hermes"), "mode_unavailable:hermes"),
@@ -1042,7 +1043,8 @@ def assert_no_results(out):
 
 @pytest.mark.parametrize("changes,code", [
     (dict(system="nomemory"), "unknown_system"), (dict(system="no-memory"), "harness_not_hermes"),
-    (dict(system="hermes-native"), "unmeasured:fresh_install_hash"),
+    (dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
+          dict(fresh_install_hash=ZERO_HASH)), "unmeasured:fresh_install_hash"),
     (dict(packs=["unknown"]), "unknown_pack"), (dict(pack_hash="0" * 64), "pinned_artifact_changed"),
     (dict(mode="hermes"), "mode_unavailable:hermes")])
 def test_library_refusals(installed, tmp_path, capsys, changes, code):

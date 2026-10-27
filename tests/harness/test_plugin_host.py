@@ -737,7 +737,7 @@ def test_pids_egress_and_serialized_types(factory):
 @pytest.mark.parametrize("name", NAMES)
 def test_live(factory, name, capsys):
     if name != "hermes-native":
-        pytest.skip("plug-in pin unmeasured (R13b dispatcher decision 2)")
+        pytest.skip("plug-in live runs need the pinned plug-in sources; X03 runs them")
     checkout = os.environ.get("BICENTENNIAL_HERMES")
     if not checkout:
         pytest.skip("BICENTENNIAL_HERMES unset")
