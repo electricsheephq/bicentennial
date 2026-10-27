@@ -168,7 +168,7 @@ class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
-                 before_shutdown=None):
+                 memory: bool = True, before_shutdown=None):
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -179,7 +179,8 @@ class HermesAdapter:
             raise ValueError("kill_mode is boundary or held")
         if any(f["kind"] in ("restart", "kill", "compaction") and f["turn"] is None for f in schedule.to_obj()):
             raise ValueError("a restart, kill or compaction needs a turn")
-        hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config)
+        hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory)
+        self.memory = memory
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
         self.commit = None
@@ -300,7 +301,7 @@ class HermesAdapter:
         validate_paths(self.paths)  # hooks may replace directories on any wake; check before writing or spawning
         # After the hook, so a wipe that restores install-time state is always followed by the current config
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
-                                                            plugin_config=self.plugin_config))
+                                                            plugin_config=self.plugin_config, memory=self.memory))
         t0 = time.monotonic()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
@@ -365,7 +366,7 @@ class HermesAdapter:
         pin = self.harness_pin  # the harness's own pin, never a plug-in system's artifact (A1)
         return {"name": pin.get("name"), "version": pin.get("version"), "sha256": pin.get("sha256"),
                 "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS),
-                "plugin_config": deepcopy(self.plugin_config),
+                "plugin_config": deepcopy(self.plugin_config), "memory": self.memory,
                 "active_memory_providers": list(self.active_memory_providers)}
 
     def close(self) -> dict:
