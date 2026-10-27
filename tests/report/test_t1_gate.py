@@ -469,3 +469,15 @@ def test_hash_seed_identity():
 
 if __name__ == "__main__":
     print(evidence_bytes().decode())
+
+
+@pytest.mark.parametrize("other", [1, None])
+def test_determinism_refuses_mixed_type_array_keys(tmp_path, other):
+    from bicentennial.report.determinism import determinism_check, main
+
+    a, b = canon({"items": [{"item_id": other}]}), canon({"items": [{"item_id": "a"}]})
+    with pytest.raises(ValueError, match="invalid array key"):
+        determinism_check(a, b)
+    (tmp_path / "a.json").write_bytes(a)
+    (tmp_path / "b.json").write_bytes(b)
+    assert main([str(tmp_path / "a.json"), str(tmp_path / "b.json")]) == 2

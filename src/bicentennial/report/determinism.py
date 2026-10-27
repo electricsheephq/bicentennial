@@ -188,7 +188,11 @@ def _children(p, c, x, y):
     if p in ARRAY_KEYS and all(isinstance(v, list) and all(isinstance(r, dict) for r in v)
                                for v in (x, y)):
         a, b = _index(p, x), _index(p, y)
-        for key in sorted(a.keys() | b.keys()):
+        try:
+            keys = sorted(a.keys() | b.keys())
+        except TypeError as error:
+            raise ValueError("invalid array key") from error
+        for key in keys:
             yield p + "[]", f"{c}[{canon(key).decode()}]", a, b, key
     elif isinstance(x, dict) and isinstance(y, dict):
         order = {field: i for i, field in enumerate(FIELD_ORDER)}
