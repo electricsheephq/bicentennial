@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from bicentennial.keyed import shuffle
 
 from ..scale import TURNS
-from . import HARD, SOFT, Unit, check_at, check_common, check_tokens, slot
+from . import HARD, SOFT, Unit, check_at, check_common, check_tokens, check_values, slot
 
 MENTIONS = ("hedge", "quote", "third_party", None)
 
@@ -56,6 +56,9 @@ def _check(db, schedule, chains, principal) -> None:
                                      or not all(type(v) is str and unicodedata.normalize("NFC", v) == v
                                                 and len(v) >= 4 and "\n" not in v for v in c.values)):
             raise ValueError("values need one NFC token of 4+ characters per fact")
+    # explicit values against one another and the life's tokens, before any insert (the world is append-only)
+    if explicit := [v for c in chains if c.values is not None for v in c.values]:
+        check_values([v for (v,) in db.execute("SELECT value FROM locked_token")] + explicit)
 
 
 def write_corrections(db, schedule, chains, *, principal) -> None:
