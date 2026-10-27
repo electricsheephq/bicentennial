@@ -640,6 +640,35 @@ def test_pack_invariant_scan_reruns(installed, tmp_path, monkeypatch, always):
         assert value["run_status"] == ("BLOCKED" if always else "COMPLETE")
 
 
+def test_pack_invariant_rerun_keeps_known_failure(installed, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    original, calls = t0.run_invariants, []
+
+    def evaluate(evidence, **kwargs):
+        verdicts = original(evidence, **kwargs)
+        calls.append(len(calls))
+        forget = verdicts["INV-FORGET"]
+        # The first attempt finds a store hit beside a scan fault; any later attempt would hide the hit.
+        verdicts["INV-FORGET"] = (replace(forget, status="FAIL", failed=("forget-hit",), infra=("forget-scan",),
+                                          reasons=("infra", "store_hit")) if len(calls) == 1 else
+                                  replace(forget, status="INFRA_FAILURE", failed=(), infra=("forget-hit",),
+                                          reasons=("infra",)))
+        return verdicts
+
+    monkeypatch.setattr(t0, "run_invariants", evaluate)
+    out = tmp_path / "out"
+    assert run(installed, out, packs=[pack.rel]) == 1
+    assert len(calls) == 1
+    verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
+    assert verdicts["INV-FORGET"]["status"] == "FAIL" and verdicts["INV-FORGET"]["failed"] == ["forget-hit"]
+    card = json.loads((out / pack.rel / "card.json").read_bytes())
+    assert card["gate_verdict"] == "FAIL"
+    for filename in ("card.json", "receipt.json"):
+        assert json.loads((out / pack.rel / filename).read_bytes())["run_status"] == "BLOCKED"
+
+
 def test_pack_invariant_session_wakes(fake_hosts, installed, tmp_path, monkeypatch):
     pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-drift-booking-mft-1")
     members = {i["item_id"] for i in pack.pack["items"]

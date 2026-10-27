@@ -530,7 +530,8 @@ def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
             roots[record["branch"]]))
     for _ in range(3):
         verdicts = run_invariants(evidence, tier="T0")
-        if not any("infra" in v.reasons for v in verdicts.values()):
+        # A known failure stands: a later attempt's scan fault must not mask it (RING0 E3).
+        if not any("infra" in v.reasons and v.status != "FAIL" for v in verdicts.values()):
             break
     if baseline_infra:
         verb = verdicts["INV-VERB"]
