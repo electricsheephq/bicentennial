@@ -31,7 +31,9 @@ _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model
 
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None,
-                  memory: bool = True, toolsets=T1_TOOLSETS, mcp_servers=None) -> dict:
+                  memory: bool = True, toolsets=T1_TOOLSETS, mcp_servers=None, window=None) -> dict:
+    if window is not None and (type(window) is not int or window < THRESHOLD_TOKENS):
+        raise ValueError("window must be an int of at least 16384")
     if type(port) is not int or not 0 < port < 65536 or not isinstance(alias, str) or not alias:
         raise ValueError("a port and an alias are required")
     if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
@@ -72,6 +74,9 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         cfg["platform_toolsets"] = {"acp": [t for t in toolsets if t not in ("memory", "session_search")]}
     if mcp_servers is not None:
         cfg["mcp_servers"] = deepcopy(mcp_servers)
+    if window is not None:
+        cfg["compression"]["threshold_tokens"] = window
+        cfg["model"]["context_length"] = cfg["auxiliary"]["compression"]["context_length"] = 4 * window
     canon(cfg)  # preserve the canonical, no-float contract for plug-in settings too
     return cfg
 
