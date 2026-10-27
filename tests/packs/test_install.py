@@ -300,6 +300,46 @@ def test_malformed_metadata_is_collected(installed, name, data):
     assert "pack_hash" in error.value.fields
 
 
+@pytest.mark.parametrize("interface", ["api", "cli"])
+@pytest.mark.parametrize("name,mutation", [
+    ("sealed/scoring.json", "float"),
+    ("sealed/scoring.json", "nan"),
+    ("index.json", "harness-float"),
+    ("index.json", "deep"),
+    ("manifest.json", "deep"),
+    ("sealed/scoring.json", "deep"),
+])
+def test_noncanonical_metadata_is_collected(installed, name, mutation, interface):
+    root, digest, index = installed
+    target = root / name if name == "index.json" else pack_file(root, index, name)
+    if mutation == "deep":
+        data = b"[" * 200000
+    else:
+        value = json.loads(target.read_bytes())
+        if mutation == "float":
+            assert type(value["cases"][0]["item"]["probe_point"]) is int
+            value["cases"][0]["item"]["probe_point"] = 1.0
+        elif mutation == "nan":
+            value["x"] = float("nan")
+        else:
+            value["harness_artifacts"][0]["version"] = 1.5
+        data = json.dumps(value).encode("utf-8")
+    target.chmod(0o644)
+    try:
+        target.write_bytes(data)
+    finally:
+        target.chmod(0o444)
+    if interface == "api":
+        with pytest.raises(PinnedArtifactChanged) as error:
+            installer.verify(root, pack_hash=digest)
+        assert target.relative_to(root).as_posix() in error.value.fields
+        assert "pack_hash" in error.value.fields
+    else:
+        completed = command("verify", root, "--pack-hash", digest)
+        assert (completed.returncode, completed.stdout, completed.stderr) == (
+            3, "", "pinned_artifact_changed\n")
+
+
 @pytest.mark.parametrize("name,key", [("index.json", "packs"), ("manifest.json", "files"),
                                       ("manifest.json", "pins")])
 def test_malformed_metadata_mapping_is_collected(installed, name, key):

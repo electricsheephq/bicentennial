@@ -9,7 +9,7 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 
-from bicentennial.canon import sha256_canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.controls.cache import (
     CONTROL_FILES,
     PACKAGE_ROOT,
@@ -94,9 +94,10 @@ def verify(root, *, pack_hash, package_root=PACKAGE_ROOT, lock=None, expected_lo
     def load(rel):
         try:
             value = json.loads(payloads[rel])
+            canon(value)
             if isinstance(value, dict):
                 return value
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, TypeError, RecursionError):
             pass
         failures.add(rel)
         return {}
