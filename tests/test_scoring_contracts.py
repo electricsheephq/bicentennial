@@ -511,8 +511,9 @@ def test_per_item_accuracy_rows_disclose_excluded_counts():
     lambda c: c["per_item_accuracy"][0].update(cell_id="act-2"),
     lambda c: c["bundles"].append(dict(c["bundles"][1], bundle_id="bundle-act-3")),
     lambda c: c["bundles"].pop(1),
+    lambda c: c.update(per_item_accuracy=[]),
 ], ids=["correct-inflated", "exclusion-hidden", "no-such-cell", "bundle-duplicated",
-        "bundle-dropped"])
+        "bundle-dropped", "cell-row-missing"])
 def test_card_summaries_follow_the_action_outcomes(edit):
     card = accuracy_card()
     edit(card)

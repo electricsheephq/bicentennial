@@ -180,6 +180,8 @@ def _card(card):
             else:
                 row["eligible"] += 1
                 row["correct"] += item["accuracy_correct"] is True
+    _require({row["cell_id"] for row in card["per_item_accuracy"]} == set(counts),
+             "per-item accuracy needs exactly one row per action cell")
     for row in card["per_item_accuracy"]:
         expected = counts.get(row["cell_id"])
         _require(expected is not None and all(row[k] == v for k, v in expected.items()),
