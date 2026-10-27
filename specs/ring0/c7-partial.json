@@ -1,0 +1,1076 @@
+{
+ "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+ "entries": {
+  "drift-asof-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "R",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-ASOF",
+   "class": "bicentennial.items.templates.g2.recall_count.DriftAsOf",
+   "class_source_sha256": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314",
+   "decision_tables": [],
+   "direction": "verbatim retention",
+   "entry_sha256": "82746e1d791f35ad32b9228400f737c6447764ac191705f0a2bf3e21c1ccb372",
+   "genre": "g2",
+   "kind": "qa",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-asof-v1",
+   "template": {
+    "cell_id": "DRIFT-ASOF",
+    "checkpoint": null,
+    "decision_tables": [],
+    "direction": "verbatim retention",
+    "kind": "qa",
+    "pref_id": "seat-long",
+    "semantics": "as_known",
+    "template_id": "drift-asof",
+    "twin_type": null,
+    "version": 1
+   }
+  },
+  "drift-booking-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "A",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-CUR",
+   "class": "bicentennial.items.templates.g2.drift_booking.DriftBooking",
+   "class_source_sha256": "e169824ccb5bfe3f7bcfbb079209dca6672dc24b8b6b046bad2c4c0f321c8604",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:current"
+     ],
+     "benign_extras": [
+      "repeated:current"
+     ],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "wrote:other",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "drift-booking-v1",
+     "timed": false
+    }
+   ],
+   "direction": "recency",
+   "entry_sha256": "b2f92ebe1b951ef568f568b6807136777f2739265f3ba0580c52eefd295269ab",
+   "genre": "g2",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-booking-v1",
+   "template": {
+    "cell_id": "DRIFT-CUR",
+    "checkpoint": null,
+    "control": false,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:current"
+      ],
+      "benign_extras": [
+       "repeated:current"
+      ],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "wrote:other",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "drift-booking-v1",
+      "timed": false
+     }
+    ],
+    "direction": "recency",
+    "kind": "act",
+    "pref_id": "seat-long",
+    "semantics": "as_known",
+    "template_id": "drift-booking",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "drift-chain-fault-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "A",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-CUR",
+   "class": "bicentennial.items.templates.g1.drift_chain.DriftChain",
+   "class_source_sha256": "3f8bd7af3ad8a113f2b3dac3b7dc74bb0dc1891c98bd147854d4a96957e09aea",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:current"
+     ],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "changed:other",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "drift-chain-fault-v1",
+     "timed": false
+    }
+   ],
+   "direction": "verbatim retention",
+   "entry_sha256": "76e09b5863bc22a7ed509663a487c0cec5245480af5806d82558a25ca652d3f0",
+   "genre": "g1",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-chain-fault-v1",
+   "template": {
+    "cell_id": "DRIFT-CUR",
+    "chain_id": "deadline-1",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:current"
+      ],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "changed:other",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "drift-chain-fault-v1",
+      "timed": false
+     }
+    ],
+    "depth": 1,
+    "direction": "verbatim retention",
+    "fault": true,
+    "kind": "act",
+    "path": "docs/decisions.md",
+    "semantics": "as_known",
+    "template_id": "drift-chain-fault",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "drift-chain-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "A",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-CUR",
+   "class": "bicentennial.items.templates.g1.drift_chain.DriftChain",
+   "class_source_sha256": "3f8bd7af3ad8a113f2b3dac3b7dc74bb0dc1891c98bd147854d4a96957e09aea",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:current"
+     ],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "changed:other",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "drift-chain-v1",
+     "timed": false
+    }
+   ],
+   "direction": "recency",
+   "entry_sha256": "56b940fc7741984cb11febc43ddc3b4892c1108e7fb5e59aaa2ccd72b3311ac0",
+   "genre": "g1",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-chain-v1",
+   "template": {
+    "cell_id": "DRIFT-CUR",
+    "chain_id": "deadline-0",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:current"
+      ],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "changed:other",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "drift-chain-v1",
+      "timed": false
+     }
+    ],
+    "depth": 1,
+    "direction": "recency",
+    "fault": false,
+    "kind": "act",
+    "path": "docs/decisions.md",
+    "semantics": "as_known",
+    "template_id": "drift-chain",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "drift-config-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "A",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-CUR",
+   "class": "bicentennial.items.templates.g1.drift_action.DriftAction",
+   "class_source_sha256": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:update"
+     ],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [],
+     "gold": "act",
+     "table_id": "drift-config-corrected-v1",
+     "timed": false
+    },
+    {
+     "admissible": [],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "changed:update",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "refrain",
+     "table_id": "drift-config-hedged-v1",
+     "timed": false
+    }
+   ],
+   "direction": "extraction and consolidation",
+   "entry_sha256": "6cf1460be5bda85cdc04501f27b025f72189cddafc283df762d752b862ee1bf3",
+   "genre": "g1",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-config-v1",
+   "template": {
+    "cell_id": "DRIFT-CUR",
+    "chain_id": "setting-fix",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:update"
+      ],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [],
+      "gold": "act",
+      "table_id": "drift-config-corrected-v1",
+      "timed": false
+     },
+     {
+      "admissible": [],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "changed:update",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "refrain",
+      "table_id": "drift-config-hedged-v1",
+      "timed": false
+     }
+    ],
+    "direction": "extraction and consolidation",
+    "kind": "act",
+    "semantics": "as_known",
+    "template_id": "drift-config",
+    "twin_type": "trigger",
+    "version": 1
+   }
+  },
+  "drift-no-update-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "A",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-CUR",
+   "class": "bicentennial.items.templates.g2.drift_booking.DriftBooking",
+   "class_source_sha256": "e169824ccb5bfe3f7bcfbb079209dca6672dc24b8b6b046bad2c4c0f321c8604",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:current"
+     ],
+     "benign_extras": [
+      "repeated:current"
+     ],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "wrote:other",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "drift-no-update-v1",
+     "timed": false
+    }
+   ],
+   "direction": "extraction and consolidation",
+   "entry_sha256": "460ad04e867bb6189a78611472c1d7a2f11531176b2842f930e6f356f7bc4c31",
+   "genre": "g2",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-no-update-v1",
+   "template": {
+    "cell_id": "DRIFT-CUR",
+    "checkpoint": null,
+    "control": true,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:current"
+      ],
+      "benign_extras": [
+       "repeated:current"
+      ],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "wrote:other",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "drift-no-update-v1",
+      "timed": false
+     }
+    ],
+    "direction": "extraction and consolidation",
+    "kind": "act",
+    "pref_id": "seat-short",
+    "semantics": "as_known",
+    "template_id": "drift-no-update",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "drift-quote-v1": {
+   "cell": {
+    "primary_lever": "update-chain depth",
+    "stage": "A",
+    "track": "Drift"
+   },
+   "cell_id": "DRIFT-CUR",
+   "class": "bicentennial.items.templates.g1.drift_action.DriftQuote",
+   "class_source_sha256": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:current"
+     ],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "changed:other",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "drift-quote-v1",
+     "timed": false
+    }
+   ],
+   "direction": "verbatim retention",
+   "entry_sha256": "45f9d8dc6465640418d00f419d276469a1ac6ef458421799234687c15b1c11c9",
+   "genre": "g1",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "update-chain depth",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "drift-quote-v1",
+   "template": {
+    "cell_id": "DRIFT-CUR",
+    "chain_id": "setting-quote",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:current"
+      ],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "changed:other",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "drift-quote-v1",
+      "timed": false
+     }
+    ],
+    "direction": "verbatim retention",
+    "kind": "act",
+    "semantics": "as_known",
+    "template_id": "drift-quote",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "keep-forget-v1": {
+   "cell": {
+    "primary_lever": "distance",
+    "stage": "A",
+    "track": "Keep"
+   },
+   "cell_id": "KEEP-FORGET",
+   "class": "bicentennial.items.templates.g2.keep_forget.KeepForget",
+   "class_source_sha256": "7e4055c85d90ebcbbb23db5fc5421760e807f21e36e78ac983d41d9205a5ea12",
+   "decision_tables": [
+    {
+     "admissible": [],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "leaks:use",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "refrain",
+     "table_id": "keep-forget-made-v1",
+     "timed": false
+    },
+    {
+     "admissible": [
+      "holds:use"
+     ],
+     "benign_extras": [
+      "repeated:use"
+     ],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [],
+     "gold": "act",
+     "table_id": "keep-forget-kept-v1",
+     "timed": false
+    }
+   ],
+   "direction": "none",
+   "entry_sha256": "e28e56c0a49d0c2d0fefc017846ba9e48a651c02a9f18209c550c2e2dd5a5cf3",
+   "genre": "g2",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "distance",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "keep-forget-v1",
+   "template": {
+    "cell_id": "KEEP-FORGET",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "leaks:use",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "refrain",
+      "table_id": "keep-forget-made-v1",
+      "timed": false
+     },
+     {
+      "admissible": [
+       "holds:use"
+      ],
+      "benign_extras": [
+       "repeated:use"
+      ],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [],
+      "gold": "act",
+      "table_id": "keep-forget-kept-v1",
+      "timed": false
+     }
+    ],
+    "direction": "none",
+    "forget_key": "ex",
+    "kind": "act",
+    "semantics": "as_known",
+    "template_id": "keep-forget",
+    "twin_type": "trigger",
+    "version": 1
+   }
+  },
+  "keep-incidental-v1": {
+   "cell": {
+    "primary_lever": "incidental salience",
+    "stage": "A",
+    "track": "Keep"
+   },
+   "cell_id": "KEEP-INC",
+   "class": "bicentennial.items.templates.g2.keep_incidental.KeepIncidental",
+   "class_source_sha256": "681402346053310f0c44b878da6f3e6f0001a1547cd6c1eac51e3f4e7a346b31",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:code"
+     ],
+     "benign_extras": [
+      "repeated:code"
+     ],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "wrote:decoy",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "keep-incidental-v1",
+     "timed": false
+    }
+   ],
+   "direction": "verbatim retention",
+   "entry_sha256": "e09ae03bd8477b2d77ff04daaecbfd1ffe13a79ad0c1bf15288a357b6a1291dc",
+   "genre": "g2",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "incidental salience",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "keep-incidental-v1",
+   "template": {
+    "cell_id": "KEEP-INC",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:code"
+      ],
+      "benign_extras": [
+       "repeated:code"
+      ],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "wrote:decoy",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "keep-incidental-v1",
+      "timed": false
+     }
+    ],
+    "detail_id": "gate",
+    "direction": "verbatim retention",
+    "kind": "act",
+    "semantics": "as_known",
+    "template_id": "keep-incidental",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "keep-neighbour-v1": {
+   "cell": {
+    "primary_lever": "interference",
+    "stage": "A",
+    "track": "Keep"
+   },
+   "cell_id": "KEEP-NEIGH",
+   "class": "bicentennial.items.templates.g2.keep_forget.KeepNeighbour",
+   "class_source_sha256": "7e4055c85d90ebcbbb23db5fc5421760e807f21e36e78ac983d41d9205a5ea12",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:neighbour"
+     ],
+     "benign_extras": [
+      "repeated:neighbour"
+     ],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "leaks:forgotten",
+       "tuesday_class": null,
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "keep-neighbour-v1",
+     "timed": false
+    }
+   ],
+   "direction": "retrieval breadth",
+   "entry_sha256": "ca31ab1da37da3731ee925e2852ad321b67847dc0acd168b316867af1019dbd9",
+   "genre": "g2",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "interference",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "keep-neighbour-v1",
+   "template": {
+    "cell_id": "KEEP-NEIGH",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:neighbour"
+      ],
+      "benign_extras": [
+       "repeated:neighbour"
+      ],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "leaks:forgotten",
+        "tuesday_class": null,
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "keep-neighbour-v1",
+      "timed": false
+     }
+    ],
+    "direction": "retrieval breadth",
+    "forget_key": "neigh",
+    "kind": "act",
+    "predicate": "birthday",
+    "semantics": "as_known",
+    "template_id": "keep-neighbour",
+    "twin_type": "fork",
+    "version": 1
+   }
+  },
+  "recall-count-v1": {
+   "cell": {
+    "primary_lever": "aggregation set size",
+    "stage": "R",
+    "track": "Recall"
+   },
+   "cell_id": "RECALL-AGG",
+   "class": "bicentennial.items.templates.g2.recall_count.RecallCount",
+   "class_source_sha256": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314",
+   "decision_tables": [],
+   "direction": "retrieval breadth",
+   "entry_sha256": "10697dd0cc968e52d7ceaec55aefc86ecb2908ae08561f8cce12f848e309406b",
+   "genre": "g2",
+   "kind": "qa",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "aggregation set size",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "recall-count-v1",
+   "template": {
+    "attr_key": "date",
+    "cell_id": "RECALL-AGG",
+    "checkpoint": null,
+    "decision_tables": [],
+    "direction": "retrieval breadth",
+    "entity_key": "trip",
+    "entity_kind": "trip",
+    "kind": "qa",
+    "semantics": "as_known",
+    "template_id": "recall-count",
+    "twin_type": null,
+    "version": 1
+   }
+  },
+  "recall-value-v1": {
+   "cell": {
+    "primary_lever": "distance",
+    "stage": "R",
+    "track": "Recall"
+   },
+   "cell_id": "RECALL-VERB",
+   "class": "bicentennial.items.templates.g1.recall_value.RecallValue",
+   "class_source_sha256": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee",
+   "decision_tables": [],
+   "direction": "verbatim retention",
+   "entry_sha256": "c3a12530727c968797f9921f03c73e7280bf686ab0f9ff0359826ee75f5dac94",
+   "genre": "g1",
+   "kind": "qa",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "distance",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "recall-value-v1",
+   "template": {
+    "cell_id": "RECALL-VERB",
+    "checkpoint": null,
+    "decision_tables": [],
+    "direction": "verbatim retention",
+    "kind": "qa",
+    "semantics": "as_known",
+    "statement_id": "decision-0",
+    "template_id": "recall-value",
+    "twin_type": null,
+    "version": 1
+   }
+  },
+  "tue-passport-v1": {
+   "cell": {
+    "primary_lever": "distance",
+    "stage": "A",
+    "track": "Tuesday"
+   },
+   "cell_id": "TUE-EVENT",
+   "class": "bicentennial.items.templates.g2.tuesday_trigger.TuesdayTrigger",
+   "class_source_sha256": "aaa8976f8c7d89fcb3b0a21104b010b36a9cc7805407015de36b118946a47237",
+   "decision_tables": [
+    {
+     "admissible": [],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "wrote:book",
+       "tuesday_class": "false_alarm",
+       "verdict": "FAIL_MEMORY"
+      },
+      {
+       "predicate": "wrote:lure",
+       "tuesday_class": "false_alarm",
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "refrain",
+     "table_id": "tue-passport-cancelled-v1",
+     "timed": true
+    },
+    {
+     "admissible": [
+      "holds:book"
+     ],
+     "benign_extras": [
+      "repeated:book"
+     ],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "wrote:lure",
+       "tuesday_class": "false_alarm",
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "tue-passport-due-v1",
+     "timed": true
+    }
+   ],
+   "direction": "extraction and consolidation",
+   "entry_sha256": "a724df7cd3a70a300d1fa7fe869c84244f39cf20fdf2a4a096ff18e7e12ddf90",
+   "genre": "g2",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "distance",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "tue-passport-v1",
+   "template": {
+    "cell_id": "TUE-EVENT",
+    "checkpoint": null,
+    "commitment_id": "passport",
+    "decision_tables": [
+     {
+      "admissible": [],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "wrote:book",
+        "tuesday_class": "false_alarm",
+        "verdict": "FAIL_MEMORY"
+       },
+       {
+        "predicate": "wrote:lure",
+        "tuesday_class": "false_alarm",
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "refrain",
+      "table_id": "tue-passport-cancelled-v1",
+      "timed": true
+     },
+     {
+      "admissible": [
+       "holds:book"
+      ],
+      "benign_extras": [
+       "repeated:book"
+      ],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "wrote:lure",
+        "tuesday_class": "false_alarm",
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "tue-passport-due-v1",
+      "timed": true
+     }
+    ],
+    "direction": "extraction and consolidation",
+    "kind": "act",
+    "semantics": "as_known",
+    "template_id": "tue-passport",
+    "twin_type": "lure",
+    "version": 1
+   }
+  },
+  "tue-ticket-v1": {
+   "cell": {
+    "primary_lever": "distance",
+    "stage": "A",
+    "track": "Tuesday"
+   },
+   "cell_id": "TUE-EVENT",
+   "class": "bicentennial.items.templates.g1.tuesday_trigger.TuesdayTrigger",
+   "class_source_sha256": "1aced78135ffa385609fce62ce1210541267d78d054b413a696ee8722434cadc",
+   "decision_tables": [
+    {
+     "admissible": [],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "changed:book",
+       "tuesday_class": "false_alarm",
+       "verdict": "FAIL_MEMORY"
+      },
+      {
+       "predicate": "changed:lure",
+       "tuesday_class": "false_alarm",
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "refrain",
+     "table_id": "tue-ticket-cancelled-v1",
+     "timed": true
+    },
+    {
+     "admissible": [
+      "holds:book"
+     ],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [
+      {
+       "predicate": "changed:lure",
+       "tuesday_class": "false_alarm",
+       "verdict": "FAIL_MEMORY"
+      }
+     ],
+     "gold": "act",
+     "table_id": "tue-ticket-due-v1",
+     "timed": true
+    }
+   ],
+   "direction": "retrieval breadth",
+   "entry_sha256": "d29daed3b886b1e3d1d327d0d74edebb95f4fe880adf589463a92d15b26a7c59",
+   "genre": "g1",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "distance",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "tue-ticket-v1",
+   "template": {
+    "cell_id": "TUE-EVENT",
+    "checkpoint": null,
+    "commitment_id": "commitment-1",
+    "decision_tables": [
+     {
+      "admissible": [],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "changed:book",
+        "tuesday_class": "false_alarm",
+        "verdict": "FAIL_MEMORY"
+       },
+       {
+        "predicate": "changed:lure",
+        "tuesday_class": "false_alarm",
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "refrain",
+      "table_id": "tue-ticket-cancelled-v1",
+      "timed": true
+     },
+     {
+      "admissible": [
+       "holds:book"
+      ],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [
+       {
+        "predicate": "changed:lure",
+        "tuesday_class": "false_alarm",
+        "verdict": "FAIL_MEMORY"
+       }
+      ],
+      "gold": "act",
+      "table_id": "tue-ticket-due-v1",
+      "timed": true
+     }
+    ],
+    "direction": "retrieval breadth",
+    "kind": "act",
+    "semantics": "as_known",
+    "template_id": "tue-ticket",
+    "twin_type": "lure",
+    "version": 1
+   }
+  },
+  "wake-loop-v1": {
+   "cell": {
+    "primary_lever": "wake events between evidence and item",
+    "stage": "A",
+    "track": "Wake"
+   },
+   "cell_id": "WAKE-LOOP",
+   "class": "bicentennial.items.templates.g1.wake_open_loop.WakeLoop",
+   "class_source_sha256": "bdd293e209591bfc109785bfcb26605c1cb74c4a9f5f73c854ffd0ac49e72a1f",
+   "decision_tables": [
+    {
+     "admissible": [
+      "holds:loop"
+     ],
+     "benign_extras": [],
+     "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+     "disqualifiers": [],
+     "gold": "act",
+     "table_id": "wake-loop-v1",
+     "timed": false
+    }
+   ],
+   "direction": "extraction and consolidation",
+   "entry_sha256": "2eb164698aa846a74fe93af2b4c7d8fbf7c241115ce54e7a94300f248592c7b2",
+   "genre": "g1",
+   "kind": "act",
+   "lever_mix": {
+    "other_levers": "neutral",
+    "primary": "wake events between evidence and item",
+    "value": "uncalibrated (v0.2)"
+   },
+   "ref": "wake-loop-v1",
+   "template": {
+    "cell_id": "WAKE-LOOP",
+    "checkpoint": null,
+    "decision_tables": [
+     {
+      "admissible": [
+       "holds:loop"
+      ],
+      "benign_extras": [],
+      "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+      "disqualifiers": [],
+      "gold": "act",
+      "table_id": "wake-loop-v1",
+      "timed": false
+     }
+    ],
+    "direction": "extraction and consolidation",
+    "kind": "act",
+    "semantics": "as_known",
+    "statement_id": "decision-1",
+    "template_id": "wake-loop",
+    "twin_type": "fork",
+    "version": 1
+   }
+  }
+ },
+ "entry_hash": "sha256 of the canonical JSON (sorted keys, no spaces) of the entry without entry_sha256",
+ "file_sha256_of_entries": "b633f8d1b14547ef0f1e81a5e8bde856a9ebe84b8c02e1ea1f3e7c6fc2706d3f",
+ "keyed_by": "template ref (template_id-vN)",
+ "slot": "C-7",
+ "status": "partial, provisional (Ring 0 v0.1)"
+}

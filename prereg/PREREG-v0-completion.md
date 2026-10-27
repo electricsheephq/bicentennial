@@ -63,6 +63,37 @@ The **write-turn prompt text** is open. Ring 0 runs with a scripted model and se
 
 **Decision tables:** from the template build, per template. They bind before any real system runs on that template.
 
+**Partial entries (frozen 2026-10-27, Ring 0 v0.1).** `specs/ring0/c7-partial.json` holds one entry per v0.1 template, keyed by template ref (`template_id-vN`). Each entry records the template's ref, genre, cell and track lever (`cell`), direction label, item kind, its decision tables, every field of the template, the template class and the sha256 of that class's source file, and the lever mix. Each entry carries `entry_sha256`, the sha256 of its canonical JSON without that field. The file is generated from the template build by `python -m bicentennial.items.c7`, with the same bytes under any hash seed, and a test fails when the committed file no longer matches the templates. It was frozen before any real memory system ran on any template.
+
+| Template ref | Genre | Cell | Direction | Kind |
+|---|---|---|---|---|
+| drift-asof-v1 | G2 | DRIFT-ASOF | verbatim retention | qa |
+| drift-booking-v1 | G2 | DRIFT-CUR | recency | act |
+| drift-chain-fault-v1 | G1 | DRIFT-CUR | verbatim retention | act |
+| drift-chain-v1 | G1 | DRIFT-CUR | recency | act |
+| drift-config-v1 | G1 | DRIFT-CUR | extraction and consolidation | act |
+| drift-no-update-v1 | G2 | DRIFT-CUR | extraction and consolidation | act |
+| drift-quote-v1 | G1 | DRIFT-CUR | verbatim retention | act |
+| keep-forget-v1 | G2 | KEEP-FORGET | none | act |
+| keep-incidental-v1 | G2 | KEEP-INC | verbatim retention | act |
+| keep-neighbour-v1 | G2 | KEEP-NEIGH | retrieval breadth | act |
+| recall-count-v1 | G2 | RECALL-AGG | retrieval breadth | qa |
+| recall-value-v1 | G1 | RECALL-VERB | verbatim retention | qa |
+| tue-passport-v1 | G2 | TUE-EVENT | extraction and consolidation | act |
+| tue-ticket-v1 | G1 | TUE-EVENT | retrieval breadth | act |
+| wake-loop-v1 | G1 | WAKE-LOOP | extraction and consolidation | act |
+
+**How the entries bind.**
+- The T0 and T1 runners refuse a real system on any template that has no entry here, or whose entry's hash does not match the template build (exit 3). Controls are not refused.
+- A template change that alters any recorded field is a new template version with its own entry, written before a real system runs on it.
+- T0 relation rows (the invariance and direction rows) sit at other distance and wake values as diagnostics, not rungs. Rungs come with calibration in v0.2.
+
+**Limits stated at the freeze.**
+- The direction cap (no label above 40% of a track's scored items in a pack) is a pack-level gate over both genres. At Ring 0 v0.1 it is reported, not met, for Wake and Tuesday, where v0.1 has one Wake template and two Tuesday templates, so one label holds 100% or 50% of the track.
+- No template declares duty items yet, so the harmful-omission count is 0 at v0.1.
+- Planted mutants are the generator-placed distractors. Mutants built from a world's planted material come later.
+- `keep-forget-v1`, `keep-neighbour-v1` and the two Tuesday templates are not exercised at T1. The Tuesday templates are structure-only until their trigger render lands.
+
 ## Pending proposals (not completion entries)
 
 These two values come from DESIGN §4.2, and no PREREG-v0.4 rule or slot covers them (`docs/ERRATA-v2.2.md` E5). They are generator configuration proposed for PREREG-v0.5, not completion entries:
