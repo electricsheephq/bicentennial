@@ -181,6 +181,7 @@ def test_no_ids_or_turn_canary(golden):
            for r in db.execute(f"SELECT {column} FROM {table}")]
     ids += [p.session_id for p in schedule.sessions]
     ids += [r["call_id"] for r in result.rows if r["call_id"] is not None]
+    ids += [r["event_id"] for r in result.rows]
     assert scan_script(life, ids, []) == []
     assert _canary() not in canon(life["sessions"]).decode()
 
