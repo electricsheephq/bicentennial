@@ -139,9 +139,10 @@ def completed(installed, cases, tmp_path_factory):
                     pytest.fail(f"STOP: stable output differs: {detail}")
             card = (root / "one" / arm / "card.json").read_bytes()
             print(f"compare {arm} card_sha256={sha256(card).hexdigest()}", flush=True)
-        yield SimpleNamespace(root=root, runs=runs, gates=gates)
     finally:
+        # Undo before yielding: later tests in this module use the real run_case and load_corpus.
         patch.undo()
+    yield SimpleNamespace(root=root, runs=runs, gates=gates)
 
 
 def test_full_run(completed, installed, cases):
