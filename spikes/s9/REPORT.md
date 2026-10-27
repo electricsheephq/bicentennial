@@ -68,7 +68,7 @@ Mem0 execution: not_run until #120. Service-backed pause invisibility: not shown
 | Spare account | not run (deferred); pending: Part B |
 
 Spare-account acceptance and the first-full-tier prerequisite remain pending.
-Same-account success cannot complete them. No qualifying compaction is BLOCKED.
+Same-account success cannot complete them. Without a qualifying compaction, B4 reads BLOCKED.
 
 ## Spend and guards
 

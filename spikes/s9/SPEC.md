@@ -40,8 +40,8 @@ and no-memory. Mem0 stays not_run until #120 measures pins and dependencies.
 - **B4, retained compaction.** Pause at the first boundary with a summariser
   record, with a later session available, for at least 86,400 seconds. Reopen the
   saved session id through the adapter's same-session path and verify that the
-  resumed request history contains the compaction summary. No qualifying state
-  is BLOCKED. Same-account success leaves the spare-account acceptance and the
+  resumed request history contains the compaction summary. Without a qualifying
+  state, B4 reads BLOCKED. Same-account success leaves the spare-account acceptance and the
   first-full-tier prerequisite pending. The spare account is not run (deferred)
   until the owner provides a non-reserved spare. No account is rebound mid-run.
 
