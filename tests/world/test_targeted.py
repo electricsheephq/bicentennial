@@ -183,6 +183,8 @@ def test_t1_composition_and_three_act_allocation(tmp_path):
 
 def test_tier_sources():
     t0, t1 = (load_tier(ROOT / "tiers/life_specs" / f"{tier}.toml") for tier in ("t0", "t1"))
+    assert t1["g2"]["pref_at"] == {"seat-long": [[1, 1], [2, 1]], "seat-short": [[1, 2], [2, 4]]}
+    assert t1["selection"]["pinned"] == {"drift-chain-fault": 20, "drift-booking": 20}
     assert seeds_manifest(t0) == dict(canary=t0["canary"], tier="T0", seeds=[1], lives=[])
     assert seeds_manifest(t1) == dict(
         canary=t1["canary"], tier="T1", seeds=[1, 2],
@@ -534,6 +536,35 @@ def test_t1_lives(tmp_path):
     try:
         for life in lives:
             assert_t1(life, tier)
+    finally:
+        for life in lives:
+            life.twin.b1.close()
+
+
+def test_t1_lives_real_templates(tmp_path):
+    from bicentennial.items.templates import g1, g2
+    from bicentennial.world.targeted import t1_lives
+
+    tier = load_tier(ROOT / "tiers/life_specs/t1.toml")
+    lives = t1_lives(tier, {"G1": g1.TEMPLATES, "G2": g2.TEMPLATES}, root=tmp_path)
+    try:
+        assert [life.life for life in lives] == ["t1-g1", "t1-g2"]
+        for life in lives:
+            assert_t1(life, tier)
+            compiled = life.twin.compiled
+            assert {r["template_id"] for r in compiled.records} == set(tier["selection"][life.genre.lower()])
+            items = {item["item_id"]: item for item in compiled.items}
+            for record in compiled.records:
+                item = items[record["item_id"]]
+                assert item["cell_id"] not in tier["not_exercised"]
+                assert record["evidence_session"] is not None
+                assert hostable(record["evidence_session"], item["probe_point"])
+            if life.genre == "G2":
+                assert len({r["bundle_id"] for r in compiled.records if r["branch"] == "B0"
+                            and r["bundle_id"] is not None and r["evidence_session"] in (1, 2)}) >= 2
+                booking = [r for r in compiled.records if r["template_id"] == "drift-booking"]
+                assert {r["branch"] for r in booking} == {"B0", "B1"}
+                assert all(items[r["item_id"]]["probe_point"] == 20 for r in booking)
     finally:
         for life in lives:
             life.twin.b1.close()

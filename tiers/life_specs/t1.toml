@@ -30,6 +30,9 @@ min_sprints = 2
 [g1]
 deadline_at = [[[1, 1], [2, 1]], [[1, 2], [2, 2]]]
 
+[g2]
+pref_at = { "seat-long" = [[1, 1], [2, 1]], "seat-short" = [[1, 2], [2, 4]] }
+
 [[lives]]
 life = "t1-g1"
 genre = "G1"
@@ -44,4 +47,4 @@ seed = 2
 [selection]
 g1 = ["drift-chain", "drift-chain-fault", "drift-config", "recall-value", "wake-loop"]
 g2 = ["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"]
-pinned = { "drift-chain-fault" = 20 }
+pinned = { "drift-chain-fault" = 20, "drift-booking" = 20 }
