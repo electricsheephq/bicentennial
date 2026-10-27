@@ -294,8 +294,13 @@ def create(path, schedule):
     return db
 
 
-def build_base(path, *, seed, life, scale) -> Life:
+def build_base(path, *, seed, life, scale, pref_at: dict | None = None) -> Life:
     """The default G2 composition; every writer call is atomic, and only `finish` commits."""
+    from dataclasses import replace
+    if pref_at and set(pref_at) - {"seat-long", "seat-short", "meal", "seat-hearsay", "venue-habit"}:
+        raise ValueError("unknown preference id")
+    def placed(prefs):
+        return [replace(pref, at=tuple(map(tuple, pref_at[pref.id]))) if pref_at and pref.id in pref_at else pref for pref in prefs]
     schedule = build_schedule(seed, life, scale)
     if len(schedule.sessions) < 3:
         raise ValueError("the base life needs three sessions")
@@ -313,10 +318,10 @@ def build_base(path, *, seed, life, scale) -> Life:
     with lineage.atomic(db):
         write_corrections(db, schedule, [Chain(id="plan-trip", subject=e["trip"], key="date", stem="DATE", depth=2)],
                           principal=p)
-    prefs = preferences.write_preferences(db, schedule, [
+    prefs = preferences.write_preferences(db, schedule, placed([
         Pref(id="seat-long", domain="seat", scope=("context", "long_haul"), stem="SEAT", depth=1),
         Pref(id="seat-short", domain="seat", scope=("context", "short_haul"), stem="SEAT", mention="hedge"),
-        Pref(id="meal", domain="meal", scope=("venue", e["venue-1"]), stem="MEAL", depth=1, strength=SOFT)],
+        Pref(id="meal", domain="meal", scope=("venue", e["venue-1"]), stem="MEAL", depth=1, strength=SOFT)]),
         principal=p)
     with lineage.atomic(db):
         write_commitments(db, schedule, [
@@ -333,10 +338,10 @@ def build_base(path, *, seed, life, scale) -> Life:
     # After every fact on the ex's covered predicates: forget.verify recomputes coverage from the rows (#74).
     request = write_forget(db, schedule, key="ex", subject=roles["ex"], covered=(("address", "ADDR"),),
                            neighbours=(("birthday", "BDAY"),), principal=p)
-    prefs |= preferences.write_preferences(db, schedule, [
+    prefs |= preferences.write_preferences(db, schedule, placed([
         Pref(id="seat-hearsay", provenance="third_party", domain="seat", scope=("context", "long_haul"),
              stem="SEAT", teller=roles["teller"]),
         Pref(id="venue-habit", provenance="behaviour", domain="venue", scope=("global", None), stem="VENUE",
-             strength=SOFT)], principal=p)
+             strength=SOFT)]), principal=p)
     finish(db, schedule, principal=p)
     return Life(db, schedule, people, e | roles, prefs, bookings, plant, request)

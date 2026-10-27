@@ -89,6 +89,42 @@ def seeds(life):
 
 # ---- base life -------------------------------------------------------------------------------------------------
 
+@pytest.mark.parametrize("pref_at", (None, {}))
+def test_base_default_golden(t1, tmp_path, pref_at):
+    life, path = t1
+    assert world_hash(life.db) == "a5ed7dce17bd3a7868f8d4b01d90912ea30180295a3c9af5d48323883ba708e7"
+    again = build_base(tmp_path / "default.db", seed="g07-t1", life=LIFE, scale=named("t1"), pref_at=pref_at)
+    try:
+        assert export_jsonl(again.db) == export_jsonl(life.db)
+        assert (tmp_path / "default.db").read_bytes() == path.read_bytes()
+    finally:
+        again.db.close()
+
+
+@pytest.mark.parametrize("pref,positions", (
+    ("seat-long", [[1, 1], [2, 1]]), ("seat-short", [[1, 2], [2, 4]]),
+    ("meal", [[1, 1], [2, 1]]), ("seat-hearsay", [[1, 1]]), ("venue-habit", [[1, 1]]),
+))
+def test_base_pref_at(tmp_path, pref, positions):
+    life = build_base(tmp_path / "placed.db", seed="2", life="t1-g2", scale=named("t1"),
+                      pref_at={pref: positions})
+    try:
+        process, key = (("g2-preferences", pref) if pref in ("seat-hearsay", "venue-habit")
+                        else ("corrections", f"pref-{pref}"))
+        times = [one(life.db, "SELECT t_sim FROM event WHERE id=?",
+                     mint(life.schedule, process, key, "event", "event", j)) for j in range(len(positions))]
+        assert times == [life.schedule.sessions[s - 1].turn_t[t - 1] for s, t in positions]
+    finally:
+        life.db.close()
+
+
+def test_base_pref_at_unknown(tmp_path):
+    path = tmp_path / "unknown.db"
+    with pytest.raises(ValueError, match="unknown preference id"):
+        build_base(path, seed="2", life="t1-g2", scale=named("t1"), pref_at={"unknown": [[1, 1]]})
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("name", ["t1", "micro"])
 def test_base_counts(name, request):
     life, _ = request.getfixturevalue(name)

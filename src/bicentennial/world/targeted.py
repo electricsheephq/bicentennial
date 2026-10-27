@@ -76,11 +76,12 @@ def _tier_source(tier):
         swap=dict(session=scale.swap, wiring_only=True, from_alias=aliases[0], to_alias=aliases[1]),
         compaction=dict(min_sprints=len(scale.sprint_ranges)),
         g1=dict(deadline_at=[[[1, 1], [2, 1]], [[1, 2], [2, 2]]]),
+        g2=dict(pref_at={"seat-long": [[1, 1], [2, 1]], "seat-short": [[1, 2], [2, 4]]}),
         lives=[dict(life="t1-g1", genre="G1", seed=1, reads_session=1),
                dict(life="t1-g2", genre="G2", seed=2)],
         selection=dict(g1=["drift-chain", "drift-chain-fault", "drift-config", "recall-value", "wake-loop"],
                        g2=["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"],
-                       pinned={"drift-chain-fault": 20}))
+                       pinned={"drift-chain-fault": 20, "drift-booking": 20}))
 
 
 def load_tier(path):
@@ -256,7 +257,7 @@ def _build_t1(path, schedule, *, spec, row):
     path, db = Path(path), None
     try:
         if row["genre"] == "G2":
-            life = build_base(path, seed=seed_text(row["seed"]), life=row["life"], scale=named("t1"))
+            life = build_base(path, seed=seed_text(row["seed"]), life=row["life"], scale=named("t1"), pref_at=spec["g2"]["pref_at"])
             db, principal = life.db, life.people.principal
             if life.schedule.to_json() != schedule.to_json():
                 raise PlacementError("composition")
