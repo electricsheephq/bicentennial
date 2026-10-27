@@ -17,6 +17,7 @@ import pytest
 
 from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS
+from bicentennial.items.levers import LEVERS
 from bicentennial.items.protocol import TRACK_BY_PREFIX
 from bicentennial.packs.catalogue import (
     NOT_COVERED,
@@ -40,7 +41,11 @@ def catalogue():
 
 
 def test_inventory(catalogue):
-    assert len(catalogue.rows) == 90
+    assert len(catalogue.rows) == 94
+    assert Counter(r.test for r in catalogue.rows) == {"MFT": 40, "INV": 30, "DIR": 24}
+    assert sum(r.gate is None for r in catalogue.rows) == 86
+    for genre, template in (("G1", "drift-quote"), ("G2", "drift-no-update")):
+        assert sum(r.template == template for r in catalogue.rows_for(genre)) == 9
     assert catalogue.seeds() == (1, 2, 3)
     assert catalogue.not_covered == NOT_COVERED + (
         dict(genre="G1", track="Tuesday", reason="every INV row confounded at v0.1"),)
@@ -48,13 +53,13 @@ def test_inventory(catalogue):
     assert set(RECIPES) == {(g, t.template_id) for g, ts in TEMPLATES_BY_GENRE.items() for t in ts.values()}
     assert len(RECIPES) == 15
     expected = {
-        ("G1", "Drift"): (10, 8, 6), ("G1", "Wake"): (2, 2, 2),
+        ("G1", "Drift"): (12, 8, 6), ("G1", "Wake"): (2, 2, 2),
         ("G1", "Recall"): (3, 2, 2), ("G1", "Tuesday"): (2, 2, 0),
-        ("G2", "Drift"): (9, 6, 6), ("G2", "Keep"): (5, 6, 6),
+        ("G2", "Drift"): (11, 6, 6), ("G2", "Keep"): (5, 6, 6),
         ("G2", "Recall"): (3, 2, 2), ("G2", "Tuesday"): (2, 2, 0),
     }
     for genre in ("G1", "G2"):
-        assert len(catalogue.rows_for(genre)) == (41 if genre == "G1" else 49)
+        assert len(catalogue.rows_for(genre)) == (43 if genre == "G1" else 51)
         for track in TRACK_BY_PREFIX.values():
             counts = Counter(r.test for r in catalogue.rows_for(genre, track))
             assert tuple(counts[k] for k in ("MFT", "INV", "DIR")) == expected.get((genre, track), (0, 0, 0))
@@ -181,6 +186,72 @@ def _toml(value):
     if isinstance(value, list):
         return "[" + ", ".join(_toml(v) for v in value) + "]"
     return json.dumps(value)
+
+
+@pytest.mark.parametrize(("ident", "case"), (
+    ("g2-keep-neighbour-inv-2", "false-flag"),
+    ("g1-drift-chain-inv-1", "true-flag"),
+    *(("g1-drift-chain-inv-1", case) for case in (
+        "null", "[]", "{}", "missing-B1", "extra-branch",
+        *(f"{branch}:{case}" for branch in ("B0", "B1") for case in (
+            "missing-lever", "extra-lever", "true-lever", "missing-side", "extra-side",
+            "bool-base", "bool-inv", "float-value", "null-distance", "string-distance",
+        )),
+    )),
+))
+def test_inv_delta_refusals(monkeypatch, ident, case):
+    import tomllib
+
+    data = tomllib.loads(CATALOGUE.read_text())
+    row = next(r for r in data["rows"] if r["id"] == ident)
+    delta = json.loads(row["lever_delta"])
+    if case in ("false-flag", "true-flag"):
+        row["confounded"] = case == "true-flag"
+    elif case in ("null", "[]", "{}"):
+        delta = json.loads(case)
+    elif case == "missing-B1":
+        del delta["B1"]
+    elif case == "extra-branch":
+        delta["B2"] = copy.deepcopy(delta["B0"])
+    else:
+        branch, mutation = case.split(":")
+        lever = next(name for name in LEVERS if name != "distance_tokens_est")
+        values = delta[branch][lever]
+        if mutation == "missing-lever":
+            del delta[branch][lever]
+        elif mutation == "extra-lever":
+            delta[branch]["extra"] = dict(base=0, inv=0)
+        elif mutation == "true-lever":
+            delta[branch][lever] = True
+        elif mutation == "missing-side":
+            del values["inv"]
+        elif mutation == "extra-side":
+            values["extra"] = 0
+        elif mutation in ("bool-base", "bool-inv"):
+            values[mutation.removeprefix("bool-")] = True
+        elif mutation == "float-value":
+            values["inv"] = float(values["base"])  # equal value: only the int-type rule can refuse it
+        elif mutation == "null-distance":
+            delta[branch]["distance_tokens_est"]["base"] = None
+        elif mutation == "string-distance":
+            delta[branch]["distance_tokens_est"]["inv"] = "139"
+    row["lever_delta"] = json.dumps(delta)
+    edited = "\n".join(f"{k} = {_toml(v)}" for k, v in data.items())
+    read_text = Path.read_text
+
+    def edited_read_text(path, *args, **kwargs):
+        return edited if path == CATALOGUE else read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", edited_read_text)
+    with pytest.raises(ValueError, match=f"^{ident}$"):
+        load_catalogue(CATALOGUE, c7_path=C7, tier_path=TIER)
+
+
+def test_shipped_confounded_rows(catalogue):
+    assert {r.id for r in catalogue.rows if r.confounded} == {
+        "g1-tue-ticket-inv-1", "g1-tue-ticket-inv-2",
+        "g2-keep-neighbour-inv-2", "g2-tue-passport-inv-2",
+    }
 
 
 @pytest.mark.parametrize("case", (

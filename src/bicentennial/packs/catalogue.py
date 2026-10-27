@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
 
-from bicentennial.items.levers import STRESS_TAGS
+from bicentennial.items.levers import LEVERS, STRESS_TAGS
 from bicentennial.items.protocol import CANARY, TRACK_BY_PREFIX, cell_stage, cell_track
 from bicentennial.items.tags import stage
 from bicentennial.items.templates import g1, g2
@@ -129,6 +129,23 @@ def _load(path, c7_path, tier_path):
             keys.update(("schedule_seed", "lever_delta", "confounded"))
             raw["lever_delta"] = json.loads(raw["lever_delta"])
             _require(type(raw["confounded"]) is bool, ident)
+            delta = raw["lever_delta"]
+            _require(type(delta) is dict and set(delta) == {"B0", "B1"}, ident)
+            confounded = False
+            for branch in ("B0", "B1"):
+                values = delta[branch]
+                _require(type(values) is dict and set(values) == set(LEVERS), ident)
+                for lever in LEVERS:
+                    pair = values[lever]
+                    _require(type(pair) is dict and set(pair) == {"base", "inv"}
+                             and all(v is None or type(v) is int for v in pair.values()), ident)
+                    base, inv = pair["base"], pair["inv"]
+                    if lever == "distance_tokens_est":
+                        _require(type(base) is int and type(inv) is int, ident)
+                        confounded |= abs(inv - base) > max(4, (base + 19) // 20)
+                    else:
+                        confounded |= base != inv
+            _require(confounded == raw["confounded"], ident)
         if template.cell_id == "TUE-EVENT":
             keys.add("gate")
         if faulted:
