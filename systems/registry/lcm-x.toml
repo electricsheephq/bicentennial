@@ -1,0 +1,18 @@
+name = "lcm-x"
+licence = "MIT"
+harness = "hermes"
+artifact = {name = "lcm-x", version = "v0.28.1", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
+write_tools = []
+# Only the read tool named in S5 is asserted; no recall arguments are invented.
+read_tools = ["lcm_expand_query"]
+# Shares the Hermes home, so it declares the same logs and lock.
+surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
+fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+own_model_routes = [
+    {role = "summariser", alias = "bicentennial-summariser"},
+    {role = "extraction", alias = "bicentennial-extraction"},
+]
+structured_formats = {}
+settle = {kind = "none", bound_s = 0}
+machine_class = "light"
+benchmark_operator_runs = false
