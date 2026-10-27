@@ -610,6 +610,93 @@ def run(installed, out, **changes):
                             pack_hash=installed[2], out=out) | changes))
 
 
+@pytest.mark.parametrize("always", [False, True])
+def test_pack_invariant_scan_reruns(installed, tmp_path, monkeypatch, always):
+    from bicentennial.score import invariants
+
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    original = invariants.search_store
+    scans = []
+
+    def search(root, needles):
+        if "main" in Path(root).parts:
+            scans.append(root)
+            if always or len(scans) == 1:
+                raise OSError("store scan failed")
+        return original(root, needles)
+
+    monkeypatch.setattr(invariants, "search_store", search)
+    out = tmp_path / "out"
+    assert run(installed, out, packs=[pack.rel]) == (2 if always else 0)
+    verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
+    forget = verdicts["INV-FORGET"]
+    assert forget["members"] >= 1
+    assert forget["status"] == ("INFRA_FAILURE" if always else "PASS")
+    assert forget["reasons"] == (["infra"] if always else [])
+    assert scans and scans.count(scans[0]) == (3 if always else 2)
+    for filename, schema in (("card.json", "card_ring0"), ("receipt.json", "receipt")):
+        value = json.loads((out / pack.rel / filename).read_bytes())
+        validate(schema, value)
+        assert value["run_status"] == ("BLOCKED" if always else "COMPLETE")
+
+
+def test_pack_invariant_rerun_keeps_known_failure(installed, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    original, calls = t0.run_invariants, []
+
+    def evaluate(evidence, **kwargs):
+        verdicts = original(evidence, **kwargs)
+        calls.append(len(calls))
+        forget = verdicts["INV-FORGET"]
+        # The first attempt finds a store hit beside a scan fault; any later attempt would hide the hit.
+        verdicts["INV-FORGET"] = (replace(forget, status="FAIL", failed=("forget-hit",), infra=("forget-scan",),
+                                          reasons=("infra", "store_hit")) if len(calls) == 1 else
+                                  replace(forget, status="INFRA_FAILURE", failed=(), infra=("forget-hit",),
+                                          reasons=("infra",)))
+        return verdicts
+
+    monkeypatch.setattr(t0, "run_invariants", evaluate)
+    out = tmp_path / "out"
+    assert run(installed, out, packs=[pack.rel]) == 1
+    assert len(calls) == 1
+    verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
+    assert verdicts["INV-FORGET"]["status"] == "FAIL" and verdicts["INV-FORGET"]["failed"] == ["forget-hit"]
+    card = json.loads((out / pack.rel / "card.json").read_bytes())
+    assert card["gate_verdict"] == "FAIL"
+    for filename in ("card.json", "receipt.json"):
+        assert json.loads((out / pack.rel / filename).read_bytes())["run_status"] == "BLOCKED"
+
+
+def test_pack_invariant_session_wakes(fake_hosts, installed, tmp_path, monkeypatch):
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-drift-booking-mft-1")
+    members = {i["item_id"] for i in pack.pack["items"]
+               if pack.records[i["item_id"]]["evidence_session"] == 2 and i["probe_point"] == 3}
+    assert members and members == {i["item_id"] for i in pack.pack["items"]}
+    assert not any(kind in ("restart", "kill") and 2 < session <= 3
+                   for kind, session, _ in pack.schedule.wakes())
+    empty_audit = t0._audit([])
+    monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
+    original = t0.run_invariants
+    observed = []
+
+    def observe(evidence, **kwargs):
+        observed.append({e.item["item_id"] for e in evidence if e.crosses_restart})
+        return original(evidence, **kwargs)
+
+    monkeypatch.setattr(t0, "run_invariants", observe)
+    for real in (False, True):
+        out = tmp_path / str(real)
+        options = dict(system="hermes-native", hermes=tmp_path,
+                       entry=load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)) if real else {}
+        assert run(installed, out, packs=[pack.rel], **options) == 0
+        verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
+        assert observed[-1] == (members if real else set())
+        assert verdicts["INV-NEW"]["members"] == (len(members) if real else 0)
+        assert verdicts["INV-NEW"]["status"] == ("PASS" if real else "NOT_EXERCISED")
+
+
 def no_floats(value):
     assert not isinstance(value, float)
     if isinstance(value, dict):
@@ -801,6 +888,13 @@ def test_known_failure_wins_over_blocked(installed, tmp_path, monkeypatch, scena
         selected = selected[:1]
     original = t0._Factory.__call__
     attempts = {}
+    evaluate = t0.run_invariants
+    evaluations = []
+
+    def invariants(evidence, **kwargs):
+        verdicts = evaluate(evidence, **kwargs)
+        evaluations.append(verdicts)
+        return verdicts
 
     def construct(factory):
         if "adapter" in factory.unit.parts:
@@ -817,10 +911,12 @@ def test_known_failure_wins_over_blocked(installed, tmp_path, monkeypatch, scena
         return Broken()
 
     monkeypatch.setattr(t0._Factory, "__call__", construct)
+    monkeypatch.setattr(t0, "run_invariants", invariants)
     if scenario == "honeypot-blocked":
         monkeypatch.setattr(t0, "hits", lambda token, texts: 1)
     out = tmp_path / "out"
     code = run(installed, out, packs=[p.rel for p in selected])
+    assert len(evaluations) == len(selected)
     expected = 2 if scenario == "blocked" else 1
     assert code == expected
     for n, pack in enumerate(selected):
@@ -882,8 +978,11 @@ def test_baseline_fault_verdict(installed, tmp_path, monkeypatch, baseline_cause
     assert len(baseline_attempts) == (4 if blocked else 2)
     card = json.loads((out / pack.rel / "card.json").read_bytes())
     validate("card_ring0", card)
-    assert card["run_status"] == ("BLOCKED" if blocked and not selected_failure else "COMPLETE")
+    assert card["run_status"] == ("BLOCKED" if blocked else "COMPLETE")
     assert card["gate_verdict"] == ("FAIL" if selected_failure else "BLOCKED" if blocked else "PASS")
+    receipt = json.loads((out / pack.rel / "receipt.json").read_bytes())
+    validate("receipt", receipt)
+    assert receipt["run_status"] == card["run_status"]
     if not selected_failure:
         assert all(i["failure_class"] not in ("SYSTEM_FAILURE", "BLOCKED") for i in card["items"])
 
