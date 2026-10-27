@@ -62,6 +62,7 @@ from bicentennial.world.scale import named
 from bicentennial.world.schedule import build_schedule
 from bicentennial.world.twin import twin_life
 
+ROOT = Path(__file__).resolve().parents[2]
 CATALOGUE = {t.template_id: t for t in TEMPLATES}
 LIVES = {
     "drift": ("drift-asof", "drift-booking", "drift-no-update"),
@@ -464,7 +465,11 @@ def test_purity_catalogue_and_helpers(lives):
         for tab in t.decision_tables:
             validate("decision_table", tab)
             assert tab["canary"] == canary
-    package = Path("src/bicentennial/items/templates/g2")
+    package = ROOT / "src/bicentennial/items/templates/g2"
+    assert sorted(p.name for p in package.glob("*.py")) == [
+        "__init__.py", "common.py", "drift_booking.py", "keep_forget.py",
+        "keep_incidental.py", "recall_count.py", "tuesday_trigger.py",
+    ]
     banned = ("random", "time", "socket", "ssl", "http", "urllib", "subprocess", "bicentennial.sandbox",
               "bicentennial.director", "bicentennial.render", "bicentennial.world.twin", "spikes")
     for path in sorted(package.glob("*.py")):
@@ -504,7 +509,7 @@ def test_determinism_subprocesses(tmp_path):
 import runpy, sys
 from pathlib import Path
 from bicentennial.canon import canon
-ns = runpy.run_path('tests/items/test_templates_g2.py')
+ns = runpy.run_path(sys.argv[2])
 root = Path(sys.argv[1])
 root.mkdir()
 result = []
@@ -515,7 +520,8 @@ for which in ('tue', 'forget'):
         db.close()
 sys.stdout.buffer.write(canon(result))
 """
-    results = [subprocess.run([sys.executable, "-c", script, str(tmp_path / str(j))],
+    results = [subprocess.run([sys.executable, "-c", script, str(tmp_path / str(j)),
+                               str(ROOT / "tests/items/test_templates_g2.py")],
                               env=os.environ | {"PYTHONHASHSEED": seed}, check=True, capture_output=True).stdout
                for j, seed in enumerate(("0", "random"))]
     assert results[0] == results[1]
