@@ -92,24 +92,25 @@ def build_mixed(path, new_value='PROD-WEST-2', plant_modality='planted'):
     fact(db, 'f-plant', predicate='favorite_editor', modality=plant_modality, tokens=['HELIX-9081'])
     fact(db, 'f-obs', subject='p2', predicate='build_status', modality='observed', tokens=['BUILD-3317'])
     fact(db, 'f-quote', predicate='budget', speech_act='quote', polarity='negate', tokens=['EUR-12500'])
+    fact(db, 'f-forget', subject='p2', predicate='forget', obj='review_meeting')  # G04's request fact shape
     for i, (id, channel, links) in enumerate([
             ('ev-intro', 'chat', [('f-old', 'assert')]),
             ('ev-correction', 'chat', [('f-new', 'assert'), ('f-old', 'retract')]),
             ('ev-commit', 'chat', [('f-commit', 'assert')]),
             ('ev-factless', 'chat', []),
-            ('ev-forget', 'chat', []),
             ('ev-mail', 'mail', [('f-quote', 'mention'), ('f-hedge', 'assert')]),
             ('ev-none', 'commit', [('f-obs', 'assert')]),
             ('ev-log', 'ci_log', [('f-obs', 'mention')]),
             ('ev-plant', 'chat', [('f-plant', 'assert')]),
-            ('ev-again', 'review_comment', [('f-new', 'mention'), ('f-commit', 'mention')])]):
+            ('ev-again', 'review_comment', [('f-new', 'mention'), ('f-commit', 'mention')]),
+            ('ev-forget', 'chat', [('f-forget', 'assert')])]):
         event(db, id, t + 600 * i, channel, 'p2' if i % 2 else 'ent')
         for fact_id, role in links:
             link(db, id, fact_id, role)
     writers.insert_commitment(db, fact_id='f-commit', trigger_kind='time', window_open_t=1793590200,
                               window_close_t=1793593800, lures_json=['early'])
     writers.insert_plant(db, fact_id='f-plant', carrier_event_id='ev-plant', kind='source')
-    writers.insert_forget_request(db, event_id='ev-forget', covered_fact_ids_json=['f-hedge'])
+    writers.insert_forget_request(db, event_id='ev-forget', covered_fact_ids_json=['f-commit'])
     db.commit()
     return db
 
@@ -130,7 +131,7 @@ def marked(parts, kind):
 
 
 def phrases(bank):
-    every = [p for cell in bank.cells.values() for p in cell] + list(bank.factless) + [bank.when]
+    every = [p for cell in bank.cells.values() for p in cell] + list(bank.factless + bank.forget) + [bank.when]
     return {p.phrase_id: p.text for p in every}
 
 
@@ -144,6 +145,8 @@ def check_trace(db, r, tz, bank=None):
         if s.token_id is not None:
             token = db.execute('SELECT * FROM locked_token WHERE token_id = ?', (s.token_id,)).fetchone()
             assert s.name == 'object' and token['fact_id'] == s.fact_id and value == token['value']
+        elif s.name == 'object' and f['predicate'] == 'forget':
+            assert value == json.loads(f['object']).replace('_', ' ')
         elif s.name == 'object':
             assert value == json.loads(f['object'])
         elif s.name == 'subject':
@@ -232,21 +235,29 @@ REFUSALS = {
                                              '"Maybe the {predicate} for {subject} is {object} from now on."'),
     'missing cell': lambda s: _lines_without(s, '[cells.quote.retracted.hard]'),
     'extra planted cell': lambda s: s + '[cells.assert.planted.soft]\naffirm = ["{object}."]\nnegate = ["{object}."]\n',
-    'two objects': lambda s: s.replace('"{subject} said the {predicate} is {object}."',
-                                       '"{subject} said the {predicate} is {object} or {object}."'),
+    'two objects': lambda s: s.replace('"It was said that the {predicate} for {subject} is {object}."',
+                                       '"It was said that the {predicate} for {subject} is {object} or {object}."'),
     'non-NFC': lambda s: s.replace('"Thanks, noted."', '"Thanks, note\u0301d."'),
     'stray slot': lambda s: s.replace('"Sounds good."', '"Sounds {x} good."'),
     'altered markers': lambda s: s.replace('"for sure", ', ''),
     'empty list': lambda s: s.replace('factless = [', 'factless = [] #'),
     'bad style': lambda s: s.replace('ci_log = "log"', 'ci_log = "syslog"'),
     'extra key': lambda s: s.replace('calibrated = false', 'calibrated = false\nextra = 1'),
-    'no subject': lambda s: s.replace('"{subject} said the {predicate} is {object}."', '"Said the {predicate} is {object}."'),
+    'no subject': lambda s: s.replace('"It was said that the {predicate} for {subject} is {object}."',
+                                      '"It was said that the {predicate} is {object}."'),
     'missing channel': lambda s: s.replace('tracker = "none"\n', ''),
-    'when in a cell': lambda s: s.replace('"{subject} wrote: the {predicate} is {object}."',
-                                          '"{subject} wrote: the {predicate} is {object} {when}."'),
+    'when in a cell': lambda s: s.replace('"Quote from a note: the {predicate} for {subject} is {object}."',
+                                          '"Quote from a note: the {predicate} for {subject} is {object} {when}."'),
     'soft assert marker': lambda s: s.replace('"The {predicate} for {subject} is {object}."',
                                               '"The {predicate} for {subject} is always {object}."'),
     'marker in when': lambda s: s.replace('"Due {when}."', '"Maybe due {when}."'),
+    'missing forget': lambda s: s.replace('forget = [', 'unforget = ['),
+    'empty forget': lambda s: s.replace('forget = [', 'forget = [] #'),
+    'forget predicate slot': lambda s: s.replace('"Please forget {subject}\'s {object}."',
+                                                 '"Please forget {subject}\'s {predicate} {object}."'),
+    'forget without subject': lambda s: s.replace('"Please forget {subject}\'s {object}."', '"Please forget {object}."'),
+    'forget hedge marker': lambda s: s.replace('"Please forget {subject}\'s {object}."',
+                                               '"Maybe forget {subject}\'s {object}."'),
 }
 
 
@@ -285,10 +296,78 @@ def test_mixed_world_trace(tmp_path):
     assert renders['ev-mail'].text.startswith('Date: ') and '\n\n' in renders['ev-mail'].text
     assert renders['ev-mail'].fact_ids == ('f-hedge', 'f-quote')
     assert not renders['ev-none'].text.startswith(('[', 'Date')) and renders['ev-log'].text.startswith('2026-')
+    assert 'the budget for Ana Weber' in renders['ev-mail'].text
     gold = {e for e, r in renders.items() if r.gold_critical}
     assert gold == set(renders) - {'ev-intro', 'ev-factless'}
     assert renders['ev-again'].stream_render() == {'lane': 'template', 'voice': 'template',
                                                    'template_id': renders['ev-again'].template_id}
+
+
+def test_forget_request_names_predicate_never_value(tmp_path):
+    db = build_mixed(tmp_path / 'm.sqlite')
+    r = render_event(db, 'ev-forget', life=LIFE, tz=NY)
+    body = r.text.split('] ', 1)[1]
+    assert re.fullmatch(r'en-v1:forget#\d', r.template_id) and r.gold_critical and r.fact_ids == ('f-forget',)
+    assert 'Bo Lindqvist' in body and 'review meeting' in body and body not in default_bank().factless
+    assert [(s.name, r.text[s.start:s.end]) for s in r.slots] == [('subject', 'Bo Lindqvist'), ('object', 'review meeting')]
+    covered = json.loads(db.execute("SELECT covered_fact_ids_json FROM forget_request").fetchone()[0])
+    values = [row[0] for row in db.execute(
+        'SELECT value FROM locked_token WHERE fact_id IN (SELECT value FROM json_each(?))', (json.dumps(covered),))]
+    assert values == ['RVW-5521'] and not any(v in r.text for v in values)
+    check_trace(db, r, NY)
+    # The template_id and text are stable: re-rendering, or flipping a covered value, changes nothing.
+    again = render_event(build_mixed(tmp_path / 'n.sqlite', new_value='PROD-WEST-9'), 'ev-forget', life=LIFE, tz=NY)
+    assert (again.text, again.template_id) == (r.text, r.template_id)
+
+
+def forget_world(tmp_path, covered='HOME-ADDR-7', links=(('f-req-a', 'assert'), ('f-req-b', 'assert')),
+                 request=True, **req):
+    db = create_world(tmp_path / f'forget-{next(WORLDS)}.sqlite', META)
+    entity(db, 'ent', 'Rin Okafor')
+    event(db, 'ev-old', 1700000001)
+    event(db, 'ev-f', 1700000601)
+    fact(db, 'f-home', predicate='home_address', tokens=[covered])
+    link(db, 'ev-old', 'f-home')
+    fact(db, 'f-req-a', predicate='forget', obj='home_address', **req)
+    fact(db, 'f-req-b', predicate='forget', obj='seat_choice')
+    for fact_id, role in links:
+        link(db, 'ev-f', fact_id, role)
+    if request:
+        writers.insert_forget_request(db, event_id='ev-f', covered_fact_ids_json=['f-home'])
+    db.commit()
+    return db
+
+
+def test_forget_request_shapes(tmp_path):
+    db = forget_world(tmp_path)
+    r = render_event(db, 'ev-f', life=LIFE, tz=PARIS)
+    ids = r.template_id.split(':')[1].split('+')
+    assert len(ids) == 2 and all(re.fullmatch(r'forget#\d', i) for i in ids)
+    assert "home address" in r.text and 'seat choice' in r.text and 'HOME-ADDR-7' not in r.text
+    check_trace(db, r, PARIS)
+    other = render_event(forget_world(tmp_path, covered='WORK-ADDR-9'), 'ev-f', life=LIFE, tz=PARIS)
+    assert (other.text, other.template_id) == (r.text, r.template_id)
+    for case in (dict(links=()),  # a forget_request row with no linked request fact is never filler
+                 dict(links=(('f-home', 'mention'),)),
+                 dict(request=False),
+                 dict(links=(('f-req-a', 'mention'),)),
+                 dict(speech_act='hedge'), dict(strength=999), dict(polarity='negate'),
+                 dict(modality='planted'), dict(tokens=['ADDR-0001'])):
+        with pytest.raises(ValueError):
+            render_event(forget_world(tmp_path, **case), 'ev-f', life=LIFE, tz=PARIS)
+
+
+def test_quote_cells_name_no_speaker(tmp_path):
+    for (act, _, _, _), cell in default_bank().cells.items():
+        for p in cell if act == 'quote' else ():
+            assert 'the {predicate} for {subject}' in p.text and not p.text.startswith('{subject}'), p
+    db = build_cells(tmp_path / 'q.sqlite')
+    for n, (act, modality, _, _) in enumerate(CELLS):
+        if act != 'quote' or modality == 'inferred_allowed':
+            continue
+        body = render_event(db, f'ev-{n:03d}', life=LIFE, tz=PARIS).text.split('] ', 1)[1]
+        assert 'the seat choice for Rin Okafor' in body and not body.startswith('Rin Okafor')
+        assert not re.search(r'Rin Okafor:?\s+(said|wrote)', body), body
 
 
 WORLDS = count()

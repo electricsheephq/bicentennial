@@ -1,9 +1,12 @@
 # The v0.1 English phrase bank. Slots are {subject}, {predicate}, {object} and {when}.
 # Not yet human-calibrated (DESIGN §4.4), so calibrated stays false.
+# A forget request's {object} is the forgotten predicate, never a value. Quote cells keep {subject}
+# inside the quoted proposition and name no speaker.
 bank_id = "en-v1"
 calibrated = false
 when = "Due {when}."
 factless = ["Thanks, noted.", "Got it, thanks.", "Okay, talk soon.", "Sounds good."]
+forget = ["Please forget {subject}'s {object}.", "Forget {subject}'s {object}, please; drop it from your notes.", "Please stop keeping {subject}'s {object} on record."]
 
 [markers]
 assert = ["always", "confirmed", "definitely", "for sure", "from now on", "must"]
@@ -84,20 +87,20 @@ affirm = ["I suggest strongly that we withdraw {object} as the {predicate} for {
 negate = ["I suggest strongly that we allow {object} again as the {predicate} for {subject}.", "Could we lift the rule against {object} as the {predicate} for {subject}?"]
 
 [cells.quote.stated.soft]
-affirm = ["{subject} said the {predicate} is {object}.", "{subject} wrote: the {predicate} is {object}."]
-negate = ["{subject} said the {predicate} is not {object}.", "{subject} wrote: the {predicate} is not {object}."]
+affirm = ["It was said that the {predicate} for {subject} is {object}.", "Quote from a note: the {predicate} for {subject} is {object}."]
+negate = ["It was said that the {predicate} for {subject} is not {object}.", "Quote from a note: the {predicate} for {subject} is not {object}."]
 [cells.quote.stated.hard]
-affirm = ["{subject} said the {predicate} must be {object}.", "{subject} wrote: the {predicate} is definitely {object}."]
-negate = ["{subject} said the {predicate} must not be {object}.", "{subject} wrote: the {predicate} is definitely not {object}."]
+affirm = ["It was said that the {predicate} for {subject} must be {object}.", "Quote from a note: the {predicate} for {subject} is definitely {object}."]
+negate = ["It was said that the {predicate} for {subject} must not be {object}.", "Quote from a note: the {predicate} for {subject} is definitely not {object}."]
 [cells.quote.observed.soft]
-affirm = ["The log wrote {object} as the {predicate} for {subject}.", "Quote from the output: {subject} {predicate} {object}."]
-negate = ["The log wrote that {object} is not the {predicate} for {subject}.", "Quote from the output: {subject} {predicate} not {object}."]
+affirm = ["The log wrote that the {predicate} for {subject} is {object}.", "Quote from the output: the {predicate} for {subject} is {object}."]
+negate = ["The log wrote that the {predicate} for {subject} is not {object}.", "Quote from the output: the {predicate} for {subject} is not {object}."]
 [cells.quote.observed.hard]
-affirm = ["The log wrote, confirmed: {object} is the {predicate} for {subject}.", "Quote from the output, confirmed: {subject} {predicate} {object}."]
-negate = ["The log wrote, confirmed: {object} is not the {predicate} for {subject}.", "Quote from the output, confirmed: {subject} {predicate} not {object}."]
+affirm = ["The log wrote, confirmed: the {predicate} for {subject} is {object}.", "Quote from the output, confirmed: the {predicate} for {subject} is {object}."]
+negate = ["The log wrote, confirmed: the {predicate} for {subject} is not {object}.", "Quote from the output, confirmed: the {predicate} for {subject} is not {object}."]
 [cells.quote.retracted.soft]
-affirm = ["{subject} said to disregard the {predicate} being {object}.", "{subject} wrote: scratch the {predicate} {object}."]
-negate = ["{subject} said the {predicate} can be {object} after all.", "{subject} wrote: {object} is fine again for the {predicate}."]
+affirm = ["It was said to disregard that the {predicate} for {subject} is {object}.", "Quote from a later note: the {predicate} for {subject} is no longer {object}."]
+negate = ["It was said that the {predicate} for {subject} can be {object} after all.", "Quote from a later note: {object} is fine again as the {predicate} for {subject}."]
 [cells.quote.retracted.hard]
-affirm = ["{subject} said the {predicate} is definitely no longer {object}.", "{subject} wrote: confirmed, the {predicate} is not {object} anymore."]
-negate = ["{subject} said {object} is definitely allowed again for the {predicate}.", "{subject} wrote: confirmed, {object} is back for the {predicate}."]
+affirm = ["It was said that the {predicate} for {subject} is definitely no longer {object}.", "Quote from a later note, confirmed: the {predicate} for {subject} is not {object} anymore."]
+negate = ["It was said that {object} is definitely allowed again as the {predicate} for {subject}.", "Quote from a later note, confirmed: {object} is back as the {predicate} for {subject}."]

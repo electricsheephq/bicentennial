@@ -24,7 +24,7 @@ MARKERS = {
 CHANNELS = ("chat", "issue_thread", "review_comment", "standup_note", "mail", "email_digest",
             "ci_log", "tool_result", "file_content", "commit", "calendar", "notes", "tracker")
 SLOT = re.compile(r"\{(subject|predicate|object|when)\}")
-KEYS = {"bank_id", "calibrated", "markers", "channels", "when", "factless", "cells"}
+KEYS = {"bank_id", "calibrated", "markers", "channels", "when", "factless", "forget", "cells"}
 
 
 class Phrase(NamedTuple):
@@ -41,6 +41,7 @@ class PhraseBank:
     channels: dict[str, str]
     when: Phrase
     factless: tuple[Phrase, ...]
+    forget: tuple[Phrase, ...]
     cells: dict[tuple[str, str, str, str], tuple[Phrase, ...]]
 
     def cell(self, speech_act: str, modality: str, strength: int, polarity: str) -> tuple[Phrase, ...]:
@@ -110,7 +111,9 @@ def load(path: str | Path | None = None) -> PhraseBank:
         raise ValueError("channel style must be chat, mail, log or none")
     none = {"subject": 0, "predicate": 0, "object": 0, "when": 0}
     when = _phrase(data["when"], {**none, "when": 1}, tuple(MARKERS))
-    factless = [_phrase(p, none, tuple(MARKERS)) for p in _list(data["factless"])]
+    factless = tuple(Phrase(f"factless#{i}", _phrase(p, none, tuple(MARKERS))) for i, p in enumerate(_list(data["factless"])))
+    forget = tuple(Phrase(f"forget#{i}", _phrase(p, {**none, "subject": 1, "object": 1}, ("hedge", "propose", "quote")))
+                   for i, p in enumerate(_list(data["forget"])))
     cells = {}
     for act, by_modality in _exact(data["cells"], SPEECH_ACTS, "cells").items():
         banned = {"assert": ("hedge", "propose"), "hedge": ("assert",), "propose": ("assert",)}.get(act, ())
@@ -124,9 +127,8 @@ def load(path: str | Path | None = None) -> PhraseBank:
                                                      banned, band_ == "soft",
                                                      None if act == "assert" else act))
                         for i, p in enumerate(_list(phrases)))
-    return PhraseBank(data["bank_id"], data["calibrated"], sha256(raw).hexdigest(),
-                      {k: tuple(v) for k, v in markers.items()}, dict(channels), Phrase("when", when),
-                      tuple(Phrase(f"factless#{i}", p) for i, p in enumerate(factless)), cells)
+    return PhraseBank(data["bank_id"], data["calibrated"], sha256(raw).hexdigest(), {k: tuple(v) for k, v in markers.items()},
+                      dict(channels), Phrase("when", when), factless, forget, cells)
 
 
 @cache
