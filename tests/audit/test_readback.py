@@ -900,3 +900,21 @@ def test_audit_imports_no_director_and_no_egress():
                      if isinstance(node, ast.ImportFrom) else [])
             for name in names:
                 assert not any(name == b or name.startswith(b + ".") for b in banned), (path.name, name)
+
+
+def test_malformed_action_values_never_reach_the_report():
+    reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "empty"})]
+    for action in ({"content": "private memory draft"}, ["private memory draft"], "private memory draft"):
+        calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":false}',
+                  "arguments": json.dumps({"action": action, "content": "x"})}]
+        out = ef.effects(calls, reqs, {"memory": ""}, "responses")
+        assert out["calls"][0]["operations"][0]["action"] is None
+        assert "private memory draft" not in json.dumps(out)
+
+
+@pytest.mark.parametrize("body", [{"input": "plain text"}, {"input": [101, 202]}, {"input": ["a", "b"]},
+                                  {"input": None}, {"model": "m"}])
+def test_history_scans_take_every_responses_input_shape(body):
+    conv, tool, _ = rb.channels(body, "responses")
+    assert [c for c in conv if c] == (["plain text"] if body.get("input") == "plain text" else [])
+    assert tool == [] and rb.calls_in(body, "responses") == set() and rb.results(body, "responses") == {}

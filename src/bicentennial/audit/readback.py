@@ -201,18 +201,25 @@ def _n_calls(obj):
         len(v) if k == "tool_calls" and isinstance(v, list) else _n_calls(v) for k, v in obj.items())
 
 
+def _items(body, wire):
+    """A request's history items. A string input is one user message; token ids and other non-object
+    items (an embeddings request's input) carry no history, and their strings stay in the other channel."""
+    items = body.get("messages" if wire == "chat" else "input", [])
+    items = [{"type": "message", "role": "user", "content": items}] if isinstance(items, str) else items
+    return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
+
+
 def conversation(body, wire):
     if wire == "chat":
-        return list(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") != "tool"]))
-    return list(strings([body.get("instructions", ""), [m.get("content", "") for m in body.get("input", [])
+        return list(strings([m.get("content", "") for m in _items(body, wire) if m.get("role") != "tool"]))
+    return list(strings([body.get("instructions", ""), [m.get("content", "") for m in _items(body, wire)
                         if m.get("type", "message") == "message"]]))
 
 
 def channels(body, wire):
     """Every string of a request in three labelled channels: conversation text, tool-call arguments and
     outputs outside it, and every other string (configuration, schemas). Each string falls in one channel."""
-    conv = conversation(body, wire)
-    items = body.get("messages" if wire == "chat" else "input", [])
+    conv, items = conversation(body, wire), _items(body, wire)
     if wire == "chat":
         tool = [tc.get("function", {}).get("arguments", "") for m in items for tc in m.get("tool_calls") or []]
         tool += [m.get("content", "") for m in items if m.get("role") == "tool"]
@@ -225,14 +232,14 @@ def channels(body, wire):
 
 def calls_in(body, wire):
     """(id, name) of every tool call already in a request's history."""
-    items = body.get("messages" if wire == "chat" else "input", [])
+    items = _items(body, wire)
     if wire == "chat":
         return {(tc.get("id"), tc.get("function", {}).get("name")) for m in items for tc in m.get("tool_calls") or []}
     return {(it.get("call_id"), it.get("name")) for it in items if it.get("type") == "function_call"}
 
 
 def results(body, wire):
-    items = body.get("messages" if wire == "chat" else "input", [])
+    items = _items(body, wire)
     return {it.get("tool_call_id", it.get("call_id")): it.get("content", it.get("output")) for it in items
             if it.get("role") == "tool" or it.get("type") == "function_call_output"}
 

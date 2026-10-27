@@ -55,7 +55,8 @@ def effects(calls, requests, stores, wire):
     for i, op in enumerate(ops):
         action, needle = op.get("action"), op["needle"]
         if not known(action) or not needle:  # a malformed call Hermes refused, staged or left unclassified
-            op["report"]["operations"].append({"id": op["id"], "action": action, "reasons": [
+            label = action if known(action) else None  # a malformed action is model text: never reported
+            op["report"]["operations"].append({"id": op["id"], "action": label, "reasons": [
                 "staged_not_applied" if op["report"]["staged"] else "hermes_refused" if op["applied"] is False
                 else "unclassified_result", "malformed_operation"]})
             continue
