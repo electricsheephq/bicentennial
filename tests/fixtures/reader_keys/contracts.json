@@ -1,0 +1,1 @@
+{"canary":"c168e5f8-3948-4553-8554-7aa162054723","contracts":{"reader_keys":{"branch":"B0","canary":"c168e5f8-3948-4553-8554-7aa162054723","competing":[{"kind":"stale","token":"STALE-5600"}],"forbidden":["ERASE-7712"],"item_id":"item-reader","life":"life-reader","oracle_spans":["event-evidence"],"recall_query":"Which value was stated?","required":["VALUE-1234"]}}}
