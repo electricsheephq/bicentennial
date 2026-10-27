@@ -43,10 +43,16 @@ def content(row):
     return row["text"] if "text" in row else "".join(_strings(row["payload"]))
 
 
-def _lint_form(row):
+def _evidence_form(row):
+    """The parts that carry a row's evidence: its text, or its result payload, never tool name or args."""
     parts = [row["text"]] if "text" in row else [canon(row["payload"]).decode(),
-                                                *_strings([row["payload"], row["tool"]], keys=True)]
+                                                *_strings(row["payload"], keys=True)]
     return tuple(unicodedata.normalize("NFC", part) for part in parts)
+
+
+def _lint_form(row):
+    tool = () if "text" in row else _strings(row["tool"], keys=True)
+    return _evidence_form(row) + tuple(unicodedata.normalize("NFC", part) for part in tool)
 
 
 def _present(token, form):
@@ -84,7 +90,7 @@ def render_key(cut, meta):
     return sha256_canon({"meta": {k: meta[k] for k in ("generator_version", "genre", "seed", "scale")},
                          **{k: getattr(cut, k) for k in
                             ("life", "branch", "world_hash", "schedule_sha256", "bank_sha256",
-                             "exclude_sha256")},
+                             "exclude_sha256", "principal_id", "expected_state_sha256")},
                          "lane": "template", "estimator": ESTIMATOR})
 
 
@@ -96,7 +102,8 @@ def _branch(branch):
 def write_branch(out_dir, cut):
     _branch(cut.branch)
     manifest = {"canary": _canary(), **{k: getattr(cut, k) for k in
-                ("life", "branch", "world_hash", "schedule_sha256", "exclude_sha256", "render_key")},
+                ("life", "branch", "world_hash", "schedule_sha256", "exclude_sha256", "principal_id",
+                 "expected_state_sha256", "render_key")},
                 "stream_hash": stream_hash(cut.rows), "sessions_hash": sessions_hash(cut.sessions),
                 "bank": {"bank_id": cut.bank_id, "sha256": cut.bank_sha256,
                          "calibrated": cut.bank_calibrated}, "estimator": ESTIMATOR,

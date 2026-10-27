@@ -230,6 +230,16 @@ def test_tool_split_linked_token(tmp_path, result):
     db.close()
 
 
+@pytest.mark.parametrize("tool", [{"name": "repo.read", "args": {"path": TOKEN}},
+                                  {"name": "repo.read", "args": {TOKEN: "log.txt"}},
+                                  {"name": TOKEN, "args": {"path": "log.txt"}}])
+def test_tool_linked_token_only_in_call(tmp_path, tool):
+    db, schedule = build(tmp_path / "args.db", tool_payload={"tool": tool, "result": {"stdout": "nothing"}})
+    with pytest.raises(ValueError, match="missing linked token: tool-event"):
+        cutting(db, schedule)
+    db.close()
+
+
 def test_lint_split_token_is_absent(world):
     db, schedule = world
     row = next(r for r in cutting(db, schedule).rows if r["kind"] == "tool")
@@ -493,6 +503,32 @@ def test_render_key_covers_exclusions(world, tmp_path):
         out.mkdir()
         manifest = write_branch(out, result)
         assert manifest["exclude_sha256"] == result.exclude_sha256
+        assert manifest["render_key"] == result.render_key
+        assert verify_branch(out, "B0") == manifest
+
+
+def test_render_key_covers_principal_and_expected_state(world, tmp_path):
+    db, schedule = world
+    writers.insert_entity(db, id="principal-2", kind="person", canonical_name="Ada Mensah",
+                          aliases_json=[], created_t=0, retired_t=None)
+    meta = dict(db.execute("SELECT * FROM meta").fetchone())
+    expected = states(schedule)
+    expected[1] = dict(expected[1], env_state_hash="c" * 64)
+    base, again = cutting(db, schedule), cutting(db, schedule, expected_state=states(schedule))
+    other_principal = cutting(db, schedule, principal_id="principal-2")
+    other_state = cutting(db, schedule, expected_state=expected)
+    assert base.render_key == again.render_key == render_key(base, meta)
+    assert stream_hash(other_principal.rows) != stream_hash(base.rows)
+    assert sessions_hash(other_state.sessions) != sessions_hash(base.sessions)
+    assert len({base.render_key, other_principal.render_key, other_state.render_key}) == 3
+    assert (base.principal_id, other_principal.principal_id) == ("principal", "principal-2")
+    assert base.expected_state_sha256 == sha256_canon([states(schedule)[p.index] for p in schedule.sessions])
+    for name, result in (("principal", other_principal), ("state", other_state)):
+        out = tmp_path / name
+        out.mkdir()
+        manifest = write_branch(out, result)
+        assert manifest["principal_id"] == result.principal_id
+        assert manifest["expected_state_sha256"] == result.expected_state_sha256
         assert manifest["render_key"] == result.render_key
         assert verify_branch(out, "B0") == manifest
 
