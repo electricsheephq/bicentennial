@@ -178,8 +178,8 @@ def _forwarded(records):
                for r in records for a in r.get("upstream", ()))
 
 
-def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None):
-    """Retry corpus infrastructure faults, retaining isolation evidence before cleanup."""
+def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None):
+    """Retry corpus infrastructure faults, retaining isolation and receipt evidence before cleanup."""
     results = []
     for case in sorted(cases, key=lambda c: c.case_id):
         for attempt in range(3):
@@ -190,6 +190,8 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None):
                 root=unit / "life", catalogue=catalogue, bound_s=ctx.entry["settle"]["bound_s"],
                 infra=INFRA)
             for h in hosts:
+                if gates is not None:
+                    gates.extend(getattr(h, "gate", ()))
                 if hasattr(h, "records") and hasattr(h, "egress"):
                     rows = h.records()
                     if not _isolated(rows, h.egress.summary()):
@@ -253,9 +255,10 @@ def _provisional(run, arm, wiped_store, *, base, out):
         duty_items=frozenset(run.duty_items), controls=base | {"wiped_store": wiped_store}, voids=a.voids)
 
 
-def _receipt(run, arm, status, start, end):
+def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=()):
     runs = _runs(run, (arm, "no_memory") if arm == "system" else (arm,))
-    rows = [r for f in runs for r in f.records]
+    # The arm's corpus hosts ran inside this run's wall time, so their requests and busy readings count.
+    rows = [r for f in runs for r in f.records] + list(corpus_rows)
     runtime = {}
     for r in rows:
         if r.get("type") == "request":
@@ -263,7 +266,8 @@ def _receipt(run, arm, status, start, end):
     return build_receipt(run_status=status, wall_start_ms=start, wall_end_ms=end,
         latency_ms=ledger_latencies(rows), load_milli=load_milli(os.getloadavg()),
         busy_marker_readings=[busy(run.ctx.marker),
-            *(g["exit"] != 0 for r in runs for s in r.sessions for g in s.gate), busy(read_marker())],
+            *(g["exit"] != 0 for r in runs for s in r.sessions for g in s.gate),
+            *(g["exit"] != 0 for g in corpus_gates), busy(read_marker())],
         tokens_by_role={}, runtime_by_role=runtime, spend_micro_usd=0, store_growth_bytes=0,
         process_ids=[], ports=[int(r.run_values["director_port"]) for r in runs if r.run_values],
         temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values],
@@ -313,12 +317,15 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     cases = load_corpus(CORPUS_PATH)
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],
                                tier_path=REPO / CATALOGUE[2])
+    corpus_rows, corpus_gates = {arm: [] for arm in GATED}, {arm: [] for arm in GATED}
     try:
-        results = {arm: corpus(ctx, arm, cases, catalogue=catalogue,
-            work=out / "corpus-work" / arm, host=corpus_host, audit=rows) for arm in GATED}
+        results = {arm: corpus(ctx, arm, cases, catalogue=catalogue, work=out / "corpus-work" / arm,
+            host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm]) for arm in GATED}
     finally:
         if (out / "corpus-work").exists():
             shutil.rmtree(out / "corpus-work")
+    for arm in GATED:
+        rows.extend(corpus_rows[arm])
     base = _controls(ctx, Path(cache) if cache is not None else out / "cache")
     corpus_objs = {arm: [r.to_obj() for r in results[arm]] for arm in GATED}
     wiped = _provisional(run, "wiped", "FAIL", base=base, out=out)
@@ -339,7 +346,8 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     cards = dict(system=finalize(dict(system, run_status=rs), vs),
                  wiped=finalize(dict(wiped, run_status=rw), vw))
     end = time.time_ns() // 1_000_000
-    receipts = {arm: _receipt(run, arm, rs if arm == "system" else rw, start, end) for arm in GATED}
+    receipts = {arm: _receipt(run, arm, rs if arm == "system" else rw, start, end,
+                              corpus_rows[arm], corpus_gates[arm]) for arm in GATED}
     fm = floor_mismatches(list(run.arms["wiped"].bundles), list(run.arms["no_memory"].bundles), run.crossing)
     controls = canon(control_report(tuple(h for u in run.arms["wiped"].units for h in u.runs[-1].hooks), fm))
     witnesses = (("isolation.unknown_requests", str(sum(r.get("role") == "unknown" for r in rows))),
