@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from bicentennial.audit.readback import calls_in, results
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.controls.cache import ControlsTampered, code_sha256
 from bicentennial.director.compiler.check import Voids, check_compile
@@ -325,12 +324,11 @@ def _arm(arm, packs, units, scores, labels, voids):
         pack, run = by_life[unit.life], unit.runs[-1]
         requests.extend(run.post_restart_requests)
         missing = set()
-        if unit.stop_reclassified or run.stopped is not None and run.stopped[0] == "INFRA_FAILURE":
-            paired = set()
-            for wire, body in run.post_restart_requests:
-                calls = {i for i, _ in sorted(calls_in(body, wire), key=canon)}
-                paired.update(sorted(calls & set(results(body, wire)) - {None}))
-            missing = set(run.expected_call_ids) - paired
+        # Only a run that never reached the resume is blocked: once a post-restart request exists,
+        # a missing pair is the system's own drop and S05 judges it.
+        if (unit.stop_reclassified or run.stopped is not None and run.stopped[0] == "INFRA_FAILURE") \
+                and not run.post_restart_requests:
+            missing = set(run.expected_call_ids)
         blocked_ids.update(sorted(missing))
         ids.update(sorted(set(run.expected_call_ids) - missing))
         for attempted in unit.runs:

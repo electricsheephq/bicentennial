@@ -570,9 +570,9 @@ def test_pairing_infra_stop_checks_carried_ids(policy, replay, wire, broken):
         return run
 
     pair = next(v for v in replay.run(mutate).arms["system"].verdicts if v.invariant == "INV-PAIR")
-    assert pair.status == ("FAIL" if broken else "INFRA_FAILURE")
-    assert pair.infra == (("expected-blocked-1", "expected-blocked-2") if broken else ("expected-blocked-1",))
-    assert pair.failed == (("req-1",) if broken else ())
+    # The resume happened, so an id it did not carry is the system's own drop, not a blocked entry.
+    assert pair.status == "FAIL" and pair.infra == ()
+    assert pair.failed == (("expected-1", "expected-2", "req-1") if broken else ("expected-2",))
 
 
 def test_pairing_reclassification_is_final_attempt_only(policy, replay):
