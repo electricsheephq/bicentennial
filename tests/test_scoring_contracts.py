@@ -31,6 +31,10 @@ def outcome(score=1000, failure=None, *, second=False):
         item["item_id"] = "item-b"
     if score is None or failure == "SYSTEM_FAILURE":
         item["envelope"] = None
+    elif score == 0:  # an abstention, the only QA outcome at 0
+        item["envelope"] = dict(type="unknown", value=None, confidence_milli=0, citation=None)
+    elif abs(score) == 500:  # hedged
+        item["envelope"]["confidence_milli"] = 400
     return item
 
 
@@ -396,6 +400,26 @@ def test_action_verdict_class_score_and_accuracy_rejected(change):
         "tuesday-no-class", "pass-never", "false-alarm-pass"])
 def test_action_score_follows_prereg_tables(change, valid):
     item = action(**change)
+    if valid:
+        validate("item_outcome", item)
+    else:
+        with pytest.raises(ValueError):
+            validate("item_outcome", item)
+
+
+@pytest.mark.parametrize("type_,confidence,score,valid", [
+    ("entity", 1000, 1000, True), ("entity", 500, -1000, True), ("entity", 499, 500, True),
+    ("entity", 0, -500, True), ("unknown", 0, 0, True), ("unknown", 0, 1000, True),
+    ("entity", 1000, 777, False), ("entity", 1000, 500, False), ("entity", 400, 1000, False),
+    ("entity", 1000, 0, False), ("unknown", 0, -1000, False), ("unknown", 0, 500, False),
+])
+def test_qa_score_follows_prereg_table(type_, confidence, score, valid):
+    item = example("item_outcome")
+    item.update(score_milli=score, worst_case_milli=score)
+    if type_ == "unknown":
+        item["envelope"] = dict(type="unknown", value=None, confidence_milli=0, citation=None)
+    else:
+        item["envelope"]["confidence_milli"] = confidence
     if valid:
         validate("item_outcome", item)
     else:

@@ -88,6 +88,11 @@ def _item(item):
     elif envelope is None:
         _require(score is None or failure == "SYSTEM_FAILURE" or score == -1000,
                  "missing QA envelope must score -1000 unless system failure/non-result")
+    if envelope is not None and not action and failure is None and score is not None:
+        # PREREG §3 QA table: UNKNOWN 0 (+1 on a never-observed gold); else ±1 asserted, ±0.5 hedged.
+        allowed = ((0, 1000) if envelope["type"] == "unknown" else
+                   (1000, -1000) if envelope["confidence_milli"] >= 500 else (500, -500))
+        _require(score in allowed, "QA score disagrees with PREREG §3")
     if envelope is not None:
         _require(envelope["confidence_milli"] <= 1000, "confidence exceeds 1000")
         kind, value = envelope["type"], envelope["value"]
