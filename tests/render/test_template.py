@@ -19,6 +19,7 @@ from bicentennial.render import (
     relative_date,
     render_event,
 )
+from bicentennial.render.dates import window
 from bicentennial.render.phrasebank import (
     BANDS,
     MARKERS,
@@ -157,7 +158,9 @@ def check_trace(db, r, tz, bank=None):
         else:
             c = db.execute('SELECT * FROM commitment WHERE fact_id = ?', (s.fact_id,)).fetchone()
             assert s.name == 'when' and c['trigger_kind'] == 'time'
-            assert value == relative_date(ev['t_sim'], c['window_open_t'], tz)
+            assert value == window(ev['t_sim'], c['window_open_t'], c['window_close_t'], tz)
+            for bound in (c['window_open_t'], c['window_close_t']):
+                assert channel_stamp(bound, tz, 'chat')[12:17] in value  # the bound's local HH:MM
     # Substituting the slot values into the named phrases reproduces the text byte-for-byte.
     bank_id, ids = r.template_id.split(':', 1)
     assert bank_id == bank.bank_id
@@ -460,18 +463,57 @@ def test_render_refusals(tmp_path):
         render_event(odd, 'ev-odd', life=LIFE, tz=PARIS)
 
 
-def test_commitment_across_fall_back(tmp_path):
-    db = create_world(tmp_path / 'c.sqlite', META)
+def commit_world(tmp_path, name, open_t, close_t, anchor=1793503800, tz=NY):
+    """One event at `anchor` linked to a time-trigger commitment; returns the render and its when value."""
+    db = create_world(tmp_path / f'{name}.sqlite', META)
     entity(db, 'ent', 'Rin Okafor')
-    event(db, 'ev', 1793503800)
+    event(db, 'ev', anchor)
     fact(db, 'fa', tokens=['MEET-0042'])
     link(db, 'ev', 'fa')
-    writers.insert_commitment(db, fact_id='fa', trigger_kind='time', window_open_t=1793590200,
-                              window_close_t=1793593800, lures_json=[])
+    writers.insert_commitment(db, fact_id='fa', trigger_kind='time', window_open_t=open_t,
+                              window_close_t=close_t, lures_json=[])
     db.commit()
-    r = render_event(db, 'ev', life=LIFE, tz=NY)
+    r = render_event(db, 'ev', life=LIFE, tz=tz)
+    check_trace(db, r, tz)
     (when,) = [s for s in r.slots if s.name == 'when']
-    assert r.text[when.start:when.end] == 'tomorrow' and when.fact_id == 'fa'
+    assert when.fact_id == 'fa' and when.token_id is None
+    return r, r.text[when.start:when.end]
+
+
+def test_commitment_across_fall_back(tmp_path):
+    # Anchor 23:30 EDT on 31 Oct; the window opens after the fall-back, on 1 Nov in EST.
+    r, when = commit_world(tmp_path, 'c', 1793590200, 1793593800)
+    assert when == 'between 22:30 and 23:30 tomorrow' and r.text.endswith(f'Due {when}.')
+
+
+def test_disjoint_windows_on_one_day_render_apart(tmp_path):
+    # 20:30-21:00 and 22:30-23:00 EST on 1 Nov: the Tuesday scorer tells them apart, so the text must.
+    early, early_when = commit_world(tmp_path, 'early', 1793583000, 1793584800)
+    late, late_when = commit_world(tmp_path, 'late', 1793590200, 1793592000)
+    assert early_when == 'between 20:30 and 21:00 tomorrow'
+    assert late_when == 'between 22:30 and 23:00 tomorrow'
+    assert early.text != late.text and early.template_id == late.template_id
+
+
+def test_window_across_midnight(tmp_path):
+    _, when = commit_world(tmp_path, 'm', 1793590200, 1793599200)
+    assert when == 'from 22:30 tomorrow until 01:00 on Monday'
+
+
+# Each pinned zone's 2026 transitions. Wall times are the zone's own: the fall-back windows last 210
+# minutes and the spring-forward ones 60, so a fixed offset added to open_t would print the wrong close.
+GOLDEN_DST_WINDOWS = [
+    (NY, 1793462400, 1793507400, 1793520000, 'between 00:30 and 03:00 tomorrow'),
+    (PARIS, 1792836000, 1792884600, 1792897200, 'between 01:30 and 04:00 tomorrow'),
+    (NY, 1772902800, 1772951400, 1772955000, 'between 01:30 and 03:30 tomorrow'),
+    (PARIS, 1774695600, 1774744200, 1774747800, 'between 01:30 and 03:30 tomorrow'),
+]
+
+
+@pytest.mark.parametrize('tz,anchor,open_t,close_t,expected', GOLDEN_DST_WINDOWS)
+def test_window_across_dst(tmp_path, tz, anchor, open_t, close_t, expected):
+    assert window(anchor, open_t, close_t, tz) == expected
+    assert commit_world(tmp_path, 'dst', open_t, close_t, anchor, tz)[1] == expected
 
 
 def test_k12_agreement(tmp_path):

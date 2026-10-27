@@ -11,7 +11,7 @@ from bicentennial.contracts.run import SCHEMAS
 from bicentennial.keyed import choice
 from bicentennial.world import unit
 
-from .dates import channel_stamp, relative_date, zone
+from .dates import channel_stamp, window, zone
 from .phrasebank import SLOT, Phrase, PhraseBank, default_bank
 
 ROLES = ("retract", "assert", "mention")
@@ -95,8 +95,8 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
         fact_ids += [] if fid in fact_ids else [fid]
         modality = "retracted" if link["role"] == "retract" else fact["modality"]
         tokens = db.execute("SELECT token_id, value FROM locked_token WHERE fact_id = ?", (fid,)).fetchall()
-        commitment = db.execute("SELECT trigger_kind, window_open_t FROM commitment WHERE fact_id = ?",
-                                (fid,)).fetchone()
+        commitment = db.execute("SELECT trigger_kind, window_open_t, window_close_t FROM commitment"
+                                " WHERE fact_id = ?", (fid,)).fetchone()
         planted = db.execute("SELECT 1 FROM plant WHERE fact_id = ?", (fid,)).fetchone()
         if (request := fact["predicate"] == "forget") and (link["role"], fact["speech_act"], modality, fact["strength"],
                 fact["polarity"], tokens, commitment, planted) != ("assert", "assert", "stated", 1000, "affirm", [], None, None):
@@ -118,7 +118,8 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
                   "predicate": (fact["predicate"].replace("_", " "), None)}
         clauses.append((choice(seed, key, 0, f"clause#{i}", cell), values, fid))
         if commitment is not None and commitment["trigger_kind"] == "time":
-            when = relative_date(event["t_sim"], commitment["window_open_t"], tz)
+            # Both bounds: the Tuesday scorer judges early, on time and late against open_t and close_t.
+            when = window(event["t_sim"], commitment["window_open_t"], commitment["window_close_t"], tz)
             clauses.append((bank.when, {"when": (when, None)}, fid))
     if forget != any(phrase in bank.forget for phrase, _, _ in clauses):
         raise ValueError(f"event {event_id}: a forget_request row and a linked forget request fact go together")
