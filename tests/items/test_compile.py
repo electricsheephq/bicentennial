@@ -160,7 +160,7 @@ class Golden(Template):
         elif self.twin_type == "trigger":
             forgotten = bool(db.execute("SELECT 1 FROM forget_request").fetchone())
             use = Option(key="use", token_fact_ids=("detail",), plan=plan("GATE-4410", "use_detail"))
-            refrain = Option(key="refrain", token_fact_ids=(), plan=plan())
+            refrain = Option(key="refrain", token_fact_ids=("marker",) if forgotten else (), plan=plan())
             options = [refrain, use] if forgotten else [use, refrain]
             spans = ("event-detail", "event-request") if forgotten else ("event-detail",)
             fid, ref, duty = "detail", table("refrain" if forgotten else "act")["table_id"], False
@@ -206,6 +206,8 @@ def golden(path, twin_type="fork", branch="B0", wake=None):
         assertion(db, schedule, "detail", "GATE-4410", (1, 2), predicate="gate")
         if branch == "B0":
             assertion(db, schedule, "request", "gate", (2, 1), predicate="forget", token=False)
+            fact(db, "marker", "REQ-482913", predicate="forget_ref")
+            insert_link(db, event_id="event-request", fact_id="marker", role="assert")
             insert_forget_request(db, event_id="event-request", covered_fact_ids_json=["detail"])
         cell, kind, tables = "KEEP-FORGET", "act", (table(), table("refrain"))
     else:
@@ -256,7 +258,7 @@ def test_golden_twins(tmp_path, twin_type):
         assert i1["options"][0]["tokens"] == ["CANCEL-6631"]
         assert i0["options"][0]["plan"]["steps"] and not i1["options"][0]["plan"]["steps"]
     elif twin_type == "trigger":
-        assert i0["options"][0]["tokens"] == [] and i1["options"][0]["tokens"] == ["GATE-4410"]
+        assert i0["options"][0]["tokens"] == ["REQ-482913"] and i1["options"][0]["tokens"] == ["GATE-4410"]
         assert d0.execute("SELECT object FROM fact WHERE predicate='forget'").fetchone()[0] == canon("gate").decode()
         assert not d1.execute("SELECT 1 FROM forget_request").fetchone()
     else:

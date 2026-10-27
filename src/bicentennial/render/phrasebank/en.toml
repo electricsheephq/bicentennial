@@ -1,12 +1,13 @@
 # The v0.1 English phrase bank. Slots are {subject}, {predicate}, {object} and {when}.
 # Not yet human-calibrated (DESIGN §4.4), so calibrated stays false.
-# A forget request's {object} is the forgotten predicate, never a value. Quote cells keep {subject}
-# inside the quoted proposition and name no speaker.
-bank_id = "en-v1"
+# A forget request's {object} is the forgotten predicate, never a value; its forget_ref clause
+# carries the request's own token. Quote cells keep {subject} inside the proposition and name no speaker.
+bank_id = "en-v2"
 calibrated = false
 when = "Due {when}."
 factless = ["Thanks, noted.", "Got it, thanks.", "Okay, talk soon.", "Sounds good."]
 forget = ["Please forget {subject}'s {object}.", "Forget {subject}'s {object}, please; drop it from your notes.", "Please stop keeping {subject}'s {object} on record."]
+forget_ref = ["Request reference {object}.", "Reference for this request: {object}."]
 
 [markers]
 assert = ["always", "confirmed", "definitely", "for sure", "from now on", "must"]

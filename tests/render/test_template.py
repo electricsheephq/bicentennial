@@ -94,6 +94,7 @@ def build_mixed(path, new_value='PROD-WEST-2', plant_modality='planted'):
     fact(db, 'f-obs', subject='p2', predicate='build_status', modality='observed', tokens=['BUILD-3317'])
     fact(db, 'f-quote', predicate='budget', speech_act='quote', polarity='negate', tokens=['EUR-12500'])
     fact(db, 'f-forget', subject='p2', predicate='forget', obj='review_meeting')  # G04's request fact shape
+    fact(db, 'f-ref', subject='p2', predicate='forget_ref', obj='REQ-482913', tokens=['REQ-482913'])
     for i, (id, channel, links) in enumerate([
             ('ev-intro', 'chat', [('f-old', 'assert')]),
             ('ev-correction', 'chat', [('f-new', 'assert'), ('f-old', 'retract')]),
@@ -104,7 +105,7 @@ def build_mixed(path, new_value='PROD-WEST-2', plant_modality='planted'):
             ('ev-log', 'ci_log', [('f-obs', 'mention')]),
             ('ev-plant', 'chat', [('f-plant', 'assert')]),
             ('ev-again', 'review_comment', [('f-new', 'mention'), ('f-commit', 'mention')]),
-            ('ev-forget', 'chat', [('f-forget', 'assert')])]):
+            ('ev-forget', 'chat', [('f-forget', 'assert'), ('f-ref', 'assert')])]):
         event(db, id, t + 600 * i, channel, 'p2' if i % 2 else 'ent')
         for fact_id, role in links:
             link(db, id, fact_id, role)
@@ -132,7 +133,7 @@ def marked(parts, kind):
 
 
 def phrases(bank):
-    every = [p for cell in bank.cells.values() for p in cell] + list(bank.factless + bank.forget) + [bank.when]
+    every = [p for cell in bank.cells.values() for p in cell] + list(bank.factless + bank.forget + bank.forget_ref) + [bank.when]
     return {p.phrase_id: p.text for p in every}
 
 
@@ -205,7 +206,7 @@ def test_cell_table_all_80(tmp_path):
             continue
         r = render_event(db, f'ev-{n:03d}', life=LIFE, tz=PARIS)
         own = 'stated' if modality == 'planted' else modality
-        assert r.template_id.startswith(f'en-v1:{act}.{own}.{band_}.{polarity}#')
+        assert r.template_id.startswith(f'en-v2:{act}.{own}.{band_}.{polarity}#')
         assert f'TOK-{n:03d}' in r.text and r.gold_critical and r.fact_ids == (f'fa-{n:03d}',)
         assert (r.lane, r.voice) == ('template', 'template')
         check_trace(db, r, PARIS)
@@ -254,6 +255,10 @@ REFUSALS = {
     'soft assert marker': lambda s: s.replace('"The {predicate} for {subject} is {object}."',
                                               '"The {predicate} for {subject} is always {object}."'),
     'marker in when': lambda s: s.replace('"Due {when}."', '"Maybe due {when}."'),
+    'missing forget_ref': lambda s: s.replace('forget_ref = [', 'unforget_ref = ['),
+    'empty forget_ref': lambda s: s.replace('forget_ref = [', 'forget_ref = [] #'),
+    'forget_ref with subject': lambda s: s.replace('Request reference {object}.', 'Request reference {subject} {object}.'),
+    'forget_ref hedge marker': lambda s: s.replace('Request reference {object}.', 'Maybe request reference {object}.'),
     'missing forget': lambda s: s.replace('forget = [', 'unforget = ['),
     'empty forget': lambda s: s.replace('forget = [', 'forget = [] #'),
     'forget predicate slot': lambda s: s.replace('"Please forget {subject}\'s {object}."',
@@ -277,7 +282,7 @@ def test_loader_refusals(tmp_path, name):
 
 def test_shipped_bank_loads(tmp_path):
     bank = load()
-    assert bank.calibrated is False and bank.bank_id == 'en-v1' and len(bank.cells) == 48
+    assert bank.calibrated is False and bank.bank_id == 'en-v2' and len(bank.cells) == 48
     assert all(bank.cells.values()) and bank == default_bank()
     copy = tmp_path / 'copy.toml'
     copy.write_bytes(BANK_PATH.read_bytes())
@@ -310,9 +315,11 @@ def test_forget_request_names_predicate_never_value(tmp_path):
     db = build_mixed(tmp_path / 'm.sqlite')
     r = render_event(db, 'ev-forget', life=LIFE, tz=NY)
     body = r.text.split('] ', 1)[1]
-    assert re.fullmatch(r'en-v1:forget#\d', r.template_id) and r.gold_critical and r.fact_ids == ('f-forget',)
+    assert re.fullmatch(r'en-v2:forget#\d\+forget_ref#\d', r.template_id) and r.gold_critical
+    assert r.fact_ids == ('f-forget', 'f-ref')
     assert 'Bo Lindqvist' in body and 'review meeting' in body and body not in default_bank().factless
-    assert [(s.name, r.text[s.start:s.end]) for s in r.slots] == [('subject', 'Bo Lindqvist'), ('object', 'review meeting')]
+    assert [(s.name, r.text[s.start:s.end]) for s in r.slots] == [
+        ('subject', 'Bo Lindqvist'), ('object', 'review meeting'), ('object', 'REQ-482913')]
     covered = json.loads(db.execute("SELECT covered_fact_ids_json FROM forget_request").fetchone()[0])
     values = [row[0] for row in db.execute(
         'SELECT value FROM locked_token WHERE fact_id IN (SELECT value FROM json_each(?))', (json.dumps(covered),))]
@@ -324,7 +331,7 @@ def test_forget_request_names_predicate_never_value(tmp_path):
 
 
 def forget_world(tmp_path, covered='HOME-ADDR-7', links=(('f-req-a', 'assert'), ('f-req-b', 'assert')),
-                 request=True, **req):
+                 request=True, marker=None, marker_role='assert', **req):
     db = create_world(tmp_path / f'forget-{next(WORLDS)}.sqlite', META)
     entity(db, 'ent', 'Rin Okafor')
     event(db, 'ev-old', 1700000001)
@@ -333,8 +340,14 @@ def forget_world(tmp_path, covered='HOME-ADDR-7', links=(('f-req-a', 'assert'), 
     link(db, 'ev-old', 'f-home')
     fact(db, 'f-req-a', predicate='forget', obj='home_address', **req)
     fact(db, 'f-req-b', predicate='forget', obj='seat_choice')
+    fact(db, 'f-ref', predicate='forget_ref', **(dict(obj='REQ-482913', tokens=['REQ-482913']) | (marker or {})))
     for fact_id, role in links:
         link(db, 'ev-f', fact_id, role)
+    if marker_role:
+        link(db, 'ev-f', 'f-ref', 'assert' if marker_role == 'two' else marker_role)
+    if marker_role == 'two':
+        fact(db, 'f-ref2', predicate='forget_ref', obj='REQ-123456', tokens=['REQ-123456'])
+        link(db, 'ev-f', 'f-ref2')
     if request:
         writers.insert_forget_request(db, event_id='ev-f', covered_fact_ids_json=['f-home'])
     db.commit()
@@ -345,7 +358,10 @@ def test_forget_request_shapes(tmp_path):
     db = forget_world(tmp_path)
     r = render_event(db, 'ev-f', life=LIFE, tz=PARIS)
     ids = r.template_id.split(':')[1].split('+')
-    assert len(ids) == 2 and all(re.fullmatch(r'forget#\d', i) for i in ids)
+    assert len(ids) == 3 and sum(bool(re.fullmatch(r'forget#\d', i)) for i in ids) == 2
+    assert sum(bool(re.fullmatch(r'forget_ref#\d', i)) for i in ids) == 1
+    assert 'REQ-482913' in r.text
+    assert ('object', 'REQ-482913', 'f-ref-tok0') in [(s.name, r.text[s.start:s.end], s.token_id) for s in r.slots]
     assert "home address" in r.text and 'seat choice' in r.text and 'HOME-ADDR-7' not in r.text
     check_trace(db, r, PARIS)
     other = render_event(forget_world(tmp_path, covered='WORK-ADDR-9'), 'ev-f', life=LIFE, tz=PARIS)
@@ -355,7 +371,11 @@ def test_forget_request_shapes(tmp_path):
                  dict(request=False),
                  dict(links=(('f-req-a', 'mention'),)),
                  dict(speech_act='hedge'), dict(strength=999), dict(polarity='negate'),
-                 dict(modality='planted'), dict(tokens=['ADDR-0001'])):
+                 dict(modality='planted'), dict(tokens=['ADDR-0001']),
+                 dict(marker_role=None), dict(marker_role='two'), dict(marker_role='mention'),
+                 dict(marker={'tokens': []}), dict(marker={'tokens': ['REQ-482913', 'REQ-123456']}),
+                 dict(marker={'speech_act': 'hedge'}), dict(marker={'strength': 999}),
+                 dict(marker={'polarity': 'negate'}), dict(marker={'modality': 'planted'})):
         with pytest.raises(ValueError):
             render_event(forget_world(tmp_path, **case), 'ev-f', life=LIFE, tz=PARIS)
 
