@@ -797,6 +797,24 @@ def test_kit_suffix_change_fails_readback(wire, kit):
 
 
 @pytest.mark.parametrize("wire", sorted(CORE["WIRE_SOURCE"]))
+def test_kit_title_ids_are_minted_and_forged_ids_are_not(wire, tmp_path):
+    root = tmp_path / "title-run"
+    CORE["title_order_run"](root, wire, True)
+    rows, blobs, digest = rb.load(root / "ledger", "kit")
+    title = next(r for r in rows if r["subrole"] == "title_generation")
+    response = blobs[title["resp"]]
+    rid = response["id"] if wire == "chat" else response["sse"][0]["response"]["id"]
+    seed = rb.canon([title["attempt_id"], title["role"]]).decode()
+    minted = rb._minted_ids(rows, blobs)
+    assert minted[rid] == (seed, 1)
+    assert minted[rb.output(response, wire)[0][0]["id"]] == (seed, 2)
+    assert mint_id(title["attempt_id"], 10**6) not in minted
+    assert mint_id(seed, 10**6) not in minted
+    report, _ = kit_audit((rows, blobs, digest), wire)
+    assert report["A2"]["introduced"] == report["A3"]["failures"] == []
+
+
+@pytest.mark.parametrize("wire", sorted(CORE["WIRE_SOURCE"]))
 def test_kit_call_id_provenance(wire, kit):
     rows, blobs, digest = rb.load(kit(wire), "kit")
     row = next(r for r in rows if r.get("served") == "write_tool_calls")
