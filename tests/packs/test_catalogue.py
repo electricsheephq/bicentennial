@@ -17,6 +17,7 @@ import pytest
 
 from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS
+from bicentennial.items.levers import LEVERS
 from bicentennial.items.protocol import TRACK_BY_PREFIX
 from bicentennial.packs.catalogue import (
     NOT_COVERED,
@@ -181,6 +182,72 @@ def _toml(value):
     if isinstance(value, list):
         return "[" + ", ".join(_toml(v) for v in value) + "]"
     return json.dumps(value)
+
+
+@pytest.mark.parametrize(("ident", "case"), (
+    ("g2-keep-neighbour-inv-2", "false-flag"),
+    ("g1-drift-chain-inv-1", "true-flag"),
+    *(("g1-drift-chain-inv-1", case) for case in (
+        "null", "[]", "{}", "missing-B1", "extra-branch",
+        *(f"{branch}:{case}" for branch in ("B0", "B1") for case in (
+            "missing-lever", "extra-lever", "true-lever", "missing-side", "extra-side",
+            "bool-base", "bool-inv", "float-value", "null-distance", "string-distance",
+        )),
+    )),
+))
+def test_inv_delta_refusals(monkeypatch, ident, case):
+    import tomllib
+
+    data = tomllib.loads(CATALOGUE.read_text())
+    row = next(r for r in data["rows"] if r["id"] == ident)
+    delta = json.loads(row["lever_delta"])
+    if case in ("false-flag", "true-flag"):
+        row["confounded"] = case == "true-flag"
+    elif case in ("null", "[]", "{}"):
+        delta = json.loads(case)
+    elif case == "missing-B1":
+        del delta["B1"]
+    elif case == "extra-branch":
+        delta["B2"] = copy.deepcopy(delta["B0"])
+    else:
+        branch, mutation = case.split(":")
+        lever = next(name for name in LEVERS if name != "distance_tokens_est")
+        values = delta[branch][lever]
+        if mutation == "missing-lever":
+            del delta[branch][lever]
+        elif mutation == "extra-lever":
+            delta[branch]["extra"] = dict(base=0, inv=0)
+        elif mutation == "true-lever":
+            delta[branch][lever] = True
+        elif mutation == "missing-side":
+            del values["inv"]
+        elif mutation == "extra-side":
+            values["extra"] = 0
+        elif mutation in ("bool-base", "bool-inv"):
+            values[mutation.removeprefix("bool-")] = True
+        elif mutation == "float-value":
+            values["inv"] = 1.5
+        elif mutation == "null-distance":
+            delta[branch]["distance_tokens_est"]["base"] = None
+        elif mutation == "string-distance":
+            delta[branch]["distance_tokens_est"]["inv"] = "139"
+    row["lever_delta"] = json.dumps(delta)
+    edited = "\n".join(f"{k} = {_toml(v)}" for k, v in data.items())
+    read_text = Path.read_text
+
+    def edited_read_text(path, *args, **kwargs):
+        return edited if path == CATALOGUE else read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", edited_read_text)
+    with pytest.raises(ValueError, match=f"^{ident}$"):
+        load_catalogue(CATALOGUE, c7_path=C7, tier_path=TIER)
+
+
+def test_shipped_confounded_rows(catalogue):
+    assert {r.id for r in catalogue.rows if r.confounded} == {
+        "g1-tue-ticket-inv-1", "g1-tue-ticket-inv-2",
+        "g2-keep-neighbour-inv-2", "g2-tue-passport-inv-2",
+    }
 
 
 @pytest.mark.parametrize("case", (
