@@ -542,7 +542,8 @@ def test_junit_properties_outcomes_and_escaping():
 def test_report_import_boundary():
     forbidden = {"world", "genres", "items", "director", "harness", "sandbox", "probe",
                  "systems", "runner", "time", "random", "socket", "subprocess"}
-    allowed_stdlib = {"json", "os", "hashlib", "fractions", "dataclasses", "pathlib", "xml"}
+    allowed_stdlib = {"json", "os", "hashlib", "fractions", "dataclasses", "pathlib", "xml",
+                      "argparse", "copy", "sys"}  # the last three for S13's gate and CLI
     for path in (ROOT / "src/bicentennial/report").glob("*.py"):
         source = path.read_text()
         assert "lcm" not in source.lower()

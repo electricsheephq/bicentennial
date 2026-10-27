@@ -5,17 +5,20 @@ import errno
 import fcntl
 import json
 import os
+import re
 import shutil
 import stat
 import sys
 import uuid
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 
 from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_hash, tree_listing
 
 _LISTINGS = {}
+PORT_FILES = ("config.yaml", "mem0.json")
 
 
 class SwapBusy(RuntimeError):
@@ -163,6 +166,19 @@ def surface_hash(root, volatile_paths) -> str:
     if len(_LISTINGS) > 128:
         del _LISTINGS[next(iter(_LISTINGS))]
     return digest
+
+
+def install_hash(root, volatile_paths, port) -> str:
+    """Hash a fresh tree with only benchmark-written director ports masked."""
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError("port must be an int in 1..65535")
+    listing = tree_listing(root, volatile_paths)
+    pattern = rb"127\.0\.0\.1:" + str(port).encode() + rb"(?!\d)"
+    for row in listing:
+        if row["kind"] == "file" and row["path"] in PORT_FILES:
+            masked = re.sub(pattern, b"127.0.0.1:{DIRECTOR_PORT}", (Path(root) / row["path"]).read_bytes())
+            row.update(size=len(masked), sha256=sha256(masked).hexdigest())
+    return tree_hash(listing)
 
 
 def verify_empty(root, volatile_paths, fresh_install_hash) -> None:

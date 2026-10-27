@@ -236,6 +236,8 @@ def _card(card):
     v = card["voids"]
     _ratio(v["voided"], v["checked"], v["void_milli"])
     _ordered([r["track"] for r in card["violations"]], "violations")
+    if card["gate_verdict"] == "BLOCKED":
+        _require(card["run_status"] == "BLOCKED", "BLOCKED gate requires BLOCKED run status")
     wiped = card["controls"]["wiped_store"]
     _require(wiped != "not run at T0" or card["tier"] == "T0", "T0-only wiped sentinel")
     _require(wiped != "PASS" or card["gate_verdict"] == "INVALID", "wiped pass invalidates run")

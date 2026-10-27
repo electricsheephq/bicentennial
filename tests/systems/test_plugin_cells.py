@@ -641,3 +641,32 @@ def test_end_observation_without_process_priority(tmp_path, monkeypatch, payload
         assert cell.settle().settled
     finally:
         a.close()
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_fresh_install_hash_is_port_stable_and_direct(tmp_path, name):
+    from bicentennial.sandbox.surfaces import install_hash
+
+    repo, digest, _ = plugin_repo(tmp_path, name)
+    opened, cells = [], []
+    try:
+        for label in ("fresh-a", "fresh-b"):
+            a, cell = make(tmp_path, label, name, digest)
+            opened.append(a)
+            result = cell.install(repo, alias="bicentennial-main")
+            assert result == cell.surface_hash()
+            hashes = [{"relative": s["relative"], "root": s["root"],
+                       "tree_hash": install_hash(d, s["volatile_paths"], a.server.port)}
+                      for s, d in cell.surfaces]
+            expected = hashes[0]["tree_hash"] if len(hashes) == 1 else sha256(canon(hashes)).hexdigest()
+            assert len(hashes) == (2 if name == "mem0-oss" else 1)
+            assert cell.fresh_install_hash == expected
+            assert cell.fresh_install_hash != result
+            for (s, d), (_, fresh) in zip(cell.surfaces, cell.snapshots, strict=True):
+                assert fresh == surface_hash(d, s["volatile_paths"])
+            cells.append(cell)
+        assert opened[0].server.port != opened[1].server.port
+        assert cells[0].fresh_install_hash == cells[1].fresh_install_hash
+    finally:
+        for a in reversed(opened):
+            a.close()
