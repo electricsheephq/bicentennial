@@ -399,6 +399,66 @@ def test_worker_imports_only_the_standard_library():
         assert not [m for m in mods if m.endswith("hermes.worker") or m == "worker"], path
 
 
+def test_blocked_worker_stdin_has_turn_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(adapter, "TURN_TIMEOUT_S", 0.1)
+    code = "import time; print('{\"ready\": true}', flush=True); time.sleep(30)"
+    real = subprocess.Popen
+
+    def scheduling_stub(argv, *args, **kwargs):
+        # Like test_hermes_fixes: isolate pipe/group behavior from macOS scheduling policy.
+        if argv[0] == "nice" and code in argv:
+            argv = argv[argv.index(sys.executable):]
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(adapter.subprocess, "Popen", scheduling_stub)
+    log = tmp_path / "blocked.stderr"
+    try:
+        worker = adapter._Worker([sys.executable, "-c", code], {}, tmp_path, log)
+    except HarnessFailed:
+        if "taskpolicy: setpriority(): Operation not permitted" in log.read_text():
+            pytest.skip("sandbox denies taskpolicy setpriority before the blocked worker starts")
+        raise
+    start = time.monotonic()
+    try:
+        with pytest.raises(HarnessFailed, match="^turn_timeout$"):
+            worker.call(op="turn", text="x" * 1_000_000)
+        assert time.monotonic() - start < 5 and worker._reaped
+        with pytest.raises(ProcessLookupError):
+            adapter.os.killpg(worker.proc.pid, 0)
+    finally:
+        worker.kill()
+
+
+def test_eperm_survivors_prevent_reap(monkeypatch):
+    from threading import Lock
+    from types import SimpleNamespace
+
+    reaped, discarded = [], []
+    worker = object.__new__(adapter._Worker)
+    worker._reaped, worker._cleanup_lock = False, Lock()
+    worker.egress = SimpleNamespace(discard=discarded.append)
+    worker.proc = SimpleNamespace(pid=123, returncode=None, wait=lambda: reaped.append(True))
+
+    def denied(*args):
+        raise PermissionError
+
+    monkeypatch.setattr(adapter.os, "killpg", denied)
+    monkeypatch.setattr(adapter.os, "waitid", lambda *args: object())
+    monkeypatch.setattr(adapter, "_group_survivors", lambda pid: [9, 4])
+    with pytest.raises(HarnessFailed, match="^group_survivors:4,9$"):
+        worker.kill()
+    assert not reaped and not discarded and not worker._reaped
+    monkeypatch.setattr(adapter, "_group_survivors", lambda pid: [])
+    worker.kill()
+    assert reaped == [True] and discarded == [123] and worker._reaped
+
+
+def test_group_survivor_parser(monkeypatch):
+    rows = "123 123 Z\n7 123 S\n8 123 Z+\n9 122 S\n10 123 R+\n"
+    monkeypatch.setattr(adapter.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, rows))
+    assert adapter._group_survivors(123) == [7, 10]
+
+
 def test_before_shutdown_observes_final_turn_before_end(tmp_path, monkeypatch):
     """The optional observation hook runs once, after drain and before worker end."""
     from types import SimpleNamespace
