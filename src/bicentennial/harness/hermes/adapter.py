@@ -252,6 +252,9 @@ class HermesAdapter:
             t["drain"].append(self._drain())
             t0 = time.monotonic()
             self._end()
+            c = d.control()
+            if c["stopped"] or c["write_failures"] > failures:
+                raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")
             t["close"] = _ms(t0)
         except BaseException:
             if self._worker is not None:

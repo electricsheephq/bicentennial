@@ -387,6 +387,63 @@ def test_plugin_config_survives_every_spawn_and_is_recorded(tmp_path):
         a.close()
 
 
+@pytest.mark.parametrize("phase", ["drain", "end"])
+@pytest.mark.parametrize("stopped,added_failures,error", [
+    (True, 0, "director_stopped"),
+    (False, 1, "write_failure"),
+    (True, 1, "director_stopped"),
+    (False, 0, None),
+])
+def test_session_shutdown_checks_director(tmp_path, monkeypatch, phase, stopped, added_failures, error):
+    a = make(tmp_path, "shutdown", faults=[])
+    a.director.write_failures = 7  # earlier failures must not reject a clean session
+    real_call, real_drain = adapter._Worker.call, a._drain
+    opened, drains, ended, injected = [], [], [], []
+
+    def inject():
+        a.director.stopped = stopped
+        a.director.write_failures += added_failures
+        injected.append(phase)
+
+    def call(worker, **op):
+        out = real_call(worker, **op)
+        if op.get("op") == "open":
+            opened.append(out["session_id"])
+        elif op.get("op") == "end":
+            assert out["ok"]  # a successful acknowledgment must not hide a director failure
+            ended.append(True)
+            if phase == "end":
+                inject()
+        return out
+
+    def drain():
+        elapsed = real_drain()
+        drains.append(elapsed)
+        if phase == "drain" and len(drains) == len(acceptance.SCRIPT["sessions"][0]["turns"]) + 1:
+            inject()
+        return elapsed
+
+    monkeypatch.setattr(adapter._Worker, "call", call)
+    monkeypatch.setattr(a, "_drain", drain)
+    try:
+        if error:
+            with pytest.raises(adapter.HarnessFailed, match=f"^{error}$"):
+                session(a, 1)
+        else:
+            result = session(a, 1)
+            assert result == adapter.SessionResult(
+                session=1, kind="replay", acp_session_id=opened[0], entrypoint="test-double",
+                turns_ok=5, finals_matched=5, restarts=(), compaction_expected=False, summariser_records=0,
+                surface_hash=adapter.surface_hash(a.paths["hermes_home"], a.volatile),
+                gate=({"exit": 0, "state": "unset"},), timings_ms=result.timings_ms,
+                finals=tuple((t["n"], t["assistant"]) for t in acceptance.SCRIPT["sessions"][0]["turns"]),
+                active_memory_providers=("holographic",))
+        assert injected == [phase] and ended == [True]
+        assert a._worker._reaped and a._worker.proc.returncode == 0
+    finally:
+        a.close()
+
+
 def test_plugin_config_deep_merge_without_mutating_input():
     settings = {"memory": {"fixture": {"enabled": True}}, "agent": {"fixture": 1}}
     cfg = config.hermes_config(4321, "bicentennial-main", plugin_config=settings)
