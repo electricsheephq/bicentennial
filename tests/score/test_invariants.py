@@ -288,6 +288,74 @@ def test_incremental_utf8_and_errors(tmp_path, monkeypatch):
     assert count == [1]
 
 
+@pytest.mark.parametrize("padding", [0, 1024 * 1024])
+def test_utf16_store_is_opaque(tmp_path, padding):
+    path = tmp_path / "memory.txt"
+    # Include a NUL in a later chunk as well as a small BOM-free UTF-16 file.
+    path.write_bytes(b"a" * padding)
+    with path.open("a", encoding="utf-16-le") as stream:
+        stream.write(TOKEN)
+    assert inv.search_store(tmp_path, inv.needles_for([TOKEN])) == inv.StoreSearch(
+        "inconclusive", (), ("memory.txt",))
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(tmp_path,))
+    v = inv.run_invariants([e], tier="T0")["INV-FORGET"]
+    assert (v.status, v.reasons) == ("INCONCLUSIVE", ("opaque_store",))
+
+
+@pytest.mark.parametrize("target", ["bytes", "adapter"])
+def test_utf16_checkpoint_is_opaque(target):
+    class UTF16Checkpoint(ReferenceStore):
+        def checkpoint(self):
+            return super().checkpoint().decode("utf-8").encode("utf-16-le")
+
+        def restore(self, data):
+            return super().restore(data.decode("utf-16-le").encode("utf-8"))
+
+    if target == "bytes":
+        assert not inv.searchable_bytes(TOKEN.encode("utf-16-le"))
+    else:
+        v = inv.adapter_invariants(UTF16Checkpoint, bound_s=5)["INV-FORGET"]
+        assert (v.status, v.reasons) == ("INCONCLUSIVE", ("opaque_store",))
+
+
+def test_empty_snapshot_roots_are_inconclusive():
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=())
+    v = inv.run_invariants([e], tier="T0")["INV-FORGET"]
+    assert (v.status, v.reasons) == ("INCONCLUSIVE", ("no_snapshot",))
+
+
+def test_api_surfaced_failure_survives_snapshot_error():
+    def broken_snapshot(adapter):
+        raise OSError("fixture snapshot error")
+
+    v = inv.adapter_invariants(mutants.forget_ignored, bound_s=5,
+                               snapshot=broken_snapshot)["INV-FORGET"]
+    assert v.failed == ("forget-1", "forget-2")
+    assert v.infra == ("forget-store",)
+    assert (v.status, v.members, v.reasons) == ("FAIL", 3, ("infra", "surfaced"))
+
+
+@pytest.mark.parametrize("hit", [True, False])
+def test_store_hit_survives_later_root_error(tmp_path, monkeypatch, hit):
+    first, later = tmp_path / "first", tmp_path / "later"
+    first.mkdir()
+    if hit:
+        (first / "memory.txt").write_text(TOKEN)
+    original, searched = inv.search_store, []
+
+    def search(root, needles):
+        searched.append(root)
+        if root == later:
+            raise OSError("fixture search error")
+        return original(root, needles)
+
+    monkeypatch.setattr(inv, "search_store", search)
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(first, later))
+    v = inv.run_invariants([e], tier="T0")["INV-FORGET"]
+    assert (v.status, v.reasons) == (("FAIL", ("store_hit",)) if hit else ("INFRA_FAILURE", ("infra",)))
+    assert searched == ([first] if hit else [first, later])
+
+
 def test_run_evidence(cases):
     assert (cases["system"]["INV-VERB"].status, cases["system"]["INV-VERB"].members) == ("PASS", 1)
     assert (cases["system"]["INV-NEW"].status, cases["system"]["INV-NEW"].members) == ("PASS", 2)

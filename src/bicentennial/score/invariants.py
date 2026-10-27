@@ -67,6 +67,8 @@ def _verdict(invariant, rows):
 
 
 def searchable_bytes(data) -> bool:
+    if b"\x00" in data:
+        return False
     try:
         data.decode("utf-8", "strict")
         return True
@@ -82,6 +84,8 @@ def searchable(path) -> bool:
     try:
         with path.open("rb") as stream:
             while chunk := stream.read(1024 * 1024):
+                if b"\x00" in chunk:
+                    return False
                 decoder.decode(chunk)
             decoder.decode(b"", final=True)
         return True
@@ -216,39 +220,41 @@ def _api_script(factory, invariant, bound, snapshot):
         _call(holder[0].maintain)
         _restart(holder, factory, bound)
         faulted = [probe(*p, spans=[f"v{n}"]) for n, p in enumerate(probes, 1)]
-        return [(p[0], "uninformative" if not base else "PASS" if r.in_context is True else "FAIL",
+        yield from ((p[0], "uninformative" if not base else "PASS" if r.in_context is True else "FAIL",
                  "absent_after_fault" if base and r.in_context is not True else "")
-                for p, base, r in zip(probes, twin, faulted, strict=True)]
+                for p, base, r in zip(probes, twin, faulted, strict=True))
+        return
     if invariant == "INV-NEW":
         ingest([_event("a1", 1, "Deploy window preference was SLOT-1101."),
                 _event("a2", 2, "Deploy window preference now SLOT-2202."),
                 _event("b2", 4, "Backup region choice now ZONE-4404."),
                 _event("b1", 3, "Backup region choice was ZONE-3303.")])
         _restart(holder, factory, bound)
-        return [(i, "PASS" if probe(i, q, token, old=old).selected_option == i[-1] + "-new" else "FAIL", "")
+        yield from ((i, "PASS" if probe(i, q, token, old=old).selected_option == i[-1] + "-new" else "FAIL", "")
                 for i, q, token, old in (("new-a", "deploy window preference", "SLOT-2202", "SLOT-1101"),
-                                         ("new-b", "backup region choice", "ZONE-4404", "ZONE-3303"))]
+                                         ("new-b", "backup region choice", "ZONE-4404", "ZONE-3303")))
+        return
     if invariant == "INV-PAIR":
         ingest([_event("p1", 1, "Please check the orchid pipeline."),
                 _event("p2", 2, "fetch_status request PING-5150", "tool_call"),
                 _event("p3", 3, "status green ACK-6262", "tool_result", call_id="p2")])
         _restart(holder, factory, bound)
-        return [(i, "PASS" if probe(i, q, token).in_context is True else "FAIL", "")
+        yield from ((i, "PASS" if probe(i, q, token).in_context is True else "FAIL", "")
                 for i, q, token in (("pair-result", "status green", "ACK-6262"),
-                                     ("pair-call", "fetch_status request", "PING-5150"))]
+                                     ("pair-call", "fetch_status request", "PING-5150")))
+        return
     ingest([_event("g1", 1, "Gate code for the loading yard is GATE-4410."),
             _event("g2", 2, "Please forget the gate code."), _event("g3", 3, "Yard opening hours are posted.")])
     _call(holder[0].forget, {"event_ids": ["g1"]})
-    rows = [(i, "FAIL" if probe(i, q, "GATE-4410", forbidden=True).forbidden_in_context is True else "PASS", "")
-            for i, q in (("forget-1", "yard gate code"), ("forget-2", "loading"))]
+    yield from ((i, "FAIL" if probe(i, q, "GATE-4410", forbidden=True).forbidden_in_context is True else "PASS", "")
+                for i, q in (("forget-1", "yard gate code"), ("forget-2", "loading")))
     data = _checkpoint(holder[0], bound)
     needles = needles_for(["GATE-4410"])
     scans = [search_store(root, needles).verdict for root in snapshot(holder[0])] if snapshot else []
     hit = any(n in data for n in needles) or "found" in scans
     opaque = not searchable_bytes(data) or "inconclusive" in scans
-    rows.append(("forget-store", "FAIL" if hit else "INCONCLUSIVE" if opaque else "PASS",
-                 "store_hit" if hit else "opaque_store" if opaque else ""))
-    return rows
+    yield ("forget-store", "FAIL" if hit else "INCONCLUSIVE" if opaque else "PASS",
+           "store_hit" if hit else "opaque_store" if opaque else "")
 
 
 def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Verdict]:
@@ -256,13 +262,14 @@ def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Ver
     for inv, ids, reason in zip(INVARIANTS, (("verb-1", "verb-2", "verb-3"), ("new-a", "new-b"),
             ("pair-call", "pair-result"), ("forget-1", "forget-2", "forget-store")),
             ("absent_after_fault", "not_newest", "absent_after_fault", "surfaced"), strict=True):
+        rows = []
         try:
-            rows = [(i, s, r or (reason if s == "FAIL" else ""))
-                    for i, s, r in _api_script(factory, inv, bound_s, snapshot)]
+            for i, s, r in _api_script(factory, inv, bound_s, snapshot):
+                rows.append((i, s, r or (reason if s == "FAIL" else "")))
         except SystemFault:
             rows = [(i, "FAIL", "system_failure") for i in ids]
         except Exception:
-            rows = [(i, "INFRA_FAILURE", "infra") for i in ids]
+            rows.extend((i, "INFRA_FAILURE", "infra") for i in ids if i not in {row[0] for row in rows})
         output[inv] = _verdict(inv, rows)
     return output
 
@@ -315,15 +322,17 @@ def run_invariants(evidence, *, tier, requests=None, expected_call_ids=()) -> di
                     status, reason = "FAIL", "not_newest"
             elif r.forbidden_in_context is True:
                 status, reason = "FAIL", "surfaced"
-            elif e.roots is None:
+            elif not e.roots:
                 status, reason = "INCONCLUSIVE", "no_snapshot"
             else:
                 try:
-                    scans = [search_store(root, needles_for(e.keys["forbidden"])).verdict for root in e.roots]
-                    if "found" in scans:
-                        status, reason = "FAIL", "store_hit"
-                    elif "inconclusive" in scans:
-                        status, reason = "INCONCLUSIVE", "opaque_store"
+                    for root in e.roots:
+                        scan = search_store(root, needles_for(e.keys["forbidden"])).verdict
+                        if scan == "found":
+                            status, reason = "FAIL", "store_hit"
+                            break
+                        if scan == "inconclusive":
+                            status, reason = "INCONCLUSIVE", "opaque_store"
                 except Exception:
                     status, reason = "INFRA_FAILURE", "infra"
             rows[inv].append((i, status, reason))
