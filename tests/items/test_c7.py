@@ -11,6 +11,7 @@ import pytest
 
 from bicentennial.canon import sha256_canon
 from bicentennial.items import c7
+from bicentennial.items.levers import LEVERS
 from bicentennial.items.templates import g1, g2
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,8 +32,12 @@ def test_every_template_has_an_entry_whose_hash_recomputes():
     for ref, e in frozen["entries"].items():
         body = {k: v for k, v in e.items() if k != "entry_sha256"}
         assert e["ref"] == ref and e["entry_sha256"] == sha256_canon(body)
-        assert e["lever_mix"] == {"primary": e["cell"]["primary_lever"], "value": "uncalibrated (v0.2)",
-                                  "other_levers": "not neutralised at v0.1; computed per item into each item's levers"}
+        mix = e["lever_mix"]
+        assert mix["primary"] == e["cell"]["primary_lever"] and mix["value"] == "uncalibrated (v0.2)"
+        assert mix["primary_key"] in (*LEVERS, None) and (mix["primary_key"] is None) == (e["cell_id"] == "RECALL-AGG")
+        assert (mix["template"] is None) == (e["genre"] == "g2")
+        assert f"items/templates/{e['genre']}/common.py" in e["source_sha256"]
+        assert "items/protocol.py" in e["source_sha256"]
     assert frozen["file_sha256_of_entries"] == sha256_canon(frozen["entries"])
 
 
@@ -56,6 +61,13 @@ def test_an_unparsed_cell_row_is_refused(tmp_path):
     (tmp_path / "docs/inventory/CELLS-v0.md").write_text("| WAKE-LOOP | Wake | broken |\n", encoding="utf-8")
     with pytest.raises(ValueError, match="unparsed cell row"):
         c7.cells(tmp_path)
+
+
+def test_source_hash_ignores_crlf(tmp_path):
+    lf, crlf = tmp_path / "lf.py", tmp_path / "crlf.py"
+    lf.write_bytes(b"x = 1\ny = 2\n")
+    crlf.write_bytes(b"x = 1\r\ny = 2\r\n")
+    assert c7.source_sha256(lf) == c7.source_sha256(crlf)
 
 
 def test_same_bytes_under_any_hash_seed():

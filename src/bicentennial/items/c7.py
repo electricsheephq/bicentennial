@@ -14,11 +14,16 @@ from pathlib import Path
 
 from bicentennial.canon import sha256_canon
 from bicentennial.items.protocol import CANARY
+from bicentennial.items.templates.g1.common import PRIMARY_LEVER
 
 GENRES = ("g1", "g2")
 FREEZE = "specs/ring0/c7-partial.json"
 _CELL_ROW = re.compile(r"\| ([A-Z]+-[A-Z]+) \| (\w+) \|[^|]*\| ([A-Z])(?: \([^|)]*\))? \|[^|]*\|[^|]*\| ([^|]+) \|")
 _CELL_ID = re.compile(r"\| [A-Z]+-[A-Z]+ \|")
+# The levers.LEVERS key of each v0.1 cell's primary lever; G1's own map, extended to the G2 cells.
+PRIMARY_KEY = {**PRIMARY_LEVER, "DRIFT-ASOF": "chain_depth", "KEEP-FORGET": "distance_sessions",
+               "KEEP-INC": "salience", "KEEP-NEIGH": "interference", "RECALL-AGG": None}
+PACKAGE = Path(__file__).resolve().parents[1]
 
 
 def cells(root) -> dict:
@@ -32,6 +37,17 @@ def cells(root) -> dict:
     return rows
 
 
+def source_sha256(path) -> str:
+    """sha256 of a source file with CRLF line endings read as LF, so a checkout's line endings never change it."""
+    return sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def sources(cls) -> dict:
+    """The sha256 of every package source file that defines a class in the template's MRO."""
+    files = {Path(inspect.getsourcefile(c)).resolve() for c in cls.__mro__ if c.__module__.startswith("bicentennial.")}
+    return {f.relative_to(PACKAGE).as_posix(): source_sha256(f) for f in sorted(files)}
+
+
 def entry(template, genre, cell_rows) -> dict:
     """One template's entry, with entry_sha256 over the canonical entry without that field."""
     cell = cell_rows[template.cell_id]
@@ -41,9 +57,11 @@ def entry(template, genre, cell_rows) -> dict:
         "decision_tables": list(template.decision_tables),
         "template": {f.name: getattr(template, f.name) for f in dataclasses.fields(template)},
         "class": f"{type(template).__module__}.{type(template).__qualname__}",
-        "class_source_sha256": sha256(Path(inspect.getsourcefile(type(template))).read_bytes()).hexdigest(),
+        "class_source_sha256": source_sha256(Path(inspect.getsourcefile(type(template)))),
+        "source_sha256": sources(type(template)),
         "cell": cell,
-        "lever_mix": {"primary": cell["primary_lever"], "value": "uncalibrated (v0.2)",
+        "lever_mix": {"primary": cell["primary_lever"], "primary_key": PRIMARY_KEY[template.cell_id],
+                      "value": "uncalibrated (v0.2)", "template": getattr(template, "lever_mix", None),
                       "other_levers": "not neutralised at v0.1; computed per item into each item's levers"},
     }))
     return {**body, "entry_sha256": sha256_canon(body)}

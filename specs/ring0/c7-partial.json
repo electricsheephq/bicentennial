@@ -12,15 +12,22 @@
    "class_source_sha256": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314",
    "decision_tables": [],
    "direction": "verbatim retention",
-   "entry_sha256": "94ce6bd4e65e4d354980b72ebca8e3b6792919f1aed88ceb282b42c026e3162e",
+   "entry_sha256": "2cd24251fe2844e4264642450ecaf19284aa9487e5c72c89d65320d4308f022b",
    "genre": "g2",
    "kind": "qa",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-asof-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/recall_count.py": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314"
+   },
    "template": {
     "cell_id": "DRIFT-ASOF",
     "checkpoint": null,
@@ -65,15 +72,22 @@
     }
    ],
    "direction": "recency",
-   "entry_sha256": "78d90f09729f3e5297b99e2724b78cee25e90e8c03e628b6f8a68fa21c9ddad8",
+   "entry_sha256": "1fbb845400ef3346e18ad41fed5a5a4c3ad2d4cadd50f30d7d2ecadf6aefe3b7",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-booking-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/drift_booking.py": "e169824ccb5bfe3f7bcfbb079209dca6672dc24b8b6b046bad2c4c0f321c8604"
+   },
    "template": {
     "cell_id": "DRIFT-CUR",
     "checkpoint": null,
@@ -137,15 +151,28 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "20b7ec867671b04977daf98fadd7611a8bf7c817ce23eb589a7398f3a9a11a7a",
+   "entry_sha256": "55452884432007fea63dd48529feafbf32800d2e9a394c96b6a2c2bea3694689",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "chain_depth",
+     "rungs": "uncalibrated (v0.2)",
+     "value": 1
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-chain-fault-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/drift_chain.py": "3f8bd7af3ad8a113f2b3dac3b7dc74bb0dc1891c98bd147854d4a96957e09aea"
+   },
    "template": {
     "cell_id": "DRIFT-CUR",
     "chain_id": "deadline-1",
@@ -209,15 +236,28 @@
     }
    ],
    "direction": "recency",
-   "entry_sha256": "b87c80c3691abe6224b39b1bf3da7486ccf3d3f47a42f8b142b158d8ecf2424e",
+   "entry_sha256": "8880e964b3e07ec8654150020d2e0b28a27f22e3652b78ca71d76ed5db5a3f02",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "chain_depth",
+     "rungs": "uncalibrated (v0.2)",
+     "value": 1
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-chain-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/drift_chain.py": "3f8bd7af3ad8a113f2b3dac3b7dc74bb0dc1891c98bd147854d4a96957e09aea"
+   },
    "template": {
     "cell_id": "DRIFT-CUR",
     "chain_id": "deadline-0",
@@ -290,15 +330,28 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "46bfce100aa0db4d4fa53819c49657f95f17f7fae3eac585eb1e296716d73b7b",
+   "entry_sha256": "516e482cb44e7f27bebe8342f07d0401143e4cfc4c9d773acca1ec3bf2b3438b",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "chain_depth",
+     "rungs": "uncalibrated (v0.2)",
+     "value": 1
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-config-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/drift_action.py": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d"
+   },
    "template": {
     "cell_id": "DRIFT-CUR",
     "chain_id": "setting-fix",
@@ -370,15 +423,22 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "f5380eefc02a58213663cc663961c2bcc03c3b5429875ba95b33a9c66d5f1640",
+   "entry_sha256": "cb49042dad9dad07058ca43108605d4c0e9cc2bf17ad165a304ea3a23a446205",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-no-update-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/drift_booking.py": "e169824ccb5bfe3f7bcfbb079209dca6672dc24b8b6b046bad2c4c0f321c8604"
+   },
    "template": {
     "cell_id": "DRIFT-CUR",
     "checkpoint": null,
@@ -442,15 +502,28 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "d57a64b426a3484f0d259bdfe94745dcd194298adc7c59970acbddb196bb9e76",
+   "entry_sha256": "967b08f2bd3267135ac438bb1b588a1a00630a09df1c1169dae71e7dc847a139",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "update-chain depth",
+    "primary_key": "chain_depth",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "chain_depth",
+     "rungs": "uncalibrated (v0.2)",
+     "value": 0
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "drift-quote-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/drift_action.py": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d"
+   },
    "template": {
     "cell_id": "DRIFT-CUR",
     "chain_id": "setting-quote",
@@ -522,15 +595,22 @@
     }
    ],
    "direction": "none",
-   "entry_sha256": "342b9a2fac8c59f791424b62787b9948349308fe73f873c2fe0033e4454faf93",
+   "entry_sha256": "12a036f49b12aad24be919c69781128c35be2215f6941db58045d8c09f52a51f",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
+    "primary_key": "distance_sessions",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "keep-forget-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/keep_forget.py": "7e4055c85d90ebcbbb23db5fc5421760e807f21e36e78ac983d41d9205a5ea12"
+   },
    "template": {
     "cell_id": "KEEP-FORGET",
     "checkpoint": null,
@@ -604,15 +684,22 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "e20ce8c1936dd0e1c920011be015f29f86819deaa5150ac0c21516db67f369a0",
+   "entry_sha256": "b9a2043eac5e813b2516ea24828b5eec09dbfb0def804f33ad1f0638825c00a1",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "incidental salience",
+    "primary_key": "salience",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "keep-incidental-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/keep_incidental.py": "681402346053310f0c44b878da6f3e6f0001a1547cd6c1eac51e3f4e7a346b31"
+   },
    "template": {
     "cell_id": "KEEP-INC",
     "checkpoint": null,
@@ -677,15 +764,22 @@
     }
    ],
    "direction": "retrieval breadth",
-   "entry_sha256": "ac8f88ea3a8a84b3836ec9cfd1ae9704e2d7829a4cf56ecb14772a0aa7afcd28",
+   "entry_sha256": "b9de6afd1dd777fac37116188a0ab9cd499ff67021eee997315be09d1848afd9",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "interference",
+    "primary_key": "interference",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "keep-neighbour-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/keep_forget.py": "7e4055c85d90ebcbbb23db5fc5421760e807f21e36e78ac983d41d9205a5ea12"
+   },
    "template": {
     "cell_id": "KEEP-NEIGH",
     "checkpoint": null,
@@ -731,15 +825,22 @@
    "class_source_sha256": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314",
    "decision_tables": [],
    "direction": "retrieval breadth",
-   "entry_sha256": "0086c23655a255eb1872c509c0630cd911637e9d4600491c40a11665de7035f0",
+   "entry_sha256": "e8964666a8d04d4bdb3e04a9d0b7499f6d51600cc6ae321c1f2b6466be3ec6c6",
    "genre": "g2",
    "kind": "qa",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "aggregation set size",
+    "primary_key": null,
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "recall-count-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/recall_count.py": "f4744711a1132d70589b212d85ec194d115d38bfde8fd78dfce5c578e51e2314"
+   },
    "template": {
     "attr_key": "date",
     "cell_id": "RECALL-AGG",
@@ -766,15 +867,28 @@
    "class_source_sha256": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee",
    "decision_tables": [],
    "direction": "verbatim retention",
-   "entry_sha256": "24141d870b608990b6ec727b66b8ae8f712af866098ae904032f6a89db626e80",
+   "entry_sha256": "55777f9eabc1b38e98cbf1c967a66ac638ecc15eaf95f139a73ac0e7f830993a",
    "genre": "g1",
    "kind": "qa",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
+    "primary_key": "distance_sessions",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "distance_sessions",
+     "rungs": "uncalibrated (v0.2)",
+     "value": null
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "recall-value-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/recall_value.py": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee"
+   },
    "template": {
     "cell_id": "RECALL-VERB",
     "checkpoint": null,
@@ -839,15 +953,22 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "879e871c9f433632a7c177a68671ac699dcda9acb70431f54052e8de47627c26",
+   "entry_sha256": "2489a4515df5cfa311754e3292be4a24f15273d0c053884f15e481e3a483b2d2",
    "genre": "g2",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
+    "primary_key": "distance_sessions",
+    "template": null,
     "value": "uncalibrated (v0.2)"
    },
    "ref": "tue-passport-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g2/common.py": "f139f71a3f258185e4b3b44a3cf7b48b684f755f07bcf98a03837dcad4cfb8e2",
+    "items/templates/g2/tuesday_trigger.py": "aaa8976f8c7d89fcb3b0a21104b010b36a9cc7805407015de36b118946a47237"
+   },
    "template": {
     "cell_id": "TUE-EVENT",
     "checkpoint": null,
@@ -950,15 +1071,28 @@
     }
    ],
    "direction": "retrieval breadth",
-   "entry_sha256": "08a18631431649bacb4ccb8d3b1fe4a53f46bbaa558ab021cee59da1da92ec7d",
+   "entry_sha256": "87834ec4ff140a5702d6c9aefc3905b18b40a16a886e523b5b18b8f251688cb7",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "distance",
+    "primary_key": "distance_sessions",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "distance_sessions",
+     "rungs": "uncalibrated (v0.2)",
+     "value": null
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "tue-ticket-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/tuesday_trigger.py": "1aced78135ffa385609fce62ce1210541267d78d054b413a696ee8722434cadc"
+   },
    "template": {
     "cell_id": "TUE-EVENT",
     "checkpoint": null,
@@ -1033,15 +1167,29 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "67fb6a290659c905780fa7887f509fccb2b8ccb4de455e51e43e9266dae9c0cb",
+   "entry_sha256": "e4f91734b30185021bbd8bdb7cf2211a78baadab8d3c5be3c2398788c8d25483",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
     "other_levers": "not neutralised at v0.1; computed per item into each item's levers",
     "primary": "wake events between evidence and item",
+    "primary_key": "wake_events",
+    "template": {
+     "label": "provisional pending PREREG-v0.5",
+     "others": "neutral",
+     "primary": "wake_events",
+     "rungs": "uncalibrated (v0.2)",
+     "value": null
+    },
     "value": "uncalibrated (v0.2)"
    },
    "ref": "wake-loop-v1",
+   "source_sha256": {
+    "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
+    "items/templates/g1/common.py": "4516777a6d500931cb24e720f4b636e87d0d1fa8b08a06135ae8f0d5d4958ba8",
+    "items/templates/g1/recall_value.py": "70f8b5d771143bceafa2be95fb85a5ff04c17214eae27a3781a2357936004eee",
+    "items/templates/g1/wake_open_loop.py": "bdd293e209591bfc109785bfcb26605c1cb74c4a9f5f73c854ffd0ac49e72a1f"
+   },
    "template": {
     "cell_id": "WAKE-LOOP",
     "checkpoint": null,
@@ -1069,7 +1217,7 @@
   }
  },
  "entry_hash": "sha256 of the canonical JSON (sorted keys, no spaces) of the entry without entry_sha256",
- "file_sha256_of_entries": "2e9347f3f9f676e966db1cb68decfe25d6fa953eb3869d9ea3a16831f12a8f3d",
+ "file_sha256_of_entries": "9c8681e9cad0cd385db7c996e419c94232f817c462bbaf68c0649890ff94c1d1",
  "keyed_by": "template ref (template_id-vN)",
  "slot": "C-7",
  "status": "partial, provisional (Ring 0 v0.1)"
