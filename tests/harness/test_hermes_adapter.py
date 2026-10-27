@@ -133,8 +133,10 @@ def test_replay_with_kill_restart_and_swap(tmp_path, niced):
             assert r.finals == tuple((t["n"], t["assistant"]) for t in turns)
         assert a.harness_record() == {"name": "hermes-agent", "version": "v0.22.2", "commit": None,
                                       "sha256": ENTRY["artifact"]["sha256"], "entrypoint": "test-double",
-                                      "config_deviations": ["auxiliary.compression.context_length",
-                                                            "agent.environment_probe"]}
+                                      "config_deviations": ["model.context_length",
+                                                            "auxiliary.compression.context_length",
+                                                            "agent.environment_probe"],
+                                      "plugin_config": {}, "active_memory_providers": ["holographic"]}
         assert a.honeypot_hits(token) == 0 and summary["non_loopback"] == []
         assert len(a.pids) == 6 and not a.director.control()["stopped"]
         digests.append(a.stable_digest())
@@ -249,7 +251,8 @@ def test_a_plugin_entry_runs_on_the_harness_pin(tmp_path, monkeypatch):
         a.close()
     assert result.entrypoint == adapter.ENTRYPOINT and (result.turns_ok, result.finals_matched) == (5, 5)
     assert a.harness_record() == {**pin, "commit": a.commit, "entrypoint": adapter.ENTRYPOINT,
-                                  "config_deviations": list(CONFIG_DEVIATIONS)}
+                                  "config_deviations": list(CONFIG_DEVIATIONS), "plugin_config": {},
+                                  "active_memory_providers": ["holographic"]}
     assert json.loads((a.paths["hermes_home"] / "config.yaml").read_bytes())["memory"]["provider"] == "holographic"
 
 

@@ -4,6 +4,7 @@ loopback with a placeholder key; the run layout is fresh and isolated, never the
 import os
 import re
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
 from bicentennial.canon import canon
@@ -18,10 +19,11 @@ _PLUGIN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _PASSED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE")  # copied when set; nothing else is inherited
 _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy")
 # Disclosed harness deviations from Hermes's defaults, beyond routing (recorded in the adapter's harness record)
-CONFIG_DEVIATIONS = ("auxiliary.compression.context_length", "agent.environment_probe")
+# Main window also overrides Hermes's default: the loopback custom provider has a 64,000-token floor.
+CONFIG_DEVIATIONS = ("model.context_length", "auxiliary.compression.context_length", "agent.environment_probe")
 
 
-def hermes_config(port: int, alias: str, *, plugin: str | None = None) -> dict:
+def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None) -> dict:
     if type(port) is not int or not 0 < port < 65536 or not isinstance(alias, str) or not alias:
         raise ValueError("a port and an alias are required")
     if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
@@ -34,7 +36,7 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None) -> dict:
     # director refuses as unknown; a remote provider would give the length from model metadata instead
     # (conversation_compression.py 2075-2084; model_metadata.py 2239-2241 returns a configured value first)
     aux["compression"]["context_length"] = CONTEXT_LENGTH
-    return {"model": {"default": alias, "provider": "custom", "base_url": f"{base}/main/v1",
+    cfg = {"model": {"default": alias, "provider": "custom", "base_url": f"{base}/main/v1",
                       "api_key": PLACEHOLDER_KEY, "context_length": CONTEXT_LENGTH},
             "auxiliary": aux,
             "memory": {"memory_enabled": True, "user_profile_enabled": True, "provider": plugin or ""},
@@ -45,6 +47,26 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None) -> dict:
             "agent": {"environment_probe": False},
             "platform_toolsets": {"acp": list(T1_TOOLSETS)},
             "compression": {"enabled": True, "threshold_tokens": THRESHOLD_TOKENS, "micro_compact": False}}
+    if plugin_config is not None:
+        if not isinstance(plugin_config, dict):
+            raise ValueError("plugin_config must be a dict")
+        if {"model", "auxiliary"} & plugin_config.keys():
+            raise ValueError("plugin_config touches adapter-owned model or auxiliary routes")
+        _merge_plugin(cfg, plugin_config)
+    canon(cfg)  # preserve the canonical, no-float contract for plug-in settings too
+    return cfg
+
+
+def _merge_plugin(target, settings):
+    for key, value in settings.items():
+        if key in {"temperature", "top_p", "top_k", "mcp_servers"}:
+            raise ValueError("plugin_config touches adapter-owned protocol settings")
+        if key in target and not (isinstance(target[key], dict) and isinstance(value, dict)):
+            raise ValueError("plugin_config touches an adapter-owned key")
+        if isinstance(value, dict):
+            _merge_plugin(target.setdefault(key, {}), value)
+        else:
+            target[key] = deepcopy(value)
 
 
 def write_config(hermes_home, cfg: dict) -> Path:
@@ -71,12 +93,21 @@ def layout(root, scratch) -> dict:
         raise ValueError("the run root is not inside the scratch directory")
     paths = {"root": root, "hermes_home": root / "hermes-home", "home": root / "home",
              "workspace": root / "workspace", "logs": root / "logs", "tmp": root / "tmp"}
+    validate_paths(paths)
     if paths["hermes_home"].exists():
         raise ValueError("hermes-home exists: every run starts from fresh directories")
     paths["hermes_home"].mkdir(parents=True)
     for key in ("home", "workspace", "logs", "tmp"):
         paths[key].mkdir(exist_ok=True)
     return paths
+
+
+def validate_paths(paths: dict) -> None:
+    root = paths["root"].resolve()
+    for key in ("tmp", "workspace", "home", "hermes_home", "logs"):
+        path = paths[key]
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            raise ValueError(f"{key} is a symlink or resolves outside the run root")
 
 
 def worker_env(paths: dict, port: int, clock_path, checkout) -> dict:

@@ -107,9 +107,9 @@ def test_live_micro_life_twice(tmp_path):
         for a in open_adapters:
             a.close()
     assert ports[0] != ports[1]
-    if digests[0] != digests[1]:  # a known director defect, not an adapter one: record where the runs part
+    if digests[0] != digests[1]:
         (tmp_path / "live-digest-diff.json").write_text(json.dumps(first_difference(*open_adapters), indent=1))
-        pytest.xfail("digests differ across runs: #71 (director arrival order)")
+    assert digests[0] == digests[1]
 
 
 def first_difference(a, b) -> dict:

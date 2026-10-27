@@ -51,7 +51,8 @@ def main():
             path = store / f"{sid}.json"
             history = json.loads(path.read_text()) if path.exists() else []
             ok = cmd["session_id"] is None or path.exists()
-            emit({"ok": ok, "session_id": sid, "history": len(history), "t_ms": int((time.monotonic() - t1) * 1000)})
+            emit({"ok": ok, "session_id": sid, "history": len(history), "active_memory_providers": ["holographic"],
+                  "t_ms": int((time.monotonic() - t1) * 1000)})
         elif cmd["op"] == "turn":
             model = json.loads((HOME / "config.yaml").read_text())["model"]
             system = {"role": "system", "content": f"fake harness; cwd {cwd}; home {HOME}"}

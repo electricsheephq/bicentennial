@@ -4,10 +4,13 @@ gate runs before every spawn, and the director drains at every idle boundary, so
 
 import json
 import os
+import selectors
+import signal
 import sqlite3
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -19,6 +22,7 @@ from bicentennial.harness.hermes.config import (
     CONFIG_DEVIATIONS,
     hermes_config,
     layout,
+    validate_paths,
     worker_env,
     write_config,
 )
@@ -31,6 +35,7 @@ from bicentennial.systems.registry import SystemRefused, check
 ENTRYPOINT = "acp_adapter.session.SessionManager in process (S6a fallback)"
 WORKER = Path(__file__).resolve().with_name("worker.py")
 DRAIN_QUIET_S, DRAIN_CAP_S, EXIT_TIMEOUT_S = 3.0, 240.0, 300
+STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 3600, 300
 
 
 class PinMismatch(RuntimeError):
@@ -61,6 +66,7 @@ class SessionResult:
     timings_ms: dict  # volatile
     finals: tuple = ()  # ((turn, text), ...) in turn order: every delivered final; a probe's is never compared
     reset: str | None = None  # "control_wipe" when the wipe hook reported a wipe (Amendment 1, A2)
+    active_memory_providers: tuple = ()
 
 
 def _ms(t0: float) -> int:
@@ -84,37 +90,65 @@ def verify_pin(checkout, pin) -> str:
 
 
 class _Worker:
-    def __init__(self, argv, env, cwd, log):
+    def __init__(self, argv, env, cwd, log, egress=None):
+        self._buffer, self._reaped, self.egress = b"", False, egress
         own = os.getpriority(os.PRIO_PROCESS, 0)  # nice -n adds: only the gap to 19 (guard.py 86-91)
         prefix = ["nice", "-n", str(19 - own)] + (["taskpolicy", "-b"] if sys.platform == "darwin" else [])
         with open(log, "ab") as err:
             self.proc = subprocess.Popen([*prefix, *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         stderr=err, env=env, cwd=cwd, text=True, encoding="utf-8")
-        if not (self.call() or {}).get("ready"):
+                                         stderr=err, env=env, cwd=cwd, text=True, encoding="utf-8",
+                                         start_new_session=True)
+        try:
+            if self.egress is not None:
+                self.egress.add(self.proc.pid)
+            if not (self.call() or {}).get("ready"):
+                raise HarnessFailed("worker_start")
+        except BaseException:
             self.kill()
-            raise HarnessFailed("worker_start")
+            raise
 
     def call(self, **op):
         """Sends one op (none: just read the ready line); -> its answer, or None at end-of-file."""
+        phase = op.get("op", "startup")
+        deadline = time.monotonic() + {"startup": STARTUP_TIMEOUT_S, "open": OPEN_TIMEOUT_S,
+                                      "turn": TURN_TIMEOUT_S, "end": END_TIMEOUT_S}[phase]
         try:
             if op:
                 self.proc.stdin.write(json.dumps(op) + "\n")
                 self.proc.stdin.flush()
-            line = self.proc.stdout.readline()
+            with selectors.DefaultSelector() as reader:
+                reader.register(self.proc.stdout, selectors.EVENT_READ)
+                while b"\n" not in self._buffer:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not reader.select(remaining):
+                        self.kill()
+                        raise HarnessFailed(f"{phase}_timeout")
+                    chunk = os.read(self.proc.stdout.fileno(), 65536)
+                    if not chunk:
+                        return None
+                    self._buffer += chunk
+            line, self._buffer = self._buffer.split(b"\n", 1)
         except OSError:
             return None
         return json.loads(line) if line else None
 
     def kill(self):
-        if self.proc.poll() is None:
-            self.proc.kill()
+        if self._reaped:
+            return
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL)  # includes children even after the leader exits
+        except ProcessLookupError:
+            pass
         self.proc.wait()
+        self._reaped = True
+        if self.egress is not None:
+            self.egress.discard(self.proc.pid)
 
 
 class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
-                 before_spawn=None, write_prompt=None, harness_pin=None):
+                 before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None):
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
             reasons.append("benchmark_operator_forbidden")
@@ -124,7 +158,9 @@ class HermesAdapter:
             raise ValueError("kill_mode is boundary or held")
         if any(f["kind"] in ("restart", "kill", "compaction") and f["turn"] is None for f in schedule.to_obj()):
             raise ValueError("a restart, kill or compaction needs a turn")
-        hermes_config(1, "bicentennial-main", plugin=plugin)  # refuses a bad plug-in name before anything starts
+        hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config)
+        self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
+        checkout = Path(checkout).resolve() if checkout is not None else None
         self.commit = None
         if worker_argv is None:
             if checkout is None or harness_pin is None:
@@ -184,7 +220,6 @@ class HermesAdapter:
                     if held and not killed:
                         raise HarnessFailed("held_kill_missed")
                     self._worker.kill() if f["kind"] == "kill" else self._end()  # restart: a clean end
-                    self.egress.discard(self._worker.proc.pid)
                     t0, mode = time.monotonic(), "clean" if f["kind"] == "restart" else self.kill_mode
                     self._gate(gate)
                     new_sid, after, wiped = self._spawn_open(f["kind"], sid, t)
@@ -216,7 +251,8 @@ class HermesAdapter:
         summarised = sum(r.get("role") == "summariser" and r.get("attempt_id") == attempt_id for r in self.records())
         return SessionResult(index, session["kind"], sid, self.entrypoint, turns_ok, matched, tuple(restarts),
                              compaction, summarised, surface_hash(self.paths["hermes_home"], self.volatile),
-                             tuple(gate), t, tuple(finals), "control_wipe" if self._wiped else None)
+                             tuple(gate), t, tuple(finals), "control_wipe" if self._wiped else None,
+                             tuple(self.active_memory_providers))
 
     def _gate(self, readings) -> None:
         """R15, before every spawn: wait while the busy marker refuses this machine class."""
@@ -232,20 +268,24 @@ class HermesAdapter:
         wiped = self.before_spawn is not None and self.before_spawn(reason) is True  # S10's hook reports a wipe
         self._wiped |= wiped
         sid = None if wiped else sid
+        validate_paths(self.paths)  # hooks may replace directories on any wake; check before writing or spawning
         # After the hook, so a wipe that restores install-time state is always followed by the current config
-        write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin))
+        write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
+                                                            plugin_config=self.plugin_config))
         t0 = time.monotonic()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
-                               self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr")
+                               self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress)
         assert_niced(self._worker.proc.pid)
-        self.egress.add(self._worker.proc.pid)
         self.pids.append(self._worker.proc.pid)
         t["spawn"].append(_ms(t0))
         t0 = time.monotonic()
         out = self._worker.call(op="open", session_id=sid, cwd=str(self.paths["workspace"]))
         if out is None or not out.get("ok") or (sid is not None and out.get("session_id") != sid):
             raise HarnessFailed("open_failed" if sid is None else "resume_failed")
+        self.active_memory_providers = list(out.get("active_memory_providers") or [])
+        if self.plugin is not None and self.plugin not in self.active_memory_providers:
+            raise HarnessFailed("plugin_inactive")
         t["open"].append(_ms(t0))
         return out["session_id"], out["history"], wiped
 
@@ -256,7 +296,7 @@ class HermesAdapter:
         except subprocess.TimeoutExpired:
             self._worker.kill()
             raise HarnessFailed("exit_timeout") from None
-        self.egress.discard(self._worker.proc.pid)
+        self._worker.kill()  # a clean leader exit can still leave plug-in children behind
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
 
@@ -295,7 +335,9 @@ class HermesAdapter:
     def harness_record(self) -> dict:
         pin = self.harness_pin  # the harness's own pin, never a plug-in system's artifact (A1)
         return {"name": pin.get("name"), "version": pin.get("version"), "sha256": pin.get("sha256"),
-                "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS)}
+                "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS),
+                "plugin_config": deepcopy(self.plugin_config),
+                "active_memory_providers": list(self.active_memory_providers)}
 
     def close(self) -> dict:
         if self._worker is not None:

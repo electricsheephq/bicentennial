@@ -36,7 +36,9 @@ def main():
         t1 = time.monotonic()
         if cmd["op"] == "open":
             state = mgr.get_session(cmd["session_id"]) if cmd.get("session_id") else mgr.create_session(cmd["cwd"])
+            memory = getattr(getattr(state, "agent", None), "_memory_manager", None)
             emit({"ok": state is not None, "session_id": state and state.session_id,
+                  "active_memory_providers": [p.name for p in getattr(memory, "providers", None) or []],
                   "history": state and len(state.history), "t_ms": ms(t1)})
         elif cmd["op"] == "turn":
             tokens = set_session_vars(session_key=state.session_id, session_id=state.session_id, cwd=state.cwd,

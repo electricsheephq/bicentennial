@@ -1,5 +1,5 @@
 """Socket and memory sampler for harness worker processes (S6a replay.py Egress, promoted). Once a second it lists
-every registered pid and its descendants, reads their sockets with lsof and their resident memory with ps, and keeps
+every registered pid, its process group and descendants, reads sockets with lsof and resident memory with ps, and keeps
 every endpoint that is not loopback. A wildcard bind (lsof's `*`) counts as non-loopback."""
 
 import subprocess
@@ -49,9 +49,12 @@ class Egress(threading.Thread):
         with self._lock:
             tree, todo = set(self.pids), list(self.pids)
         children = {}
-        for row in (line.split() for line in _out(["ps", "-A", "-o", "pid=,ppid="]).splitlines()):
-            if len(row) == 2 and row[0].isdigit() and row[1].isdigit():
+        for row in (line.split() for line in _out(["ps", "-A", "-o", "pid=,ppid=,pgid="]).splitlines()):
+            if len(row) == 3 and all(c.isdigit() for c in row):
                 children.setdefault(int(row[1]), []).append(int(row[0]))
+                if int(row[2]) in tree:  # a worker's orphaned child keeps its process group
+                    todo.append(int(row[0]))
+        tree.update(todo)
         while todo:  # the registered pids and all their descendants
             new = [c for c in children.get(todo.pop(), []) if c not in tree]
             tree.update(new)
