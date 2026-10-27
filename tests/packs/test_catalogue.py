@@ -41,7 +41,11 @@ def catalogue():
 
 
 def test_inventory(catalogue):
-    assert len(catalogue.rows) == 90
+    assert len(catalogue.rows) == 94
+    assert Counter(r.test for r in catalogue.rows) == {"MFT": 40, "INV": 30, "DIR": 24}
+    assert sum(r.gate is None for r in catalogue.rows) == 86
+    for genre, template in (("G1", "drift-quote"), ("G2", "drift-no-update")):
+        assert sum(r.template == template for r in catalogue.rows_for(genre)) == 9
     assert catalogue.seeds() == (1, 2, 3)
     assert catalogue.not_covered == NOT_COVERED + (
         dict(genre="G1", track="Tuesday", reason="every INV row confounded at v0.1"),)
@@ -49,13 +53,13 @@ def test_inventory(catalogue):
     assert set(RECIPES) == {(g, t.template_id) for g, ts in TEMPLATES_BY_GENRE.items() for t in ts.values()}
     assert len(RECIPES) == 15
     expected = {
-        ("G1", "Drift"): (10, 8, 6), ("G1", "Wake"): (2, 2, 2),
+        ("G1", "Drift"): (12, 8, 6), ("G1", "Wake"): (2, 2, 2),
         ("G1", "Recall"): (3, 2, 2), ("G1", "Tuesday"): (2, 2, 0),
-        ("G2", "Drift"): (9, 6, 6), ("G2", "Keep"): (5, 6, 6),
+        ("G2", "Drift"): (11, 6, 6), ("G2", "Keep"): (5, 6, 6),
         ("G2", "Recall"): (3, 2, 2), ("G2", "Tuesday"): (2, 2, 0),
     }
     for genre in ("G1", "G2"):
-        assert len(catalogue.rows_for(genre)) == (41 if genre == "G1" else 49)
+        assert len(catalogue.rows_for(genre)) == (43 if genre == "G1" else 51)
         for track in TRACK_BY_PREFIX.values():
             counts = Counter(r.test for r in catalogue.rows_for(genre, track))
             assert tuple(counts[k] for k in ("MFT", "INV", "DIR")) == expected.get((genre, track), (0, 0, 0))
