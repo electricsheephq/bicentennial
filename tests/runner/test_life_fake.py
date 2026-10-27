@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from bicentennial.audit.readback import FAILING
 from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS
 from bicentennial.director.compiler.check import Voids
@@ -205,6 +206,9 @@ def test_wiped(lives, tmp_path, harness, life):
     case = lives[life, "B0"]
     result = drive(case, tmp_path, arm="wiped")
     assert result.stopped is None
+    assert result.audit["status"] == "OK"
+    assert "A4.gaps" in result.audit["failures"]
+    assert result.audit["a4_gaps"] == "expected: the wiped arm restores the fresh install at every wake"
     records = {r["item_id"]: r for r in case["records"]}
     retained = [iid for iid, r in result.results.items() if r.kind == "qa" and r.in_context is False
                 and crosses_cold_restart(case["t"].schedule, records[iid]["evidence_session"],
@@ -253,6 +257,28 @@ def completed_sessions(monkeypatch):
             (), False, 0, surface_hash(self.paths["hermes_home"], self.volatile), (), {})
 
     monkeypatch.setattr(adapter.HermesAdapter, "run_session", run_session)
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped"])
+@pytest.mark.parametrize("other_failure", [False, True])
+def test_audit_effect_gaps_by_arm(lives, tmp_path, monkeypatch, completed_sessions, arm, other_failure):
+    report = {section: dict.fromkeys(keys, []) for section, keys in FAILING.items()}
+    report["A4"]["gaps"] = ["missing write"]
+    if other_failure:
+        report["A1"]["mismatches"] = ["different request"]
+    monkeypatch.setattr(runner, "load_ledger", lambda *args: ([], {}, "unit-ledger"))
+    monkeypatch.setattr(runner, "audit", lambda *args, **kwargs: report)
+    result = drive(lives["t1-g1", "B0"], tmp_path, arm=arm)
+    try:
+        assert result.stopped is None
+        assert result.audit["status"] == ("OK" if arm == "wiped" and not other_failure else "INFRA_FAILURE")
+        assert result.audit["failures"] == (["A1.mismatches"] if other_failure else []) + ["A4.gaps"]
+        if arm == "wiped":
+            assert result.audit["a4_gaps"] == "expected: the wiped arm restores the fresh install at every wake"
+        else:
+            assert "a4_gaps" not in result.audit
+    finally:
+        result.cleanup()
 
 
 @pytest.mark.parametrize("holds", [False, True])
@@ -520,6 +546,43 @@ def test_firewall_and_no_mutable_module_state():
 def test_failure_cause_table(label, cls):
     assert runner._cause(HarnessFailed(label)) == (cls, label)
     assert runner._cause(ValueError("not emitted")) == ("INFRA_FAILURE", "ValueError")
+
+
+def test_adapter_failure_labels_are_named():
+    tree = ast.parse(Path(adapter.__file__).read_text())
+    labels = set()
+
+    def literal_labels(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        if isinstance(node, ast.IfExp):
+            return literal_labels(node.body) | literal_labels(node.orelse)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return literal_labels(node.left)
+        return set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and (
+                isinstance(node.exc.func, ast.Name) and node.exc.func.id == "HarnessFailed"):
+            labels.update(literal_labels(node.exc.args[0]))
+    worker = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "_Worker")
+    call = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == "call")
+    phases = next(n for n in ast.walk(call) if isinstance(n, ast.Dict))
+    assert {k.value for k in phases.keys} == {"startup", "open", "turn", "end"}
+    # The formatted timeout label is expanded from the worker's actual phase table.
+    labels.update(f"{k.value}_timeout" for k in phases.keys)
+    assert "group_survivors:" in labels
+    assert labels - {"group_survivors:"} <= dict(CAUSES).keys()
+
+
+@pytest.mark.parametrize("label,cls", [
+    ("turn_timeout", "SYSTEM_FAILURE"), ("end_timeout", "SYSTEM_FAILURE"),
+    ("startup_timeout", "INFRA_FAILURE"), ("open_timeout", "INFRA_FAILURE"),
+    ("worker_start", "INFRA_FAILURE"),
+])
+def test_worker_failure_mappings(label, cls):
+    assert dict(CAUSES)[label] == cls
+    assert runner._cause(HarnessFailed(label)) == (cls, label)
 
 
 def test_earlier_and_pair_inputs_ignore_torn_tail(tmp_path):

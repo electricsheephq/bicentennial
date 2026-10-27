@@ -66,9 +66,11 @@ STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
-    "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "end_failed", "exit_timeout")) + tuple(
+    "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "end_failed", "exit_timeout",
+    "turn_timeout", "end_timeout")) + tuple(
     (label, "INFRA_FAILURE") for label in (
-        "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout"))
+        "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
+        "startup_timeout", "open_timeout", "worker_start"))
 TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only compiled workspace commands; "
                        "a live model could reach the Hermes home")
 
@@ -185,7 +187,7 @@ def _pair_inputs(root, rows, kill, genre):
     return tuple(sorted(ids)), tuple(requests)
 
 
-def _audit(adapter, table, faults, script, items, records, plugin):
+def _audit(adapter, table, faults, script, items, records, plugin, arm):
     try:
         rows, blobs, _ = load_ledger(adapter.paths["root"] / "ledger", "kit")
         model_for, mode = route_models(table, adapter.entry["name"], faults)
@@ -194,9 +196,15 @@ def _audit(adapter, table, faults, script, items, records, plugin):
                        id_needles=life_ids({"items": list(items), "records": list(records)}),
                        effects=None if plugin else hermes_effects(adapter.paths["hermes_home"]))
         codes = failures(report)
-        status = "OK" if plugin and not [c for c in codes if c != "A4.no_effects_hook"] else run_status(report, mode)
-        return dict(status=status, failures=codes, **(
+        ignored = ("A4.no_effects_hook",) if plugin else ()
+        if arm == "wiped":
+            ignored += ("A4.gaps",)
+        status = "OK" if not [c for c in codes if c not in ignored] else run_status(report, mode)
+        result = dict(status=status, failures=codes, **(
             {"a4": "not audited for plug-in providers at v0.1"} if plugin else {}))
+        if arm == "wiped" and "A4.gaps" in codes:
+            result["a4_gaps"] = "expected: the wiped arm restores the fresh install at every wake"
+        return result
     except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
         raise
     except Exception:
@@ -401,7 +409,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         ids, requests = _pair_inputs(root / "run" / "ledger", rows, kill, genre)
         return replace(evidence, results=dict(sorted(responder.results().items())), transforms=tuple(sorted(transforms)),
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
-            post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin),
+            post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin, arm),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
             egress=egress, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified)

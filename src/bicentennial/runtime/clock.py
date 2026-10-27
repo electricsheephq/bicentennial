@@ -56,12 +56,17 @@ class SimClock:
 
     def set_session(self, sim_t_s: int, step_s: int | None = None) -> None:
         """Publish the scheduled instant at an idle session boundary."""
+        previous_step_s = self.step_s
         if step_s is not None:
             self._integer(step_s)
             if step_s <= 0:
                 raise ValueError("step_s must be positive")
             self.step_s = step_s
-        self._write(sim_t_s)
+        try:
+            self._write(sim_t_s)
+        except Exception:
+            self.step_s = previous_step_s
+            raise
 
     @classmethod
     def resume(cls, path: str | Path, schedule_sim_t_s: int) -> "SimClock":
