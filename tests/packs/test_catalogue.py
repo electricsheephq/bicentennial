@@ -226,7 +226,7 @@ def test_inv_delta_refusals(monkeypatch, ident, case):
         elif mutation in ("bool-base", "bool-inv"):
             values[mutation.removeprefix("bool-")] = True
         elif mutation == "float-value":
-            values["inv"] = 1.5
+            values["inv"] = float(values["base"])  # equal value: only the int-type rule can refuse it
         elif mutation == "null-distance":
             delta[branch]["distance_tokens_est"]["base"] = None
         elif mutation == "string-distance":
