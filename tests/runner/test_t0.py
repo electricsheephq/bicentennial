@@ -394,6 +394,57 @@ def test_invariant_hosts_closed(fake_hosts):
     assert created and all(h.closed == 1 for h in created)
 
 
+def test_invariant_injected_context(fake_hosts, monkeypatch):
+    factory, created = fake_hosts
+    probed, queried = [], []
+
+    def probe(host, task, now):
+        assert host.log[-1] == "settle"
+        answer = ReferenceStore.query(host, task, now)
+        # Extracted facts need not contain a complete event or cite its id.
+        host.blocks = tuple(text.split()[-1] for text in answer["output"].splitlines())
+        host.cached_task = (task, now)
+        probed.append((task, now))
+        return host.context_blocks()
+
+    def query(host, task, now):
+        if hasattr(host, "cached_task"):
+            assert (task, now) == host.cached_task
+        queried.append((task, now))
+        return dict(output="", citations=[], confidence_milli=0)
+
+    monkeypatch.setattr(t0.HermesMemoryHost, "probe", probe)
+    monkeypatch.setattr(t0.HermesMemoryHost, "context_blocks", lambda host: host.blocks, raising=False)
+    monkeypatch.setattr(t0.HermesMemoryHost, "query", query)
+    verdicts = factory.invariants(5)
+    assert verdicts["INV-NEW"].status == verdicts["INV-VERB"].status == "PASS"
+    assert all(v.status == "PASS" for v in verdicts.values())
+    assert probed == queried and all(now == 100 for _, now in probed)
+    assert created and all(host.closed == 1 for host in created)
+
+
+@pytest.mark.parametrize("cause,status,attempts", [("ipc", "INFRA_FAILURE", 3),
+                                                  ("query_failed", "FAIL", 1)])
+def test_invariant_probe_fault_attribution(fake_hosts, monkeypatch, cause, status, attempts):
+    factory, created = fake_hosts
+    original = t0.HermesMemoryHost.probe
+    failed = []
+
+    def probe(host, task, now):
+        if task["task_id"] == "new-b":
+            failed.append(host.options["root"])
+            raise HarnessFailed(cause)
+        return original(host, task, now)
+
+    monkeypatch.setattr(t0.HermesMemoryHost, "probe", probe)
+    verdicts = factory.invariants(5)
+    assert verdicts["INV-NEW"].status == status
+    assert verdicts["INV-NEW"].infra == (("new-a", "new-b") if cause == "ipc" else ())
+    assert len(failed) == len(set(failed)) == attempts
+    assert all(v.status == "PASS" for name, v in verdicts.items() if name != "INV-NEW")
+    assert created and all(host.closed == 1 for host in created)
+
+
 def test_invariant_factory_refusal(fake_hosts, monkeypatch):
     factory, created = fake_hosts
 
@@ -788,6 +839,68 @@ def test_known_failure_wins_over_blocked(installed, tmp_path, monkeypatch, scena
     assert all(count == (1 if scenario == "fail-blocked" and rel == selected[0].rel or
                          scenario == "system-blocked" and branch == "B0" else 3)
                for (rel, branch), count in attempts.items())
+
+
+@pytest.mark.parametrize("baseline_cause,selected_failure", [
+    ("ipc", False), ("ipc", True), ("query_failed", False)])
+def test_baseline_fault_verdict(installed, tmp_path, monkeypatch, baseline_cause, selected_failure):
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-drift-asof-dir-2")
+    members = sorted(i["item_id"] for i in pack.pack["items"] if t0._verb_member(pack, i))
+    assert members
+    original = t0._Factory.__call__
+    baseline_attempts = []
+
+    def construct(factory):
+        if "baseline" in factory.unit.parts:
+            baseline_attempts.append(factory.unit)
+
+            class Broken(ReferenceStore):
+                def query(self, task, now):
+                    raise HarnessFailed(baseline_cause)
+
+            return Broken()
+        if selected_failure and "main" in factory.unit.parts:
+            class FailedMember(ReferenceStore):
+                def query(self, task, now):
+                    if task["task_id"] == members[0]:
+                        raise HarnessFailed("query_failed")
+                    return super().query(task, now)
+
+            return FailedMember()
+        return original(factory)
+
+    monkeypatch.setattr(t0._Factory, "__call__", construct)
+    out = tmp_path / "out"
+    blocked = baseline_cause == "ipc"
+    assert run(installed, out, packs=[pack.rel]) == (1 if selected_failure else 2 if blocked else 0)
+    verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
+    verb = verdicts["INV-VERB"]
+    assert verb["status"] == ("FAIL" if selected_failure else "INFRA_FAILURE" if blocked else "INCONCLUSIVE")
+    assert verb["infra"] == (members if blocked else [])
+    assert verb["failed"] == ([members[0]] if selected_failure else [])
+    # The twin has a probe in B0; its empty B1 branch never reaches query.
+    assert len(baseline_attempts) == (4 if blocked else 2)
+    card = json.loads((out / pack.rel / "card.json").read_bytes())
+    validate("card_ring0", card)
+    assert card["run_status"] == ("BLOCKED" if blocked and not selected_failure else "COMPLETE")
+    assert card["gate_verdict"] == ("FAIL" if selected_failure else "BLOCKED" if blocked else "PASS")
+    if not selected_failure:
+        assert all(i["failure_class"] not in ("SYSTEM_FAILURE", "BLOCKED") for i in card["items"])
+
+
+def test_clean_baseline_card_bytes(installed, tmp_path, monkeypatch):
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-drift-asof-dir-2")
+    first, second = tmp_path / "one", tmp_path / "two"
+    assert run(installed, first, packs=[pack.rel]) == 0
+    original = t0._pack_invariants
+
+    def without_baseline_infra(*args, **kwargs):
+        kwargs.pop("baseline_infra", None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(t0, "_pack_invariants", without_baseline_infra)
+    assert run(installed, second, packs=[pack.rel]) == 0
+    assert stable_files(first) == stable_files(second)
 
 
 @pytest.mark.parametrize("fault,status,code,count", [

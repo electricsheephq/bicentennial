@@ -4,7 +4,7 @@ import hashlib
 import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bicentennial.canon import canon, sha256_canon
@@ -97,6 +97,7 @@ class UnitResult:
     arm: str
     runs: tuple[LifeRun, ...]
     reclassified: tuple
+    stop_reclassified: bool = False
 
 
 @dataclass(frozen=True)
@@ -306,7 +307,7 @@ def _unit(ctx, pack, arm, b, scratch, voids, floor):
         if isinstance(scores[iid], Infra):
             scores[iid] = dict(sorted(outcome(identity0(pack.cases[iid].item), None,
                 cause="INFRA_FAILURE", infra_reruns=2).items()))
-    return UnitResult(pack.life, b, arm, tuple(runs), tuple(sorted(reclassified))), scores, labels
+    return UnitResult(pack.life, b, arm, tuple(runs), tuple(sorted(reclassified)), bool(relabel)), scores, labels
 
 
 def _crosses(pack, item):
@@ -316,12 +317,20 @@ def _crosses(pack, item):
 
 def _arm(arm, packs, units, scores, labels, voids):
     bundles, evidence, requests, ids, recall = [], [], [], set(), {}
+    blocked_ids = set()
     transforms, hits = set(), 0
     by_life = {p.life: p for p in packs}
     for unit in units:
         pack, run = by_life[unit.life], unit.runs[-1]
         requests.extend(run.post_restart_requests)
-        ids.update(run.expected_call_ids)
+        missing = set()
+        # Only a run that never reached the resume is blocked: once a post-restart request exists,
+        # a missing pair is the system's own drop and S05 judges it.
+        if (unit.stop_reclassified or run.stopped is not None and run.stopped[0] == "INFRA_FAILURE") \
+                and not run.post_restart_requests:
+            missing = set(run.expected_call_ids)
+        blocked_ids.update(sorted(missing))
+        ids.update(sorted(set(run.expected_call_ids) - missing))
         for attempted in unit.runs:
             transforms.update(attempted.transforms)
             hits += attempted.honeypot_hits
@@ -342,6 +351,12 @@ def _arm(arm, packs, units, scores, labels, voids):
     verdicts = None
     if arm in GATED_ARMS:
         values = run_invariants(evidence, tier="T1", requests=requests, expected_call_ids=tuple(sorted(ids)))
+        if blocked_ids:
+            pair = values["INV-PAIR"]
+            # S05 numbers expected-<n> over the ids it was given, so blocked ids get their own form.
+            infra = {f"expected-blocked-{n}" for n in range(1, len(blocked_ids) + 1)}
+            values["INV-PAIR"] = replace(pair, infra=tuple(sorted(set(pair.infra) | infra)),
+                status="INFRA_FAILURE" if pair.status in ("PASS", "NOT_EXERCISED") else pair.status)
         verdicts = tuple(values[name] for name in INVARIANTS)
     summary = voids.summary()
     return ArmResult(arm, dict(sorted(scores.items())), dict(sorted(labels.items())),
