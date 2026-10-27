@@ -41,8 +41,6 @@ CASES = 200
 LIFE = 'life-a'
 SHAPES = ('none', 'stated', 'observed', 'superseded', 'retracted', 'hidden', 'same-time',
           'unauthorised', 'authorised')
-EXPECTED = {'stated': 'contradiction', 'observed': 'verification', 'unauthorised': 'authority_rule',
-            'stated+unauthorised': 'contradiction'}
 FIXTURE = json.loads((Path(__file__).parents[2] / 'schemas/fixtures/gen/world.json').read_bytes())
 
 
@@ -93,7 +91,16 @@ def plant_draws(c):
     kind = pick('kind', sorted(PLANT_KINDS))
     return dict(kind=kind, channel=pick('channel', PLANT_KINDS[kind]), shape=pick('shape', SHAPES),
                 speech_act=pick('speech_act', PLANT_SPEECH_ACTS), polarity=pick('polarity', ('affirm', 'negate')),
-                strength=uniform_int('g04-properties', u, 0, 'strength', 0, 1000), actor=pick('actor', ('principal', 'third')))
+                strength=uniform_int('g04-properties', u, 0, 'strength', 0, 1000), actor=pick('actor', ('principal', 'third')),
+                evidence_object=pick('evidence_object', ('v-true', 'v-plant')),
+                evidence_polarity=pick('evidence_polarity', ('affirm', 'negate')))
+
+
+def contradicts(d):
+    """Evidence L contradicts plant P: the same object with opposite polarity, or both affirm different objects."""
+    if d['evidence_object'] == 'v-plant':
+        return d['evidence_polarity'] != d['polarity']
+    return d['evidence_polarity'] == d['polarity'] == 'affirm'
 
 
 def plant_case(path, c, twin=None, extra=False, shape=None):
@@ -107,7 +114,7 @@ def plant_case(path, c, twin=None, extra=False, shape=None):
                     subject_id='other', predicate='extra', object='v-extra', polarity='affirm',
                     speech_act='assert', strength=500)
     if parts & {'stated', 'observed', 'superseded', 'retracted', 'hidden', 'same-time'}:
-        value = ('v-true', d['polarity'])
+        value = (d['evidence_object'], d['evidence_polarity'])
         if twin and twin.evidence_fact_id == 'f-l':
             value = (twin.evidence_object, twin.evidence_polarity)
         g01(db, 'e-l', t if 'same-time' in parts else s1[1], 'f-l', object=value[0], polarity=value[1],
@@ -152,7 +159,11 @@ def check_twin(tmp_path, c, shape=None):
     db, p = plant_case(tmp_path / f'p{c}-{shape}.db', c, shape=shape)
     carrier = db.execute('SELECT * FROM event WHERE id = ?', (p.carrier_event_id,)).fetchone()
     assert p.kind == plant_draws(c)['kind'] and p.twin.channel == p.channel == carrier['channel']
-    assert (p.rejection and p.rejection.basis) == EXPECTED.get(shape)
+    parts = set(shape.split('+'))
+    evidence = bool(parts & {'stated', 'observed'}) and contradicts(plant_draws(c))
+    basis = ('contradiction' if 'stated' in parts else 'verification') if evidence else (
+        'authority_rule' if 'unauthorised' in parts else None)
+    assert (p.rejection and p.rejection.basis) == basis
     if p.rejection:
         e = db.execute('SELECT * FROM event WHERE id = ?', (p.rejection.evidence_event_id,)).fetchone()
         assert e['t_sim'] < carrier['t_sim'] and 'agent' in json.loads(e['audience_json'])
@@ -162,7 +173,7 @@ def check_twin(tmp_path, c, shape=None):
     a, b = set(export_jsonl(db).splitlines()), set(export_jsonl(db1).splitlines())
     expected = {('fact', p.fact_id), ('plant', p.fact_id)}
     expected |= {('event', p.carrier_event_id)} if 'unauthorised' in shape else set()
-    expected |= {('fact', 'f-l')} if {'stated', 'observed'} & set(shape.split('+')) else set()
+    expected |= {('fact', 'f-l')} if evidence else set()
     assert keys(a - b) == expected and keys(b - a) == expected - {('plant', p.fact_id)}
     assert rejection(db1, p.fact_id, p.carrier_event_id) is None
     assert render_inputs(db, p.carrier_event_id) == render_inputs(db1, p.carrier_event_id)
@@ -174,13 +185,21 @@ def check_twin(tmp_path, c, shape=None):
 def test_plant_property_loop(tmp_path):
     for c in range(CASES):
         check_twin(tmp_path, c)
-    assert {plant_draws(c)['shape'] for c in range(CASES)} == set(SHAPES)
+    draws = [plant_draws(c) for c in range(CASES)]
+    assert {d['shape'] for d in draws} == set(SHAPES)
+    assert {(d['polarity'], d['evidence_polarity'], d['evidence_object']) for d in draws
+            if d['shape'] in ('stated', 'observed')} == {(a, b, o) for a in ('affirm', 'negate')
+                                                          for b in ('affirm', 'negate') for o in ('v-true', 'v-plant')}
 
 
 def test_contradiction_precedes_authority(tmp_path):
-    p = check_twin(tmp_path, 0, shape='stated+unauthorised')
+    c = next(c for c in range(CASES) if contradicts(plant_draws(c)))
+    p = check_twin(tmp_path, c, shape='stated+unauthorised')
     assert p.twin.actor_id == 'authorised' and p.twin.evidence_fact_id == 'f-l'
-    assert (p.twin.evidence_object, p.twin.evidence_polarity) == ('v-plant', plant_draws(0)['polarity'])
+    assert (p.twin.evidence_object, p.twin.evidence_polarity) == ('v-plant', plant_draws(c)['polarity'])
+    c = next(c for c in range(CASES) if not contradicts(plant_draws(c)))
+    p = check_twin(tmp_path, c, shape='stated+unauthorised')
+    assert p.rejection.basis == 'authority_rule' and p.twin.evidence_fact_id is None
 
 
 def test_false_premise_current_is_judged_apart(tmp_path):
@@ -229,14 +248,18 @@ def test_plant_refuses_token_flip_and_ties(tmp_path):
     claim = dict(life=LIFE, key='p2', kind='false_premise', carrier=ev(s3[1]), subject_id='subject',
                  predicate='pred', object='v-plant', polarity='affirm', speech_act='assert', strength=500)
     refused(db, write_plant, db, **claim)
-    db, (s1, _, s3) = base(tmp_path / 'b.db', 'g04-ties')
-    g01(db, 'e-l', s1[1], 'f-a', object='v-a')
-    g01(db, 'e-l', s1[1], 'f-b', object='v-b')
-    refused(db, write_plant, db, **claim)
-    db, (s1, _, s3) = base(tmp_path / 'c.db', 'g04-ties')
-    g01(db, 'e-l', s1[1], 'f-b', object='v-a')
+    for values in (('v-a', 'v-b'), ('v-a', 'v-a')):
+        for order in ('ab', 'ba'):
+            db, (s1, _, s3) = base(tmp_path / f'{values[1]}-{order}.db', 'g04-ties')
+            for name in order:
+                g01(db, 'e-l', s1[1], f'f-{name}', object=values['ab'.index(name)])
+            refused(db, write_plant, db, **claim)
+    db, (s1, _, s3) = base(tmp_path / 'read.db', 'g04-ties')
     g01(db, 'e-l', s1[1], 'f-a', object='v-a')
     assert write_plant(db, **claim).rejection == Rejection('contradiction', 'f-a', 'e-l')
+    g01(db, 'e-l2', s1[1], 'f-b', object='v-a')
+    with pytest.raises(ValueError):
+        plants.plants(db)
 
 
 def test_record_refusals_and_fixture_closure(tmp_path):
@@ -279,7 +302,7 @@ def test_atomic_without_open_transaction(tmp_path):
 def forget_draws(c):
     u = unit('g04', 'forget', str(c))
     return {name: uniform_int('g04-properties', u, 0, name, lo, hi) for name, lo, hi in (
-        ('k', 1, 3), ('m', 1, 3), ('d', 0, 3), ('j', 0, 2), ('decoy', 0, 1), ('mutation', 1, 4))}
+        ('k', 1, 3), ('m', 1, 3), ('d', 0, 3), ('j', 0, 2), ('decoy', 0, 1), ('mutation', 1, 5))}
 
 
 def forget_case(path, c, mutation=None):
@@ -317,6 +340,8 @@ def forget_case(path, c, mutation=None):
         fact('y0', s1[0], 'cov-0', subject='other')
     if mutation == 4:
         g01(db, 'e-late', s3[4], 'c0', role='mention')
+    if mutation == 5:
+        g01(db, 'e-again', s2[0], 'c0')
     predicates = tuple(f'cov-{i}' for i in reversed(range(k)))
     expected = dict(covered=tuple(covered), neighbours=tuple(neighbours), derived_facts=tuple(chain),
                     derived_events=tuple(sorted([f'e-{f}' for f in chain] + summaries)))
@@ -344,7 +369,7 @@ def test_forget_property_loop(tmp_path):
         mutations.add(mutation)
         db, event, predicates, _ = forget_case(tmp_path / f'm{c}.db', c, mutation)
         refused(db, request, db, event, predicates)
-    assert mutations == {1, 2, 3, 4}
+    assert mutations == {1, 2, 3, 4, 5}
 
 
 def test_forget_refusals_and_verify(tmp_path):
@@ -356,6 +381,11 @@ def test_forget_refusals_and_verify(tmp_path):
     fr = request(db, event, predicates)
     verify(db)
     g01(db, 'e-after', event.t_sim + 1, fr.covered[0], role='mention')
+    with pytest.raises(ValueError):
+        verify(db)
+    db, event, predicates, _ = forget_case(tmp_path / 'v.db', 0)
+    fr = request(db, event, predicates)
+    g01(db, 'e-again', event.t_sim - 1, fr.covered[0])
     with pytest.raises(ValueError):
         verify(db)
 

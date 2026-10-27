@@ -20,12 +20,11 @@ class ForgetRequest:
     neighbours: tuple[str, ...]
 
 
-def _links(db, fact_ids, role=None):
-    """(event id, t_sim) of the events that link any of the facts, with any role unless one is named."""
+def _links(db, fact_ids):
+    """(fact id, role, event id, t_sim) of every link to any of the facts."""
     marks = ','.join('?' * len(fact_ids))
-    return {tuple(r) for r in db.execute(
-        f'SELECT DISTINCT e.id, e.t_sim FROM link l JOIN event e ON e.id = l.event_id WHERE l.fact_id IN ({marks})'
-        + (' AND l.role = ?' if role else ''), (*fact_ids, *([role] if role else [])))}
+    return [tuple(r) for r in db.execute(f'SELECT l.fact_id, l.role, e.id, e.t_sim FROM link l JOIN event e '
+                                         f'ON e.id = l.event_id WHERE l.fact_id IN ({marks})', fact_ids)]
 
 
 def forget_request(db, event_id) -> ForgetRequest:
@@ -48,11 +47,16 @@ def forget_request(db, event_id) -> ForgetRequest:
     reach = (*covered, *lineage.facts)
     times = dict(db.execute(f'SELECT id, t_sim FROM event WHERE id IN ({",".join("?" * len(lineage.events))})',
                             tuple(lineage.events)).fetchall())
-    copies = {e for e, ts in _links(db, covered, 'mention') | _links(db, tuple(lineage.facts)) if ts < t}
+    # A covered fact's original assertion is its earliest assert-linked event (smallest id on a tie); any other
+    # link to it, of any role, and any link to a closure fact, is a copy that lineage must track.
+    links = _links(db, covered)
+    first = {f: e for f, role, e, ts in sorted(links, key=lambda r: (r[3], r[2]), reverse=True) if role == 'assert'}
+    copies = {e for f, _, e, ts in links if ts < t and e != first.get(f)}
+    copies |= {e for _, _, e, ts in _links(db, tuple(lineage.facts)) if ts < t}
     if copies - lineage.events:
         raise ValueError('an untracked copy precedes the request')
     if len(times) != len(lineage.events) or any(ts >= t for ts in times.values()) or any(
-            ts >= t and e != event_id for e, ts in _links(db, reach)):
+            ts >= t and e != event_id for _, _, e, ts in _links(db, reach)):
         raise ValueError('a derivative at or after the request')
     marks = ','.join('?' * len(predicates))
     neighbours = tuple(sorted(f['id'] for f in db.execute(

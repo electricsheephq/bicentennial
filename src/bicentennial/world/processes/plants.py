@@ -49,12 +49,13 @@ class Plant:
     twin: Twin
 
 
-def _latest(db, rows, t, value):
-    """The candidate on record at t with the greatest record time; equal values tie to the smallest id."""
+def _latest(db, rows, t, value=None):
+    """The candidate on record at t with the greatest record time. A tie at that time is refused unless value
+    is given and the tied candidates share it; then the smallest id wins."""
     found = sorted((-rec[0], row['id'], rec[1], row) for row in rows if (rec := on_record(db, row['id'], t)))
     top = [x for x in found if x[0] == found[0][0]] if found else []
-    if len({value(x[3]) for x in top}) > 1:
-        raise ValueError('candidates share a record time with different values')
+    if len(top) > 1 and (value is None or len({value(x[3]) for x in top}) > 1):
+        raise ValueError('candidates share a record time')
     return (top[0][3], top[0][2]) if top else (None, None)
 
 
@@ -66,11 +67,14 @@ def _judge(db, fact_id, event_id):
     t, actor = carrier['t_sim'], carrier['actor_id']
     last, last_ev = _latest(db, db.execute(
         "SELECT * FROM fact WHERE subject_id = ? AND predicate = ? AND modality IN ('stated', 'observed') "
-        'AND id != ?', (p['subject_id'], p['predicate'], fact_id)), t, lambda r: (r['object'], r['polarity']))
+        'AND id != ?', (p['subject_id'], p['predicate'], fact_id)), t)
     auth, auth_ev = _latest(db, db.execute(
         "SELECT * FROM fact WHERE predicate = 'authorised_for' AND object = ? AND modality = 'stated'",
         (canon(p['predicate']).decode(),)), t, lambda r: (r['subject_id'], r['polarity']))
-    differs = last is not None and (last['object'], last['polarity']) != (p['object'], p['polarity'])
+    # A contradiction is the same object with opposite polarity, or two affirmations of different objects (a
+    # predicate is single-valued in v0.1); any other pair is compatible evidence (DESIGN §5.1b).
+    differs = last is not None and (last['polarity'] != p['polarity'] if last['object'] == p['object']
+                                    else last['polarity'] == p['polarity'] == 'affirm')
     unauthorised = auth is not None and auth['subject_id'] != actor
     if differs:
         verdict = Rejection('contradiction' if last['modality'] == 'stated' else 'verification', last['id'], last_ev)
