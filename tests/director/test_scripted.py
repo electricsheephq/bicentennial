@@ -97,8 +97,10 @@ def test_identity_usage_and_purity(role, wire):
         msg["tool_calls"] = [{"type": "function", "function": tc} for tc in reply.tool_calls]
     usage_body = request if wire == "chat" else {"messages": responses.typed(request["input"]),
                                                 "tools": request["tools"]}
-    assert reply.usage == chat.usage_estimate(usage_body, {"choices": [{"message": msg}]})
-    assert reply.usage["estimated"] is True
+    est = chat.usage_estimate(usage_body, {"choices": [{"message": msg}]})
+    n_in, n_out = est["prompt_tokens"], est["completion_tokens"]
+    keys = ("prompt_tokens", "completion_tokens") if wire == "chat" else ("input_tokens", "output_tokens")
+    assert reply.usage == {keys[0]: n_in, keys[1]: n_out, "total_tokens": n_in + n_out, "estimated": True}
     if role in ("write_turn", "memory_write"):
         assert len(reply.tool_calls) == 1 and reply.text == ""
     else:
@@ -187,7 +189,7 @@ def test_text_parts_join_and_non_message_items(wire):
                 {"type": "image_url", "image_url": "ignored"}, {"type": part, "text": "猫"}]}]
     request = body(wire, messages)
     if wire != "chat":
-        request["input"].append({"type": "function_call_output", "role": "user", "output": "ignore"})
+        request["input"].insert(0, {"type": "function_call_output", "role": "user", "output": "ignore"})
     reply = responder().respond(call(wire=wire, request=request))
     assert json.loads(reply.tool_calls[0]["arguments"])["content"] == "a 猫"
     assert responder().respond(call("extraction", wire, request)).text == "a 猫"
@@ -337,3 +339,42 @@ def test_director_routed_titles_and_compactions(wire, tmp_path):
         director.close()
     roles = {(r["role"], r["subrole"]) for r in fixture["records"](tmp_path) if r.get("status") == 200}
     assert ("aux", "title_generation") in roles and ("summariser", "compression") in roles
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("answer", ["stored", "refused: memory full", "error: bad target"])
+def test_no_second_write_after_its_tool_result(wire, answer):
+    """A background review that offers the write tool gets one write; its tool result, whatever it
+    says, ends the review with an empty reply instead of a duplicate write."""
+    request = body(wire)
+    first = responder().respond(call("memory_write", wire, request))
+    assert len(first.tool_calls) == 1
+    key = "messages" if wire == "chat" else "input"
+    tc = first.tool_calls[0]
+    if wire == "chat":
+        request[key] += [{"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": tc}]}, {"role": "tool", "tool_call_id": "c1",
+                                                                  "content": answer}]
+    else:
+        request[key] += [{"type": "function_call", "call_id": "c1", **tc},
+                         {"type": "function_call_output", "call_id": "c1", "output": answer}]
+    for role in ("memory_write", "write_turn"):
+        reply = responder().respond(call(role, wire, request))
+        assert reply.text == "" and reply.tool_calls == ()
+    request[key].append({"role": "user", "content": "a new turn"})
+    again = responder().respond(call("memory_write", wire, request))
+    assert json.loads(again.tool_calls[0]["arguments"])["content"] == "a new turn"
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses", "responses_compact", "embeddings"])
+def test_usage_uses_the_wire_keys(wire):
+    if wire == "embeddings":
+        reply = responder().respond(Call("embeddings", "embedding", "embeddings", {
+            "model": "m", "input": ["a b"]}, "route-model", None, "attempt-one"))
+        assert set(reply.usage) == {"prompt_tokens", "total_tokens", "estimated"}
+        assert reply.usage["total_tokens"] == reply.usage["prompt_tokens"]
+        return
+    reply = responder().respond(call("compaction", wire, body("chat" if wire == "chat" else "responses")))
+    n_in, n_out = ("prompt_tokens", "completion_tokens") if wire == "chat" else ("input_tokens", "output_tokens")
+    assert set(reply.usage) == {n_in, n_out, "total_tokens", "estimated"}
+    assert reply.usage["total_tokens"] == reply.usage[n_in] + reply.usage[n_out]
