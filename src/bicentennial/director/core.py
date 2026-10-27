@@ -259,15 +259,14 @@ class Director:
         items = body.get("messages", body.get("input", []))
         if isinstance(items, str):
             items = [{"content": items}]
-        hashes, prefixes = set(), set()
+        hashes = set()
         for item in items if isinstance(items, list) else []:
             content = item.get("content") if isinstance(item, dict) else None
             blocks = roles._blocks(content) if isinstance(content, (str, list)) else []
             hashes.update(roles.h16(text.strip()) for text in [*blocks, "\n".join(blocks)] if text.strip())
-            prefixes.update(text.strip() for text in blocks if len(text.strip()) >= HERMES_TITLE_INPUT_CHARS)
         return next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
                      and (roles.h16(t["user"].strip()) in hashes
-                          or any(t["user"].strip().startswith(prefix) for prefix in prefixes))), None)
+                          or roles.h16(t["user"].strip()[:HERMES_TITLE_INPUT_CHARS].strip()) in hashes)), None)
 
     def _write_turn(self, wire, body, cursor, rec):
         """-> the write-tool calls to return (empty: serve the scripted turn), or None on an identity mismatch."""

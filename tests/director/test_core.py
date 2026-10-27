@@ -322,7 +322,7 @@ def title_order_run(tmp, wire, title_first, sessions=1, *, script=None, title_ch
             user = session["turns"][0]["user"]
             main = turn_body(user) if wire == "chat" else {
                 "model": "bicentennial-main", "input": user, "tools": tools_of(1, False)}
-            snippet = user[:title_chars]
+            snippet = user.strip()[:title_chars]
             title = {"model": "bicentennial-aux-title_generation", **(
                 {"messages": [{"role": "user", "content": f"  {snippet}\n"}]} if wire == "chat" else
                 {"input": f"  {snippet}\n"})}
@@ -366,10 +366,15 @@ def test_title_arrival_order_keeps_the_same_stable_digest(wire, tmp_path):
 
 
 @pytest.mark.parametrize("wire", ["chat", "responses"])
-def test_truncated_session_six_title_keeps_digest_and_created(wire, tmp_path):
+@pytest.mark.parametrize("user", [
+    pytest.param(("word " * 400).strip(), id="cut-ends-in-space"),
+    pytest.param(next(s for s in SCRIPT["sessions"] if s["index"] == 6)["turns"][0]["user"], id="session-six"),
+    pytest.param("short opening turn", id="short"),
+])
+def test_hermes_title_transform_keeps_digest_and_created(wire, user, tmp_path):
     session = next(s for s in SCRIPT["sessions"] if s["index"] == 6)
-    assert len(session["turns"][0]["user"]) == 2484
-    script = dict(SCRIPT, sessions=[dict(session, turns=session["turns"][:1])])
+    turn = dict(session["turns"][0], user=f"  \n{user}\t ")
+    script = dict(SCRIPT, sessions=[dict(session, turns=[turn])])
     first, fv = title_order_run(tmp_path / "title-first", wire, True, script=script, title_chars=1000)
     last, lv = title_order_run(tmp_path / "main-first", wire, False, script=script, title_chars=1000)
     assert stable_digest(first, fv) == stable_digest(last, lv)
