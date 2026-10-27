@@ -763,7 +763,7 @@ def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
     a = object.__new__(adapter.HermesAdapter)
     a.before_spawn, a._wiped, a._session_index, a._alias = None, False, 22, "bicentennial-main"
     a.paths, a.server, a.clock = paths, SimpleNamespace(port=4321), SimpleNamespace(path=root / "clock.json")
-    a.env_server, a.toolsets, a.memory = hook, config.HERMES_TOOLSETS, False
+    a.env_server, a.toolsets, a.memory, a.window = hook, config.HERMES_TOOLSETS, False, None
     a.plugin, a.plugin_config, a.checkout = None, {}, None
     a.argv, a.egress, a.pids = [], None, []
     timings = dict(spawn=[], open=[])
