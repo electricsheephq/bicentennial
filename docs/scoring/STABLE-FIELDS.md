@@ -93,9 +93,9 @@ with no repeated key; the validator rejects any other order.
 | `card.twin_consistency[].consistent` | stable | RING0 §4; PREREG §3/§7 |
 | `card.twin_consistency[].scored` | stable | RING0 §4; PREREG §3/§7 |
 | `card.twin_consistency[].consistency_milli` | stable | RING0 §4; PREREG §3/§7 |
-| `card.singletons` | stable | S06 A2; optional, absent means none; order: `item_id` |
-| `card.singletons[].item_id` | stable | S06 A2 |
-| `card.singletons[].life` | stable | S06 A2 |
+| `card.singletons` | stable | RING0 §4; PREREG §2 (an unbundled QA item is its own unit); optional, absent means none; order: `item_id` |
+| `card.singletons[].item_id` | stable | RING0 §4; PREREG §2 |
+| `card.singletons[].life` | stable | RING0 §4; PREREG §2 |
 | `card.per_item_accuracy` | stable | RING0 §4; PREREG §3/§7; order: `cell_id` |
 | `card.per_item_accuracy[].cell_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.per_item_accuracy[].correct` | stable | RING0 §4; PREREG §3/§7 |
