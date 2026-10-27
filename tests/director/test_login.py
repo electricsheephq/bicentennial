@@ -299,6 +299,21 @@ def test_refresh_budget_latches_in_process_only(tmp_path):
     assert not auth.sentinel.exists() and not calls
 
 
+def test_token_stop_suppresses_injected_exception_context(tmp_path):
+    def post(*args):
+        try:
+            raise ValueError("fake credential material")
+        except ValueError as exc:
+            raise sd.Stop("refresh_error:ValueError") from exc
+
+    auth = login(store(tmp_path, 60), post=post)
+    for _ in range(2):
+        with pytest.raises(sd.Stop, match="^refresh_error:ValueError$") as caught:
+            auth.token()
+        assert caught.value.__suppress_context__
+        assert caught.value.__cause__ is None
+
+
 def test_successful_refresh_syncs_rotated_store_and_unlinks(tmp_path):
     auth, order = login(store(tmp_path, 60), post=rotated), []
     full, folder = sd.full_sync, sd.sync_folder
@@ -973,7 +988,7 @@ def test_credential_stops_latch(home, setup, status, raw, reason):
                                          ("unparsed", "upstream_unparsed_3_in_a_row", 3)])
 def test_noncredential_stops_do_not_latch(home, setup, kind, reason, n):
     auth = login(home)
-    r, server, _, _ = setup([(400, {}, b"fake invalid request")] if kind == "invalid" else [(200, {}, b"fake unparsed")] * 3)
+    r, server, _, _ = setup([(400, {}, b"fake invalid request")] if kind == "invalid" else [(200, {}, b"data: fake-unparsed\n\n")] * 3)
     wrapped = attach(r, auth)
     for _ in range(n):
         assert wrapped.respond(call()).status == 503

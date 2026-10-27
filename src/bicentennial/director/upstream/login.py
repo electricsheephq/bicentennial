@@ -169,8 +169,8 @@ def post_form(url, fields) -> tuple[int, dict]:
             if len(raw) > MAX_BODY:
                 raise Stop("refresh_error:oversize")
             return (200, json.loads(raw)) if response.status == 200 else (response.status, {})
-    except Stop:
-        raise
+    except Stop as exc:
+        raise exc from None
     except Exception as exc:
         raise Stop(f"refresh_error:{type(exc).__name__}") from None
 
@@ -230,7 +230,7 @@ class Login:
         with self.lock, self._auth_lock() as stream:
             fcntl.flock(stream, fcntl.LOCK_EX)
             if self.dead:
-                raise Stop(self.dead)
+                raise Stop(self.dead) from None
             try:
                 self.posted = False
                 if self.sentinel.exists():
@@ -248,7 +248,7 @@ class Login:
                 return self._refresh(raw, store)
             except Stop as exc:
                 self.latch(str(exc), persist=self.posted)
-                raise
+                raise exc from None
             except Exception as exc:
                 self.latch(f"login_error:{type(exc).__name__}", persist=self.posted)
                 raise Stop(self.dead) from None
@@ -270,7 +270,7 @@ class Login:
         except Exception as exc:
             self.log.append({"type": "refresh", "status": -1, "t": int(time.time() * 1000),
                              "error": str(exc) if isinstance(exc, Stop) else type(exc).__name__})
-            raise
+            raise exc from None
         body = body if isinstance(body, dict) else {}
         claims = jwt_claims(body.get("access_token"))
         exp, iat = claims.get("exp"), claims.get("iat")
