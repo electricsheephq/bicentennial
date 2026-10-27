@@ -109,13 +109,19 @@ def forgetting(db, s, *, request=True):
     return f
 
 
-def source(db, s, *, authority=True, evidence=False, token=False):
+def source(db, s, *, authority=True, evidence=False, token=False, tool_evidence=False):
     if authority:
         write_authority_rule(db, life=LIFE, key="authority", event=ev(slot(s, 1, 3)),
                              authorised_id="authorised", predicate="approval")
     if evidence:
-        write_event(db, "evidence-event", ev(slot(s, 1, 5)), ("chat",))
-        write_fact(db, "evidence-fact", "evidence-event", subject_id="epsilon", predicate="approval", object="declined")
+        if tool_evidence:
+            writers.insert_event(db, id="evidence-event", t_sim=slot(s, 1, 5), kind="tool", channel="tool_result",
+                                 actor_id="principal", audience_json=["agent"], visibility="shared", salience=500,
+                                 payload_json={"tool": {"name": "approval", "args": {}}, "result": {"approval": "declined"}})
+        else:
+            write_event(db, "evidence-event", ev(slot(s, 1, 5)), ("chat",))
+        write_fact(db, "evidence-fact", "evidence-event", subject_id="epsilon", predicate="approval", object="declined",
+                   modality="observed" if tool_evidence else "stated")
     value = token_value(db, s, "test", "source", "value", 0, "SOURCE") if token else "accepted"
     p = write_plant(db, life=LIFE, key="plant", kind="third_party_claim", carrier=ev(slot(s, 3, 5), "third"),
                     subject_id="epsilon", predicate="approval", object=value, polarity="affirm",
@@ -218,18 +224,19 @@ def test_generator_goldens(tmp_path, kind):
 class QA(Template):
     """Read every gold from rows, retaining stable keys and decisive ids."""
 
-    def __init__(self, kind, fid, extra_span=None):
+    def __init__(self, kind, fid, extra_span=None, token_fact_id=None):
         super().__init__(template_id=kind, version=1, cell_id="RECALL-VERB", kind="qa", twin_type=TYPES[kind],
                          direction="none", semantics="as_known")
         object.__setattr__(self, "flipper_kind", kind)
         object.__setattr__(self, "fid", fid)
         object.__setattr__(self, "extra_span", extra_span)
+        object.__setattr__(self, "token_fact_id", token_fact_id or fid)
 
     def instances(self, db, schedule):
         f = db.execute("SELECT * FROM fact WHERE id=?", (self.fid,)).fetchone()
         events = tuple(r[0] for r in db.execute("SELECT event_id FROM link WHERE fact_id=? AND role='assert' ORDER BY event_id", (self.fid,)))
         kind = self.flipper_kind
-        tokens = (self.fid,)
+        tokens = (self.token_fact_id,)
         if kind == "value":
             answer = json.loads(f["object"])
         elif kind == "cancel":
@@ -639,6 +646,40 @@ def test_non_time_cancel_structure(tmp_path, trigger):
     assert next(r for r in cs[0].rows if r["event_id"] == made) == next(r for r in cs[1].rows if r["event_id"] == made)
     assert_involution(db, db1, (f,), tmp_path / "back.db")
     db1.close()
+    db.close()
+
+
+@pytest.mark.parametrize("stage", ("flip", "plan", "publish"))
+def test_source_refuses_payload_backed_evidence(tmp_path, stage):
+    db, s = base(tmp_path / "base.db")
+    token_fact_id = detail(db, s)
+    fid = source(db, s, evidence=True, tool_evidence=True)
+    finish(db, s)
+    before = export_jsonl(db)
+    p = plant(db, fid)
+    assert p.twin.evidence_fact_id == "evidence-fact"
+    assert p.rejection.basis == "verification"
+    c = cut(db, s, branch="B0", principal_id="principal", expected_state=state(db))
+    tool_row = next(r for r in c.rows if r["event_id"] == "evidence-event")
+    assert tool_row["payload"] == {"approval": "declined"}
+    templates = [QA("source", fid, token_fact_id=token_fact_id)]
+    compiled = compile_branch(db, s, c, templates)
+    if stage == "flip":
+        with pytest.raises(ValueError) as error:
+            flip(db, s, "source", fid)
+        assert str(error.value) == fid
+    else:
+        with pytest.raises(twin.IndependenceError) as error:
+            if stage == "plan":
+                twin.plan(db, s, compiled, principal_id="principal")
+            else:
+                twin.twin_life(db, s, templates, world_path=tmp_path / "twin.db", out_dir=tmp_path / "branches",
+                               principal_id="principal", expected_state=state)
+        assert error.value.rejected == (("source", "one"),)
+        assert str(error.value) == compiled.entries[0][0]["item_id"]
+    assert export_jsonl(db) == before
+    assert not (tmp_path / "twin.db").exists()
+    assert not (tmp_path / "branches").exists()
     db.close()
 
 
