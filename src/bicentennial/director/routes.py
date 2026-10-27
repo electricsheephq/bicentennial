@@ -36,8 +36,6 @@ class RouteTable:
             if system in previous and previous[system] != row["vision"]:
                 raise ValueError("a swap must not move vision")
             previous[system] = row["vision"]
-        if any(row["vision"] is not None for row in rows):
-            raise ValueError("v0.1 routes must have null vision")
         table = cls()
         table._obj = deepcopy(obj)
         table._routes = {(row["system"], row["segment"]): row

@@ -27,6 +27,7 @@ AUX_TASKS = ("compression", "title_generation", "vision", "approval", "mcp", "me
              "profile_describer", "goal_judge", "monitor", "moa_reference", "moa_aggregator", "review")
 SERVED_WIRES = {"openai_chat": "chat", "openai_responses": "responses",
                 "openai_responses_compact": "responses_compact"}
+FLOAT_KEYS = ("temperature", "top_p")
 JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
 # Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
@@ -191,7 +192,20 @@ class Director:
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise ValueError("body")
-            canon(body)  # a float has no canonical form, so it could never be ledgered
+            try:
+                canon(body)  # a float has no canonical form, so it could never be ledgered
+            except TypeError:
+                if wire == "embeddings":
+                    raise
+                removed = sorted(key for key in FLOAT_KEYS if isinstance(body.get(key), float))
+                body = {key: value for key, value in body.items() if key not in removed}
+                canon(body)
+                _, (role, sub, turn) = self._classify(path, body)
+                if not removed or role == "unknown":
+                    raise ValueError("body") from None
+                rec.update(role=role, subrole=sub, cursor=turn and {"session": turn["session"], "turn": turn["turn"]})
+                return _refuse(rec, 400, "refused_float", f"unsupported parameter: {removed[0]}",
+                               {"body_sha256": sha256(raw).hexdigest(), "float_keys": removed})
         except (ValueError, TypeError):
             rec["subrole"] = "malformed_body"
             return _refuse(rec, 400, "refused_unknown", "malformed request body", {"body_sha256": sha256(raw).hexdigest()})
@@ -225,15 +239,21 @@ class Director:
         stored = {"object": "list", "model": body["model"], "vectors": reply.embedding, "scale": reply.scale}
         return 200, JSON, json.dumps(obj).encode(), stored, body, False
 
-    def _classified(self, wire, path, body, rec):
+    def _classify(self, path, body):
+        """Classify and route without advancing state or serving a request."""
         s1 = roles.classify({"method": "POST", "path": path, "body": body}, self.ctx)
         state = RouteState(self.pending, self.turns, self.ctx.cursor, self.ctx.current, self.ctx.path_aliases,
                            self.ctx.aliases, self.id_roles)
-        role, sub, turn = route(s1, path, body, state)
+        return s1, route(s1, path, body, state)
+
+    def _classified(self, wire, path, body, rec):
+        s1, (role, sub, turn) = self._classify(path, body)
         cursor = turn and {"session": turn["session"], "turn": turn["turn"]}
         rec.update(role=role, subrole=sub, cursor=cursor)
         if role == "unknown":
             return _refuse(rec, 400, "refused_unknown", "unclassified request refused (fail closed)", body)
+        if (role, sub) == ("aux", "vision") and self.route["vision"] is None:
+            return _refuse(rec, 400, "no_vision_route", "no vision route", body)
         roles.advance(self.ctx, s1)
         if sub == "cursor":  # a new integer turn, replay or probe; a retry, continuation or tool result never ticks
             self.clock.tick()
@@ -304,6 +324,8 @@ class Director:
         return calls  # any text the model wrote is discarded
 
     def _model(self, role: str, subrole: str = "") -> str:
+        if (role, subrole) == ("aux", "vision") and isinstance(self.route["vision"], str):
+            return self.route["vision"]
         return self.route["summariser"] if role == "summariser" or (role, subrole) == ("aux", "summariser") else self.route["probe_model"]
 
     def _blob(self, obj) -> str:

@@ -257,7 +257,7 @@ def test_open_payloads_still_reject_floats_and_foreign_templates():
     ("ledger-record", lambda v: v.update(status=-1)),
     ("ledger-record", lambda v: v.update(cursor={"session": 1})),
     ("route-table", lambda v: v["routes"].append(copy.deepcopy(v["routes"][0]))),
-    ("route-table", lambda v: v["routes"][0].update(vision="live")),
+    ("route-table", lambda v: v["routes"][0].update(vision="")),
     ("route-table", lambda v: v["routes"][0].update(segment="invalid space")),
     ("fault-lite", lambda v: v[0].update(turn=0)),
     ("surfaces", lambda v: v.reverse()),
