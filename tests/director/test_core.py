@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.director import roles
 from bicentennial.director.core import Director
@@ -22,7 +23,7 @@ from bicentennial.director.routes import RouteTable
 from bicentennial.director.serve import serve, shutdown
 from bicentennial.director.wire import responses
 from bicentennial.keyed import mint_id
-from bicentennial.ledger import CredentialLeak, Guard, stable_digest
+from bicentennial.ledger import BlobStore, CredentialLeak, Guard, stable_digest
 from bicentennial.runtime.clock import SimClock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -430,7 +431,7 @@ def test_refusals_catalog_and_control(tmp_path):
         ("unknown", "path", "path_refused"), ("aux", "metadata", "path_refused"), ("aux", "metadata", "catalog"),
         ("unknown", "path", "path_refused"), ("unknown", "malformed_body", "refused_unknown"),
         ("unknown", "malformed_body", "refused_unknown"), ("unknown", "encoding", "encoding_refused"),
-        ("unknown", "director_error_runtimeerror", "director_error")]
+        ("aux", "title_generation", "director_error")]  # a responder error keeps its classification
     assert all(r["incoming_auth_dropped"] is (r["method"] == "POST") for r in records(tmp_path))
     assert set(d.control()) == {"inflight", "cursor", "stopped", "write_failures", "send_errors"}
 
@@ -480,3 +481,64 @@ def test_a_credential_in_a_body_stops_admission_unrecorded(tmp_path, monkeypatch
     with pytest.raises(CredentialLeak):
         post(d, "/main/v1/chat/completions", turn_body("r08-canary-value-not-a-credential"))
     assert d.stopped is True and (tmp_path / "ledger" / "ledger.jsonl").read_bytes() == b""
+
+
+TITLE = {"model": "bicentennial-aux-title_generation", "messages": [{"role": "user", "content": "hello"}]}
+
+
+def fail_next_blob(d):
+    """The ledger's next blob write raises OSError once (a full or failing disk)."""
+    real, state = d.ledger.blob, {"armed": True}
+
+    def blob(obj):
+        if state.pop("armed", False):
+            raise OSError("test: the blob write failed")
+        return real(obj)
+
+    d.ledger.blob = blob
+
+
+@pytest.mark.parametrize("where", ["upstream", "write_turn"])
+def test_a_ledger_failure_inside_dispatch_stops_admission(where, tmp_path):
+    # upstream: the first blob is _upstream()'s call body; write_turn: the failed write turn's call-body blob
+    d = make(tmp_path, Fake(fail=("write_turn",) if where == "write_turn" else ()))
+    start(d, tmp_path)
+    fail_next_blob(d)
+    path, body = ("/aux/title_generation/v1/chat/completions", TITLE) if where == "upstream" else (
+        "/main/v1/chat/completions", turn_body())
+    with pytest.raises(OSError):  # nothing recorded, nothing sent: serve closes the connection
+        post(d, path, body)
+    assert d.stopped is True and (tmp_path / "ledger" / "ledger.jsonl").read_bytes() == b""
+    assert post(d, "/main/v1/chat/completions", turn_body())[0] == 503
+    (rec,) = records(tmp_path)
+    assert (rec["served"], rec["status"]) == ("stopped", 503)
+
+
+def test_a_responder_error_keeps_the_request_evidence(tmp_path):
+    d = make(tmp_path, Fake(fail=("aux",)))
+    start(d, tmp_path)
+    assert post(d, "/aux/title_generation/v1/chat/completions", TITLE)[0] == 500
+    assert post(d, "/main/v1/chat/completions", turn_body())[0] == 200  # a responder error is recoverable
+    rec = records(tmp_path)[0]
+    blobs = BlobStore(tmp_path / "ledger" / "blobs", None)
+    assert blobs.get(rec["req"]) == canon(TITLE)  # the parsed body, not {}
+    assert (rec["role"], rec["subrole"], rec["served"], rec["status"]) == (
+        "aux", "title_generation", "director_error", 500)  # S1's title, as route_role ledgers it
+    assert rec["upstream"] == [{"role": "aux", "req": rec["req"], "error": "error_runtimeerror"}]
+
+
+def test_a_director_fault_is_recorded_with_its_request_then_stops(tmp_path, monkeypatch):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+
+    def broken(*args, **kwargs):
+        raise KeyError("test: a director fault")
+
+    monkeypatch.setattr(d, "_answer", broken)
+    assert post(d, "/main/v1/chat/completions", turn_body())[0] == 500
+    assert post(d, "/main/v1/chat/completions", turn_body())[0] == 503
+    fault, stopped = records(tmp_path)
+    assert (fault["role"], fault["cursor"], fault["subrole"]) == ("replay_main", {"session": 1, "turn": 1},
+                                                                  "director_error_keyerror")
+    assert BlobStore(tmp_path / "ledger" / "blobs", None).get(fault["req"]) == canon(turn_body())
+    assert stopped["served"] == "stopped" and d.stopped is True
