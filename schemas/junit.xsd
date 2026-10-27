@@ -1,0 +1,51 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="testsuites">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="testsuite" minOccurs="0" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="properties" minOccurs="0">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="property" maxOccurs="unbounded">
+                      <xs:complexType>
+                        <xs:attribute name="name" type="xs:string" use="required" />
+                        <xs:attribute name="value" type="xs:string" use="required" />
+                      </xs:complexType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+              <xs:element name="testcase" minOccurs="0" maxOccurs="unbounded">
+                <xs:complexType>
+                  <xs:choice minOccurs="0">
+                    <xs:element name="failure" type="detail" />
+                    <xs:element name="error" type="detail" />
+                    <xs:element name="skipped" type="detail" />
+                  </xs:choice>
+                  <xs:attribute name="name" type="xs:string" use="required" />
+                  <xs:attribute name="classname" type="xs:string" use="required" />
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+            <xs:attributeGroup ref="counts" />
+            <xs:attribute name="skipped" type="xs:nonNegativeInteger" use="required" />
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+      <xs:attributeGroup ref="counts" />
+    </xs:complexType>
+  </xs:element>
+  <xs:attributeGroup name="counts">
+    <xs:attribute name="name" type="xs:string" use="required" />
+    <xs:attribute name="tests" type="xs:nonNegativeInteger" use="required" />
+    <xs:attribute name="failures" type="xs:nonNegativeInteger" use="required" />
+    <xs:attribute name="errors" type="xs:nonNegativeInteger" use="required" />
+  </xs:attributeGroup>
+  <xs:complexType name="detail">
+    <xs:attribute name="type" type="xs:string" use="required" />
+    <xs:attribute name="message" type="xs:string" use="required" />
+  </xs:complexType>
+</xs:schema>

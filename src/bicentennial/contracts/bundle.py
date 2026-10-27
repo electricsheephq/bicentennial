@@ -233,15 +233,29 @@ def _card(card):
                 _require(key == "naive_rag" and value == "not run in v0.1", "invalid control sentinel")
             else:
                 _score(value)
+    v = card["voids"]
+    _ratio(v["voided"], v["checked"], v["void_milli"])
+    _ordered([r["track"] for r in card["violations"]], "violations")
     wiped = card["controls"]["wiped_store"]
+    _require(wiped != "not run at T0" or card["tier"] == "T0", "T0-only wiped sentinel")
     _require(wiped != "PASS" or card["gate_verdict"] == "INVALID", "wiped pass invalidates run")
     # RING0 §6: a first run with no baseline card is a labelled conformance PASS.
     if card["gate_verdict"] in ("PASS", "CONFORMANCE_PASS"):
-        _require(wiped == "FAIL" and bool(items) and bool(bundle_ids)
+        _require((wiped == "FAIL" or card["tier"] == "T0" and wiped == "not run at T0")
+                 and bool(items) and (bool(bundle_ids) or card["tier"] == "T0")
                  and card["run_status"] == "COMPLETE", "ineligible Ring 0 PASS")
 
 
 def _receipt(receipt):
+    from bicentennial.report.receipt import percentiles
+
+    for field in ("tokens_by_role", "runtime_by_role"):
+        _ordered([r["role"] for r in receipt[field]], field)
+    for key in ("input", "output"):
+        _require(sum(r[key] for r in receipt["tokens_by_role"]) == receipt["tokens"][key],
+                 "token total mismatch")
+    _require(receipt["latency_summary"] == percentiles(receipt["latency_ms"]),
+             "latency summary mismatch")
     _require(receipt["wall_end_ms"] >= receipt["wall_start_ms"], "wall time reversed")
     _require(len(receipt["load_milli"]) == 3, "load requires 1-, 5-, 15-minute readings")
     _require(all(port <= 65535 for port in receipt["ports"]), "port exceeds 65535")

@@ -27,6 +27,7 @@ AUX_TASKS = ("compression", "title_generation", "vision", "approval", "mcp", "me
              "profile_describer", "goal_judge", "monitor", "moa_reference", "moa_aggregator", "review")
 SERVED_WIRES = {"openai_chat": "chat", "openai_responses": "responses",
                 "openai_responses_compact": "responses_compact"}
+FLOAT_KEYS = ("temperature", "top_p")
 JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
 # Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
@@ -52,12 +53,13 @@ class Director:
                  run_values, write_prompt=None, on_hold=None, *, schedule=None):
         validate("script", script)
         for turn in (t for s in script["sessions"] for t in s["turns"]):
-            if turn["tool_calls"]:
-                raise ValueError("scripted tool calls need the tool-call compiler")
+            if turn["kind"] == "probe" and turn["tool_calls"]:
+                raise ValueError("probe tool calls are the reader's")
             if turn["kind"] == "replay" and turn["assistant"] is None:
                 raise ValueError("a replay turn needs assistant text")
         self.turns = tuple({"session": s["index"], "turn": t["n"], "kind": t["kind"], "user": t["user"],
-                            "assistant": t["assistant"]} for s in script["sessions"] for t in s["turns"])
+                            "assistant": t["assistant"], "tool_calls": t["tool_calls"]}
+                           for s in script["sessions"] for t in s["turns"])
         self.ctx = roles.Context(expected=[{"kind": t["kind"], "hash": roles.h16(t["user"].strip())}
                                            for t in self.turns])
         for task in AUX_TASKS:
@@ -190,7 +192,20 @@ class Director:
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise ValueError("body")
-            canon(body)  # a float has no canonical form, so it could never be ledgered
+            try:
+                canon(body)  # a float has no canonical form, so it could never be ledgered
+            except TypeError:
+                if wire == "embeddings":
+                    raise
+                removed = sorted(key for key in FLOAT_KEYS if isinstance(body.get(key), float))
+                body = {key: value for key, value in body.items() if key not in removed}
+                canon(body)
+                _, (role, sub, turn) = self._classify(path, body)
+                if not removed or role == "unknown":
+                    raise ValueError("body") from None
+                rec.update(role=role, subrole=sub, cursor=turn and {"session": turn["session"], "turn": turn["turn"]})
+                return _refuse(rec, 400, "refused_float", f"unsupported parameter: {removed[0]}",
+                               {"body_sha256": sha256(raw).hexdigest(), "float_keys": removed})
         except (ValueError, TypeError):
             rec["subrole"] = "malformed_body"
             return _refuse(rec, 400, "refused_unknown", "malformed request body", {"body_sha256": sha256(raw).hexdigest()})
@@ -224,29 +239,43 @@ class Director:
         stored = {"object": "list", "model": body["model"], "vectors": reply.embedding, "scale": reply.scale}
         return 200, JSON, json.dumps(obj).encode(), stored, body, False
 
-    def _classified(self, wire, path, body, rec):
+    def _classify(self, path, body):
+        """Classify and route without advancing state or serving a request."""
         s1 = roles.classify({"method": "POST", "path": path, "body": body}, self.ctx)
         state = RouteState(self.pending, self.turns, self.ctx.cursor, self.ctx.current, self.ctx.path_aliases,
                            self.ctx.aliases, self.id_roles)
-        role, sub, turn = route(s1, path, body, state)
+        return s1, route(s1, path, body, state)
+
+    def _classified(self, wire, path, body, rec):
+        s1, (role, sub, turn) = self._classify(path, body)
         cursor = turn and {"session": turn["session"], "turn": turn["turn"]}
         rec.update(role=role, subrole=sub, cursor=cursor)
         if role == "unknown":
             return _refuse(rec, 400, "refused_unknown", "unclassified request refused (fail closed)", body)
+        if (role, sub) == ("aux", "vision") and self.route["vision"] is None:
+            return _refuse(rec, 400, "no_vision_route", "no vision route", body)
         roles.advance(self.ctx, s1)
         if sub == "cursor":  # a new integer turn, replay or probe; a retry, continuation or tool result never ticks
             self.clock.tick()
             rec["sim_now"] = self.clock.sim_t_s
         if role in ("replay_main", "write_turn"):  # the scripted turn: its cursor, a retry, or its tool results
             text, calls, rec["served"] = turn["assistant"], (), "script_retry" if sub == "retry" else "script"
+            issued = ("write_turn", "tool_results", "write_turn", turn)
             if role == "replay_main" and sub == "cursor" and _tool_names(wire, body) & set(self.write_tools):
                 calls = self._write_turn(wire, body, cursor, rec)
                 if calls is None:
                     return _refuse(rec, 503, "identity_mismatch", "served model identity mismatch", body)
                 if calls:
                     text, rec["served"] = "", "write_tool_calls"
-            return self._answer(wire, body, text, calls, ("write_turn", "tool_results", "write_turn", turn), rec,
-                                hold=not calls)
+            if turn["tool_calls"]:
+                if role == "replay_main" and sub == "tool_results":
+                    turn["script_done"] = True
+                if not calls and not turn.get("script_done"):
+                    calls = tuple({"name": c["name"], "arguments": canon(c["args"]).decode()}
+                                  for c in turn["tool_calls"])
+                    text, rec["served"] = "", "script_tool_calls_retry" if sub == "retry" else "script_tool_calls"
+                    issued = ("replay_main", "tool_results", "replay_main", turn)
+            return self._answer(wire, body, text, calls, issued, rec, hold=not calls)
         reply = self._ask(Call(role, sub, wire, deepcopy(body), self._model(role, sub), cursor, self.attempt_id), rec)
         if reply is None:
             return _refuse(rec, 503, "identity_mismatch", "served model identity mismatch", body)
@@ -295,6 +324,8 @@ class Director:
         return calls  # any text the model wrote is discarded
 
     def _model(self, role: str, subrole: str = "") -> str:
+        if (role, subrole) == ("aux", "vision") and isinstance(self.route["vision"], str):
+            return self.route["vision"]
         return self.route["summariser"] if role == "summariser" or (role, subrole) == ("aux", "summariser") else self.route["probe_model"]
 
     def _blob(self, obj) -> str:

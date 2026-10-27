@@ -10,6 +10,8 @@ import http.client
 import json
 import runpy
 import socket
+from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -308,6 +310,102 @@ def post(d, path, body, headers=None):
     return status, hdrs["Content-Type"], data
 
 
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("by_path", [False, True])
+@pytest.mark.parametrize("vision", [None, "vision-a"])
+def test_aux_vision_uses_vision_route_or_refuses(wire, by_path, vision, tmp_path):
+    fake = Fake()
+    d = make(tmp_path, fake)
+    d.table = RouteTable.load({"routes": [dict(ROUTES["routes"][0], vision=vision)]})
+    start(d, tmp_path)
+    body = {"model": "bicentennial-main" if by_path else "bicentennial-aux-vision",
+            "messages" if wire == "chat" else "input": [{"role": "user", "content": "Describe this image"}]}
+    path = ("/aux/vision/v1/" if by_path else "/main/v1/") + (
+        "chat/completions" if wire == "chat" else "responses")
+    try:
+        status, _, _ = post(d, path, body)
+        (rec,) = records(tmp_path)
+        assert (rec["role"], rec["subrole"], rec["status"]) == ("aux", "vision", status)
+        if vision is None:
+            assert status == 400 and rec["served"] == "no_vision_route"
+            assert not fake.calls and rec["upstream"] == []
+        else:
+            assert status == 200 and rec["served"] == "responder_fake"
+            (call,) = fake.calls
+            assert (call.role, call.subrole, call.model, call.body) == ("aux", "vision", "vision-a", body)
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("main", [False, True])
+@pytest.mark.parametrize("floats", [{"temperature": 0.5}, {"top_p": 0.9, "temperature": 0.5}, {"top_p": 0.9}])
+def test_classified_float_refusal_then_canonical_retry(wire, main, floats, tmp_path):
+    fake = Fake()
+    d = make(tmp_path, fake)
+    start(d, tmp_path)
+    body = turn_body(tools=("todo",)) if main else {
+        "model": "bicentennial-aux-vision", "messages": [{"role": "user", "content": "Describe this image"}]}
+    d.route["vision"] = "vision-a"
+    if wire == "responses":
+        body["input"] = body.pop("messages")
+        body["tools"] = [{"type": "function", "name": "todo"}] if main else []
+    path = "/main/v1/" + ("chat/completions" if wire == "chat" else "responses")
+    raw = json.dumps(body | floats, indent=2).encode()
+    before = deepcopy(d.ctx), d.clock.path.read_bytes(), d.clock.sim_t_s
+    try:
+        status, _, data = post(d, path, raw)
+        assert status == 400
+        assert json.loads(data)["error"]["message"] == f"director: unsupported parameter: {sorted(floats)[0]}"
+        (rec,) = records(tmp_path)
+        expected_role = ("replay_main", "cursor") if main else ("aux", "vision")
+        assert (rec["role"], rec["subrole"], rec["served"]) == (*expected_role, "refused_float")
+        assert rec["cursor"] == ({"session": 1, "turn": 1} if main else None)
+        assert rec["upstream"] == [] and not fake.calls
+        store = BlobStore(tmp_path / "ledger/blobs", None)
+        assert json.loads(store.get(rec["req"])) == {
+            "body_sha256": sha256(raw).hexdigest(), "float_keys": sorted(floats)}
+        assert not store._path(sha256(canon(body)).hexdigest()).exists()
+        assert (d.ctx, d.clock.path.read_bytes(), d.clock.sim_t_s) == before
+        assert d._req == {} and not d.pending and not d.id_roles and d.n_ids == 0
+        status, ctype, data = post(d, path, body)
+        assert status == 200
+        retry = records(tmp_path)[1]
+        assert (retry["role"], retry["subrole"]) == expected_role
+        if main:
+            assert answer(ctype, data)[0] == TURN1["assistant"]
+            assert retry["served"] == "script" and not fake.calls
+        else:
+            assert fake.calls[0].model == "vision-a" and fake.calls[0].body == body
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/main/v1/chat/completions", turn_body() | {"nested": {"value": 0.5}}),
+    ("/main/v1/chat/completions", turn_body() | {"temperature": 0.5, "nested": [0.5]}),
+    ("/main/v1/chat/completions", {"model": "unknown", "temperature": 0.5}),
+    ("/main/v1/embeddings", {"model": "embed", "input": "hello", "temperature": 0.5}),
+])
+def test_nonclassifiable_float_bodies_keep_malformed_refusal(path, body, tmp_path):
+    fake = Fake()
+    d = make(tmp_path, fake)
+    start(d, tmp_path)
+    raw = json.dumps(body).encode()
+    try:
+        status, _, data = post(d, path, raw)
+        assert status == 400 and json.loads(data)["error"]["message"] == "director: malformed request body"
+        (rec,) = records(tmp_path)
+        assert (rec["role"], rec["subrole"], rec["served"], rec["cursor"]) == (
+            "unknown", "malformed_body", "refused_unknown", None)
+        store = BlobStore(tmp_path / "ledger/blobs", None)
+        assert json.loads(store.get(rec["req"])) == {"body_sha256": sha256(raw).hexdigest()}
+        assert not fake.calls and rec["upstream"] == []
+        assert d.ctx.cursor == 0 and d._req == {}
+    finally:
+        d.close()
+
+
 def title_order_run(tmp, wire, title_first, sessions=1, *, script=None, title_chars=None):
     tmp.mkdir()
     if script is None:
@@ -592,10 +690,12 @@ def test_refusals_catalog_and_control(tmp_path):
     assert set(d.control()) == {"inflight", "cursor", "stopped", "write_failures", "send_errors"}
 
 
-def test_scripted_tool_calls_need_the_compiler(tmp_path):
+def test_probe_tool_calls_are_the_readers(tmp_path):
     script = json.loads(json.dumps(SCRIPT))
+    script["sessions"][0]["kind"] = script["sessions"][0]["turns"][0]["kind"] = "probe"
+    script["sessions"][0]["turns"] = script["sessions"][0]["turns"][:1]
     script["sessions"][0]["turns"][0]["tool_calls"] = [{"name": "terminal", "args": {}}]
-    with pytest.raises(ValueError, match="scripted tool calls need the tool-call compiler"):
+    with pytest.raises(ValueError, match="probe tool calls are the reader's"):
         make(tmp_path, Fake(), script=script)
 
 

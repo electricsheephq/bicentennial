@@ -129,7 +129,7 @@ def worker_env(paths: dict, port: int, clock_path, checkout) -> dict:
     env = {k: os.environ[k] for k in _PASSED if k in os.environ}
     env.update(HERMES_HOME=str(paths["hermes_home"]), HOME=str(paths["home"]), TMPDIR=str(paths["tmp"]),
                PYTHONPATH=os.pathsep.join([str(SHIM)] + ([str(Path(checkout).resolve())] if checkout else [])),
-               BICENTENNIAL_CLOCK_FILE=str(clock_path), PYTHONHASHSEED="0", PYTHONDONTWRITEBYTECODE="1",
+               BICENTENNIAL_CLOCK_FILE=str(Path(clock_path).resolve()), PYTHONHASHSEED="0", PYTHONDONTWRITEBYTECODE="1",
                HERMES_DISABLE_LAZY_INSTALLS="1", HERMES_ACP_SKIP_CONFIGURED_MCP="1",
                NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
                **dict.fromkeys(_PROXIES, f"http://127.0.0.1:{port}"))

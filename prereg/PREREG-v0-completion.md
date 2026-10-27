@@ -63,6 +63,39 @@ The **write-turn prompt text** is open. Ring 0 runs with a scripted model and se
 
 **Decision tables:** from the template build, per template. They bind before any real system runs on that template.
 
+**Partial entries (frozen 2026-10-27, Ring 0 v0.1).** `specs/ring0/c7-partial.json` holds one entry per v0.1 template, keyed by template ref (`template_id-vN`). Each entry records the template's ref, genre, cell and track lever (`cell`), direction label, item kind, its decision tables, every field of the template, the template class and the sha256 of that class's source file, the sha256 of every package source file that defines a class in the template's hierarchy (source hashes read CRLF line endings as LF), and the lever mix (the cell's primary lever as written in the inventory and as its lever key, and the template's own lever mix where it declares one). Each entry carries `entry_sha256`, the sha256 of its canonical JSON without that field. The file is generated from the template build by `python -m bicentennial.items.c7`, with the same bytes under any hash seed, and a test fails when the committed file no longer matches the templates. It was frozen before any real memory system ran on any template.
+
+| Template ref | Genre | Cell | Direction | Kind |
+|---|---|---|---|---|
+| drift-asof-v1 | G2 | DRIFT-ASOF | verbatim retention | qa |
+| drift-booking-v1 | G2 | DRIFT-CUR | recency | act |
+| drift-chain-fault-v1 | G1 | DRIFT-CUR | verbatim retention | act |
+| drift-chain-v1 | G1 | DRIFT-CUR | recency | act |
+| drift-config-v1 | G1 | DRIFT-CUR | extraction and consolidation | act |
+| drift-no-update-v1 | G2 | DRIFT-CUR | extraction and consolidation | act |
+| drift-quote-v1 | G1 | DRIFT-CUR | verbatim retention | act |
+| keep-forget-v1 | G2 | KEEP-FORGET | none | act |
+| keep-incidental-v1 | G2 | KEEP-INC | verbatim retention | act |
+| keep-neighbour-v1 | G2 | KEEP-NEIGH | retrieval breadth | act |
+| recall-count-v1 | G2 | RECALL-AGG | retrieval breadth | qa |
+| recall-value-v1 | G1 | RECALL-VERB | verbatim retention | qa |
+| tue-passport-v1 | G2 | TUE-EVENT | extraction and consolidation | act |
+| tue-ticket-v1 | G1 | TUE-EVENT | retrieval breadth | act |
+| wake-loop-v1 | G1 | WAKE-LOOP | extraction and consolidation | act |
+
+**How the entries bind.**
+- The T0 and T1 runners will refuse a real system on any template that has no entry here, or whose entry's hash does not match the template build (exit 3). Controls are not refused. Until those runners land, the only check is the repository test that fails when the committed file no longer matches the template build.
+- A template change that alters any recorded field is a new template version with its own entry, written before a real system runs on it.
+- T0 relation rows (the invariance and direction rows) sit at other distance and wake values as diagnostics, not rungs. Rungs come with calibration in v0.2.
+
+**Limits stated at the freeze.**
+- The direction cap (no label above 40% of a track's scored items in a pack) is a pack-level gate over both genres. At Ring 0 v0.1 it is not met wherever one label holds more than 40% of a track. The pack build's distribution check will report it per pack; until that lands, this record is the disclosure. That holds for Wake (one template), for Tuesday and Recall (two templates with two labels, so 50% each) and for Keep at T1, which uses only `keep-incidental-v1`. The Drift share depends on which Drift templates a pack selects, and is known only once a pack is built.
+- The memory-using heuristic gate (DESIGN §5.3: every memory-using heuristic scores at most 0 on every track) is not yet evaluated on any pack. At Ring 0 v0.1 it is planned for the Drift action rows of latest mention, its reverse and first mention, with every other heuristic row reported without gating. Today the only check is a template-level test over the four G1 Drift action templates; it does not cover the G2 Drift templates or a pack's selection, so whether a v0.1 pack meets the gate is unknown until the pack build runs it.
+- Duty items are declared by `wake-loop-v1` and by both Tuesday templates (each live commitment). An omission on one of them counts as a harmful omission.
+- The lever-mix shape's neutral secondary levers are not enforced at v0.1. Lever values are computed per item and recorded in each item's `levers`. `keep-incidental-v1`, for example, places same-predicate decoys on other places, so its items carry non-zero interference. Each entry's `lever_mix.other_levers` says so.
+- Planted mutants are the generator-placed distractors. Mutants built from a world's planted material come later.
+- `keep-forget-v1`, `keep-neighbour-v1` and the two Tuesday templates are not exercised at T1. The Tuesday templates are structure-only until their trigger render lands.
+
 ## Pending proposals (not completion entries)
 
 These two values come from DESIGN §4.2, and no PREREG-v0.4 rule or slot covers them (`docs/ERRATA-v2.2.md` E5). They are generator configuration proposed for PREREG-v0.5, not completion entries:
