@@ -226,6 +226,9 @@ def test_wiped(lives, tmp_path, harness, life):
 def test_no_memory(lives, tmp_path, harness, life):
     case = lives[life, "B0"]
     result = drive(case, tmp_path, arm="no_memory")
+    assert result.kill is None
+    assert result.expected_call_ids == ()
+    assert result.post_restart_requests == ()
     assert result.stopped is None
     assert result.audit == {"status": "OK", "failures": []}
     assert all(s["kind"] == "probe" for s in harness.made[0].script["sessions"])
@@ -238,6 +241,100 @@ def test_no_memory(lives, tmp_path, harness, life):
 
     result.cleanup()
     assert not result._root.exists()
+
+
+@pytest.fixture
+def completed_sessions(monkeypatch):
+    """Unit boundary: consume scripted sessions without worker or responder effects."""
+    def run_session(self, index, **kwargs):
+        session = next(s for s in self.script["sessions"] if s["index"] == index)
+        turns = len(session["turns"])
+        return adapter.SessionResult(index, session["kind"], "unit-session", "test-double", turns, turns,
+            (), False, 0, surface_hash(self.paths["hermes_home"], self.volatile), (), {})
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", run_session)
+
+
+@pytest.mark.parametrize("holds", [False, True])
+def test_rerun_shares_voids_unit(lives, tmp_path, monkeypatch, completed_sessions, holds):
+    case = lives["t1-g1", "B0"]
+    monkeypatch.setattr(runner, "precondition_holds", lambda *args, **kwargs: holds)
+    voids = Voids()
+    first = drive(case, tmp_path / "first", voids=voids)
+    try:
+        assert first.stopped is None
+        records, diagnostics = dict(voids.records), list(voids.diagnostics)
+        assert records == {(i["item_id"], "system"): holds for i in case["items"]}
+        second = drive(case, tmp_path / "second", attempt=1, voids=voids)
+        try:
+            assert second.attempt == 1 and second._root != first._root
+            assert second.stopped is None
+            assert len(second.sessions) == len(case["compiled"].script["sessions"])
+            assert second.classes == first.classes
+            assert voids.records == records and voids.diagnostics == diagnostics
+            assert sorted(d["item_id"] for d in voids.diagnostics) == sorted(i["item_id"] for i in case["items"])
+        finally:
+            second.cleanup()
+    finally:
+        first.cleanup()
+
+
+def test_no_memory_kill_unit(lives, tmp_path, completed_sessions):
+    result = drive(lives["t1-g1", "B0"], tmp_path, arm="no_memory")
+    try:
+        assert result.stopped is None
+        assert result.kill is None
+        assert result.expected_call_ids == ()
+        assert result.post_restart_requests == ()
+    finally:
+        result.cleanup()
+
+
+@pytest.mark.parametrize("void_checkpoint", [False, True])
+def test_rerun_shares_voids(lives, tmp_path, monkeypatch, void_checkpoint):
+    case = lives["t1-g2", "B0"]
+    if void_checkpoint:
+        real = runner.expected_probe_env
+        monkeypatch.setattr(runner, "expected_probe_env",
+            lambda db, genre, p, k: "f" * 64 if k == 10 else real(db, genre, p, k))
+    voids = Voids()
+    first = drive(case, tmp_path / "first", voids=voids)
+    try:
+        assert first.stopped is None
+        records, diagnostics = dict(voids.records), list(voids.diagnostics)
+        assert len(records) == len(case["items"])
+        assert set(records.values()) == ({False, True} if void_checkpoint else {True})
+        second = drive(case, tmp_path / "second", attempt=1, voids=voids)
+        try:
+            assert second.attempt == 1 and second._root != first._root
+            assert second.stopped is None
+            assert len(second.results) == len(case["items"])
+            assert second.classes == first.classes
+            assert voids.records == records
+            assert voids.diagnostics == diagnostics
+            assert sorted(d["item_id"] for d in voids.diagnostics) == sorted(i["item_id"] for i in case["items"])
+        finally:
+            second.cleanup()
+    finally:
+        first.cleanup()
+
+
+@pytest.mark.parametrize("holds", [False, True])
+def test_rerun_void_mismatch(lives, tmp_path, monkeypatch, harness, holds):
+    case = lives["t1-g2", "B0"]
+    probe = case["compiled"].probes[0]
+    voids = Voids()
+    voids.record(probe.item_ids[0], "no_memory", not holds)
+    records, diagnostics = dict(voids.records), list(voids.diagnostics)
+    monkeypatch.setattr(runner, "precondition_holds", lambda *args, **kwargs: holds)
+    result = drive(case, tmp_path, arm="no_memory", attempt=1, voids=voids)
+    try:
+        assert result.stopped == ("INFRA_FAILURE", "void_mismatch", probe.index)
+        assert set(result.classes.values()) == {("INFRA_FAILURE", "void_mismatch")}
+        assert not harness.calls
+        assert voids.records == records and voids.diagnostics == diagnostics
+    finally:
+        result.cleanup()
 
 
 @pytest.mark.parametrize("extra,label,session", [

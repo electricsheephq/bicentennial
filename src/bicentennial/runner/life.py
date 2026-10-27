@@ -226,7 +226,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         if arm == "no_memory":
             script = dict(script, sessions=[s for s in script["sessions"] if s["kind"] == "probe"])
         faults = FaultLite.load([] if arm == "no_memory" else schedule.fault_lite(), script)
-        kill = next(((f["session"], f["turn"]) for f in schedule.fault_lite() if f["kind"] == "kill"), None)
+        kill = next(((f["session"], f["turn"]) for f in faults.to_obj() if f["kind"] == "kill"), None)
         entry_r = load(REGISTRY / "hermes-native.toml") if arm == "no_memory" else entry
         reader = load(REGISTRY / "no-memory.toml") if arm == "no_memory" else entry
         table = RouteTable.load({"routes": [dict(system=entry_r["name"], segment=s, probe_model="probe-model",
@@ -320,7 +320,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     repo_tree_hash=workspace_hash(clones[-1]) if genre == "G1" else EMPTY_TREE_HASH,
                                     env_state_hash=sha256_canon(seeds[index]["state"] if genre == "G2" else {}),
                                     probe_env_state_hash=expected_probe_env(db, genre, index, probe.checkpoint))
-                                voids.record(iid, arm, holds)
+                                if (iid, arm) not in voids.records:
+                                    voids.record(iid, arm, holds)
+                                elif voids.records[iid, arm] != holds:
+                                    raise HarnessFailed("void_mismatch")
                                 if not holds:
                                     evidence.classes[iid] = ("INFRA_FAILURE", "void")
                                 evidence.retained_roots[iid] = tuple(clones[:-1])
