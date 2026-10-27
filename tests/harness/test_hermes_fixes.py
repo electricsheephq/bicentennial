@@ -11,6 +11,7 @@ import sys
 import time
 import types
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -102,13 +103,95 @@ def test_kill_owns_tree_even_after_parent_exit(workers, tmp_path, parent_exited)
         time.sleep(0.01)
     if parent_exited:
         assert worker.call(op="end")["ok"]
-        worker.proc.wait(timeout=2)
+        os.waitid(os.P_PID, worker.proc.pid, os.WEXITED | os.WNOWAIT)
     worker.kill()
     time.sleep(0.05)  # delivery of SIGKILL to the child; a zombie cannot keep writing
     size = heartbeat.stat().st_size
     time.sleep(0.1)
     assert heartbeat.stat().st_size == size
     assert worker.proc.poll() is not None
+
+
+def test_clean_exit_signals_group_before_reaping_leader(workers, monkeypatch):
+    worker, events = workers("normal"), []
+    a = object.__new__(adapter.HermesAdapter)
+    a._worker = worker
+    real_wait = worker.proc.wait
+
+    def reap(*args, **kwargs):
+        result = real_wait(*args, **kwargs)
+        events.append("reap")
+        return result
+
+    def signal_group(pid, sig):
+        assert "reap" not in events, "killpg ran after the leader was reaped"
+        assert (pid, sig) == (worker.proc.pid, signal.SIGKILL)
+        assert os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None
+        events.append("signal")  # recording fake: the leader is already dead and has no children
+
+    monkeypatch.setattr(worker.proc, "wait", reap)
+    monkeypatch.setattr(os, "killpg", signal_group)
+    a._end()
+    worker.kill()  # a later close must not signal the now-reusable pgid
+    assert events == ["signal", "reap"]
+
+
+def test_concurrent_kill_cannot_signal_after_reap(workers, monkeypatch):
+    worker, errors, signals = workers("normal"), [], []
+    reaped, release, attempted, done = Event(), Event(), Event(), Event()
+    real_wait, real_killpg = worker.proc.wait, os.killpg
+
+    def reap(*args, **kwargs):
+        result = real_wait(*args, **kwargs)
+        reaped.set()
+        assert release.wait(2), "test did not release reap hook"
+        return result
+
+    def signal_group(pid, sig):
+        assert not reaped.is_set(), "concurrent killpg ran after reap"
+        signals.append(pid)
+        real_killpg(pid, sig)
+
+    def kill(second=False):
+        if second:
+            attempted.set()
+        try:
+            worker.kill()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            if second:
+                done.set()
+
+    monkeypatch.setattr(worker.proc, "wait", reap)
+    monkeypatch.setattr(os, "killpg", signal_group)
+    first, second = Thread(target=kill), Thread(target=kill, args=(True,))
+    first.start()
+    try:
+        assert reaped.wait(2)
+        second.start()
+        assert attempted.wait(2)
+        assert not done.wait(0.05), "second cleanup escaped serialization during reap"
+    finally:
+        release.set()
+        first.join(2)
+        if second.ident is not None:
+            second.join(2)
+    assert not first.is_alive() and not second.is_alive()
+    assert not errors
+    assert signals == [worker.proc.pid]
+
+
+def test_clean_exit_timeout_still_kills_and_reaps(workers, monkeypatch):
+    worker = workers("normal")
+    a = object.__new__(adapter.HermesAdapter)
+    a._worker = worker
+    monkeypatch.setattr(adapter, "EXIT_TIMEOUT_S", 0)
+    monkeypatch.setattr(os, "waitid", lambda *args: None)  # leader has not reported exit before the deadline
+    with pytest.raises(adapter.HarnessFailed, match="exit_timeout"):
+        a._end()
+    assert worker._reaped and worker.proc.returncode is not None
+    worker.kill()
 
 
 @pytest.mark.parametrize("phase", ["startup", "open", "turn", "end"])
@@ -255,6 +338,11 @@ def test_plugin_config_deep_merge_without_mutating_input():
 @pytest.mark.parametrize("settings", [
     {"model": {}}, {"auxiliary": {}}, {"agent": {"environment_probe": False}}, {"agent": None},
     {"memory": {"provider": "other"}},
+    {"fallback_providers": [{"provider": "fixture", "model": "fixture"}]},
+    {"fallback_model": {"provider": "fixture", "model": "fixture"}},
+    {"providers": {"fixture": {"base_url": "https://fixture.invalid/v1"}}},
+    {"custom_providers": [{"name": "fixture", "base_url": "https://fixture.invalid/v1"}]},
+    {"moa": {"aggregator": {"provider": "fixture", "model": "fixture"}}},
 ])
 def test_plugin_config_cannot_override_owned_routes(settings):
     with pytest.raises(ValueError, match="owned"):

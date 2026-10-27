@@ -21,6 +21,10 @@ _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy
 # Disclosed harness deviations from Hermes's defaults, beyond routing (recorded in the adapter's harness record)
 # Main window also overrides Hermes's default: the loopback custom provider has a 64,000-token floor.
 CONFIG_DEVIATIONS = ("model.context_length", "auxiliary.compression.context_length", "agent.environment_probe")
+# Hermes d923a5e: hermes_cli/fallback_config.py:get_fallback_chain, agent/auxiliary_client.py route readers,
+# and hermes_cli/config_providers.py:get_compatible_custom_providers (named providers and endpoint/key settings).
+_OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model", "providers",
+                     "custom_providers", "moa"}
 
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None) -> dict:
@@ -50,8 +54,8 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
     if plugin_config is not None:
         if not isinstance(plugin_config, dict):
             raise ValueError("plugin_config must be a dict")
-        if {"model", "auxiliary"} & plugin_config.keys():
-            raise ValueError("plugin_config touches adapter-owned model or auxiliary routes")
+        if _OWNED_ROUTE_KEYS & plugin_config.keys():
+            raise ValueError("plugin_config touches adapter-owned routes")
         _merge_plugin(cfg, plugin_config)
     canon(cfg)  # preserve the canonical, no-float contract for plug-in settings too
     return cfg

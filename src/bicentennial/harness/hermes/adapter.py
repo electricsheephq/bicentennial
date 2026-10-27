@@ -14,6 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 
 from bicentennial.director.core import Director
 from bicentennial.director.serve import serve, shutdown
@@ -92,6 +93,7 @@ def verify_pin(checkout, pin) -> str:
 class _Worker:
     def __init__(self, argv, env, cwd, log, egress=None):
         self._buffer, self._reaped, self.egress = b"", False, egress
+        self._cleanup_lock = Lock()
         own = os.getpriority(os.PRIO_PROCESS, 0)  # nice -n adds: only the gap to 19 (guard.py 86-91)
         prefix = ["nice", "-n", str(19 - own)] + (["taskpolicy", "-b"] if sys.platform == "darwin" else [])
         with open(log, "ab") as err:
@@ -132,9 +134,20 @@ class _Worker:
             return None
         return json.loads(line) if line else None
 
-    def kill(self):
+    def kill(self, *, clean=False):
+        with self._cleanup_lock:
+            self._cleanup(clean)
+
+    def _cleanup(self, clean):
         if self._reaped:
             return
+        if clean:
+            deadline = time.monotonic() + EXIT_TIMEOUT_S
+            # Keep the exited leader waitable: its pid must still reserve the pgid until killpg.
+            while os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(self.proc.args, EXIT_TIMEOUT_S)
+                time.sleep(0.01)
         try:
             os.killpg(self.proc.pid, signal.SIGKILL)  # includes children even after the leader exits
         except ProcessLookupError:
@@ -292,11 +305,10 @@ class HermesAdapter:
     def _end(self) -> None:
         out = self._worker.call(op="end")
         try:
-            self._worker.proc.wait(timeout=EXIT_TIMEOUT_S)
+            self._worker.kill(clean=True)  # observe exit, signal remaining group members, then reap
         except subprocess.TimeoutExpired:
             self._worker.kill()
             raise HarnessFailed("exit_timeout") from None
-        self._worker.kill()  # a clean leader exit can still leave plug-in children behind
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
 
