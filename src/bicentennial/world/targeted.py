@@ -79,7 +79,7 @@ def _tier_source(tier):
         g2=dict(pref_at={"seat-long": [[1, 1], [2, 1]], "seat-short": [[1, 2], [2, 4]]}),
         lives=[dict(life="t1-g1", genre="G1", seed=1, reads_session=1),
                dict(life="t1-g2", genre="G2", seed=2)],
-        selection=dict(g1=["drift-chain", "drift-chain-fault", "drift-config", "recall-value", "wake-loop"],
+        selection=dict(g1=["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"],
                        g2=["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"],
                        pinned={"drift-chain-fault": 20, "drift-booking": 20}))
 
@@ -284,6 +284,12 @@ def _build_t1(path, schedule, *, spec, row):
             reads = [Read(id=f"read-{i:02d}", session=row["reads_session"], turn=i % 5 + 1,
                           name=name, args=args) for i, (name, args) in enumerate(CALLS)]
             write_reads(db, schedule, reads, principal=principal)
+            quote = mint(schedule, "targeted", "setting-quote", "entity", "constant", 0)
+            insert_entity(db, id=quote, kind="constant", canonical_name="lock timeout", aliases_json=[],
+                          created_t=schedule.sessions[0].t_start, retired_t=None)
+            write_corrections(db, schedule, [Chain(
+                id="setting-quote", subject=quote, key="value", stem="SETTING", depth=0, mention="quote",
+                at=((1, 4), (2, 4)))], principal=principal)
         else:
             raise PlacementError("composition")
         db.commit()

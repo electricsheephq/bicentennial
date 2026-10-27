@@ -183,6 +183,7 @@ def test_t1_composition_and_three_act_allocation(tmp_path):
 
 def test_tier_sources():
     t0, t1 = (load_tier(ROOT / "tiers/life_specs" / f"{tier}.toml") for tier in ("t0", "t1"))
+    assert t1["selection"]["g1"] == ["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"]
     assert t1["g2"]["pref_at"] == {"seat-long": [[1, 1], [2, 1]], "seat-short": [[1, 2], [2, 4]]}
     assert t1["selection"]["pinned"] == {"drift-chain-fault": 20, "drift-booking": 20}
     assert seeds_manifest(t0) == dict(canary=t0["canary"], tier="T0", seeds=[1], lives=[])
@@ -454,10 +455,10 @@ def t1_templates(tier, genre):
                  row_template(names[3], kind="act", candidate="late", index=2),
                  row_template(names[4], twin=None, candidate="late", index=1)]
     if genre == "G1":
-        # Enforce G14's actual depth-1 and selective-commit material as well.
-        templates[0] = replace(templates[0], candidate=None, process="corrections", target="deadline-0",
+        # Keep the pinned drift-chain-fault on deadline-1 under the A12 selection order.
+        templates[0] = replace(templates[0], candidate=None, process="corrections", target="deadline-1",
                                part="value", index=1)
-        templates[1] = replace(templates[1], candidate=None, process="corrections", target="deadline-1",
+        templates[1] = replace(templates[1], candidate=None, process="corrections", target="deadline-0",
                                part="value", index=1)
     return tuple(templates)
 
@@ -559,7 +560,12 @@ def test_t1_lives_real_templates(tmp_path):
                 assert item["cell_id"] not in tier["not_exercised"]
                 assert record["evidence_session"] is not None
                 assert hostable(record["evidence_session"], item["probe_point"])
-            if life.genre == "G2":
+            if life.genre == "G1":
+                assert {r["template_id"] for r in compiled.records if r["bundle_id"] is not None
+                        and items[r["item_id"]]["stage"] == "act"
+                        and items[r["item_id"]]["track"] == "Drift"} == {
+                            "drift-chain-fault", "drift-config", "drift-quote"}
+            else:
                 assert len({r["bundle_id"] for r in compiled.records if r["branch"] == "B0"
                             and r["bundle_id"] is not None and r["evidence_session"] in (1, 2)}) >= 2
                 booking = [r for r in compiled.records if r["template_id"] == "drift-booking"]
@@ -746,25 +752,22 @@ b.twin.b1.close()
 
 
 def test_t1_g1_selected_material(tmp_path):
-    from dataclasses import asdict
-
     from bicentennial.world import open_world
     from bicentennial.world.targeted import t1_life
     tier = load_tier(ROOT / "tiers/life_specs/t1.toml")
     templates = (
-        row_template("drift-chain", kind="act", process="corrections", target="deadline-0", part="value", index=1),
         row_template("drift-chain-fault", kind="act", process="corrections", target="deadline-1", part="value", index=1),
         row_template("drift-config", kind="act", twin="trigger", mode="correction", process="corrections",
                      target="setting-fix", part="value", index=1),
+        row_template("drift-quote", kind="act", process="corrections", target="setting-quote", part="value"),
         row_template("recall-value", twin=None, process="g1_software", target="decision-0", part="value"),
         row_template("wake-loop", kind="act", cell="WAKE-LOOP", process="g1_software", target="decision-1", part="value"),
     )
-    templates = (NoCrash(**asdict(templates[0])), *templates[1:])
     life = t1_life(tier, tier["lives"][0], templates, out_dir=tmp_path / "material")
     db0 = open_world(life.out_dir / "world.B0.db")
     try:
         assert_t1(life, tier)
-        for chain in ("deadline-0", "deadline-1", "setting-fix"):
+        for chain in ("deadline-0", "deadline-1", "setting-fix", "setting-quote"):
             facts = tuple(mint(life.schedule, "corrections", chain, "fact", "value", i) for i in range(2))
             assert not db0.execute("SELECT 1 FROM fact WHERE id=?", (
                 mint(life.schedule, "corrections", chain, "fact", "value", 2),)).fetchone()
@@ -774,28 +777,19 @@ def test_t1_g1_selected_material(tmp_path):
                 assert life.twin.b1.execute("SELECT speech_act FROM fact WHERE id=?", (facts[1],)).fetchone()[0] == "hedge"
             else:
                 assert not db0.execute("SELECT 1 FROM fact_surface WHERE fact_id IN (?,?)", facts).fetchone()
+            if chain == "setting-quote":
+                for i, fid in enumerate(facts):
+                    assert db0.execute("SELECT speech_act FROM fact WHERE id=?", (fid,)).fetchone()[0] == (
+                        "assert" if i == 0 else "quote")
+                    t = db0.execute("SELECT e.t_sim FROM event e JOIN link l ON l.event_id=e.id "
+                                   "WHERE l.fact_id=? AND l.role='assert'", (fid,)).fetchone()[0]
+                    assert t == life.schedule.sessions[i].turn_t[3]
         for target in ("decision-0", "decision-1"):
             fid = mint(life.schedule, "g1_software", target, "fact", "value", 0)
             assert not db0.execute("SELECT 1 FROM fact_surface WHERE fact_id=?", (fid,)).fetchone()
     finally:
         db0.close()
         life.twin.b1.close()
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class NoCrash(RowTemplate):
-    """G14's ordinary chain is valid at 10 and refuses a crash-crossing probe at 20."""
-
-    def instances(self, db, schedule):
-        entries = super().instances(db, schedule)
-        for entry in entries:
-            positions = [db.execute("SELECT t_sim FROM event WHERE id=?", (eid,)).fetchone()[0]
-                         for eid in entry.gold_spans]
-            kills = [p.turn_t[r["turn"] - 1] for p in schedule.sessions if p.index <= entry.probe_point
-                     for r in p.fault_points if r["kind"] == "kill"]
-            if any(t <= kill for t in positions for kill in kills):
-                raise ValueError(self.template_id)
-        return entries
 
 
 @pytest.mark.parametrize("seed", (-1, True, "1"))
