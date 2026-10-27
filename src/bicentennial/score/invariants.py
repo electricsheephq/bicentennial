@@ -12,7 +12,7 @@ from bicentennial.api.contract import shape
 from bicentennial.audit.readback import calls_in, results
 from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS, validate
-from bicentennial.probe.scripted_reader import ReaderResult, read_api
+from bicentennial.probe.scripted_reader import ReaderResult, api_task, read_api
 from bicentennial.sandbox.spansearch import span_search
 
 INVARIANTS = ("INV-VERB", "INV-NEW", "INV-PAIR", "INV-FORGET")
@@ -185,8 +185,10 @@ def _probe(adapter, bound, i, query, token, *, old=None, forbidden=False, spans=
                 competing=[dict(kind="stale", token=old)] if old else [],
                 canary=json.loads((SCHEMAS / "reader_keys.schema.json").read_bytes())["properties"]["canary"]["enum"][0])
     validate("reader_keys", keys)
+    view = dict(item_id=i, prompt=query, options=options)
     _settle(adapter, bound)
-    return read_api(_Query(adapter), dict(item_id=i, prompt=query, options=options), keys, 100)
+    injected = _call(adapter.probe, api_task(view, keys), 100) if hasattr(adapter, "probe") else ()
+    return read_api(_Query(adapter), view, keys, 100, injected=tuple(injected))
 
 
 def _api_script(factory, invariant, bound, snapshot):
@@ -266,6 +268,25 @@ def _api_script(factory, invariant, bound, snapshot):
            "opaque_store" if opaque else "")
 
 
+def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None) -> Verdict:
+    """Run one API-mode invariant against an adapter factory."""
+    ids, reason = {
+        "INV-VERB": (("verb-1", "verb-2", "verb-3"), "absent_after_fault"),
+        "INV-NEW": (("new-a", "new-b"), "not_newest"),
+        "INV-PAIR": (("pair-call", "pair-result"), "absent_after_fault"),
+        "INV-FORGET": (("forget-1", "forget-2", "forget-store"), "surfaced"),
+    }[invariant]
+    rows = []
+    try:
+        for i, s, r in _api_script(factory, invariant, bound_s, snapshot):
+            rows.append((i, s, r or (reason if s == "FAIL" else "")))
+    except SystemFault:
+        rows = [(i, "FAIL", "system_failure") for i in ids]
+    except Exception:
+        rows.extend((i, "INFRA_FAILURE", "infra") for i in ids if i not in {row[0] for row in rows})
+    return _verdict(invariant, rows)
+
+
 def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Verdict]:
     """Run API-mode invariants against an adapter factory.
 
@@ -274,20 +295,8 @@ def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Ver
     Call/result linkage is certified in Hermes mode, where the requests' call and
     output ids are observable.
     """
-    output = {}
-    for inv, ids, reason in zip(INVARIANTS, (("verb-1", "verb-2", "verb-3"), ("new-a", "new-b"),
-            ("pair-call", "pair-result"), ("forget-1", "forget-2", "forget-store")),
-            ("absent_after_fault", "not_newest", "absent_after_fault", "surfaced"), strict=True):
-        rows = []
-        try:
-            for i, s, r in _api_script(factory, inv, bound_s, snapshot):
-                rows.append((i, s, r or (reason if s == "FAIL" else "")))
-        except SystemFault:
-            rows = [(i, "FAIL", "system_failure") for i in ids]
-        except Exception:
-            rows.extend((i, "INFRA_FAILURE", "infra") for i in ids if i not in {row[0] for row in rows})
-        output[inv] = _verdict(inv, rows)
-    return output
+    return {inv: adapter_invariant(factory, inv, bound_s=bound_s, snapshot=snapshot)
+            for inv in INVARIANTS}
 
 
 @dataclass(frozen=True)
