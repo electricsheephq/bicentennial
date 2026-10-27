@@ -1,0 +1,162 @@
+{
+  "canary": "c168e5f8-3948-4553-8554-7aa162054723",
+  "source": "Hermes cca83848ec^ holographic and 781334eea4^ mem0; re-record from the pinned release at install",
+  "tools": {
+    "holographic": [
+      {
+        "name": "fact_store",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "add",
+                "search",
+                "probe",
+                "related",
+                "reason",
+                "contradict",
+                "update",
+                "remove",
+                "list"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "entity": {
+              "type": "string"
+            },
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fact_id": {
+              "type": "integer"
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "user_pref",
+                "project",
+                "tool",
+                "general"
+              ]
+            },
+            "tags": {
+              "type": "string"
+            },
+            "trust_delta": {
+              "type": "number"
+            },
+            "min_trust": {
+              "type": "number"
+            },
+            "limit": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      },
+      {
+        "name": "fact_feedback",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "helpful",
+                "unhelpful"
+              ]
+            },
+            "fact_id": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "fact_id"
+          ]
+        }
+      }
+    ],
+    "mem0": [
+      {
+        "name": "mem0_search",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "top_k": {
+              "type": "integer"
+            },
+            "rerank": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "mem0_add",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      },
+      {
+        "name": "mem0_update",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "memory_id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "memory_id",
+            "text"
+          ]
+        }
+      },
+      {
+        "name": "mem0_delete",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "memory_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "memory_id"
+          ]
+        }
+      }
+    ]
+  }
+}

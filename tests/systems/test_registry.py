@@ -41,7 +41,9 @@ def test_shipped_cli(capsys):
     assert main(["check"]) == 0
     assert capsys.readouterr().out.splitlines() == [
         "hermes-native: UNMEASURED fresh_install_hash",
+        "holographic: UNMEASURED artifact.sha256 fresh_install_hash",
         "lcm-x: UNMEASURED artifact.sha256 fresh_install_hash",
+        "mem0-oss: UNMEASURED artifact.sha256 fresh_install_hash",
         "no-memory: ok",
     ]
 
