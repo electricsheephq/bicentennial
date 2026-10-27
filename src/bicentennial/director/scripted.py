@@ -1,5 +1,6 @@
 """T1 deterministic wiring stubs, never a measure of model quality (RING0 §2)."""
 
+import json
 import re
 from hashlib import sha256
 from math import isqrt
@@ -8,7 +9,12 @@ from bicentennial.canon import canon
 from bicentennial.director.responder import Call, Reply
 from bicentennial.director.wire import chat, responses
 
-WRITE_ARGS = {"hermes-native": ("memory", {"action": "add", "target": "memory"}, "content")}
+# Argument names from the recorded provider schemas (tests/fixtures/systems/tool-schemas.json).
+WRITE_ARGS = {
+    "hermes-native": ("memory", {"action": "add", "target": "memory"}, "content"),
+    "holographic": ("fact_store", {"action": "add"}, "content"),
+    "mem0-oss": ("mem0_add", {}, "content"),
+}
 VECTOR_SCALE = 1_000_000_000
 
 
@@ -35,6 +41,51 @@ def _cut(text, call):
         raise ValueError("invalid output-token limit")
     # R03's provisional ceil(UTF-8 bytes / 4) estimator; preserve whole code points.
     return text.encode()[:4 * min(limits)].decode("utf-8", "ignore") if limits else text[:4096]
+
+
+class _Refusal(ValueError):
+    pass
+
+
+def _last_facts(text):
+    decoder, facts, depth, i = json.JSONDecoder(), [], 0, 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '"' or (ch == "[" and depth == 0):
+            try:
+                value, end = decoder.raw_decode(text, i)
+            except ValueError:
+                pass
+            else:
+                if ch == '"':
+                    i = end
+                    continue
+                if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                    facts = value
+        if ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth = max(0, depth - 1)
+        i += 1
+    return facts
+
+
+def _mem0(call, messages):
+    users = [_text(m.get("content")) for m in messages if m.get("role") == "user"]
+    update = len(users) == 1 and not any(m.get("role") in ("system", "developer") for m in messages)
+    facts = [f[:240] for f in _last_facts(users[0])] if update else [t[:240] for t in users if t]
+    while True:
+        obj = {"memory": [{"event": "ADD", "id": str(i), "text": f} for i, f in enumerate(facts)]} if update else {
+            "facts": facts}
+        text = canon(obj).decode()
+        if _cut(text, call) == text:
+            return text
+        if not facts:
+            raise _Refusal("reply_over_budget")
+        facts.pop()
+
+
+FORMATS = {("mem0-oss", "extraction"): _mem0}
 
 
 def _vector(text, dimension):
@@ -71,7 +122,7 @@ def _kind(call):
     titles, summaries and extraction arrive as aux with their task as the subrole."""
     if call.role in ("write_turn", "memory_write"):
         return "write"
-    if call.role == "summariser" or (call.role == "aux" and call.subrole in ("summariser", "extraction")):
+    if call.role in ("summariser", "extraction") or (call.role == "aux" and call.subrole in ("summariser", "extraction")):
         return "extract"
     if call.role == "aux":
         return "title" if call.subrole == "title_generation" else "empty"
@@ -82,12 +133,12 @@ class ScriptedResponder:
     """Implement R08's Responder for a loaded R13a system-entry dictionary."""
 
     def __init__(self, system_entry):
-        if system_entry.get("structured_formats"):
+        self.name = system_entry["name"]
+        if any((self.name, key) not in FORMATS for key in system_entry.get("structured_formats", {})):
             raise ValueError("scripted structured formats are not implemented")
         self.write_tools = tuple(t["tool"] for t in system_entry.get("write_tools", []))
         self.write_args = WRITE_ARGS.get(system_entry["name"])
-        if self.write_tools and (self.write_args is None or any(
-                tool != self.write_args[0] for tool in self.write_tools)):
+        if self.write_tools and (self.write_args is None or self.write_args[0] != self.write_tools[0]):
             raise ValueError("scripted write arguments are not declared for this system")
         if self.write_args:
             name, fixed, content = self.write_args
@@ -95,6 +146,12 @@ class ScriptedResponder:
         self.embedding_dim = system_entry.get("embedding_dim")
 
     def respond(self, call: Call) -> Reply:
+        try:
+            return self._respond(call)
+        except _Refusal as error:
+            return Reply(400, str(error), "scripted", call.model)
+
+    def _respond(self, call: Call) -> Reply:
         text, calls, vectors, scale = "", (), None, None
         if call.role == "embeddings":
             if call.wire != "embeddings":
@@ -115,6 +172,8 @@ class ScriptedResponder:
             messages = _messages(call)
             if kind == "write":
                 calls = self._write(call, messages)
+            elif kind == "extract" and (self.name, call.subrole or call.role) in FORMATS:
+                text = FORMATS[self.name, call.subrole or call.role](call, messages)
             elif kind == "extract":
                 text = _cut("\n".join(_text(m.get("content"))[:240] for m in messages
                                      if m.get("type", "message") == "message"
@@ -132,7 +191,10 @@ class ScriptedResponder:
 
     def _write(self, call, messages):
         offered = [t.get("function", {}) if call.wire == "chat" else t for t in call.body.get("tools", [])]
-        tool = next((t for name in self.write_tools for t in offered if t.get("name") == name), None)
+        tool = next((t for t in offered if self.write_args and self.write_tools
+                     and t.get("name") == self.write_args[0]), None)
+        if tool is None and any(t.get("name") in self.write_tools for t in offered):
+            raise _Refusal("write_tool_unmapped")
         users = [i for i, m in enumerate(messages) if m.get("type", "message") == "message" and m.get("role") == "user"]
         # One write per user message: a tool result after it means the write was already issued,
         # whatever the tool answered (RING0 §2: the tool's answer is never retried).

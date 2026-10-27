@@ -59,8 +59,10 @@ def main():
                   "history": len(state.history), "hermes_session_id": getattr(state.agent, "session_id", None),
                   "t_ms": ms(t1)})
         elif cmd["op"] == "end":
+            import threading
             mgr.end_all_sessions()
-            emit({"ok": True, "ended": True, "t_ms": ms(t1)})
+            emit({"ok": True, "ended": True, "t_ms": ms(t1),
+                  "alive_threads": sorted(t.name for t in threading.enumerate() if t.is_alive())})
             break
 
 

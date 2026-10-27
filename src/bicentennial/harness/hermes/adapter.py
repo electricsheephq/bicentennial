@@ -68,6 +68,7 @@ class SessionResult:
     finals: tuple = ()  # ((turn, text), ...) in turn order: every delivered final; a probe's is never compared
     reset: str | None = None  # "control_wipe" when the wipe hook reported a wipe (Amendment 1, A2)
     active_memory_providers: tuple = ()
+    end_threads: tuple | None = None
 
 
 def _ms(t0: float) -> int:
@@ -251,7 +252,8 @@ class HermesAdapter:
                     t["resume"].append(_ms(t0))
             t["drain"].append(self._drain())
             t0 = time.monotonic()
-            self._end()
+            end_threads = self._end()
+            self.end_threads = end_threads
             c = d.control()
             if c["stopped"] or c["write_failures"] > failures:
                 raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")
@@ -273,7 +275,7 @@ class HermesAdapter:
         return SessionResult(index, session["kind"], sid, self.entrypoint, turns_ok, matched, tuple(restarts),
                              compaction, summarised, surface_hash(self.paths["hermes_home"], self.volatile),
                              tuple(gate), t, tuple(finals), "control_wipe" if self._wiped else None,
-                             tuple(self.active_memory_providers))
+                             tuple(self.active_memory_providers), end_threads)
 
     def _gate(self, readings) -> None:
         """R15, before every spawn: wait while the busy marker refuses this machine class."""
@@ -310,7 +312,7 @@ class HermesAdapter:
         t["open"].append(_ms(t0))
         return out["session_id"], out["history"], wiped
 
-    def _end(self) -> None:
+    def _end(self) -> tuple | None:
         out = self._worker.call(op="end")
         try:
             self._worker.kill(clean=True)  # observe exit, signal remaining group members, then reap
@@ -319,6 +321,7 @@ class HermesAdapter:
             raise HarnessFailed("exit_timeout") from None
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
+        return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
 
     def _drain(self) -> int:
         """Wait for DRAIN_QUIET_S with nothing in flight (background titles and reviews), as replay.py 169-180."""
