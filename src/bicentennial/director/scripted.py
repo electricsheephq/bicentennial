@@ -133,14 +133,19 @@ class ScriptedResponder:
     def _write(self, call, messages):
         offered = [t.get("function", {}) if call.wire == "chat" else t for t in call.body.get("tools", [])]
         tool = next((t for name in self.write_tools for t in offered if t.get("name") == name), None)
-        last = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("type", "message")
-                     == "message" and messages[i].get("role") == "user"), None)
+        users = [i for i, m in enumerate(messages) if m.get("type", "message") == "message" and m.get("role") == "user"]
         # One write per user message: a tool result after it means the write was already issued,
         # whatever the tool answered (RING0 §2: the tool's answer is never retried).
-        if tool is None or last is None or any(m.get("role") == "tool" or m.get("type") == "function_call_output"
-                                               for m in messages[last + 1:]):
+        if tool is None or not users or any(m.get("role") == "tool" or m.get("type") == "function_call_output"
+                                            for m in messages[users[-1] + 1:]):
             return ()
-        user = messages[last]
+        # A memory_write request is recognised by its last user message, the harness's own
+        # memory-write prompt, so the content is the conversation's latest user message before it.
+        if call.role == "memory_write":
+            users = users[:-1]
+            if not users:
+                return ()
+        user = messages[users[-1]]
         name, fixed, content_key = self.write_args
         content = _text(user.get("content"))
         limit = tool.get("parameters", {}).get("properties", {}).get(content_key, {}).get("maxLength")

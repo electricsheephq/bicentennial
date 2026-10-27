@@ -75,9 +75,24 @@ LEDGER = {"write_turn": ("write_turn", "cursor"), "memory_write": ("memory_write
           "aux": ("aux", "other_task")}
 
 
+REVIEW_PROMPT = "Review the conversation above and consider saving to memory if appropriate."
+
+
+def prompted(request, wire):
+    """A memory_write request as the harness sends it: its own prompt is the last user message."""
+    key = "messages" if wire == "chat" else "input"
+    users = [m for m in request[key] if m.get("type", "message") == "message" and m.get("role") == "user"]
+    if users and users[-1].get("content") == REVIEW_PROMPT:
+        return request
+    return {**request, key: [*request[key], {"role": "user", "content": REVIEW_PROMPT}]}
+
+
 def call(role="write_turn", wire="chat", request=None):
-    return Call(*LEDGER.get(role, (role, "")), wire, body(wire) if request is None else request,
-                "route-model", {"session": 1, "turn": 1}, "attempt-one")
+    request = body(wire) if request is None else request
+    if role == "memory_write":
+        request = prompted(request, wire)
+    return Call(*LEDGER.get(role, (role, "")), wire, request, "route-model", {"session": 1, "turn": 1},
+                "attempt-one")
 
 
 @pytest.mark.parametrize("wire", ["chat", "responses"])
@@ -95,8 +110,8 @@ def test_identity_usage_and_purity(role, wire):
     msg = {"role": "assistant", "content": reply.text}
     if reply.tool_calls:
         msg["tool_calls"] = [{"type": "function", "function": tc} for tc in reply.tool_calls]
-    usage_body = request if wire == "chat" else {"messages": responses.typed(request["input"]),
-                                                "tools": request["tools"]}
+    usage_body = c.body if wire == "chat" else {"messages": responses.typed(c.body["input"]),
+                                               "tools": c.body["tools"]}
     est = chat.usage_estimate(usage_body, {"choices": [{"message": msg}]})
     n_in, n_out = est["prompt_tokens"], est["completion_tokens"]
     keys = ("prompt_tokens", "completion_tokens") if wire == "chat" else ("input_tokens", "output_tokens")
@@ -346,9 +361,9 @@ def test_director_routed_titles_and_compactions(wire, tmp_path):
 def test_no_second_write_after_its_tool_result(wire, answer):
     """A background review that offers the write tool gets one write; its tool result, whatever it
     says, ends the review with an empty reply instead of a duplicate write."""
-    request = body(wire)
+    request = prompted(body(wire), wire)
     first = responder().respond(call("memory_write", wire, request))
-    assert len(first.tool_calls) == 1
+    assert json.loads(first.tool_calls[0]["arguments"])["content"] == "latest é\nverbatim"
     key = "messages" if wire == "chat" else "input"
     tc = first.tool_calls[0]
     if wire == "chat":
@@ -378,3 +393,14 @@ def test_usage_uses_the_wire_keys(wire):
     n_in, n_out = ("prompt_tokens", "completion_tokens") if wire == "chat" else ("input_tokens", "output_tokens")
     assert set(reply.usage) == {n_in, n_out, "total_tokens", "estimated"}
     assert reply.usage["total_tokens"] == reply.usage[n_in] + reply.usage[n_out]
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_memory_write_never_stores_the_harness_prompt(wire):
+    """The harness's memory-write prompt is the request's last user message; the write carries the
+    conversation's latest user message before it, and a prompt with no conversation gets no write."""
+    reply = responder().respond(call("memory_write", wire, body(wire)))
+    content = json.loads(reply.tool_calls[0]["arguments"])["content"]
+    assert content == "latest é\nverbatim" and REVIEW_PROMPT not in content
+    alone = responder().respond(call("memory_write", wire, body(wire, messages=[])))
+    assert alone.text == "" and alone.tool_calls == ()
