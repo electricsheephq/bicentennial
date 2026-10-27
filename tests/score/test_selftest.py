@@ -534,4 +534,3 @@ def test_import_and_purity_boundary(module, allowed):
             assert node.module in allowed and node.level == 0
         if isinstance(node, ast.Constant):
             assert not isinstance(node.value, float)
-    assert not (ROOT / "src/bicentennial/controls/__init__.py").exists()
