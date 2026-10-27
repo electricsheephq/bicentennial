@@ -620,6 +620,25 @@ def test_mix_and_scale(tmp_path):
         build_g1(db, schedule)
 
 
+def test_deadline_placement_override(tmp_path):
+    base, schedule, _ = keyed_world(tmp_path, "g05-0")
+    unchanged, _, _ = keyed_world(tmp_path, "g05-0", replace(MIX, deadline_at=(None, None)))
+    assert export_jsonl(unchanged) == export_jsonl(base)
+    positions = ((1, 1), (2, 1))
+    placed, _, _ = keyed_world(tmp_path, "g05-0", replace(MIX, deadline_at=(positions,)))
+    for j, (session, turn) in enumerate(positions):
+        fid = mint(schedule, "corrections", "deadline-0", "fact", "value", j)
+        assert asserting(placed, fid)["t_sim"] == schedule.sessions[session - 1].turn_t[turn - 1]
+    affected = {mint(schedule, "corrections", "deadline-0", "event", "event", j) for j in range(2)}
+    def unaffected(db):
+        return [tuple(r) for r in db.execute(
+            "SELECT * FROM event WHERE kind != 'filler' ORDER BY id") if r["id"] not in affected]
+
+    assert unaffected(base) == unaffected(placed)
+    for db in (base, unchanged, placed):
+        db.close()
+
+
 def test_full_scale(tmp_path):
     db, schedule, world = keyed_world(tmp_path, "g05-full", scale=named("full"))
     assert len(schedule.sessions) == 200

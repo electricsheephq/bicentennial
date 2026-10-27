@@ -1,0 +1,15 @@
+# Generator input for Ring 0 T0 lives; never agent-visible (RING0 §10).
+canary = "c168e5f8-3948-4553-8554-7aa162054723"
+tier = "T0"
+scale = "t0-micro"
+window = 16384
+window_label = "provisional C-5"
+levers_label = "uncalibrated (v0.2)"
+seeds = [1]
+sessions = [1, 3]
+wakes = ["none", "kill", "swap", "restart", "compaction", "gap"]
+
+[defaults]
+sessions = 3
+distance = 1
+wake = "none"
