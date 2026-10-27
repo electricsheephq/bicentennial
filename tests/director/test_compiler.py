@@ -287,14 +287,15 @@ def test_dialect_and_normalization_keyed_200():
 
 
 @pytest.mark.parametrize("retry", [False, True])
-def test_director_scripted_calls_and_audit(tmp_path, retry):
+@pytest.mark.parametrize("n_calls", [0, 1])
+def test_director_scripted_calls_and_audit(tmp_path, retry, n_calls):
     script = copy.deepcopy(CORE["SCRIPT"])
     script["sessions"] = script["sessions"][:1]
     script["sessions"][0]["turns"] = script["sessions"][0]["turns"][:1]
     turn = script["sessions"][0]["turns"][0]
     turn["tool_calls"] = [hermes_call(*CALLS[0]), hermes_call(*CALLS[-1])]
     fake = CORE["Fake"]()
-    fake.n_calls = 1
+    fake.n_calls = n_calls
     d = CORE["make"](tmp_path, fake, script=script)
     CORE["start"](d, tmp_path)
     server = serve(d)
@@ -312,9 +313,10 @@ def test_director_scripted_calls_and_audit(tmp_path, retry):
                 '{"success":false}' if c["function"]["name"] == "memory" else "{}")} for c in msg["tool_calls"]])
 
     try:
-        write = request(body)
-        body = result(body, write)
         calls = request(body)
+        if n_calls:
+            body = result(body, calls)
+            calls = request(body)
         if retry:
             calls = request(CORE["turn_body"](turn["user"], tools=("memory", "terminal")))
         final = request(result(body, calls))
@@ -324,15 +326,16 @@ def test_director_scripted_calls_and_audit(tmp_path, retry):
         shutdown(server)
         d.close()
     rows, blobs, _ = rb.load(tmp_path / "ledger", "kit")
-    assert [r["served"] for r in rows] == ["write_tool_calls", "script_tool_calls", *(
+    assert [r["served"] for r in rows] == [*(["write_tool_calls"] if n_calls else []), "script_tool_calls", *(
         ["script_tool_calls_retry"] if retry else []), "script", "script_retry"]
     assert not [r for r in rows if r["role"] == "unknown"]
+    first_id = 2 + 2 * n_calls + 3 * retry
     assert [c["id"] for c in calls["tool_calls"]] == [CORE["mint_id"]("attempt-s1", i)
-                                                      for i in ((7, 8) if retry else (4, 5))]
+                                                      for i in (first_id, first_id + 1)]
     report = rb.audit(rows, blobs, rb.turns_from_script(script), "chat", fmt="kit",
                       model_for=lambda s: "probe-model", suffix=None, write_tools=("memory",), id_needles=[],
                       effects=lambda calls, requests, w: ef.effects(calls, requests, {"memory": "", "user": ""}, w))
-    assert rb.failures(report) == []
+    assert rb.failures(report) == [], report["A3"]["failures"]
     # An id that no reply issued still fails the same audit.
     blobs[rows[-2]["req"]]["messages"].append({"role": "tool", "tool_call_id": "unissued", "content": "{}"})
     report = rb.audit(rows, blobs, rb.turns_from_script(script), "chat", fmt="kit",
@@ -360,18 +363,12 @@ def test_replay_instants(worlds, tmp_path):
 
 
 def test_absolute_worker_paths(tmp_path, monkeypatch):
-    baseline = subprocess.run(["git", "show", "4774643:src/bicentennial/harness/hermes/config.py"],
-                              cwd=ROOT, check=True, capture_output=True, text=True).stdout
-    original = {"__file__": str(ROOT / "src/bicentennial/harness/hermes/config.py")}
-    exec(compile(baseline, "baseline-config", "exec"), original)
     monkeypatch.chdir(tmp_path)
     paths = layout(Path("scratch/run"), Path("scratch"))
     env = worker_env(paths, 4321, Path("scratch/run/clock.json"), None)
     assert paths["root"] == (tmp_path / "scratch/run").resolve()
     for key in ("HOME", "HERMES_HOME", "TMPDIR", "BICENTENNIAL_CLOCK_FILE"):
         assert Path(env[key]).is_absolute() and Path(env[key]).is_relative_to(paths["root"])
-    old_env = original["worker_env"](paths, 4321, Path("scratch/run/clock.json"), None)
-    assert not Path(old_env["BICENTENNIAL_CLOCK_FILE"]).is_absolute()
 
 
 def test_relative_scratch_adapter(tmp_path, monkeypatch):

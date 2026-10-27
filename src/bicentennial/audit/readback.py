@@ -322,7 +322,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
             idx = turn_index(seq, cursor)
             want = expected(body, wire, model_for(cursor["session"]), suffix, write_tools)
             verdicts = []
-            served, served_texts = ([], []) if bad else output(blobs[r["resp"]], wire)
+            served, served_texts = output(blobs[r["resp"]], wire) if not bad and r.get("served") == "write_tool_calls" else ([], [])
             if not bad and r.get("served") == "write_tool_calls" and (any(served_texts) or reasoning(blobs[r["resp"]], wire)):
                 # the harness gets the calls only: no reply or reasoning text
                 a5["served_write_text"].append(seq)
