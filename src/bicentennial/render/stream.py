@@ -157,6 +157,8 @@ def history_set_hash(manifests):
                              "stream_hash", "sessions_hash", "render_key")}
     for life in sorted(history):
         branches = history[life]
+        if any(branch["exclude_sha256"] is None for branch in branches.values()):
+            raise ValueError(f"explicit twin exclusions required: {life}")
         if set(branches) != {"B0", "B1"} or any(
                 branches["B0"][key] != branches["B1"][key]
                 for key in ("schedule_sha256", "exclude_sha256", "principal_id")):

@@ -485,11 +485,23 @@ def test_history_set_refuses_twin_input_mismatch(world, tmp_path, field, value):
         history_set_hash([manifest, twin])
 
 
+@pytest.mark.parametrize("implicit_branches", [("B0", "B1"), ("B0",), ("B1",)])
+def test_history_set_requires_explicit_twin_exclusions(world, tmp_path, implicit_branches):
+    db, schedule = world
+    manifests = [write_branch(tmp_path, cutting(
+        db, schedule, branch=branch,
+        exclude_tokens=None if branch in implicit_branches else frozenset([TOKEN])))
+        for branch in ("B0", "B1")]
+    with pytest.raises(ValueError, match=f"explicit twin exclusions required: {re.escape(schedule.life)}"):
+        history_set_hash(manifests)
+
+
 def test_history_set_allows_different_expected_states(world, tmp_path):
     db, schedule = world
     expected = states(schedule)
     expected[1] = dict(expected[1], env_state_hash="c" * 64)
-    manifests = [write_branch(tmp_path, cutting(db, schedule, branch=branch, expected_state=state))
+    manifests = [write_branch(tmp_path, cutting(db, schedule, branch=branch, expected_state=state,
+                                              exclude_tokens=frozenset([TOKEN])))
                  for branch, state in (("B0", states(schedule)), ("B1", expected))]
     assert manifests[0]["expected_state_sha256"] != manifests[1]["expected_state_sha256"]
     assert history_set_hash(manifests) == history_set_hash(reversed(manifests))
