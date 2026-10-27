@@ -44,9 +44,14 @@ def content(row):
 
 
 def _lint_form(row):
-    return unicodedata.normalize("NFC", row["text"] if "text" in row else
-                                 canon(row["payload"]).decode() + "".join(
-                                     _strings([row["payload"], row["tool"]], keys=True)))
+    parts = [row["text"]] if "text" in row else [canon(row["payload"]).decode(),
+                                                *_strings([row["payload"], row["tool"]], keys=True)]
+    return tuple(unicodedata.normalize("NFC", part) for part in parts)
+
+
+def _present(token, form):
+    """A token is present only inside one part of the form, never across a join."""
+    return any(token in part for part in form)
 
 
 def lint(db, rows):
@@ -57,8 +62,8 @@ def lint(db, rows):
     for row in rows:
         form, eid = _lint_form(row), row["event_id"]
         violations.update((eid, tid) for tid, fid, token in tokens
-                          if token in form and (eid, fid) not in links)
-        if _canary() in form:
+                          if _present(token, form) and (eid, fid) not in links)
+        if _present(_canary(), form):
             violations.add((eid, "canary"))
     return sorted(violations)
 
@@ -78,7 +83,8 @@ sessions_hash = stream_hash
 def render_key(cut, meta):
     return sha256_canon({"meta": {k: meta[k] for k in ("generator_version", "genre", "seed", "scale")},
                          **{k: getattr(cut, k) for k in
-                            ("life", "branch", "world_hash", "schedule_sha256", "bank_sha256")},
+                            ("life", "branch", "world_hash", "schedule_sha256", "bank_sha256",
+                             "exclude_sha256")},
                          "lane": "template", "estimator": ESTIMATOR})
 
 
@@ -90,7 +96,7 @@ def _branch(branch):
 def write_branch(out_dir, cut):
     _branch(cut.branch)
     manifest = {"canary": _canary(), **{k: getattr(cut, k) for k in
-                ("life", "branch", "world_hash", "schedule_sha256", "render_key")},
+                ("life", "branch", "world_hash", "schedule_sha256", "exclude_sha256", "render_key")},
                 "stream_hash": stream_hash(cut.rows), "sessions_hash": sessions_hash(cut.sessions),
                 "bank": {"bank_id": cut.bank_id, "sha256": cut.bank_sha256,
                          "calibrated": cut.bank_calibrated}, "estimator": ESTIMATOR,

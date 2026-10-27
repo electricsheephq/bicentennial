@@ -222,6 +222,25 @@ def test_tool_missing_linked_token(tmp_path):
     db.close()
 
 
+@pytest.mark.parametrize("result", [{"stdout": ["TOK-", "4410"]}, {"TOK-": "4410"}])
+def test_tool_split_linked_token(tmp_path, result):
+    db, schedule = build(tmp_path / "split.db", result=result)
+    with pytest.raises(ValueError, match="missing linked token: tool-event"):
+        cutting(db, schedule)
+    db.close()
+
+
+def test_lint_split_token_is_absent(world):
+    db, schedule = world
+    row = next(r for r in cutting(db, schedule).rows if r["kind"] == "tool")
+    fact(db, "fact-other", "OTHER-6632")
+    half = len(CANARY) // 2
+    for payload in ({"out": ["OTHER-", "6632"]}, {"OTHER-": "6632"}, {"c": [CANARY[:half], CANARY[half:]]}):
+        assert lint(db, [row | {"payload": payload}]) == []
+    assert lint(db, [row | {"tool": {"name": "OTHER-", "args": {"x": "6632"}}}]) == []
+    assert lint(db, [row | {"payload": {"out": ["x OTHER-6632 y"]}}]) == [("tool-event", "fact-other-token")]
+
+
 def test_lint_nested_keys_nfc_and_roles(world):
     db, schedule = world
     row = next(r for r in cutting(db, schedule).rows if r["kind"] == "tool")
@@ -456,6 +475,26 @@ def test_cache_files_and_bank(world, tmp_path):
         used_phrase, used_phrase + " Understood."))
     changed = cutting(db, schedule, bank=load(bank_path))
     assert changed.render_key != first.render_key and stream_hash(changed.rows) != stream_hash(first.rows)
+
+
+def test_render_key_covers_exclusions(world, tmp_path):
+    db, schedule = world
+    meta = dict(db.execute("SELECT * FROM meta").fetchone())
+    standalone = cutting(db, schedule)
+    shared = cutting(db, schedule, exclude_tokens=frozenset([TOKEN, "caf\u00e9-7733"]))
+    again = cutting(db, schedule, exclude_tokens=frozenset(["cafe\u0301-7733", TOKEN]))
+    other = cutting(db, schedule, exclude_tokens=frozenset([TOKEN, "OTHER-7733"]))
+    assert standalone.exclude_sha256 is None
+    assert shared.exclude_sha256 == again.exclude_sha256 == sha256(canon(sorted([TOKEN, "caf\u00e9-7733"]))).hexdigest()
+    assert shared.render_key == again.render_key == render_key(shared, meta)
+    assert len({standalone.render_key, shared.render_key, other.render_key}) == 3
+    for name, result in (("none", standalone), ("shared", shared)):
+        out = tmp_path / name
+        out.mkdir()
+        manifest = write_branch(out, result)
+        assert manifest["exclude_sha256"] == result.exclude_sha256
+        assert manifest["render_key"] == result.render_key
+        assert verify_branch(out, "B0") == manifest
 
 
 @pytest.mark.parametrize("case", ["byte", "manifest", "row-seal", "canonical", "session", "missing"])

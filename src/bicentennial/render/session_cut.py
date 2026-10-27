@@ -13,7 +13,7 @@ from bicentennial.world import unit, world_hash
 from bicentennial.world.tokens import estimate_tokens, meets_sprint
 
 from . import channel_stamp, default_bank, render_event
-from .stream import _canary, _lint_form, content, lint, render_key, seal
+from .stream import _canary, _lint_form, _present, content, lint, render_key, seal
 
 LEVELS = ("warn", "error", "info")
 SERVICES = ("transport", "spool", "collector")
@@ -33,6 +33,7 @@ class Cut:
     bank_id: str
     bank_sha256: str
     bank_calibrated: bool
+    exclude_sha256: str | None
     render_key: str
 
 
@@ -102,7 +103,8 @@ def cut(db, schedule, *, branch, principal_id, expected_state, bank=None,
                        call_id=mint_id(canon([schedule.seed, schedule.life, "call", e["id"]]).decode(), 0),
                        expected_result_sha256=sha256_canon(payload["result"]),
                        render=dict(lane="template", template_id=None, voice="sandbox"))
-            if any(unicodedata.normalize("NFC", t["value"]) not in _lint_form(row)
+            form = _lint_form(row)
+            if any(not _present(unicodedata.normalize("NFC", t["value"]), form)
                    for t in tokens if t["fact_id"] in r.fact_ids):
                 raise ValueError(f"missing linked token: {e['id']}")
         else:
@@ -150,5 +152,6 @@ def cut(db, schedule, *, branch, principal_id, expected_state, bank=None,
     if violations:
         raise ValueError(f"closed-world violations: {violations}")
     result = Cut(schedule.life, branch, tuple(rows), tuple(sessions), world_hash(db),
-                 sha256(schedule.to_json()).hexdigest(), bank.bank_id, bank.sha256, bank.calibrated, "")
+                 sha256(schedule.to_json()).hexdigest(), bank.bank_id, bank.sha256, bank.calibrated,
+                 None if exclude_tokens is None else sha256(canon(excluded)).hexdigest(), "")
     return replace(result, render_key=render_key(result, meta))
