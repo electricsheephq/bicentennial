@@ -1,0 +1,19 @@
+name = "holographic"
+licence = "MIT"
+# Catalog a6d009315bc72a7c4e68d6a0e60a6eeed68080fd; unmeasured:
+# git archive --format=tar a6d009315bc72a7c4e68d6a0e60a6eeed68080fd | shasum -a 256
+artifact = {name = "hermes-plugin-holographic", version = "0.13.0", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
+write_tools = [
+    {tool = "fact_store", actions = ["add", "change", "end", "correct", "revert", "merge", "forget", "update", "remove", "alias", "rename", "delete_entity", "split", "rebuild_entities"]},
+    {tool = "fact_feedback", actions = ["helpful", "unhelpful", "confirmed"]},
+]
+read_tools = ["fact_store"]
+recall = {tool = "fact_store", argument_template = {action = "search", query = "{prompt}"}}
+own_model_routes = []
+structured_formats = {}
+settle = {kind = "none", bound_s = 0}
+harness = "hermes"
+surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
+fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+machine_class = "light"
+benchmark_operator_runs = true
