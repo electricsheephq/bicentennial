@@ -110,12 +110,49 @@ def test_role_costs_counts_sent_attempts_holds_and_integer_usage():
         dict(role="replay_main", resp="script", diagnostics=[])]),
         dict(type="request", attempt_id="unrelated", upstream=[]),
         dict(type="session", attempt_id="a")]
-    blobs = {"live": {"usage": {"prompt_tokens": 12, "completion_tokens": 3}}, "script": {}}
+    blobs = {"live": {"usage": {"prompt_tokens": 12, "completion_tokens": 3}},
+             "script": {"usage": {"prompt_tokens": 40, "completion_tokens": 5,
+                                   "total_tokens": 45, "estimated": True}}}
     costs = role_costs(rows, blobs, {"a": 2})
     assert costs == {2: {"write_turn": Cost(requests=1, upstream_ms=3000, held_ms=500,
                                            input_tokens=12, output_tokens=3), "replay_main/cursor": Cost()}}
     blobs["live"]["usage"] = {"prompt_tokens": True, "completion_tokens": "3"}
     assert role_costs(rows, blobs, {"a": 2})[2]["write_turn"].input_tokens == 0
+
+
+@pytest.mark.parametrize(("diagnostics", "held_ms"), [
+    ([dict(kind="hold", reason="quota", held_ms=600000),
+      dict(kind="hold", reason="operator", held_ms=600000),
+      dict(kind="try", sent=True, t_ms=3000)], 600000),
+    ([dict(kind="hold", reason="quota", held_ms=600000),
+      dict(kind="hold", reason="operator", held_ms=600000),
+      dict(kind="try", sent=True, t_ms=3000),
+      dict(kind="hold", reason="quota", held_ms=200000),
+      dict(kind="hold", reason="operator", held_ms=300000)], 900000),
+])
+def test_role_costs_counts_each_consecutive_hold_run_once(diagnostics, held_ms):
+    rows = [dict(type="request", attempt_id="a", role="replay_main", subrole="cursor",
+                 upstream=[dict(role="write_turn", diagnostics=diagnostics)])]
+    assert role_costs(rows, {}, {"a": 2}) == {
+        2: {"write_turn": Cost(requests=1, upstream_ms=3000, held_ms=held_ms)}}
+
+
+@pytest.mark.parametrize(("usage", "tokens"), [
+    ({"input_tokens": 12, "output_tokens": 3}, (12, 3)),
+    ({"prompt_tokens": 12, "output_tokens": 3}, (12, 3)),
+    ({"prompt_tokens": 0, "completion_tokens": 3, "input_tokens": 99, "output_tokens": 99}, (0, 3)),
+    ({"prompt_tokens": True, "completion_tokens": "3", "input_tokens": 99, "output_tokens": 99},
+     (0, 0)),
+    ({"input_tokens": True, "output_tokens": "3"}, (0, 0)),
+    ({"input_tokens": 12, "output_tokens": 3, "estimated": True}, (0, 0)),
+])
+def test_role_costs_reads_both_usage_wires_with_integer_provider_tokens(usage, tokens):
+    rows = [dict(type="request", attempt_id="a", role="replay_main", subrole="cursor",
+                 upstream=[dict(role="write_turn", resp="reply", diagnostics=[
+                     dict(kind="try", sent=True, t_ms=3000)])])]
+    assert role_costs(rows, {"reply": {"usage": usage}}, {"a": 2}) == {
+        2: {"write_turn": Cost(requests=1, upstream_ms=3000,
+                              input_tokens=tokens[0], output_tokens=tokens[1])}}
 
 
 def test_keyed_exact_arithmetic_and_breakeven_boundary_256_cases():

@@ -178,11 +178,20 @@ def role_costs(rows, blobs, sessions: dict[str, int]) -> dict[int, dict[str, Cos
             key = role if role != row["role"] else f"{role}/{row['subrole']}"
             diags = upstream.get("diagnostics", [])
             tries = [d for d in diags if d.get("kind") == "try" and d.get("sent") is True]
+            held_ms, hold = 0, 0
+            for d in diags:
+                if d.get("kind") == "hold":
+                    hold = max(hold, d.get("held_ms", 0))
+                else:
+                    held_ms, hold = held_ms + hold, 0
             usage = (blobs[upstream["resp"]].get("usage") or {}) if upstream.get("resp") else {}
-            tokens = [usage.get(k) if type(usage.get(k)) is int else 0
-                      for k in ("prompt_tokens", "completion_tokens")]
+            if usage.get("estimated") is True:
+                usage = {}
+            tokens = [usage.get(k, usage.get(fallback)) for k, fallback in
+                      (("prompt_tokens", "input_tokens"), ("completion_tokens", "output_tokens"))]
+            tokens = [n if type(n) is int else 0 for n in tokens]
             cost = Cost(requests=len(tries), upstream_ms=sum(d.get("t_ms", 0) for d in tries),
-                        held_ms=sum(d.get("held_ms", 0) for d in diags if d.get("kind") == "hold"),
+                        held_ms=held_ms + hold,
                         input_tokens=tokens[0], output_tokens=tokens[1])
             roles[key] = roles.get(key, Cost()) + cost
     return result
