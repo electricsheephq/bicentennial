@@ -473,7 +473,7 @@ def test_purity_and_public_doc():
     assert len(doc.splitlines()) <= 80
     assert all(line in doc for line in ('TOP_K = 5', 'CHUNK_CHARS = 240',
                                        'EMBEDDER_NAME = "hashed-tfidf-v1"', 'cached, API mode'))
-    assert "/Users/" not in doc
+    assert "/" + "Users/" not in doc and "/" + "home/" not in doc
     assert len(path.read_text().splitlines()) <= 340
 
 
