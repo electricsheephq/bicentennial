@@ -111,24 +111,27 @@ def _factory_names():
     return tuple(FACTORIES)
 
 
-def _call(adapter, method, *args):
+def _call(adapter, method, *args, infra=()):
     try:
         return getattr(adapter, method)(*args)
+    except infra:
+        raise
     except Exception:
         raise SystemFault(method) from None
 
 
-def _settle(adapter, bound_s):
-    if _call(adapter, "settle", bound_s) is not True:
+def _settle(adapter, bound_s, infra=()):
+    if _call(adapter, "settle", bound_s, infra=infra) is not True:
         raise SystemFault("settle")
 
 
 class _Guard:
-    def __init__(self, adapter):
+    def __init__(self, adapter, infra=()):
         self.adapter = adapter
+        self.infra = infra
 
     def query(self, task, now):
-        answer = _call(self.adapter, "query", task, now)
+        answer = _call(self.adapter, "query", task, now, infra=self.infra)
         try:
             shape(answer, dict(output=str, citations=list, confidence_milli=int))
             if any(type(c) is not str for c in answer["citations"]) or not (
@@ -139,25 +142,30 @@ class _Guard:
         return answer
 
 
-def _close(adapter):
+def _close(adapter, infra=(), error=None):
     if adapter is not None and hasattr(adapter, "close"):
-        _call(adapter, "close")
+        try:
+            _call(adapter, "close", infra=infra)
+        except BaseException as close_error:
+            if error is None:
+                raise
+            error.add_note(f"close() failed: {close_error!r}")
 
 
-def drive(life, branch, worlds, keys, items, factory, *, oracle, forget, bound_s):
+def drive(life, branch, worlds, keys, items, factory, *, oracle, forget, bound_s, infra=()):
     """Apply session faults, then probe through the guarded memory-layer API."""
-    adapter, ingested = None, []
+    adapter, ingested, error = None, [], None
 
     def crash():
         nonlocal adapter
-        _settle(adapter, bound_s)
-        data = _call(adapter, "checkpoint")
+        _settle(adapter, bound_s, infra)
+        data = _call(adapter, "checkpoint", infra=infra)
         if type(data) is not bytes:
             raise SystemFault("checkpoint")
         old, adapter = adapter, None
-        _close(old)
-        adapter = _call_factory(factory)
-        _call(adapter, "restore", data)
+        _close(old, infra)
+        adapter = _call_factory(factory, infra)
+        _call(adapter, "restore", data, infra=infra)
 
     db, cut = worlds[branch]
     events = api_events(cut)
@@ -168,30 +176,30 @@ def drive(life, branch, worlds, keys, items, factory, *, oracle, forget, bound_s
         "(SELECT value FROM json_each(?)) ORDER BY token_id", (r[1],))]
         for r in db.execute("SELECT event_id, covered_fact_ids_json FROM forget_request ORDER BY event_id")}
     try:
-        adapter = _call_factory(factory)
-        _call(adapter, "reset")
+        adapter = _call_factory(factory, infra)
+        _call(adapter, "reset", infra=infra)
         for plan in life.schedule.sessions:
             if plan.index > 1 and hasattr(adapter, "begin_session"):
-                _settle(adapter, bound_s)
-                _call(adapter, "begin_session", plan.index)
+                _settle(adapter, bound_s, infra)
+                _call(adapter, "begin_session", plan.index, infra=infra)
             faults = [f for f in life.schedule.fault_lite() if f["session"] == plan.index]
             for fault in faults:
                 if fault["kind"] == "restart":
                     crash()
                 elif fault["kind"] == "compaction":
-                    _call(adapter, "maintain")
+                    _call(adapter, "maintain", infra=infra)
             kills = [f["turn"] for f in faults if f["kind"] == "kill"]
             for event in (e for e in events if sessions[e["event_id"]] == plan.session_id):
                 while kills and bisect.bisect_right(plan.turn_t, event["t_sim"]) > kills[0]:
                     crash()
                     kills.pop(0)
-                _call(adapter, "ingest", event)
+                _call(adapter, "ingest", event, infra=infra)
                 ingested.append(event)
                 if forget and event["event_id"] in requests:
                     tokens = [unicodedata.normalize("NFC", v) for v in requests[event["event_id"]]]
                     targets = sorted({e["event_id"] for e in ingested if any(
                         v in unicodedata.normalize("NFC", e["text"]) for v in tokens)})
-                    _call(adapter, "forget", dict(event_ids=targets))
+                    _call(adapter, "forget", dict(event_ids=targets), infra=infra)
             for _ in kills:
                 crash()
         results = []
@@ -200,33 +208,42 @@ def drive(life, branch, worlds, keys, items, factory, *, oracle, forget, bound_s
             iid = item["item_id"]
             if branches[iid] != branch:
                 continue
-            _settle(adapter, bound_s)
+            _settle(adapter, bound_s, infra)
             now = life.schedule.sessions[item["probe_point"] - 1].t_end
             injected = ()
             if hasattr(adapter, "probe"):
                 task = dict(task_id=iid, prompt=keys[iid]["recall_query"])
                 if oracle:
                     task["oracle_evidence"] = list(keys[iid]["oracle_spans"])
-                injected = _call(adapter, "probe", task, now)
-            results.append(outcome(read_api(_Guard(adapter), reader_view(item), keys[iid], now,
+                injected = _call(adapter, "probe", task, now, infra=infra)
+            results.append(outcome(read_api(_Guard(adapter, infra), reader_view(item), keys[iid], now,
                                             oracle=oracle, injected=injected)))
         return results
+    except BaseException as caught:
+        error = caught
+        raise
     finally:
-        _close(adapter)
+        _close(adapter, infra, error)
 
 
-def _call_factory(factory):
+def _call_factory(factory, infra=()):
     try:
         return factory()
+    except infra:
+        raise
     except Exception:
         raise SystemFault("factory") from None
 
 
-def observe(life, worlds, keys, items, factory, *, oracle=False, forget=True, bound_s=SETTLE_BOUND_S):
+def observe(life, worlds, keys, items, factory, *, oracle=False, forget=True,
+            bound_s=SETTLE_BOUND_S, infra=()):
     try:
         return sorted([o for branch in sorted(worlds) for o in drive(
-            life, branch, worlds, keys, items, factory, oracle=oracle, forget=forget, bound_s=bound_s)],
+            life, branch, worlds, keys, items, factory, oracle=oracle, forget=forget,
+            bound_s=bound_s, infra=infra)],
             key=lambda o: o["item_id"])
+    except infra:
+        raise
     except SystemFault:
         return "system_failure"
 
@@ -290,7 +307,7 @@ def _observations(life, worlds, keys, items):
             for name in _factory_names()}
 
 
-def _evaluate(case, root, catalogue, factory=None, bound_s=SETTLE_BOUND_S):
+def _evaluate(case, root, catalogue, factory=None, bound_s=SETTLE_BOUND_S, infra=()):
     try:
         with regenerate(case, root=root, catalogue=catalogue) as (life, worlds, keys, items):
             if factory is None:
@@ -306,7 +323,7 @@ def _evaluate(case, root, catalogue, factory=None, bound_s=SETTLE_BOUND_S):
                                        if by_left.get(i) != by_right.get(i))
                         return CaseResult(case.case_id, "FAIL", "mismatch", f"{name}/{iid}")
             else:
-                observed = observe(life, worlds, keys, items, factory, bound_s=bound_s)
+                observed = observe(life, worlds, keys, items, factory, bound_s=bound_s, infra=infra)
                 if observed == "system_failure":
                     return CaseResult(case.case_id, "FAIL", "system_failure", None)
                 actual = [[o["item_id"], o["selected_option"]] for o in observed]
@@ -317,6 +334,8 @@ def _evaluate(case, root, catalogue, factory=None, bound_s=SETTLE_BOUND_S):
                                if i not in left or i not in right or left[i] != right[i])
                     return CaseResult(case.case_id, "FAIL", "mismatch", iid)
         return CaseResult(case.case_id, "PASS", "", None)
+    except infra:
+        return CaseResult(case.case_id, "INFRA_FAILURE", "infra", None)
     except StaleCase as error:
         return CaseResult(case.case_id, "INFRA_FAILURE", "stale_case", error.field)
     except Exception:
@@ -327,12 +346,12 @@ def replay(case, *, root, catalogue):
     return _evaluate(case, root, catalogue)
 
 
-def run_case(case, factory, *, root, catalogue, bound_s):
-    return _evaluate(case, root, catalogue, factory, bound_s)
+def run_case(case, factory, *, root, catalogue, bound_s, infra=()):
+    return _evaluate(case, root, catalogue, factory, bound_s, infra)
 
 
-def run_corpus(cases, factory, *, root, catalogue, bound_s):
-    return tuple(run_case(c, factory, root=root, catalogue=catalogue, bound_s=bound_s)
+def run_corpus(cases, factory, *, root, catalogue, bound_s, infra=()):
+    return tuple(run_case(c, factory, root=root, catalogue=catalogue, bound_s=bound_s, infra=infra)
                  for c in sorted(cases, key=lambda c: c.case_id))
 
 

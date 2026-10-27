@@ -437,6 +437,136 @@ def test_system_faults(catalogue, corpus, tmp_path, fault):
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize("method", ["factory", "reset", "ingest", "settle", "checkpoint",
+                                    "restore", "query", "close"])
+@pytest.mark.parametrize("named", [False, True])
+def test_infra_attribution(catalogue, corpus, tmp_path, method, named):
+    from bicentennial.api.adapters.reference_store import ReferenceStore
+    from bicentennial.corpus.run import observe, regenerate, run_case, run_corpus
+
+    class BenchmarkFault(RuntimeError):
+        pass
+
+    fault, instances = BenchmarkFault(method), []
+
+    class Host(ReferenceStore):
+        def __init__(self):
+            ReferenceStore.reset(self)
+            self.closed = 0
+            instances.append(self)
+
+        def close(self):
+            self.closed += 1
+            if method == "close":
+                raise fault
+
+    def fail(*args):
+        raise fault
+
+    if method != "factory" and method != "close":
+        setattr(Host, method, fail)
+    factory = fail if method == "factory" else Host
+    infra = (BenchmarkFault,) if named else ()
+    case = next(c for c in corpus if any(f["kind"] == "kill" for f in c.fault_points))
+    result = run_case(case, factory, root=tmp_path, catalogue=catalogue, bound_s=5, infra=infra)
+    expected = ("INFRA_FAILURE", "infra", None) if named else ("FAIL", "system_failure", None)
+    assert (result.status, result.reason, result.first_diff) == expected
+    results = run_corpus([case], factory, root=tmp_path, catalogue=catalogue, bound_s=5, infra=infra)
+    assert results == (result,)
+    with regenerate(case, root=tmp_path, catalogue=catalogue) as data:
+        if named:
+            with pytest.raises(BenchmarkFault) as caught:
+                observe(*data, factory, infra=infra)
+            assert caught.value is fault
+        else:
+            assert observe(*data, factory) == "system_failure"
+    assert all(h.closed == 1 for h in instances)
+    assert bool(instances) == (method != "factory")
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("phase", ["probe", "checkpoint", "restore"])
+def test_close_preserves_benchmark_exception(catalogue, corpus, tmp_path, monkeypatch, phase):
+    import bicentennial.corpus.run as run
+    from bicentennial.api.adapters.reference_store import ReferenceStore
+
+    instances = []
+    original = IndexError(phase)
+
+    class Host(ReferenceStore):
+        def __init__(self):
+            super().__init__()
+            self.closed = 0
+            instances.append(self)
+
+        def close(self):
+            self.closed += 1
+            raise ValueError("close")
+
+    def fail(*args, **kwargs):
+        raise original
+
+    case = next(c for c in corpus if any(f["kind"] == "kill" for f in c.fault_points))
+    kwargs = {}
+    if phase == "probe":
+        monkeypatch.setattr(run, "read_api", fail)
+        # Reach the probe before cleanup, without an earlier crash-close failure.
+        case = next(c for c in corpus if not c.fault_points)
+    else:
+        setattr(Host, phase, fail)
+        kwargs["infra"] = (IndexError,)
+        if phase == "restore":
+            # The first adapter closes successfully so the restored one can fail.
+            def close(self):
+                self.closed += 1
+                if instances.index(self) % 2 == 1:
+                    raise ValueError("close")
+            Host.close = close
+
+    with run.regenerate(case, root=tmp_path, catalogue=catalogue) as data:
+        life, worlds, keys, items = data
+        with pytest.raises(IndexError) as caught:
+            run.drive(life, "B0", worlds, keys, items, Host,
+                      oracle=False, forget=True, bound_s=5, **kwargs)
+        assert caught.value is original
+        assert any("close" in note for note in original.__notes__)
+    result = run.run_case(case, Host, root=tmp_path, catalogue=catalogue, bound_s=5, **kwargs)
+    assert (result.status, result.reason, result.first_diff) == ("INFRA_FAILURE", "infra", None)
+    assert instances and all(h.closed == 1 for h in instances)
+    assert not list(tmp_path.iterdir())
+
+
+def test_close_preserves_system_fault(catalogue, corpus, tmp_path):
+    from bicentennial.api.adapters.reference_store import ReferenceStore
+    from bicentennial.corpus.run import SystemFault, drive, regenerate, run_case
+
+    instances = []
+
+    class Host(ReferenceStore):
+        def __init__(self):
+            super().__init__()
+            self.closed = 0
+            instances.append(self)
+
+        def ingest(self, event):
+            raise RuntimeError("ingest")
+
+        def close(self):
+            self.closed += 1
+            raise ValueError("close")
+
+    case = corpus[0]
+    with regenerate(case, root=tmp_path, catalogue=catalogue) as (life, worlds, keys, items):
+        with pytest.raises(SystemFault) as caught:
+            drive(life, "B0", worlds, keys, items, Host, oracle=False, forget=True, bound_s=5)
+        assert str(caught.value) == "ingest"
+        assert any("close" in note for note in caught.value.__notes__)
+    result = run_case(case, Host, root=tmp_path, catalogue=catalogue, bound_s=5)
+    assert (result.status, result.reason, result.first_diff) == ("FAIL", "system_failure", None)
+    assert instances and all(h.closed == 1 for h in instances)
+    assert not list(tmp_path.iterdir())
+
+
 def test_cli_hash_seeds(corpus, tmp_path):
     outputs = []
     for seed in ("0", "random"):
