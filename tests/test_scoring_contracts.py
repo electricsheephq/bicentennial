@@ -6,11 +6,12 @@ import os
 import re
 import subprocess
 import sys
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
 
-from bicentennial.canon import canon
+from bicentennial.canon import canon, milli
 from bicentennial.contracts.bundle import bundle_outcome
 from bicentennial.contracts.run import SCHEMAS, validate
 
@@ -468,12 +469,32 @@ def test_system_competing_share_is_a_milli_share(value, valid):
         validate("card_ring0", card)
 
 
-def test_per_item_accuracy_rows_disclose_excluded_counts():
+def accuracy_card():
+    """The example card plus four Act items in cell act-1: correct, omitted, BLOCKED, N/A_CLOCK."""
     card = example("card_ring0")
-    row = dict(cell_id="act-1", correct=1, eligible=2, accuracy_milli=500,
-               blocked=1, na_exposure=0, na_clock=2)
-    card["per_item_accuracy"] = [row]
+    cell = dict(cell_id="act-1", track="Wake")
+    missing = dict(score_milli=None, worst_case_milli=None, base_verdict=None, accuracy_correct=None)
+    acts = [action(item_id="act-a", **cell),
+            action(item_id="act-b", base_verdict="OMISSION", score_milli=0,
+                   accuracy_correct=False, **cell),
+            action(item_id="act-c", failure_class="BLOCKED", **missing, **cell),
+            action(item_id="act-d", failure_class="N/A_CLOCK", **missing, **cell)]
+    template = card["bundles"][0]
+    for n, (a, b) in enumerate([acts[:2], acts[2:]], 1):
+        card["bundles"].append(dict(copy.deepcopy(template), bundle_id=f"bundle-act-{n}",
+                                    cell_id="act-1", items=[a["item_id"], b["item_id"]],
+                                    **bundle_outcome(a, b)))
+    card["items"] = sorted(card["items"] + acts, key=lambda item: item["item_id"])
+    card["coverage"].update(assigned=3, scored=2, blocked=1, coverage_milli=667)
+    card["per_item_accuracy"] = [dict(cell_id="act-1", correct=1, eligible=2, accuracy_milli=500,
+                                      blocked=1, na_exposure=0, na_clock=1)]
+    return card
+
+
+def test_per_item_accuracy_rows_disclose_excluded_counts():
+    card = accuracy_card()
     validate("card_ring0", card)
+    row = card["per_item_accuracy"][0]
     for key in ("blocked", "na_exposure", "na_clock"):
         for bad in (-1, None, True):
             card["per_item_accuracy"] = [dict(row, **{key: bad})]
@@ -482,6 +503,26 @@ def test_per_item_accuracy_rows_disclose_excluded_counts():
         card["per_item_accuracy"] = [{k: v for k, v in row.items() if k != key}]
         with pytest.raises(ValueError):
             validate("card_ring0", card)
+
+
+@pytest.mark.parametrize("edit", [
+    lambda c: c["per_item_accuracy"][0].update(correct=2, accuracy_milli=1000),
+    lambda c: c["per_item_accuracy"][0].update(na_clock=0),
+    lambda c: c["per_item_accuracy"][0].update(cell_id="act-2"),
+    lambda c: c["bundles"].append(dict(c["bundles"][1], bundle_id="bundle-act-3")),
+    lambda c: c["bundles"].pop(1),
+], ids=["correct-inflated", "exclusion-hidden", "no-such-cell", "bundle-duplicated",
+        "bundle-dropped"])
+def test_card_summaries_follow_the_action_outcomes(edit):
+    card = accuracy_card()
+    edit(card)
+    if len(card["bundles"]) != 3:  # keep coverage consistent so only the new rule can refuse
+        card["coverage"].update(assigned=len(card["bundles"]),
+                                scored=len(card["bundles"]) - 1,
+                                coverage_milli=milli(Fraction(len(card["bundles"]) - 1,
+                                                              len(card["bundles"]))))
+    with pytest.raises(ValueError):
+        validate("card_ring0", card)
 
 
 @pytest.mark.parametrize("edit", [

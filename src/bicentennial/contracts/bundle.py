@@ -163,6 +163,27 @@ def _card(card):
         _require(bundle["cell_id"] == a["cell_id"], "bundle cell mismatch")
         expected = bundle_outcome(a, b)
         _require(all(bundle[k] == v for k, v in expected.items()), "bundle reduction mismatch")
+    # DESIGN §5.1a: each action item is in exactly one bundle, so no outcome is dropped or counted twice.
+    members = [i for bundle in card["bundles"] for i in bundle["items"]]
+    _require(len(members) == len(set(members)), "an item sits in two bundles")
+    _require({i for i, item in items.items() if item["stage"] == "act"} <= set(members),
+             "an action item belongs to no bundle")
+    # PREREG §3: per-cell accuracy counts come from the card's own action outcomes.
+    counts = {}
+    for item in items.values():
+        if item["stage"] == "act":
+            row = counts.setdefault(item["cell_id"], dict.fromkeys(
+                ("correct", "eligible", "blocked", "na_exposure", "na_clock"), 0))
+            failure = item["failure_class"]
+            if failure in NONRESULTS:
+                row[failure.lower().replace("n/a_", "na_")] += 1
+            else:
+                row["eligible"] += 1
+                row["correct"] += item["accuracy_correct"] is True
+    for row in card["per_item_accuracy"]:
+        expected = counts.get(row["cell_id"])
+        _require(expected is not None and all(row[k] == v for k, v in expected.items()),
+                 "per-item accuracy disagrees with the card's action outcomes")
     for rows, low in ((card["aggregates"], -1000),
                       (card["sensitivity"]["minus_one_at_zero"], -1000),
                       (card["sensitivity"]["minus_one_at_minus_two"], -2000)):
