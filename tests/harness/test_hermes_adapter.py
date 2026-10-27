@@ -23,7 +23,7 @@ from bicentennial.harness import egress
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed, HermesAdapter
 from bicentennial.harness.hermes.config import CONFIG_DEVIATIONS
-from bicentennial.ledger import verify
+from bicentennial.ledger import BlobStore, Guard, verify
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.envserver.honeypot import plant
@@ -77,6 +77,24 @@ def make(scratch, name, *, entry=ENTRY, faults=FAULTS, script=SCRIPT, routes=ROU
 
 def session(a, index):
     return a.run_session(index, sim_t_s=BASE + index * DAY, lock_hash=LOCK, attempt_id=f"attempt-s{index}")
+
+
+def test_boundary_resume_named_session_retains_saved_summary(tmp_path, niced):
+    a = make(tmp_path, "boundary-resume", faults=[])
+    try:
+        first = session(a, 1)
+        assert a._worker.proc.poll() is not None
+        summary = "Retained synthetic compaction summary."
+        saved = a.paths["hermes_home"] / "fake-sessions" / f"{first.acp_session_id}.json"
+        saved.write_bytes(canon([{"role": "assistant", "content": summary}]))
+        resumed = a.run_session(2, sim_t_s=BASE + 2 * DAY, lock_hash=LOCK,
+                                attempt_id="boundary-resumed", resume_session_id=first.acp_session_id)
+        assert resumed.acp_session_id == first.acp_session_id
+        row = next(r for r in a.records() if r["attempt_id"] == "boundary-resumed")
+        blob = BlobStore(a.paths["root"] / "ledger/blobs", Guard([])).get(row["req"])
+        assert summary.encode() in blob
+    finally:
+        a.close()
 
 
 def spawn_log(home, log):
