@@ -30,7 +30,7 @@ G2_KINDS = ("person", "preference", "booking", "trip", "purchase", "place", "ven
 G2_CHANNELS = ("chat", "mail", "notes", "calendar")
 ENV_SURFACES = ("mail", "notes", "calendar")
 BOOKING_CHANNELS = ("mail", "calendar")
-RESERVED = ("forget", "authorised_for")
+RESERVED = ("forget", "forget_ref", "authorised_for")
 GENERATOR_VERSION = "g2-assistant-0.1"
 
 

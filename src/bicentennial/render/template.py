@@ -101,7 +101,13 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
         if (request := fact["predicate"] == "forget") and (link["role"], fact["speech_act"], modality, fact["strength"],
                 fact["polarity"], tokens, commitment, planted) != ("assert", "assert", "stated", 1000, "affirm", [], None, None):
             raise ValueError(f"fact {fid}: a forget request names a predicate in a plain stated assert, never a value")
-        cell = bank.forget if request else bank.cell(fact["speech_act"], modality, fact["strength"], fact["polarity"])
+        marker = fact["predicate"] == "forget_ref"
+        if marker and (not forget or (link["role"], fact["speech_act"], modality, fact["strength"],
+                fact["polarity"], len(tokens), commitment, planted) != (
+                    "assert", "assert", "stated", 1000, "affirm", 1, None, None)):
+            raise ValueError(f"fact {fid}: a forget marker needs a request and one token in a plain stated assert")
+        cell = bank.forget if request else bank.forget_ref if marker else bank.cell(
+            fact["speech_act"], modality, fact["strength"], fact["polarity"])
         gold = gold or bool(tokens or commitment or planted) or link["role"] == "retract" or (
             fact["modality"] in ("retracted", "planted") or fact["speech_act"] in ("hedge", "propose", "quote"))
         if len(tokens) > 1:
@@ -123,6 +129,8 @@ def render_event(db: sqlite3.Connection, event_id: str, *, life: str, tz: str,
             clauses.append((bank.when, {"when": (when, None)}, fid))
     if forget != any(phrase in bank.forget for phrase, _, _ in clauses):
         raise ValueError(f"event {event_id}: a forget_request row and a linked forget request fact go together")
+    if forget != (sum(p in bank.forget_ref for p, _, _ in clauses) == 1):
+        raise ValueError(f"event {event_id}: a forget request needs exactly one marker clause")
     style = bank.channels[event["channel"]]
     stamp = channel_stamp(event["t_sim"], tz, style)
     prefix = {"chat": stamp + " ", "log": stamp + " ", "mail": stamp + "\n\n"}.get(style, "")

@@ -4,6 +4,7 @@ import ast
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -97,10 +98,10 @@ def test_base_counts(name, request):
     assert 8 <= n <= 12 and n == len(life.people.people)
     assert kinds == {"preference": 5, "booking": 2, "trip": 1, "purchase": 2, "place": 4, "venue": 1}
     assert one(db, "SELECT count(*) FROM event WHERE kind != 'filler'") == 33
-    assert one(db, "SELECT count(*) FROM fact") == 37
-    assert one(db, "SELECT count(*) FROM locked_token") == 34
+    assert one(db, "SELECT count(*) FROM fact") == 38
+    assert one(db, "SELECT count(*) FROM locked_token") == 35
     assert dict(db.execute("SELECT role, count(*) FROM link GROUP BY role").fetchall()) == {
-        "assert": 33, "retract": 7, "mention": 2}
+        "assert": 34, "retract": 7, "mention": 2}
     assert tuple(db.execute("SELECT count(*), sum(valid_to_t IS NULL) FROM attr").fetchone()) == (27, 20)
     # The packet says 8 mail rows; the composition delivers 7 (fact, from_t) pairs by mail: three slot values,
     # the seat sibling, the passport cue mention, the lure and the plant (deviation recorded in the report).
@@ -125,6 +126,8 @@ def test_plant_and_forget(t1):
     assert json.loads(record["object"]) == "keep" and p.twin.evidence_object == "cancel"
     assert p.twin.evidence_fact_id == record["id"] == mint(life.schedule, "g2-plants", "saturday", "fact", "record", 0)
     f = life.forget
+    assert re.fullmatch(r"REQ-[0-9]{6}", f.marker) and f.marker not in f.selector
+    assert f.marker in render_event(db, f.event_id, life=LIFE, tz=life.schedule.tz).text
     address = mint(life.schedule, "g2-forget", "ex", "fact", "fact", 0)
     birthday = mint(life.schedule, "g2-forget", "ex", "fact", "fact", 1)
     assert f.covered == (address,) and f.neighbours == (birthday,)
@@ -536,7 +539,8 @@ def test_forget_refusals(tmp_path):
     for change in (dict(subject=p), dict(subject=e["trip"]), dict(covered=()), dict(neighbours=()),
                    dict(covered=["address", "ADDR"]), dict(covered=(("address",),)),
                    dict(neighbours=(("address", "BDAY"),)), dict(covered=(("Address", "ADDR"),)),
-                   dict(covered=(("forget", "ADDR"),)), dict(neighbours=(("authorised_for", "BDAY"),)),
+                   dict(covered=(("forget", "ADDR"),)), dict(covered=(("forget_ref", "ADDR"),)),
+                   dict(neighbours=(("forget_ref", "BDAY"),)), dict(neighbours=(("authorised_for", "BDAY"),)),
                    dict(summaries=3), dict(summaries=-1), dict(summaries=True),
                    dict(at=((1, 1), (3, 1), (2, 1))), dict(at=((2, 1), (1, 1), (3, 1))),
                    dict(at=((1, 1), (3, 1))), dict(at=((1, 1), (1, 2), (3, 1))), dict(summaries=0, at=((2, 1), (2, 2))),
