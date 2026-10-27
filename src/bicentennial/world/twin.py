@@ -25,6 +25,7 @@ from .export import export_jsonl
 from .lineage import closure
 from .processes import (
     LOW_SALIENCE,
+    NUMBER,
     SOFT,
     check_tokens,
     check_values,
@@ -116,7 +117,7 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
             kind = "value"
             token, = find("locked_token", fact_id=decisive_fact_id)
             stem, _ = re.fullmatch(r"([A-Z]{2,12})-([0-9]{6})", token["value"]).groups()
-            if (f["object"] != token["value"] or f["predicate"] == "forget"
+            if (f["object"] != token["value"] or f["predicate"] in ("forget", "forget_ref")
                     or find("commitment", fact_id=decisive_fact_id) or find("plant", fact_id=decisive_fact_id)
                     or any(find("event", id=link["event_id"])[0]["payload_json"] for link in links)):
                 raise ValueError
@@ -161,14 +162,20 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
             fr = forget_request(db, request["event_id"])
             if correction_rows() is not None:
                 raise ValueError
-            for fid in fr.request_fact_ids:
-                if find("locked_token", fact_id=fid) or any(link["event_id"] != fr.event_id for link in find("link", fact_id=fid)):
+            marker, = find("locked_token", fact_id=fr.marker_fact_id)
+            if marker["value"] != find("fact", id=fr.marker_fact_id)[0]["object"]:
+                raise ValueError
+            swap("locked_token", marker)
+            request_facts = (*fr.request_fact_ids, fr.marker_fact_id)
+            for fid in request_facts:
+                if (fid in fr.request_fact_ids and find("locked_token", fact_id=fid)
+                        or any(link["event_id"] != fr.event_id for link in find("link", fact_id=fid))):
                     raise ValueError
                 swap("fact", find("fact", id=fid)[0])
                 for surface in find("fact_surface", fact_id=fid):
                     swap("fact_surface", surface)
             for link in find("link", event_id=fr.event_id):
-                if link["fact_id"] not in fr.request_fact_ids:
+                if link["fact_id"] not in request_facts:
                     raise ValueError
                 swap("link", link)
             swap("event", find("event", id=fr.event_id)[0])
@@ -273,6 +280,23 @@ def plan(db0, schedule, b0, *, principal_id):
         guards[key] = frozenset(item["gold_spans"]), guard(db0, item, meta["decisive_fact_id"])
         ids[key] = item["item_id"]
     accepted, rejected = independent(db0, schedule, flips, guards)
+    rejected = list(rejected)
+    values = dict(db0.execute("SELECT token_id, value FROM locked_token"))
+    for f in accepted:
+        if f.kind != "value":
+            continue
+        replacements = {r["row"]["token_id"]: r["row"]["value"] for line in f.into
+                        if (r := json.loads(line))["table"] == "locked_token"}
+        candidate = values | replacements
+        try:
+            check_values(list(candidate.values()))
+            numbers = [n for value in candidate.values() for n in NUMBER.findall(value)]
+            if len(set(numbers)) != len(numbers):
+                raise ValueError
+        except ValueError:
+            rejected.append(f.key)
+        else:
+            values = candidate
     if rejected:
         raise IndependenceError(rejected, ids)
     return tuple(sorted(accepted, key=lambda f: f.key))

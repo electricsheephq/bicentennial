@@ -36,7 +36,7 @@ from bicentennial.world.processes import (
 from bicentennial.world.processes.commitments import Commitment, write_commitments
 from bicentennial.world.processes.corrections import Chain, write_corrections
 from bicentennial.world.processes.filler import write_filler
-from bicentennial.world.processes.forget import forget_request, request_forget
+from bicentennial.world.processes.forget import forget_request, request_forget, verify
 from bicentennial.world.processes.incidental import Detail, write_details
 from bicentennial.world.processes.plants import (
     plant,
@@ -479,6 +479,69 @@ def test_forget_refusals(tmp_path, case):
     db.close()
 
 
+def test_forget_removes_marker(tmp_path):
+    db, s = base(tmp_path / "base.db")
+    fid = forgetting(db, s)
+    event = db.execute("SELECT event_id FROM forget_request").fetchone()[0]
+    fr = forget_request(db, event)
+    writers.insert_fact_surface(db, fact_id=fr.marker_fact_id, surface="notes", from_t=slot(s, 3, 4))
+    finish(db, s)
+    verify(db)
+    f = flip(db, s, "forget", fid)
+    db1 = twin.apply(db, (f,), tmp_path / "twin.db")
+    assert not db1.execute("SELECT 1 FROM fact WHERE predicate='forget_ref'").fetchall()
+    assert not db1.execute("SELECT 1 FROM locked_token WHERE value LIKE 'REQ-%'").fetchall()
+    assert not db1.execute("SELECT 1 FROM fact_surface WHERE fact_id=?", (fr.marker_fact_id,)).fetchall()
+    assert not db1.execute("SELECT 1 FROM link WHERE event_id=?", (event,)).fetchall()
+    verify(db1)
+    assert_swap(db, db1, (f,))
+    assert_involution(db, db1, (f,), tmp_path / "back.db")
+    db1.close()
+    db.close()
+
+
+def test_value_refuses_forget_marker(tmp_path):
+    db, s = base(tmp_path / "base.db")
+    forgetting(db, s)
+    event = db.execute("SELECT event_id FROM forget_request").fetchone()[0]
+    marker = forget_request(db, event).marker_fact_id
+    finish(db, s)
+    with pytest.raises(ValueError, match=marker):
+        flip(db, s, "value", marker)
+    db.close()
+
+
+@pytest.mark.parametrize("stems", (("VALUE", "VALUE"), ("VALUE", "OTHER")))
+def test_value_alternate_collision_rejects_later_key(tmp_path, monkeypatch, stems):
+    db, s = base(tmp_path / "base.db")
+    templates = []
+    for i, stem in enumerate(stems):
+        spec = Chain(id=f"chain-{i}", subject=NAMES[i + 1], key="status", stem=stem,
+                     depth=1, at=((1, i + 1), (2, i + 1)))
+        write_corrections(db, s, [spec], principal="principal")
+        template = QA("value", mint(s, "corrections", spec.id, "fact", "value", 1))
+        object.__setattr__(template, "template_id", f"value-{i}")
+        templates.append(template)
+    finish(db, s)
+    taken = {v.rsplit("-", 1)[1] for (v,) in db.execute("SELECT value FROM locked_token")}
+    number = next(str(n) for n in range(100000, 999999) if str(n) not in taken)
+    monkeypatch.setattr(twin, "token_value", lambda *args: f"{args[6]}-{number}")
+    c = cut(db, s, branch="B0", principal_id="principal", expected_state=state(db))
+    compiled = compile_branch(db, s, c, templates)
+    ids = {(meta["template_id"], meta["instance_key"]): item["item_id"] for item, meta in compiled.entries}
+    order = shuffle(s.seed, unit(LIFE, "twin", "order"), 0, "order",
+                    sorted(canon(list(key)).decode() for key in ids))
+    expected = tuple(json.loads(order[1]))
+    with pytest.raises(twin.IndependenceError) as error:
+        twin.twin_life(db, s, templates, world_path=tmp_path / "twin.db", out_dir=tmp_path / "branches",
+                       principal_id="principal", expected_state=state)
+    assert error.value.rejected == (expected,)
+    assert str(error.value) == ids[expected]
+    assert not (tmp_path / "twin.db").exists()
+    assert not (tmp_path / "branches").exists()
+    db.close()
+
+
 def test_apply_refusals_and_cleanup(tmp_path):
     db, s = base(tmp_path / "base.db")
     fid = chain(db, s)
@@ -513,8 +576,11 @@ def test_apply_refusals_and_cleanup(tmp_path):
 def test_life_failure_cleanup(tmp_path, monkeypatch, stage):
     db, s, templates = life(tmp_path / "base.db")
     expected = state
+    fired = False
 
     def fail(*args, **kwargs):
+        nonlocal fired
+        fired = True
         raise ValueError("injected")
 
     if stage == "state":
@@ -528,8 +594,10 @@ def test_life_failure_cleanup(tmp_path, monkeypatch, stage):
         original = twin.apply
 
         def missing_event(*args):
+            nonlocal fired
             connection = original(*args)
             # Return a real world with valid rows, but make every planned event footprint empty.
+            fired = True
             return connection
 
         monkeypatch.setattr(twin, "apply", missing_event)
@@ -546,9 +614,11 @@ def test_life_failure_cleanup(tmp_path, monkeypatch, stage):
         monkeypatch.setattr(twin, "write_branch", partial)
     else:
         monkeypatch.setattr(twin, "verify_branch" if stage == "verify" else "history_set_hash", fail)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as error:
         twin.twin_life(db, s, templates, world_path=tmp_path / "twin.db", out_dir=tmp_path / "branches",
                        principal_id="principal", expected_state=expected)
+    assert fired
+    assert str(error.value) == ("event footprint mismatch" if stage == "diff" else "injected")
     assert not (tmp_path / "twin.db").exists()
     assert not list((tmp_path / "branches").glob("*"))
     db.close()
