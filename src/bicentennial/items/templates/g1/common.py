@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from bicentennial.genres.g1_software.codebase_model import PATHS, state_at
 from bicentennial.genres.g1_software.world import EXPLICIT
-from bicentennial.items.checks.repo import RepoCheck
 from bicentennial.items.compile import _id
 from bicentennial.items.levers import wake_points
 from bicentennial.items.protocol import CANARY, Option, Template
@@ -163,10 +162,13 @@ def table(table_id, *, gold, timed, admissible, disqualifiers=()):
                 benign_extras=[])
 
 
-def repo_checks(template, db, schedule, *, check_type=RepoCheck):
+def repo_checks(template, db, schedule, *, check_type=None):
     """Build constant OR-groups, reducing changed to end-state holds because G1 templates
     refuse preexisting target names and drift-config's S0 holds the original, not the hedge.
+    RepoCheck is imported here so importing the templates never loads the repository layer.
     """
+    if check_type is None:
+        from bicentennial.items.checks.repo import RepoCheck as check_type
     result = {}
     for i in template.instances(db, schedule):
         tab = next(t for t in template.decision_tables if t["table_id"] == i.decision_table_ref)

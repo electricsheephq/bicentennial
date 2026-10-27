@@ -571,6 +571,13 @@ def test_catalogue_and_imports():
             assert not (isinstance(node, ast.Constant) and isinstance(node.value, float))
 
 
+def test_import_loads_no_repository_layer():
+    script = ("import sys, bicentennial.items.templates.g1; print(sorted(m for m in sys.modules if m in "
+              "('subprocess', 'shutil', 'bicentennial.genres.g1_software.repo', 'bicentennial.genres.g1_software.diffs')))")
+    run = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert run.stdout.strip() == "[]"
+
+
 def test_determinism_subprocesses(tmp_path):
     script = ("import runpy,sys; from pathlib import Path; from bicentennial.canon import canon; "
               "m=runpy.run_path('tests/items/test_templates_g1.py'); "
