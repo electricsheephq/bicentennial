@@ -100,6 +100,33 @@ def test_installed_reference_branch_drives(installed, tmp_path):
         assert elapsed_ms < 60_000
 
 
+def test_reference_no_update_kill_packs(tmp_path, monkeypatch):
+    catalogue = load_catalogue(ROOT / "packs/catalogue-v0.toml",
+        c7_path=ROOT / "specs/ring0/c7-partial.json", tier_path=ROOT / "tiers/life_specs/t0.toml")
+    rows = catalogue.by_id()
+    names = ["g1-drift-quote-dir-2", "g2-drift-no-update-dir-2"]
+    names += [rows[n].baseline for n in names]
+    # As in installed(), a row subset cannot satisfy the tier-wide shares.
+    monkeypatch.setattr(build, "check_distribution", lambda packs, **kwargs:
+                        SimpleNamespace(ok=True, to_obj=lambda: {}))
+    built = build.build_tier("T0", tmp_path / "build", harness_artifacts=[
+        load(REGISTRY / "hermes-native.toml")["artifact"]], rows=[rows[n] for n in names])
+    destination = tmp_path / "installed"
+    digest = install(tmp_path / "build/T0", destination)
+    fixture = destination, built["index"], digest
+    out = tmp_path / "out"
+    assert run(fixture, out) == 0
+    for rel in built["index"]["packs"]:
+        card = json.loads((out / rel / "card.json").read_bytes())
+        assert card["gate_verdict"] == "PASS"
+        assert len(card["items"]) == 2
+        assert all(item["score_milli"] == 1000 for item in card["items"])
+        verdicts = {v["invariant"]: v for v in json.loads((out / rel / "invariants.json").read_bytes())}
+        kill = "kill" in rel
+        assert verdicts["INV-NEW"]["members"] == (2 if kill else 0)
+        assert verdicts["INV-NEW"]["status"] == ("PASS" if kill else "NOT_EXERCISED")
+
+
 def test_ingest_and_forget_from_installed_world(installed, tmp_path):
     pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
     for branch in ("B0", "B1"):
