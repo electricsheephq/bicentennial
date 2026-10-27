@@ -384,3 +384,10 @@ def test_run_values_are_masked_in_object_keys():
     assert a == b == {"files": {"{SANDBOX_ROOT}/data": "same"}}
     with pytest.raises(ValueError, match="merged"):
         apply_masks({"/sandbox/run-a/x": 1, "{SANDBOX_ROOT}/x": 2}, RUN_VALUES)
+
+
+def test_a_descendant_selector_matches_inside_a_match():
+    body = {"tool_calls": [{"id": "outer-a", "metadata": {"tool_calls": [{"id": "inner-a"}]}}]}
+    masked = apply_masks(body, RUN_VALUES)
+    assert masked == {"tool_calls": [{"id": "{HARNESS_TOOL_CALL_ID}", "metadata": {
+        "tool_calls": [{"id": "{HARNESS_TOOL_CALL_ID}"}]}}]}

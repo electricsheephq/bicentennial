@@ -19,8 +19,14 @@ def _visit(obj, tokens, entry):
         return entry["placeholder"]
     op, name = tokens[0]
     if isinstance(obj, dict):
-        return {k: _visit(v, tokens[1:], entry) if k == name else
-                _visit(v, tokens, entry) if op == ".." else v for k, v in obj.items()}
+        out = {}
+        for k, v in obj.items():
+            if k == name:
+                v = _visit(v, tokens[1:], entry)
+            if op == "..":  # a descendant selector also matches inside a match
+                v = _visit(v, tokens, entry)
+            out[k] = v
+        return out
     if isinstance(obj, list):
         return [_visit(v, tokens[1:] if op == "[*]" else tokens, entry)
                 if op in ("[*]", "..") else v for v in obj]
