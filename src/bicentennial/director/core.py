@@ -29,6 +29,8 @@ SERVED_WIRES = {"openai_chat": "chat", "openai_responses": "responses",
                 "openai_responses_compact": "responses_compact"}
 JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
+# Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
+HERMES_TITLE_INPUT_CHARS = 1000
 
 
 class ResponderError(Exception):
@@ -253,17 +255,19 @@ class Director:
         return self._answer(wire, body, reply.text, reply.tool_calls, issued, rec, usage=reply.usage)
 
     def _request_turn(self, body):
-        """Latest turn quoted in this session's request, using S1's stripped block/whole-text hashes."""
+        """Latest reached/next turn quoted in this session, including Hermes's truncated title input."""
         items = body.get("messages", body.get("input", []))
         if isinstance(items, str):
             items = [{"content": items}]
-        hashes = set()
+        hashes, prefixes = set(), set()
         for item in items if isinstance(items, list) else []:
             content = item.get("content") if isinstance(item, dict) else None
             blocks = roles._blocks(content) if isinstance(content, (str, list)) else []
             hashes.update(roles.h16(text.strip()) for text in [*blocks, "\n".join(blocks)] if text.strip())
-        return next((t for t in reversed(self.turns) if t["session"] == self.session_index
-                     and roles.h16(t["user"].strip()) in hashes), None)
+            prefixes.update(text.strip() for text in blocks if len(text.strip()) >= HERMES_TITLE_INPUT_CHARS)
+        return next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
+                     and (roles.h16(t["user"].strip()) in hashes
+                          or any(t["user"].strip().startswith(prefix) for prefix in prefixes))), None)
 
     def _write_turn(self, wire, body, cursor, rec):
         """-> the write-tool calls to return (empty: serve the scripted turn), or None on an identity mismatch."""

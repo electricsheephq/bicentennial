@@ -308,9 +308,10 @@ def post(d, path, body, headers=None):
     return status, hdrs["Content-Type"], data
 
 
-def title_order_run(tmp, wire, title_first, sessions=1):
+def title_order_run(tmp, wire, title_first, sessions=1, *, script=None, title_chars=None):
     tmp.mkdir()
-    script = dict(SCRIPT, sessions=[dict(s, turns=s["turns"][:1]) for s in SCRIPT["sessions"][:sessions]])
+    if script is None:
+        script = dict(SCRIPT, sessions=[dict(s, turns=s["turns"][:1]) for s in SCRIPT["sessions"][:sessions]])
     fake = Fake()
     fake.n_calls = 1
     d = make(tmp, fake, script=script)
@@ -321,11 +322,12 @@ def title_order_run(tmp, wire, title_first, sessions=1):
             user = session["turns"][0]["user"]
             main = turn_body(user) if wire == "chat" else {
                 "model": "bicentennial-main", "input": user, "tools": tools_of(1, False)}
+            snippet = user[:title_chars]
             title = {"model": "bicentennial-aux-title_generation", **(
-                {"messages": [{"role": "user", "content": f"  {user}\n"}]} if wire == "chat" else
-                {"input": f"  {user}\n"})}
+                {"messages": [{"role": "user", "content": f"  {snippet}\n"}]} if wire == "chat" else
+                {"input": f"  {snippet}\n"})}
             requests = [(f"/aux/title_generation/v1/{path}", title), (f"/main/v1/{path}", main)]
-            for target, body in requests if title_first and session["index"] == 1 else reversed(requests):
+            for target, body in requests if title_first and session is script["sessions"][0] else reversed(requests):
                 clock_before = d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s
                 status, ctype, data = post(d, target, body)
                 assert status == 200
@@ -360,6 +362,24 @@ def test_title_arrival_order_keeps_the_same_stable_digest(wire, tmp_path):
         assert all(r["sim_now"] == BASE + DAY + STEP for r in recs)
         if wire == "chat":
             assert all(obj["created"] == BASE + DAY + STEP for obj in bodies[-1].values())
+    assert bodies[0] == bodies[1]
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_truncated_session_six_title_keeps_digest_and_created(wire, tmp_path):
+    session = next(s for s in SCRIPT["sessions"] if s["index"] == 6)
+    assert len(session["turns"][0]["user"]) == 2484
+    script = dict(SCRIPT, sessions=[dict(session, turns=session["turns"][:1])])
+    first, fv = title_order_run(tmp_path / "title-first", wire, True, script=script, title_chars=1000)
+    last, lv = title_order_run(tmp_path / "main-first", wire, False, script=script, title_chars=1000)
+    assert stable_digest(first, fv) == stable_digest(last, lv)
+    bodies = []
+    for name, recs in (("title-first", first), ("main-first", last)):
+        store = BlobStore(tmp_path / name / "ledger/blobs", None)
+        bodies.append({(r["role"], r["subrole"]): json.loads(store.get(r["resp"])) for r in recs})
+        assert all(r["sim_now"] == BASE + 6 * DAY + STEP for r in recs)
+        if wire == "chat":
+            assert all(obj["created"] == BASE + 6 * DAY + STEP for obj in bodies[-1].values())
     assert bodies[0] == bodies[1]
 
 
@@ -399,6 +419,32 @@ def test_non_cursor_instants_use_latest_quoted_turn_and_fallback(wire, tmp_path)
             assert json.loads(data)["created"] == BASE + DAY + STEP * turn
         assert (d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s) == snapshot
     d.close()
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_repeated_text_does_not_stamp_an_unreached_turn(wire, tmp_path):
+    session = SCRIPT["sessions"][0]
+    turns = [dict(t, user="Thanks!" if t["n"] in (2, 5) else t["user"]) for t in session["turns"]]
+    script = dict(SCRIPT, sessions=[dict(session, turns=turns)])
+    d = make(tmp_path, Fake(), script=script)
+    start(d, tmp_path)
+    try:
+        for turn in turns[:3]:
+            assert post(d, "/main/v1/chat/completions", turn_body(turn["user"], tools=("todo",)))[0] == 200
+        assert d.ctx.cursor == 3
+        snapshot = d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s
+        items = [{"role": "user", "content": "  Thanks!\n"}]
+        body = {"model": "bicentennial-summariser", "messages" if wire == "chat" else "input": items}
+        path = "chat/completions" if wire == "chat" else "responses"
+        status, _, data = post(d, f"/v1/{path}", body)
+        assert status == 200
+        assert records(tmp_path)[-1]["sim_now"] == BASE + DAY + 2 * STEP
+        if wire == "chat":
+            assert json.loads(data)["created"] == BASE + DAY + 2 * STEP
+        assert (d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s) == snapshot
+        assert d.ctx.cursor == 3
+    finally:
+        d.close()
 
 
 def test_embeddings_use_identifiable_turn_instant(tmp_path):
