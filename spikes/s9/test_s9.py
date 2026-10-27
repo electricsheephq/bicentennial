@@ -383,7 +383,14 @@ def test_cli_rejects_short_resume_and_spare(tmp_path):
 
 
 @pytest.fixture
-def preflight_env(monkeypatch, tmp_path):
+def idle_marker(monkeypatch, tmp_path):
+    marker = tmp_path / "idle-marker.sh"
+    marker.write_text("printf '%s' '{\"glm\":false,\"state\":\"fixture\"}'\nexit 0\n")
+    monkeypatch.setenv("BICENTENNIAL_BUSY_CMD", "sh " + str(marker))
+
+
+@pytest.fixture
+def preflight_env(monkeypatch, tmp_path, idle_marker):
     monkeypatch.setattr(s9, "reexec_niced", lambda _: None)
     monkeypatch.setenv("BICENTENNIAL_OPERATOR", "benchmark")
     for key in ("BASE_URL", "TOKEN_URL", "CLIENT_ID", "AUTH"):
@@ -406,7 +413,6 @@ def test_preflight_marker_refuses_first(preflight_env, monkeypatch, tmp_path, st
 
 @pytest.mark.parametrize("cause", ["operator", "token_url", "existing", "pin"])
 def test_preflight_never_opens_login(preflight_env, monkeypatch, tmp_path, capsys, cause):
-    monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     if cause == "operator":
         monkeypatch.delenv("BICENTENNIAL_OPERATOR")
     elif cause == "token_url":
@@ -531,11 +537,10 @@ def test_summary_counts_and_hashes_only(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("label", ["hermes-native", "wiped", "no-memory"])
-def test_fake_worker_twins(tmp_path, monkeypatch, label):
+def test_fake_worker_twins(tmp_path, monkeypatch, label, idle_marker):
     from bicentennial.harness.hermes import adapter as adapter_module
 
     monkeypatch.setattr(adapter_module, "DRAIN_QUIET_S", 0.01)
-    monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     script = s9.micro_script(probes_only=label == "no-memory", sessions=None if label == "no-memory" else [1, 2, 3, 4])
     digests = []
     for suffix in ("u", "p"):
@@ -557,11 +562,10 @@ def test_fake_worker_twins(tmp_path, monkeypatch, label):
     assert digests[0] == digests[1], "STOP: fake-worker twin digest mismatch; do not change masks"
 
 
-def test_fake_worker_proof_refuses_later_session(tmp_path, monkeypatch):
+def test_fake_worker_proof_refuses_later_session(tmp_path, monkeypatch, idle_marker):
     from bicentennial.harness.hermes import adapter as adapter_module
 
     monkeypatch.setattr(adapter_module, "DRAIN_QUIET_S", 0.01)
-    monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     script = s9.micro_script(sessions=[1, 2, 3, 4])
     arm, routes = s9.build_arm("hermes-native", tmp_path / "negative", script, "r", s9.ActiveClock(),
                                worker_argv=[sys.executable, str(s9.ROOT / "tests/harness/fake_worker.py")])
@@ -664,7 +668,7 @@ def test_unretained_compaction_refuses_later_sessions(arm):
     assert record["stop"] == "compaction_not_retained" and arm.resume_record["resumed_ok"] is False
 
 
-def test_constructed_gate_excludes_wait_and_preserves_marker_readings(tmp_path, monkeypatch):
+def test_constructed_gate_excludes_wait_and_preserves_marker_readings(tmp_path, monkeypatch, idle_marker):
     now = [0]
     active = s9.ActiveClock(lambda: now[0])
 
@@ -681,4 +685,146 @@ def test_constructed_gate_excludes_wait_and_preserves_marker_readings(tmp_path, 
     readings = []
     arm.adapter._gate(readings)
     assert active() == 0 and active.markers == readings
-    assert [m["exit"] for m in readings] == [11, 0]
+    assert readings[:2] == [{"exit": 11, "state": "busy"}, {"exit": 0, "state": "idle"}]
+    assert readings[-1] == {"exit": 0, "state": "fixture"}
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_preflight_requires_configured_marker(preflight_env, monkeypatch, tmp_path, capsys, configured):
+    if not configured:
+        monkeypatch.delenv("BICENTENNIAL_BUSY_CMD")
+    monkeypatch.delenv("BICENTENNIAL_OPERATOR")
+    with pytest.raises(SystemExit) as exc:
+        s9.main(preflight_env)
+    assert exc.value.code == 3
+    assert ("benchmark_operator_required" if configured else "marker_refused") in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_adapter_admission_requires_configured_marker(tmp_path, monkeypatch, idle_marker, configured):
+    def construct(entry, **kwargs):
+        adapter = FakeAdapter(kwargs["root"])
+        def gate(readings):
+            marker = s9.read_marker()
+            readings.append({"exit": marker.exit, "state": marker.state})
+        adapter._gate = gate
+        return adapter
+
+    monkeypatch.setattr(s9, "HermesAdapter", construct)
+    active = s9.ActiveClock()
+    arm, _ = s9.build_arm("hermes-native", tmp_path / "cell", s9.micro_script(), "r", active)
+    # The marker can disappear after preflight, even after the adapter is built.
+    if not configured:
+        monkeypatch.delenv("BICENTENNIAL_BUSY_CMD")
+        with pytest.raises(s9.Stop, match="marker_refused"):
+            arm.adapter._gate([])
+    else:
+        arm.adapter._gate([])
+    assert active.markers[-1] == {"exit": 0, "state": "fixture" if configured else "unset"}
+
+
+@pytest.fixture
+def offline_execution(tmp_path, monkeypatch):
+    args = SimpleNamespace(part="live", out=tmp_path / "out", run="synthetic",
+        arms=["hermes-native", "wiped", "no-memory"], mem0_source=None,
+        max_output_tokens=1024, wait_s=86400, resume_auth=None)
+    constructed, closed = [], []
+
+    def build(label, root, script, run, active, **kwargs):
+        assert constructed == closed
+        constructed.append(root.name)
+        adapter = FakeAdapter(root)
+        adapter.paths["root"] = root
+        return s9.Arm(adapter, load(REGISTRY / "hermes-native.toml"), label=label), {}
+
+    def finish(arm, record):
+        closed.append(constructed[len(closed)])
+        record.update(unknown_requests=0, non_loopback=0, auth_path_requests=0,
+                      digest="ab" * 32, ledger={})
+
+    login = SimpleNamespace(log=[], needles=lambda: {})
+    responder = SimpleNamespace(state=lambda: {"sends": 0}, served_identities=lambda: {})
+    monkeypatch.setattr(s9, "build_arm", build)
+    monkeypatch.setattr(s9, "finish_arm", finish)
+    monkeypatch.setattr(s9, "live_responder", lambda *a: (responder, None, login))
+    monkeypatch.setattr(s9, "scan", lambda *a: {"hits": {}, "unreadable": 0})
+    return args, constructed, closed
+
+
+@pytest.mark.parametrize("reason", ["proof_failed", "harness_failed", "resume_failed",
+    "compaction_not_retained", "compaction_unobserved", "compaction_unsettled", "no_compaction", "harness_alive"])
+def test_arm_stop_preserves_other_executions(offline_execution, monkeypatch, reason):
+    args, constructed, closed = offline_execution
+    original = s9.run_life
+
+    def life(arm, *a, **kw):
+        if arm.execution == "hermes-native.micro":
+            # Exercise the real proof-failure path for the reported finding.
+            if reason == "proof_failed":
+                def tamper(_):
+                    (arm.adapter.paths["workspace"] / "tampered").write_text("changed")
+                kw["sleep"] = tamper
+                return original(arm, *a, **kw)
+            arm.finals = []
+            return {"arm": arm.label, "stop": reason}, 1
+        return original(arm, *a, **kw)
+
+    monkeypatch.setattr(s9, "run_life", life)
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == 1
+    expected = ["hermes-native.micro", "hermes-native.canary", "no-memory.canary", "wiped.micro", "no-memory.micro"]
+    assert constructed == closed == expected
+    records = {p.stem: s9.json.loads(p.read_bytes()) for p in (args.out / "arms").glob("*.json")}
+    assert set(records) == set(expected)
+    assert records["hermes-native.micro"]["stop"] == reason
+    if reason == "proof_failed":
+        assert records["hermes-native.micro"]["sessions_run"] == [1]
+
+
+@pytest.mark.parametrize("reason", ["identity_drift", "responder_stopped:MAX_SENDS", "spend_stop",
+    "login_stop", "hold:quota", "budget", "unexpected_request"])
+def test_admission_stop_ends_part_immediately(offline_execution, monkeypatch, reason):
+    args, constructed, closed = offline_execution
+
+    def life(arm, *a, **kw):
+        arm.finals = []
+        return {"arm": arm.label, "stop": reason}, 2
+
+    monkeypatch.setattr(s9, "run_life", life)
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == 2
+    assert constructed == closed == ["hermes-native.micro"]
+    assert [p.stem for p in (args.out / "arms").glob("*.json")] == constructed
+
+
+@pytest.mark.parametrize("missing", ["hermes-native.canary", "no-memory.canary"])
+def test_missing_canary_execution_is_not_run(offline_execution, monkeypatch, missing):
+    args, constructed, closed = offline_execution
+    original = s9.build_arm
+
+    def build(label, root, *a, **kw):
+        if root.name == missing:
+            raise s9.BoundaryBlocked("fixture")
+        return original(label, root, *a, **kw)
+
+    monkeypatch.setattr(s9, "build_arm", build)
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == 2
+    assert constructed == closed
+    canary = s9.json.loads((args.out / "canary.json").read_bytes())
+    assert canary == {"items": 3, "sent": 0, "carried": 0, "verdict": "not_run"}
+
+
+def test_twin_digest_mismatch_preserves_later_arms(offline_execution, monkeypatch):
+    args, constructed, closed = offline_execution
+    args.part = "twin"
+    original = s9.finish_arm
+
+    def finish(arm, record):
+        original(arm, record)
+        if constructed[-1] == "hermes-native.micro-p":
+            record["digest"] = "cd" * 32
+
+    monkeypatch.setattr(s9, "finish_arm", finish)
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == 1
+    assert constructed == closed == [f"{label}.micro-{suffix}" for label in args.arms for suffix in ("u", "p")]
+    record = s9.json.loads((args.out / "arms/hermes-native.micro-p.json").read_bytes())
+    assert record["stop"] == "twin_digest_mismatch"

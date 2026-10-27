@@ -534,7 +534,11 @@ def build_arm(label, root, script, run, active, *, responder=None, login=None,
         def gated(readings):
             start = len(readings)
             try:
-                return active.omit(gate, readings)
+                active.omit(gate, readings)
+                marker = active.omit(read_marker)
+                readings.append({"exit": marker.exit, "state": marker.state})
+                if marker.exit != 0 or marker.state == "unset":
+                    raise Stop("marker_refused")
             finally:
                 active.markers.extend(readings[start:])
         adapter._gate = gated
@@ -584,7 +588,7 @@ def write_result(path, value, guard=None):
 def preflight(args):
     reexec_niced(sys.argv)
     marker = read_marker()
-    if marker.exit != 0:
+    if marker.exit != 0 or marker.state == "unset":
         raise Stop("marker_refused")
     if os.environ.get("BICENTENNIAL_OPERATOR") != "benchmark":
         raise Stop("benchmark_operator_required")
@@ -670,9 +674,10 @@ def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
             if any(record[k] for k in ("unknown_requests", "non_loopback", "auth_path_requests")):
                 record["stop"], status = "unexpected_request", 2
             code = 1 if 1 in (code, status) else max(code, status)
-            if suffix == "p" and records.get(f"{label}.micro-u", {}).get("digest") != record["digest"]:
+            if suffix == "p" and not record["stop"] and records.get(f"{label}.micro-u", {}).get("digest") != record["digest"]:
                 record["stop"], code = "twin_digest_mismatch", 1
-            if record["stop"]:
+            if (record["stop"] in {"identity_drift", "spend_stop", "login_stop", "hold:quota", "budget", "unexpected_request"}
+                    or (record["stop"] or "").startswith("responder_stopped:")):
                 break
         if args.part == "twin":
             for label in args.arms:
@@ -684,7 +689,9 @@ def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
             control = evidence.get("no-memory.canary", {})
             extra = canary_result(source.get("sent", []), control.get("replies", []), nonces,
                                   live_probes=control.get("live_probes", []))
-            status = {"pass": 0, "fail": 1, "vacuous": 2, "incomplete": 2}[extra["verdict"]]
+            if not all(k in evidence for k in ("hermes-native.canary", "no-memory.canary")):
+                extra["verdict"] = "not_run"
+            status = {"pass": 0, "fail": 1, "vacuous": 2, "incomplete": 2, "not_run": 2}[extra["verdict"]]
             code = 1 if 1 in (code, status) else max(code, status)
     except CredentialLeak:
         code = 1
