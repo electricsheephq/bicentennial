@@ -64,6 +64,8 @@ Embedding requests (an embeddings endpoint on a declared alias) go to the hashed
 
 **The content-blind write rule.** It applies to every write turn, and to every harness- or system-originated memory-write request (DESIGN §6.2's `memory_write`: background review, the pre-compaction flush, session-end hooks).
 - **When the request offers at least one of the system's declared write tools,** the responder makes exactly one call, to the first declared write tool on the system's list (C-6). The call carries the latest user message in that request verbatim, as the tool's content argument. That message is the last user-role message in the harness's own request, and never a director-added suffix.
+- **A `memory_write` request is recognised by its last user message,** which is the harness's own memory-write prompt (Hermes's background review sends its review prompt as that message). So for `memory_write` the content is the latest user message *before* that prompt, and a request with none gets an empty reply. The harness's prompt is never stored.
+- **One write per user message.** When a tool result follows the request's last user message, the write was already issued, so the reply is empty whatever the tool answered.
 - **When the tool documents a per-call length limit,** the content is cut at that limit, by character.
 - **The per-system mapping:**
   - Hermes native: `memory`, with `action: "add"`, `target: "memory"` and `content`;

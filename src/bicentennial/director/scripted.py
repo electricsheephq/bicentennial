@@ -56,6 +56,16 @@ def _vector(text, dimension):
     return vector
 
 
+def _usage(wire, estimate):
+    """R03's estimate in the wire's own usage keys, with the total."""
+    n_in, n_out = estimate["prompt_tokens"], estimate["completion_tokens"]
+    if wire == "embeddings":
+        return {"prompt_tokens": n_in, "total_tokens": n_in, "estimated": True}
+    keys = ("input_tokens", "output_tokens") if wire in ("responses", "responses_compact") else (
+        "prompt_tokens", "completion_tokens")
+    return {keys[0]: n_in, keys[1]: n_out, "total_tokens": n_in + n_out, "estimated": True}
+
+
 def _kind(call):
     """The Director's ledger roles (R08 route_role): compaction arrives as summariser, and
     titles, summaries and extraction arrive as aux with their task as the subrole."""
@@ -116,17 +126,26 @@ class ScriptedResponder:
         message = {"role": "assistant", "content": text}
         if calls:
             message["tool_calls"] = [{"type": "function", "function": c} for c in calls]
-        usage = chat.usage_estimate(usage_body, {"choices": [{"message": message}]})
+        usage = _usage(call.wire, chat.usage_estimate(usage_body, {"choices": [{"message": message}]}))
         return Reply(200, "scripted", "scripted", call.model, text=text, tool_calls=calls,
                      embedding=vectors, scale=scale, usage=usage, upstream=[])
 
     def _write(self, call, messages):
         offered = [t.get("function", {}) if call.wire == "chat" else t for t in call.body.get("tools", [])]
         tool = next((t for name in self.write_tools for t in offered if t.get("name") == name), None)
-        user = next((m for m in reversed(messages) if m.get("type", "message") == "message"
-                     and m.get("role") == "user"), None)
-        if tool is None or user is None:
+        users = [i for i, m in enumerate(messages) if m.get("type", "message") == "message" and m.get("role") == "user"]
+        # One write per user message: a tool result after it means the write was already issued,
+        # whatever the tool answered (RING0 §2: the tool's answer is never retried).
+        if tool is None or not users or any(m.get("role") == "tool" or m.get("type") == "function_call_output"
+                                            for m in messages[users[-1] + 1:]):
             return ()
+        # A memory_write request is recognised by its last user message, the harness's own
+        # memory-write prompt, so the content is the conversation's latest user message before it.
+        if call.role == "memory_write":
+            users = users[:-1]
+            if not users:
+                return ()
+        user = messages[users[-1]]
         name, fixed, content_key = self.write_args
         content = _text(user.get("content"))
         limit = tool.get("parameters", {}).get("properties", {}).get(content_key, {}).get("maxLength")
