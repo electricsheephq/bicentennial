@@ -4,7 +4,9 @@ Schemas live at the source-tree boundary. Validation returns None or raises
 ValueError, including a JSON-style path for structural failures.
 """
 
+import importlib
 import json
+import pkgutil
 import re
 from pathlib import Path
 
@@ -16,6 +18,7 @@ _MASK_PATH = re.compile(r"\$(?:\.\.?[A-Za-z_][A-Za-z0-9_]*|\[\*\])+")
 NAMES = frozenset(p.name.removesuffix(".schema.json") for p in SCHEMAS.glob("*.schema.json"))
 RUN_VALUES = {"sandbox_root", "director_port"}
 _CHECKS: dict[str, list] = {}
+_LOADED = []
 FORBIDDEN = {"event_id", "fact_id", "fact_ids", "gold", "gold_spans",
              "options", "manifest"}
 TYPES = {"object": dict, "array": list, "string": str, "integer": int,
@@ -41,6 +44,15 @@ def scan_script(script, sealed_ids, gold_tokens) -> list[str]:
     tokens = tuple(sealed_ids) + tuple(gold_tokens)
     return [path for keys in (False, True) for path, text in _children(script, keys=keys)
             if any(token in text for token in tokens)]
+
+
+def _load_checks() -> None:
+    # Sibling modules register their checks on import. Import them all before the first
+    # validation, so a caller that imports only this module never validates without them.
+    if not _LOADED:
+        _LOADED.append(True)
+        for module in pkgutil.iter_modules([str(Path(__file__).parent)]):
+            importlib.import_module(f"{__package__}.{module.name}")
 
 
 def register_check(name, check) -> None:
@@ -85,6 +97,7 @@ def validate(name, obj) -> None:
     """Validate a named run schema, canonical types and semantic constraints."""
     if name not in NAMES:
         raise ValueError(f"unknown contract: {name}")
+    _load_checks()
     try:
         canon(obj)
     except TypeError as error:

@@ -1,0 +1,1 @@
+{"canary":"c168e5f8-3948-4553-8554-7aa162054723","est_tokens":120,"expected_state":{"env_state_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo_tree_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"fault_points":[],"index":2,"kind":"probe","long_sprint":false,"probe_point":true,"wake_before":["restart"]}
