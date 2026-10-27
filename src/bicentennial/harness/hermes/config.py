@@ -23,8 +23,10 @@ _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy
 CONFIG_DEVIATIONS = ("model.context_length", "auxiliary.compression.context_length", "agent.environment_probe")
 # Hermes d923a5e: hermes_cli/fallback_config.py:get_fallback_chain, agent/auxiliary_client.py route readers,
 # and hermes_cli/config_providers.py:get_compatible_custom_providers (named providers and endpoint/key settings).
+# Same pin: agent/curator.py:_resolve_review_runtime reads legacy curator.auxiliary;
+# tools/delegate_tool_config.py:_load_config reads top-level delegation routes.
 _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model", "providers",
-                     "custom_providers", "moa"}
+                     "custom_providers", "moa", "curator", "delegation"}
 
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None) -> dict:

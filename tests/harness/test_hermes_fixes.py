@@ -136,6 +136,67 @@ def test_clean_exit_signals_group_before_reaping_leader(workers, monkeypatch):
     assert events == ["signal", "reap"]
 
 
+@pytest.mark.parametrize("phase", ["end", "own-exit"])
+def test_zombie_only_group_is_reaped_without_faking_killpg(workers, phase):
+    worker = workers("normal" if phase == "end" else "exit-after-ready")
+    if phase == "end":
+        a = object.__new__(adapter.HermesAdapter)
+        a._worker = worker
+        a._end()
+    else:
+        # Observe a spontaneous exit without reaping or changing Popen.returncode.
+        assert os.waitid(os.P_PID, worker.proc.pid, os.WEXITED | os.WNOWAIT) is not None
+        worker.kill()
+    assert worker._reaped and worker.proc.returncode == 0
+    with pytest.raises(ChildProcessError):
+        os.waitid(os.P_PID, worker.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+    worker.kill()  # idempotent after reap
+
+
+@pytest.mark.parametrize("clean", [False, True])
+def test_interrupted_reap_retry_never_signals_again(workers, monkeypatch, clean):
+    worker, discarded = workers("normal"), []
+    worker.egress = SimpleNamespace(discard=discarded.append)
+    real_wait, real_killpg, signals = worker.proc.wait, os.killpg, []
+
+    def signal_group(pid, sig):
+        assert not signals, "retried cleanup signaled a reaped pid"
+        signals.append(pid)
+        real_killpg(pid, sig)
+
+    def interrupted_wait(*args, **kwargs):
+        real_wait(*args, **kwargs)
+        raise KeyboardInterrupt
+
+    def unexpected_waitid(*args):
+        pytest.fail("retried cleanup called waitid on a reaped pid")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "killpg", signal_group)
+        patch.setattr(worker.proc, "wait", interrupted_wait)
+        with pytest.raises(KeyboardInterrupt):
+            worker.kill()
+        assert worker.proc.returncode is not None and not worker._reaped
+        patch.setattr(os, "waitid", unexpected_waitid)
+        worker.kill(clean=clean)
+        worker.kill()
+    assert worker._reaped and signals == [worker.proc.pid]
+    assert discarded == [worker.proc.pid]
+
+
+def test_killpg_permission_error_with_running_leader_is_not_ignored(workers, monkeypatch):
+    worker = workers("normal")
+
+    def denied(pid, sig):
+        raise PermissionError("fixture permission denial")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "killpg", denied)
+        with pytest.raises(PermissionError, match="fixture permission denial"):
+            worker.kill()
+    assert not worker._reaped and worker.proc.returncode is None
+
+
 def test_concurrent_kill_cannot_signal_after_reap(workers, monkeypatch):
     worker, errors, signals = workers("normal"), [], []
     reaped, release, attempted, done = Event(), Event(), Event(), Event()
@@ -343,6 +404,8 @@ def test_plugin_config_deep_merge_without_mutating_input():
     {"providers": {"fixture": {"base_url": "https://fixture.invalid/v1"}}},
     {"custom_providers": [{"name": "fixture", "base_url": "https://fixture.invalid/v1"}]},
     {"moa": {"aggregator": {"provider": "fixture", "model": "fixture"}}},
+    {"curator": {"auxiliary": {"provider": "fixture", "model": "fixture"}}},
+    {"delegation": {"provider": "fixture", "model": "fixture"}},
 ])
 def test_plugin_config_cannot_override_owned_routes(settings):
     with pytest.raises(ValueError, match="owned"):

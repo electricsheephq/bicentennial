@@ -141,18 +141,23 @@ class _Worker:
     def _cleanup(self, clean):
         if self._reaped:
             return
-        if clean:
-            deadline = time.monotonic() + EXIT_TIMEOUT_S
-            # Keep the exited leader waitable: its pid must still reserve the pgid until killpg.
-            while os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
-                if time.monotonic() >= deadline:
-                    raise subprocess.TimeoutExpired(self.proc.args, EXIT_TIMEOUT_S)
-                time.sleep(0.01)
-        try:
-            os.killpg(self.proc.pid, signal.SIGKILL)  # includes children even after the leader exits
-        except ProcessLookupError:
-            pass
-        self.proc.wait()
+        if self.proc.returncode is None:  # an interrupted Popen.wait may already have reaped the leader
+            if clean:
+                deadline = time.monotonic() + EXIT_TIMEOUT_S
+                # Keep the exited leader waitable: its pid must still reserve the pgid until killpg.
+                while os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(self.proc.args, EXIT_TIMEOUT_S)
+                    time.sleep(0.01)
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)  # includes children even after the leader exits
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                # Darwin returns EPERM for a group containing only its exited, unreaped leader.
+                if os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+                    raise
+            self.proc.wait()
         self._reaped = True
         if self.egress is not None:
             self.egress.discard(self.proc.pid)

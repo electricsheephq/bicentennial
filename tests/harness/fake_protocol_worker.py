@@ -26,6 +26,8 @@ if mode in ("malformed", "invalid-ready"):
     time.sleep(2)
     sys.exit(0)
 print(json.dumps({"ready": True}), flush=True)
+if mode == "exit-after-ready":
+    sys.exit(0)
 for line in sys.stdin:
     cmd = json.loads(line)
     if mode == "stall-" + cmd["op"]:
