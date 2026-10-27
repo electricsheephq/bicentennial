@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 
+from bicentennial.canon import canon
 from bicentennial.score.answer_types import matches, normalize
 
 # K14's item_outcome envelope (schemas/item_outcome.schema.json and contracts/bundle.py _item).
@@ -105,6 +106,7 @@ def parse_envelope(text: str) -> dict | None:
             envelope["value"] = str(envelope["value"])  # a decimal keeps its source text
         if not _float_free(envelope):  # a float anywhere else is malformed
             return None
+        canon(envelope)  # refuses strings UTF-8 cannot encode, such as lone surrogates
         return envelope if valid_envelope(envelope) else None
     except Exception:  # never raise on agent text
         return None

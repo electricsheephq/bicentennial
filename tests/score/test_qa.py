@@ -378,3 +378,13 @@ def test_calibration_empty_denominators_and_bad_inputs():
             selective_accuracy(*counts)
     with pytest.raises(ValueError):
         assertion_precision([(1, True)])
+
+
+@pytest.mark.parametrize("text", [
+    '{"type":"set","value":["\\ud800"],"confidence_milli":1000}',
+    '{"type":"ordered_list","value":["a","\\udfff"],"confidence_milli":1000}',
+    '{"type":"env_state","value":{"k":"\\ud83d"},"confidence_milli":1000}',
+    '{"type":"entity","value":"x\\ud800","confidence_milli":1000}',
+])
+def test_an_unencodable_string_is_malformed(text):
+    assert parse_envelope(text) is None
