@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 
+from bicentennial.runner.compare import run_t1
 from bicentennial.runner.guard import reexec_niced
 from bicentennial.runner.t0 import run_t0
 
@@ -38,13 +39,19 @@ def main(argv=None) -> int:
     command.add_argument("--workers", type=_workers, default=1)
     for name in ("hermes", "plugin-source", "cache"):
         command.add_argument("--" + name)
+    command = commands.add_parser("t1")
+    for name in ("system", "pack-hash", "out"):
+        command.add_argument("--" + name, required=True)
+    command.add_argument("--packs", dest="packs_dir", required=True)
+    for name in ("baseline", "hermes", "plugin-source", "cache"):
+        command.add_argument("--" + name)
     args = vars(parser.parse_args(argv))
-    args.pop("command")
+    selected = args.pop("command")
     if os.environ.get("PYTHONHASHSEED") != "0":
         print("hashseed", file=sys.stderr)
         return 3
     reexec_niced(["-m", "bicentennial.cli", *argv])
-    return run_t0(**args)
+    return run_t0(**args) if selected == "t0" else run_t1(**args)
 
 
 if __name__ == "__main__":
