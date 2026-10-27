@@ -21,6 +21,7 @@ from bicentennial.director.serve import serve, shutdown
 from bicentennial.harness.egress import Egress
 from bicentennial.harness.hermes.config import (
     CONFIG_DEVIATIONS,
+    T1_TOOLSETS,
     hermes_config,
     layout,
     validate_paths,
@@ -75,6 +76,12 @@ def _ms(t0: float) -> int:
     return int((time.monotonic() - t0) * 1000)
 
 
+def _group_survivors(pgid) -> list[int]:
+    rows = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, check=True)
+    return [int(pid) for pid, group, stat in (line.split() for line in rows.stdout.splitlines())
+            if int(group) == pgid and int(pid) != pgid and not stat.startswith("Z")]
+
+
 def verify_pin(checkout, pin) -> str:
     """pin: the lock's harness artifact {name, version, sha256}, never the system entry's (Amendment 1, A1). Raises
     PinMismatch unless HEAD's archive hashes to it and no tracked file is changed; -> the commit."""
@@ -101,6 +108,7 @@ class _Worker:
             self.proc = subprocess.Popen([*prefix, *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=err, env=env, cwd=cwd, text=True, encoding="utf-8",
                                          start_new_session=True)
+        os.set_blocking(self.proc.stdin.fileno(), False)
         try:
             if self.egress is not None:
                 self.egress.add(self.proc.pid)
@@ -117,8 +125,18 @@ class _Worker:
                                       "turn": TURN_TIMEOUT_S, "end": END_TIMEOUT_S}[phase]
         try:
             if op:
-                self.proc.stdin.write(json.dumps(op) + "\n")
-                self.proc.stdin.flush()
+                pending = memoryview((json.dumps(op) + "\n").encode("utf-8"))
+                with selectors.DefaultSelector() as writer:
+                    writer.register(self.proc.stdin, selectors.EVENT_WRITE)
+                    while pending:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not writer.select(remaining):
+                            self.kill()
+                            raise HarnessFailed(f"{phase}_timeout")
+                        try:
+                            pending = pending[os.write(self.proc.stdin.fileno(), pending[:65536]):]
+                        except BlockingIOError:
+                            continue
             with selectors.DefaultSelector() as reader:
                 reader.register(self.proc.stdout, selectors.EVENT_READ)
                 while b"\n" not in self._buffer:
@@ -158,6 +176,9 @@ class _Worker:
                 # Darwin returns EPERM for a group containing only its exited, unreaped leader.
                 if os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
                     raise
+                survivors = _group_survivors(self.proc.pid)
+                if survivors:
+                    raise HarnessFailed("group_survivors:" + ",".join(map(str, sorted(survivors)))) from None
             self.proc.wait()
         self._reaped = True
         if self.egress is not None:
@@ -168,7 +189,7 @@ class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
-                 memory: bool = True):
+                 memory: bool = True, toolsets=None, env_server=None):
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
             reasons.append("benchmark_operator_forbidden")
@@ -178,7 +199,9 @@ class HermesAdapter:
             raise ValueError("kill_mode is boundary or held")
         if any(f["kind"] in ("restart", "kill", "compaction") and f["turn"] is None for f in schedule.to_obj()):
             raise ValueError("a restart, kill or compaction needs a turn")
-        hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory)
+        self.toolsets, self.env_server = T1_TOOLSETS if toolsets is None else toolsets, env_server
+        hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory,
+                      toolsets=self.toolsets)
         self.memory = memory
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
@@ -207,6 +230,7 @@ class HermesAdapter:
         self.egress.start()
 
     def run_session(self, index, *, sim_t_s, lock_hash, attempt_id) -> SessionResult:
+        self._session_index = index
         session, d = next(s for s in self.script["sessions"] if s["index"] == index), self.director
         gate, restarts, finals, compaction, self._wiped = [], [], [], False, False
         self.end_threads = None
@@ -297,8 +321,12 @@ class HermesAdapter:
         sid = None if wiped else sid
         validate_paths(self.paths)  # hooks may replace directories on any wake; check before writing or spawning
         # After the hook, so a wipe that restores install-time state is always followed by the current config
+        from bicentennial.harness.hermes.envwire import ENV_SERVER
+        servers = {ENV_SERVER: self.env_server(self._session_index, reason)} if self.env_server is not None else None
+        toolsets = self.toolsets + ((ENV_SERVER,) if servers and ENV_SERVER not in self.toolsets else ())
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
-                                                            plugin_config=self.plugin_config, memory=self.memory))
+                                                            plugin_config=self.plugin_config, memory=self.memory,
+                                                            toolsets=toolsets, mcp_servers=servers))
         t0 = time.monotonic()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),

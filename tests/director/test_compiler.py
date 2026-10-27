@@ -1,4 +1,4 @@
-"""R14a offline acceptance; no Hermes process or model calls."""
+"""Compiler and build-time check acceptance; no model calls."""
 
 import ast
 import copy
@@ -530,3 +530,268 @@ def test_voids_preserve_assigned_coverage():
     for arm in report.values():
         assert arm["coverage"]["assigned"] == len(bundles)
         assert arm["coverage"]["blocked"] == fixture["expected"]["coverage"]["blocked"] + 1
+
+
+# R14b: fixture life directories and end-to-end worker checks.
+def life_directory(world, target):
+    import sqlite3
+
+    root, db, schedule, _, items = world
+    target.mkdir()
+    (target / "life.json").write_bytes(canon(dict(canary=_canary(), life=schedule.life,
+                                                 seed=schedule.seed, scale="t1")))
+    for branch in ("B0", "B1"):
+        with sqlite3.connect(target / f"world.{branch}.db") as out:
+            db.backup(out)
+        for stem, suffix in (("stream", "jsonl"), ("sessions", "jsonl"), ("history", "json")):
+            (target / f"{stem}.{branch}.{suffix}").write_bytes((root / f"{stem}.{branch}.{suffix}").read_bytes())
+        (target / f"items.{branch}.json").write_bytes(canon(items))
+    return target
+
+
+def check_life(life, scratch, **kwargs):
+    helper = runpy.run_path(str(ROOT / "tests/harness/test_hermes_adapter.py"))
+    from bicentennial.director.compiler.check import check_compile
+
+    return check_compile(life, entry=helper["ENTRY"], route_table=helper["ROUTES"], harness_pin=None,
+                         checkout=None, scratch=scratch,
+                         worker_argv=[sys.executable, str(Path(__file__).with_name("fake_tool_worker.py"))], **kwargs)
+
+
+@pytest.fixture
+def fast_check(monkeypatch):
+    from bicentennial.harness.hermes import adapter
+
+    monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.01)
+
+
+def sandbox_check(life, scratch):
+    try:
+        report = check_life(life, scratch)
+    except PermissionError as error:
+        pytest.skip(f"sandbox denies process or loopback operation: {error}")
+    startup = [m for b in report["branches"].values() for m in b["mismatches"]
+               if m["kind"] == "harness_failed:worker_start"]
+    if startup:
+        logs = "\n".join(p.read_text() for p in scratch.glob("*/logs/*.stderr"))
+        if "taskpolicy: setpriority(): Operation not permitted" in logs:
+            pytest.skip("sandbox denies taskpolicy setpriority before the tool worker starts")
+    return report
+
+
+@pytest.mark.parametrize("genre", ["G1", "G2"])
+def test_check_compile_fake(worlds, tmp_path, genre, fast_check):
+    life = life_directory(worlds[genre], tmp_path / "life")
+    report = sandbox_check(life, tmp_path / "runs")
+    assert report["ok"], report
+    for branch in report["branches"].values():
+        assert branch == dict(sessions=1 if genre == "G1" else 2, calls=15 if genre == "G1" else 2, mismatches=[])
+    if genre == "G2":
+        rows = [json.loads(line) for p in (tmp_path / "runs").glob("*/env/*/life-*/env_actions.jsonl")
+                for line in p.read_bytes().splitlines()]
+        actions = [r for r in rows if r["type"] == "action"]
+        assert len(actions) == 4 and all(r["ok"] and r["state_changed"] for r in actions)
+        assert {r["t_sim"] for r in actions} == {worlds[genre][2].sessions[19].t_end}
+
+
+def cli_args(life, scratch, tmp_path):
+    from bicentennial.systems.registry import REGISTRY
+
+    helper = runpy.run_path(str(ROOT / "tests/harness/test_hermes_adapter.py"))
+    (tmp_path / "pin.json").write_bytes(canon(helper["ENTRY"]["artifact"]))
+    (tmp_path / "routes.json").write_bytes(canon(helper["ROUTES"]))
+    return ["check-compile", str(life), "--checkout", str(tmp_path / "absent-checkout"),
+            "--harness-pin", str(tmp_path / "pin.json"), "--route-table", str(tmp_path / "routes.json"),
+            "--entry", str(REGISTRY / "hermes-native.toml"), "--scratch", str(scratch)]
+
+
+def test_planted_mismatch_cli(worlds, tmp_path, fast_check, monkeypatch, capfd):
+    from bicentennial.director.compiler import __main__ as cli
+
+    life = life_directory(worlds["G1"], tmp_path / "life")
+    path = life / "stream.B0.jsonl"
+    rows = [json.loads(line) for line in path.read_bytes().splitlines()]
+    row = next(r for r in rows if r["kind"] == "tool")
+    row["payload"] = dict(content="planted") if row["tool"]["name"] == "read_file" else dict(stdout="planted")
+    row["expected_result_sha256"] = sha256_canon(row["payload"])
+    rewrite(life, "B0", [seal(r) for r in rows])
+    report = sandbox_check(life, tmp_path / "runs")
+    mismatches = report["branches"]["B0"]["mismatches"]
+    assert not report["ok"] and len(mismatches) == 1
+    mismatch = mismatches[0]
+    assert mismatch["kind"] == "result" and mismatch["call"] == row["tool"]
+    assert mismatch["expected_sha256"] == row["expected_result_sha256"]
+    assert mismatch["got_sha256"] != mismatch["expected_sha256"]
+    monkeypatch.setattr(cli, "check_compile", lambda *a, **kw: report)
+    assert cli.main(cli_args(life, tmp_path / "cli", tmp_path)) == 1
+    assert json.loads(capfd.readouterr().out) == report
+
+
+def test_vacuous_branch_cli(worlds, tmp_path, fast_check, monkeypatch, capfd):
+    from bicentennial.director.compiler import __main__ as cli
+
+    life = life_directory(worlds["G1"], tmp_path / "life")
+    path = life / "stream.B0.jsonl"
+    rewrite(life, "B0", [json.loads(line) for line in path.read_bytes().splitlines()
+                        if json.loads(line)["kind"] != "tool"])
+    report = sandbox_check(life, tmp_path / "runs")
+    assert not report["ok"] and report["branches"]["B0"] == dict(sessions=0, calls=0, mismatches=[])
+    monkeypatch.setattr(cli, "check_compile", lambda *a, **kw: report)
+    assert cli.main(cli_args(life, tmp_path / "cli", tmp_path)) == 1
+    capfd.readouterr()
+
+
+def test_cli_bad_input_and_pin(tmp_path, monkeypatch):
+    from bicentennial.director.compiler import __main__ as cli
+    from bicentennial.harness.hermes.adapter import PinMismatch
+
+    args = cli_args(tmp_path / "missing", tmp_path / "runs", tmp_path)
+    assert cli.main(args) == 2
+
+    def mismatch(*args, **kwargs):
+        raise PinMismatch("fixture")
+
+    monkeypatch.setattr(cli, "check_compile", mismatch)
+    assert cli.main(args) == 3
+
+
+def test_envwire_recovery(worlds, tmp_path):
+    from bicentennial.harness.hermes.envwire import EnvWiring, derived_seed
+    from bicentennial.sandbox.envserver.state import state_hash
+    from bicentennial.sandbox.envserver.tools_g2 import G2State
+
+    seed = probe_envseed(worlds["G2"][1], 22, 20).seed
+    clock = SimClock(tmp_path / "clock.json", worlds["G2"][2].sessions[19].t_end, 60)
+    wiring = EnvWiring(tmp_path, {22: seed}, clock.path)
+    first = wiring(22, "session_start")
+    path = tmp_path / "env/22/life-1"
+    assert json.loads((path / "seed.json").read_bytes()) == seed
+    state = G2State(seed)
+    tool = worlds["G2"][4][1]["options"][0]["plan"]["steps"][0]["tool"]
+    _, changed = state.call(tool["name"], tool["args"])
+    row = dict(type="action", ok=True, state_changed=changed, tool=tool["name"], args=tool["args"],
+               state_hash=state_hash(state.state))
+    (path / "env_actions.jsonl").write_bytes(canon(row) + b"\n")  # killed before a session_end boundary
+    second = wiring(22, "kill")
+    resumed = json.loads((tmp_path / "env/22/life-2/seed.json").read_bytes())
+    assert resumed == dict(seed, state=state.state) == derived_seed(seed, [path])
+    assert first["env"]["PYTHONHASHSEED"] == "0" and "--clock" in second["args"]
+    assert wiring.records(22) == [row]
+    assert derived_seed(seed, [tmp_path / "env/22/life-2"]) == seed
+    row["state_hash"] = "0" * 64
+    (path / "env_actions.jsonl").write_bytes(canon(row) + b"\n")
+    with pytest.raises(ValueError, match="resume refused"):
+        wiring(22, "restart")
+    assert not (tmp_path / "env/22/life-3").exists()
+
+
+@pytest.mark.parametrize("mode", ["ok", "mismatch", "missing", "retry", "first-result", "stream"])
+def test_check_comparison_receipts(tmp_path, mode):
+    from types import SimpleNamespace
+
+    from bicentennial.director.compiler.check import _compare
+    from bicentennial.director.compiler.hermes import CheckCall
+    from bicentennial.ledger import BlobStore, Guard
+
+    root = tmp_path / "check"
+    store = BlobStore(root / "ledger/blobs", Guard([]))
+    call = {"name": "read_file", "args": {"path": "README.md"}}
+    expected = {"content": "expected"}
+    issued = dict(tool_calls=[dict(id="issued", function=dict(name="terminal", arguments='{"command":"cat"}'))])
+    response = {"choices": [{"message": issued}]}
+    if mode == "stream":
+        response = {"sse": [{"choices": [{"delta": issued}]}]}
+    rows = [dict(seq=1, cursor=dict(session=1, turn=1), served="script_tool_calls", type="request",
+                 req=store.put({"messages": []}), resp=store.put(response))]
+    if mode == "retry":
+        rows.append(dict(rows[0], seq=2, served="script_tool_calls_retry"))
+    if mode != "missing":
+        text = "wrong" if mode in ("mismatch", "first-result") else "expected\n"
+        req = dict(messages=[dict(role="tool", tool_call_id="issued", content=json.dumps(
+            dict(output=text, exit_code=0)))])
+        rows.append(dict(seq=3, cursor=dict(session=1, turn=1), type="request", req=store.put(req)))
+        # A later repetition must never overwrite the first result.
+        if mode == "first-result":
+            rows.append(dict(seq=4, cursor=dict(session=1, turn=2), type="request", req=store.put(dict(messages=[
+                dict(role="tool", tool_call_id="issued", content='{"output":"expected","exit_code":0}')]))))
+    fake = SimpleNamespace(records=lambda: rows, paths=dict(root=root))
+    mismatch = _compare(fake, [CheckCall("B0", 1, 1, 0, call, expected)])
+    if mode in ("ok", "stream"):
+        assert mismatch == []
+    else:
+        assert len(mismatch) == 1
+        assert mismatch[0]["kind"] == {"missing": "no_result", "retry": "retried"}.get(mode, "result")
+        assert mismatch[0]["call"] == call and mismatch[0]["expected_sha256"] == sha256_canon(expected)
+
+
+def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from bicentennial.harness.hermes import adapter, config
+    from bicentennial.harness.hermes.envwire import EnvWiring
+
+    root = tmp_path / "run"
+    paths = config.layout(root, tmp_path)
+    seed = probe_envseed(worlds["G2"][1], 22, 20).seed
+    wiring = EnvWiring(root, {22: seed}, root / "clock.json")
+    reasons = []
+
+    def hook(session, reason):
+        reasons.append((session, reason))
+        return wiring(session, reason)
+
+    class Worker:
+        def __init__(self, *args):
+            self.proc = SimpleNamespace(pid=123)
+
+        def call(self, **op):
+            return dict(ok=True, history=0, session_id="session")
+
+    monkeypatch.setattr(adapter, "_Worker", Worker)
+    monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
+    a = object.__new__(adapter.HermesAdapter)
+    a.before_spawn, a._wiped, a._session_index, a._alias = None, False, 22, "bicentennial-main"
+    a.paths, a.server, a.clock = paths, SimpleNamespace(port=4321), SimpleNamespace(path=root / "clock.json")
+    a.env_server, a.toolsets, a.memory = hook, config.HERMES_TOOLSETS, False
+    a.plugin, a.plugin_config, a.checkout = None, {}, None
+    a.argv, a.egress, a.pids = [], None, []
+    timings = dict(spawn=[], open=[])
+    for reason, sid in (("session_start", None), ("kill", "session")):
+        assert a._spawn_open(reason, sid, timings) == ("session", 0, False)
+        cfg = json.loads((paths["hermes_home"] / "config.yaml").read_bytes())
+        assert cfg["platform_toolsets"]["acp"] == ["todo", "terminal", "envserver"]
+        assert cfg["mcp_servers"]["envserver"]["args"][-1] == str(root / "clock.json")
+    assert reasons == [(22, "session_start"), (22, "kill")]
+    assert [p.name for p in sorted((root / "env/22").iterdir())] == ["life-1", "life-2"]
+
+
+@pytest.mark.parametrize("phase", ["start", "close"])
+def test_check_compile_records_harness_failure_and_continues(worlds, tmp_path, monkeypatch, phase):
+    from bicentennial.harness.hermes import adapter
+
+    starts = []
+
+    def failed(*args, **kwargs):
+        starts.append(kwargs["branch"])
+        if phase == "start":
+            raise HarnessFailed("turn_timeout")
+
+        class ClosingFailure:
+            paths = dict(root=kwargs["root"])
+
+            def run_session(self, *args, **kwargs):
+                pass
+
+            def records(self):
+                return []
+
+            def close(self):
+                raise HarnessFailed("turn_timeout")
+
+        return ClosingFailure()
+
+    monkeypatch.setattr(adapter, "HermesAdapter", failed)
+    report = check_life(life_directory(worlds["G2"], tmp_path / "life"), tmp_path / "runs")
+    assert not report["ok"] and starts == ["B0", "B0", "B1", "B1"]
+    assert all(sum(m["kind"] == "harness_failed:turn_timeout" for m in branch["mismatches"]) == 2
+               for branch in report["branches"].values())

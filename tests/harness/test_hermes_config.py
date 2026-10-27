@@ -98,3 +98,16 @@ def test_layout_refusals(tmp_path, monkeypatch):
         layout(tmp_path / "run", tmp_path)
     with pytest.raises(ValueError, match="scratch"):
         layout(tmp_path / "elsewhere", tmp_path / "run")
+
+
+def test_custom_toolsets_keep_actions_without_memory():
+    from bicentennial.harness.hermes.config import HERMES_TOOLSETS
+
+    assert canon(hermes_config(4321, "main")) == canon(hermes_config(4321, "main", toolsets=config.T1_TOOLSETS))
+    toolsets = HERMES_TOOLSETS + ("envserver",)
+    cfg = hermes_config(4321, "main", toolsets=toolsets, memory=False, mcp_servers={"envserver": {"command": "python"}})
+    assert cfg["platform_toolsets"]["acp"] == ["todo", "terminal", "envserver"]
+    assert cfg["mcp_servers"] == {"envserver": {"command": "python"}}
+    for bad in (["todo"], ("Bad",), ("",), (1,)):
+        with pytest.raises(ValueError, match="toolsets"):
+            hermes_config(4321, "main", toolsets=bad)
