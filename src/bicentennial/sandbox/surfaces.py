@@ -61,6 +61,8 @@ def clone_tree(source, target) -> str:
         nonlocal method
         if method == "clonefile" and native is not None:
             if native(os.fsencode(src), os.fsencode(dst), 0) == 0:
+                # clonefile clears setuid and setgid; K13 hashes the full mode.
+                os.chmod(dst, stat.S_IMODE(os.lstat(src).st_mode))
                 return dst
             code = ctypes.get_errno()
             if code not in (errno.ENOTSUP, errno.EXDEV, errno.ENOSYS):
@@ -182,9 +184,19 @@ def _marked(root):
     return root
 
 
+def _writable_dirs(root):
+    # rmtree cannot unlink inside a read-only directory; links are never followed.
+    for path, dirs, _ in _walk(root):
+        for name in [".", *dirs]:
+            info = os.lstat(os.path.join(path, name))
+            if stat.S_ISDIR(info.st_mode):
+                os.chmod(os.path.join(path, name), stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
+
+
 def wipe_to_fresh(root, fresh_snapshot):
     """Replace only a marked sandbox with a separately marked fresh snapshot."""
-    root, fresh = _marked(root), _marked(fresh_snapshot)
+    # Resolve after the link check so the stage and backup sit beside the real root.
+    root, fresh = _marked(root).resolve(), _marked(fresh_snapshot)
     _separate(root.resolve(), fresh.resolve())
     stage = root.with_name(f".{root.name}.fresh-{uuid.uuid4().hex}")
     backup = root.with_name(f".{root.name}.wiped-{uuid.uuid4().hex}")
@@ -197,4 +209,5 @@ def wipe_to_fresh(root, fresh_snapshot):
     except BaseException:
         backup.rename(root)
         raise
-    shutil.rmtree(_marked(backup))
+    _writable_dirs(_marked(backup))
+    shutil.rmtree(backup)

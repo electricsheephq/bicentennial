@@ -179,6 +179,40 @@ def test_wipe_matches_marked_fresh_snapshot(tmp_path):
     assert not list(tmp_path.glob(".root.*"))
 
 
+def test_clone_keeps_setuid_and_setgid_bits(tmp_path):
+    source = home(tmp_path / "source")
+    (source / "tool").write_text("run")
+    (source / "tool").chmod(0o4755)
+    (source / "group").write_text("run")
+    (source / "group").chmod(0o2755)
+    clone_tree(source, tmp_path / "copy")
+    assert stat.S_IMODE((tmp_path / "copy" / "tool").stat().st_mode) == 0o4755
+    assert stat.S_IMODE((tmp_path / "copy" / "group").stat().st_mode) == 0o2755
+    assert surface_hash(source, []) == surface_hash(tmp_path / "copy", [])
+
+
+def test_wipe_removes_a_tree_with_read_only_directories(tmp_path):
+    fresh = home(tmp_path / "fresh")
+    (fresh / "pkg").mkdir()
+    (fresh / "pkg" / "module").write_text("cached")
+    (fresh / "pkg").chmod(0o555)
+    clone_tree(fresh, tmp_path / "root")
+    (tmp_path / "root" / "memory").write_text("remembered")
+    baseline = surface_hash(fresh, [])
+    wipe_to_fresh(tmp_path / "root", fresh)
+    assert surface_hash(tmp_path / "root", []) == baseline
+    assert not list(tmp_path.glob(".root.*"))
+
+
+def test_wipe_resolves_a_root_path_that_ends_in_dotdot(tmp_path):
+    fresh, root = home(tmp_path / "fresh"), home(tmp_path / "root", "dirty")
+    (root / "sub").mkdir()
+    baseline = surface_hash(fresh, [])
+    wipe_to_fresh(root / "sub" / "..", fresh)
+    assert surface_hash(root, []) == baseline
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fresh", "root"]
+
+
 @pytest.mark.parametrize("bad", ["root", "fresh", "marker-link", "root-link", "nested"])
 def test_wipe_refuses_unmarked_or_overlapping_trees(tmp_path, bad):
     root, fresh = home(tmp_path / "root"), home(tmp_path / "fresh")
