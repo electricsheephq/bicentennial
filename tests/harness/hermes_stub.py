@@ -58,6 +58,8 @@ def search(query):
 def tool(name, args):
     action = args.get("action", "")
     if name in ("memory", "fact_store") and action == "add" or name == "mem0_add":
+        if name == "mem0_add" and MODE == "delayed_sync":
+            return json.dumps(dict(ok=True))
         rows = read()
         rows.append(dict(t=time.time(), seq=max((r["seq"] for r in rows), default=0) + 1, text=args["content"]))
         save(rows)
@@ -121,7 +123,14 @@ class MemoryManager:
     def sync_all(self, user, assistant, **kwargs):
         s.log("sync_all", user, assistant, **kwargs)
         if s.PROVIDER == "mem0" and s.SYNC_MS:
-            thread = s.threading.Thread(target=lambda: s.time.sleep(s.SYNC_MS / 1000), name="mem0-sync", daemon=True)
+            def sync():
+                s.time.sleep(s.SYNC_MS / 1000)
+                if s.MODE == "delayed_sync":
+                    rows = s.read()
+                    rows.append(dict(t=s.time.time(), seq=max((r["seq"] for r in rows), default=0) + 1, text=user))
+                    s.save(rows)
+                    s.log("sync_landed", user)
+            thread = s.threading.Thread(target=sync, name="mem0-sync", daemon=True)
             s.THREADS.append(thread)
             thread.start()
 
@@ -225,7 +234,7 @@ class SessionDB:
 
 def write_tree(dest, *, log, mode="none", sync_ms=0):
     """Create exactly the Hermes import surfaces used by the file-launched worker."""
-    if mode not in {"none", "wipe_on_open", "keep_on_remove", "stale_wins", "missing"}:
+    if mode not in {"none", "wipe_on_open", "keep_on_remove", "stale_wins", "missing", "delayed_sync"}:
         raise ValueError("unknown stub mode")
     dest = Path(dest)
     source = COMMON.replace("__MODE__", repr(mode)).replace("__SYNC_MS__", str(sync_ms))

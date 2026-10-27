@@ -70,7 +70,7 @@ class GateRefused(RuntimeError):
     """The machine gate refused a worker spawn."""
 
 
-def _corpus(raw):
+def _entries(raw):
     def leaves(value):
         if isinstance(value, str):
             yield value
@@ -78,9 +78,13 @@ def _corpus(raw):
             for child in value.values() if isinstance(value, dict) else value:
                 yield from leaves(child)
     try:
-        return "\n".join(leaves(json.loads(raw)))
+        return list(leaves(json.loads(raw)))
     except ValueError:
-        return raw
+        return [raw]
+
+
+def _corpus(raw):
+    return "\n".join(_entries(raw))
 
 
 def _schedule(script, index):
@@ -246,11 +250,16 @@ class HermesMemoryHost(Adapter):
         out = self._call("query", text=task["prompt"], recall={"name": call["name"],
                                                             "arguments": json.loads(call["arguments"])})
         self.settled = False
-        corpus, pre = _corpus(out["recall"]), out["prefetch"]
+        entries, pre = _entries(out["recall"]), out["prefetch"]
+        corpus = "\n".join(entries)
         self._blocks = tuple(t for t in (corpus, pre) if t)
-        cited = [r["event"] for r in self.events.values() if r["event"]["text"]
-                 and r["event"]["t_sim"] <= now and r["event"]["text"] in corpus]
-        return answer(sorted(cited, key=lambda e: (corpus.find(e["text"]), -e["t_sim"], e["event_id"])))
+        cited = {}
+        for entry in entries:
+            matches = [r["event"] for r in self.events.values() if r["event"]["text"]
+                       and r["event"]["t_sim"] <= now and r["event"]["text"] in entry]
+            cited.update((e["event_id"], e) for e in matches if not any(
+                e["text"] != other["text"] and e["text"] in other["text"] for other in matches))
+        return answer(sorted(cited.values(), key=lambda e: (corpus.find(e["text"]), -e["t_sim"], e["event_id"])))
 
     def probe(self, task, now):
         result = self.query(task, now)
@@ -340,6 +349,11 @@ class HermesMemoryHost(Adapter):
 
     def forget(self, selector):
         self._cache = None
+        if self._worker is not None:
+            self.settled = settle(dict(self.entry, settle={"kind": "hook", "bound_s":
+                                  self.entry["settle"]["bound_s"] or 5}), self._drain).settled
+            if not self.settled:
+                raise HarnessFailed("forget_unsettled")
         shape(selector, {"event_ids": list})
         ids = selector["event_ids"]
         if any(type(i) is not str or not i for i in ids):
@@ -366,13 +380,15 @@ class HermesMemoryHost(Adapter):
             del self.events[event["event_id"]]
         self.settled = False
 
+    def _drain(self):
+        reply = self._call("drain", timeout_ms=200)
+        return reply["drained"] is True and not set(reply["threads"]) & set(SETTLE_THREADS.get(self.name, ()))
+
     def settle(self, bound_s):
         integer(bound_s)
-        def observe():
-            reply = self._call("drain", timeout_ms=200)
-            return reply["drained"] is True and not set(reply["threads"]) & set(SETTLE_THREADS.get(self.name, ()))
-        self.settled = self._worker is None or settle(
-            dict(self.entry, settle={"kind": "hook", "bound_s": bound_s}), observe).settled
+        self.settled = self._worker is None or (
+            self._drain() if bound_s == 0 or self.entry["settle"]["kind"] == "none" else settle(
+                dict(self.entry, settle={"kind": "hook", "bound_s": bound_s}), self._drain).settled)
         return self.settled
 
     def begin_session(self, index):

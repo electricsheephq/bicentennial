@@ -366,6 +366,8 @@ def test_cache_invalidation(factory, change):
     result = host.query(task(), 100)
     assert result["output"] == {"ingest": "new quartz", "forget": "UNKNOWN", "reset": "UNKNOWN",
                                  "restore": "quartz", "session": "quartz"}[change]
+    if change == "ingest":
+        assert result["citations"] == ["e2"]
 
 
 def test_reader_injected_uses_one_recall(factory):
@@ -439,6 +441,97 @@ def test_seeded_json_escape_property():
         value = "".join(rng.choices('abc猫"\\\n\t', k=30))
         assert plugin_host._corpus(json.dumps({"skip this key": [value, {"skip": value}]})) == value + "\n" + value
     assert plugin_host._corpus("not JSON") == "not JSON"
+
+
+@pytest.mark.parametrize("texts,leaves,expected", [
+    (["quartz", "new quartz"], ["new quartz"], [2]),
+    (["quartz", "topaz"], ["quartz and topaz"], [1, 2]),
+    (["quartz", "new quartz"], ["quartz", "new quartz"], [1, 2]),
+    (["quartz\ntopaz"], ["quartz", "topaz"], []),
+    (["quartz", "quartz"], ["quartz"], [2, 1]),
+    (["quartz", "new quartz", "brand new quartz"], ["brand new quartz"], [3]),
+])
+def test_citations_use_maximal_texts_per_leaf(factory, monkeypatch, texts, leaves, expected):
+    host = factory()
+    events = [event(i, text) for i, text in enumerate(texts, 1)]
+    host.events = {e["event_id"]: dict(event=e, session=1) for e in events}
+    monkeypatch.setattr(host, "_call", lambda *a, **kw: dict(recall=json.dumps(dict(results=leaves)), prefetch=""))
+    result = host.query(task(), 100)
+    assert result == answer([events[i - 1] for i in expected])
+    assert host.context_blocks() == ("\n".join(leaves),)
+
+
+def test_native_live_worker_settle_zero(factory):
+    host = factory()
+    assert host.entry["settle"] == dict(kind="none", bound_s=0)
+    host.ingest(event())
+    assert host._worker is not None
+    assert host.settle(0) is True
+
+
+@pytest.mark.parametrize("kind,bound,drained,threads,expected", [
+    ("none", 0, True, [], True),
+    ("none", 5, True, [], True),
+    ("hook", 0, True, [], True),
+    ("hook", 0, False, [], False),
+    ("none", 0, True, ["mem0-sync"], False),
+])
+def test_single_drain_observation(kind, bound, drained, threads, expected):
+    host = HermesMemoryHost.__new__(HermesMemoryHost)
+    host.entry, host.name, host._worker = dict(settle=dict(kind=kind)), "mem0-oss", object()
+    observed = []
+
+    def call(name, **args):
+        observed.append((name, args))
+        return dict(drained=drained, threads=threads)
+
+    host._call = call
+    assert host.settle(bound) is expected
+    assert host.settled is expected
+    assert observed == [("drain", dict(timeout_ms=200))]
+
+
+def test_forget_waits_for_delayed_sync(factory):
+    host = factory("mem0-oss", mode="delayed_sync", sync_ms=500)
+    token = "DELAYEDMEM0TOKEN7788"
+    host.ingest(event(text=token))
+    assert not any(c["name"] == "sync_landed" for c in calls(host))
+    host.forget(dict(event_ids=["e1"]))
+    assert host.settle(5)
+    assert token.encode() not in host.checkpoint()
+    history = calls(host)
+    landed = next(i for i, c in enumerate(history) if c["name"] == "sync_landed")
+    searched = next(i for i, c in enumerate(history) if c["name"] == "handle_tool_call" and c["args"][0] == "mem0_search")
+    assert landed < searched
+    assert any(c["name"] == "handle_tool_call" and c["args"][0] == "mem0_delete" for c in history)
+    assert host.query(task(token), 100) == answer([])
+
+
+@pytest.mark.parametrize("declared_bound", [0, 2])
+def test_forget_unsettled_refuses_search(monkeypatch, declared_bound):
+    host = HermesMemoryHost.__new__(HermesMemoryHost)
+    host.entry = dict(settle=dict(kind="none" if declared_bound == 0 else "hook", bound_s=declared_bound))
+    host.name, host._worker, host.settled, host._cache = "mem0-oss", object(), True, object()
+    host.events = {"e1": dict(event=event(), session=1)}
+    observed = []
+
+    def call(name, **args):
+        assert name == "drain", "forget searched or deleted before draining"
+        observed.append(args)
+        return dict(drained=False, threads=[])
+
+    def timed_settle(entry, observe):
+        assert entry["settle"] == dict(kind="hook", bound_s=declared_bound or 5)
+        ticks = iter([0, declared_bound or 5])
+        return real_settle(entry, observe, monotonic=lambda: next(ticks))
+
+    real_settle = plugin_host.settle
+    host._call = call
+    monkeypatch.setattr(plugin_host, "settle", timed_settle)
+    with pytest.raises(HarnessFailed, match="^forget_unsettled$"):
+        host.forget(dict(event_ids=["e1"]))
+    assert observed == [dict(timeout_ms=200)]
+    assert "e1" in host.events and host.settled is False and host._cache is None
 
 
 @pytest.mark.parametrize("sync_ms,bound,expected", [(1500, 5, True), (8000, 1, False)])
