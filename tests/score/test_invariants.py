@@ -215,6 +215,15 @@ def test_api_failure_classes(cases):
         assert reason in v.reasons if reason else v.reasons == ()
 
 
+@pytest.mark.parametrize("factory", [ReferenceStore, mutants.stale_wins])
+def test_single_adapter_invariant_matches_batch(factory):
+    batch = inv.adapter_invariants(factory, bound_s=5)
+    singles = {name: inv.adapter_invariant(factory, name, bound_s=5) for name in inv.INVARIANTS}
+    assert tuple(batch) == tuple(singles) == inv.INVARIANTS
+    assert batch == singles
+    assert canon([v.to_obj() for v in batch.values()]) == canon([v.to_obj() for v in singles.values()])
+
+
 def test_store_search(tmp_path):
     needle = inv.needles_for([TOKEN])
     assert needle == (b"GATE-4410", b"gate-4410")

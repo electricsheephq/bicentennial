@@ -76,7 +76,8 @@ from bicentennial.score.invariants import (
     VERBATIM,
     ItemEvidence,
     SystemFault,
-    adapter_invariants,
+    Verdict,
+    adapter_invariant,
     run_invariants,
 )
 from bicentennial.systems.hermes_plugin import PROVIDERS
@@ -95,6 +96,14 @@ ROUTE_TABLE = {"routes": [dict(system=name, segment="seg0", probe_model="probe-m
                               served_by="scripted") for name in ("hermes-native", *sorted(PROVIDERS))]}
 REFUSALS = (PinnedArtifactChanged, LockMismatch, ControlsTampered, GateRefused,
             PinMismatch, SystemRefused)
+SYSTEM_CAUSES = frozenset(("ingest_failed", "query_failed", "tool_failed", "drain_failed",
+                           "forget_unsettled", "turn_timeout", "session_end_failed"))
+ADAPTER_PROBES = {
+    "INV-VERB": ("verb-1", "verb-2", "verb-3"),
+    "INV-NEW": ("new-a", "new-b"),
+    "INV-PAIR": ("pair-call", "pair-result"),
+    "INV-FORGET": ("forget-1", "forget-2", "forget-store"),
+}
 
 
 class T0Refused(RuntimeError):
@@ -172,8 +181,7 @@ class _Guarded:
             except (*REFUSALS, T0Refused, SystemFault):
                 raise
             except HarnessFailed as error:
-                if str(error) in ("ingest_failed", "query_failed", "tool_failed",
-                                  "drain_failed", "forget_unsettled"):
+                if str(error) in SYSTEM_CAUSES:
                     raise SystemFault() from error
                 raise
             except Exception as error:
@@ -302,10 +310,10 @@ def _surface_bytes(adapter):
 
 
 class _Capture:
-    """Retain named refusals even when S05 converts an adapter exception."""
+    """Retain refusals and infrastructure causes through S05's conversion."""
 
-    def __init__(self, host, refusals):
-        self.host, self.refusals = host, refusals
+    def __init__(self, host, refusals, infra):
+        self.host, self.refusals, self.infra = host, refusals, infra
 
     def __getattr__(self, name):
         value = getattr(self.host, name)
@@ -318,14 +326,22 @@ class _Capture:
             except (*REFUSALS, T0Refused) as error:
                 self.refusals.append(error)
                 raise
+            except HarnessFailed as error:
+                if str(error) not in SYSTEM_CAUSES:
+                    self.infra.append(error)
+                raise
+            except Exception as error:
+                if isinstance(self, _OwnedHost):
+                    self.infra.append(error)
+                raise
         return call
 
 
 class _OwnedHost(_Capture):
     """Own a successful construction; close the underlying host exactly once."""
 
-    def __init__(self, host, refusals):
-        super().__init__(host, refusals)
+    def __init__(self, host, refusals, infra):
+        super().__init__(host, refusals, infra)
         self.closed = False
         self.initial_bytes, self.growth = 0, 0
 
@@ -333,9 +349,9 @@ class _OwnedHost(_Capture):
         if not self.closed:
             self.closed = True
             try:
-                self.host.close()
+                super().__getattr__("close")()
             finally:
-                self.growth = _surface_bytes(self.host) - self.initial_bytes
+                self.growth = _surface_bytes(self) - self.initial_bytes
 
 
 class _Factory:
@@ -345,13 +361,14 @@ class _Factory:
         self.pack, self.branch, self.unit = pack, branch, Path(unit)
         self.entry, self.lock, self.real = entry, lock, real
         self.host_options, self.hosts, self.refusals = dict(host_options or {}), [], []
+        self.infra = []
         self.snapshots = 0
         self.unit.mkdir(parents=True)
 
     def __call__(self):
         try:
             if not self.real:
-                return _Capture(REFERENCE_SYSTEMS[self.entry["name"]](), self.refusals)
+                return _Capture(REFERENCE_SYSTEMS[self.entry["name"]](), self.refusals, self.infra)
             n = len(self.hosts)
             root = self.unit / f"h{n}"
             root.mkdir()
@@ -362,7 +379,7 @@ class _Factory:
                                   self.pack.pack["pack_id"]]).decode(), 0),
                 lock_hash=lock_hash(self.lock), sim_epoch_s=0, **self.host_options)
             host = HermesMemoryHost(self.entry, **options)
-            owned = _OwnedHost(host, self.refusals)
+            owned = _OwnedHost(host, self.refusals, self.infra)
             self.hosts.append(owned)
             owned.initial_bytes = _surface_bytes(host)
             target = host.paths["workspace"] / "pack"
@@ -381,6 +398,10 @@ class _Factory:
                 refusal = T0Refused("no T0 mapping")
                 self.refusals.append(refusal)
                 raise refusal from None
+            self.infra.append(error)
+            raise
+        except Exception as error:
+            self.infra.append(error)
             raise
 
     def snapshot(self, adapter):
@@ -413,11 +434,32 @@ class _Factory:
             active.add_note(f"cleanup: {type(errors[0]).__name__}")
 
     def invariants(self, bound_s):
-        try:
-            verdicts = adapter_invariants(self, bound_s=bound_s,
-                                         snapshot=self.snapshot if self.real else None)
-        finally:
-            self.close()
+        verdicts = {}
+        for invariant in INVARIANTS:
+            for attempt in range(3):
+                factory = _Factory(self.pack, self.branch, self.unit / invariant / f"a{attempt}",
+                    self.entry, self.lock, real=self.real, host_options=self.host_options)
+                try:
+                    try:
+                        verdict = adapter_invariant(factory, invariant, bound_s=bound_s,
+                            snapshot=factory.snapshot if self.real else None)
+                    finally:
+                        try:
+                            factory.close()
+                        except (*REFUSALS, T0Refused):
+                            raise
+                        except Exception as error:
+                            factory.infra.append(error)
+                finally:
+                    # Keep the closed hosts available for audit until the parent unit is removed.
+                    self.hosts.extend(factory.hosts)
+                    self.refusals.extend(factory.refusals)
+                if not factory.infra:
+                    break
+                if attempt == 2:
+                    ids = ADAPTER_PROBES[invariant]
+                    verdict = Verdict(invariant, "INFRA_FAILURE", len(ids), 0, (), (), ids, ("infra",))
+            verdicts[invariant] = verdict
         return verdicts
 
 
@@ -647,9 +689,11 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
     status = "BLOCKED" if (any(i["failure_class"] == "BLOCKED" for i in items) or
         any(v["status"] == "INFRA_FAILURE" for v in all_verdicts)) else "COMPLETE"
     hit_count = hits(pack.meta["honeypot_token"], audit["texts"])
-    gate = "INVALID" if hit_count else "FAIL" if (status != "COMPLETE" or
+    known_failure = (
         any(v["status"] == "FAIL" for v in all_verdicts) or
-        any(i["failure_class"] == "SYSTEM_FAILURE" for i in items)) else "PASS"
+        any(i["failure_class"] == "SYSTEM_FAILURE" for i in items))
+    gate = ("INVALID" if hit_count else "FAIL" if known_failure else
+            "BLOCKED" if status == "BLOCKED" else "PASS")
     kwargs = dict(singleton_lives=pack.meta["singleton_lives"],
                   duty_items=frozenset(pack.meta["duty_items"]))
     provisional = assemble(tier="T0", mode="api", system_entry=entry, run_status=status,
@@ -680,7 +724,8 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         process_ids=audit["pids"], ports=audit["ports"], temporary_paths=audit["paths"],
         raw_body_digest=raw_body_digest(receipt_records))
     return dict(card=card, receipt=receipt, junit=junit, invariants=canon(verdicts),
-                controls=canon(controls), code=2 if status == "BLOCKED" else 1 if gate != "PASS" else 0)
+                controls=canon(controls), code=1 if gate in ("INVALID", "FAIL") else
+                2 if gate == "BLOCKED" else 0)
 
 
 def _relations(index, selected, outcomes, name):
@@ -774,7 +819,8 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers):
         (out / "adapter_invariants.json").write_bytes(canon(adapter))
         (out / "relations.json").write_bytes(relation_json)
         (out / "relations.xml").write_bytes(relation_xml)
-        return max(report["code"] for report in reports.values())
+        codes = {report["code"] for report in reports.values()}
+        return 1 if 1 in codes else 2 if 2 in codes else 0
     finally:
         try:
             invariant_factory.close()

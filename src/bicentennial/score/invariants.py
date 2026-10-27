@@ -257,6 +257,25 @@ def _api_script(factory, invariant, bound, snapshot):
            "store_hit" if hit else "opaque_store" if opaque else "")
 
 
+def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None) -> Verdict:
+    """Run one API-mode invariant against an adapter factory."""
+    ids, reason = {
+        "INV-VERB": (("verb-1", "verb-2", "verb-3"), "absent_after_fault"),
+        "INV-NEW": (("new-a", "new-b"), "not_newest"),
+        "INV-PAIR": (("pair-call", "pair-result"), "absent_after_fault"),
+        "INV-FORGET": (("forget-1", "forget-2", "forget-store"), "surfaced"),
+    }[invariant]
+    rows = []
+    try:
+        for i, s, r in _api_script(factory, invariant, bound_s, snapshot):
+            rows.append((i, s, r or (reason if s == "FAIL" else "")))
+    except SystemFault:
+        rows = [(i, "FAIL", "system_failure") for i in ids]
+    except Exception:
+        rows.extend((i, "INFRA_FAILURE", "infra") for i in ids if i not in {row[0] for row in rows})
+    return _verdict(invariant, rows)
+
+
 def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Verdict]:
     """Run API-mode invariants against an adapter factory.
 
@@ -265,20 +284,8 @@ def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Ver
     Call/result linkage is certified in Hermes mode, where the requests' call and
     output ids are observable.
     """
-    output = {}
-    for inv, ids, reason in zip(INVARIANTS, (("verb-1", "verb-2", "verb-3"), ("new-a", "new-b"),
-            ("pair-call", "pair-result"), ("forget-1", "forget-2", "forget-store")),
-            ("absent_after_fault", "not_newest", "absent_after_fault", "surfaced"), strict=True):
-        rows = []
-        try:
-            for i, s, r in _api_script(factory, inv, bound_s, snapshot):
-                rows.append((i, s, r or (reason if s == "FAIL" else "")))
-        except SystemFault:
-            rows = [(i, "FAIL", "system_failure") for i in ids]
-        except Exception:
-            rows.extend((i, "INFRA_FAILURE", "infra") for i in ids if i not in {row[0] for row in rows})
-        output[inv] = _verdict(inv, rows)
-    return output
+    return {inv: adapter_invariant(factory, inv, bound_s=bound_s, snapshot=snapshot)
+            for inv in INVARIANTS}
 
 
 @dataclass(frozen=True)

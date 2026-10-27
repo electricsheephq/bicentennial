@@ -27,7 +27,7 @@ from bicentennial.packs import build
 from bicentennial.packs.catalogue import load_catalogue
 from bicentennial.packs.install import install
 from bicentennial.runner import t0
-from bicentennial.score.invariants import SystemFault
+from bicentennial.score.invariants import SystemFault, Verdict, adapter_invariants
 from bicentennial.systems.registry import REGISTRY, load
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,6 +151,7 @@ def test_settle_false_is_system_failure(installed, tmp_path):
 
 @pytest.mark.parametrize("reason,system", [("query_failed", True), ("ingest_failed", True),
     ("tool_failed", True), ("drain_failed", True), ("forget_unsettled", True),
+    ("turn_timeout", True), ("session_end_failed", True),
     ("open_failed", False), ("unknown", False)])
 def test_harness_failure_cause(reason, system):
     class Broken(ReferenceStore):
@@ -496,7 +497,7 @@ def test_preflight_c7_before_host(installed, monkeypatch):
 
 def test_parallel_pack_invariants_and_baseline(installed, tmp_path):
     index, selected, by_row, entry, _, _, _, bound_s = preflight(installed)
-    adapter_verdicts = t0.adapter_invariants(ReferenceStore, bound_s=bound_s)
+    adapter_verdicts = adapter_invariants(ReferenceStore, bound_s=bound_s)
     assert all(v.status == "PASS" for v in adapter_verdicts.values())
     for pack in selected:
         factories = []
@@ -700,7 +701,7 @@ def test_mutant_whole_runs(installed, tmp_path, system, failed):
 
 
 @pytest.mark.parametrize("kind,code,failure", [("settle", 1, "SYSTEM_FAILURE"),
-    ("twice", 1, None), ("always", 2, "BLOCKED"), ("system", 1, "SYSTEM_FAILURE")])
+    ("twice", 0, None), ("always", 2, "BLOCKED"), ("system", 1, "SYSTEM_FAILURE")])
 def test_whole_run_failure_classes(installed, tmp_path, monkeypatch, kind, code, failure):
     attempts = {}
     original = t0._attempts
@@ -717,6 +718,9 @@ def test_whole_run_failure_classes(installed, tmp_path, monkeypatch, kind, code,
 
         def query(self, task, now):
             iid = task["task_id"]
+            if iid.startswith(("verb-", "new-", "pair-", "forget-")):
+                # Two failed attempts per invariant, then a clean attempt of all its probes.
+                iid = iid.split("-")[0]
             attempts[iid] = attempts.get(iid, 0) + 1
             if kind == "system":
                 raise HarnessFailed("query_failed")
@@ -736,6 +740,115 @@ def test_whole_run_failure_classes(installed, tmp_path, monkeypatch, kind, code,
             assert all(i["failure_class"] == failure for i in card["items"])
         if kind == "twice":
             assert all(i["infra_reruns"] == 2 for i in card["items"])
+
+
+@pytest.mark.parametrize("scenario", ["system-blocked", "fail-blocked", "honeypot-blocked", "blocked"])
+def test_known_failure_wins_over_blocked(installed, tmp_path, monkeypatch, scenario):
+    selected = [next(p for p in packs(installed) if p.meta["row"]["id"] == name)
+                for name in ("g2-keep-forget-mft-1", "g2-keep-incidental-mft-1")]
+    if scenario != "fail-blocked":
+        selected = selected[:1]
+    original = t0._Factory.__call__
+    attempts = {}
+
+    def construct(factory):
+        if "adapter" in factory.unit.parts:
+            return original(factory)
+        key = (factory.pack.rel, factory.branch)
+        attempts[key] = attempts.get(key, 0) + 1
+        system = (scenario == "system-blocked" and factory.branch == "B0" or
+                  scenario == "fail-blocked" and factory.pack.rel == selected[0].rel)
+
+        class Broken(ReferenceStore):
+            def query(self, task, now):
+                raise HarnessFailed("query_failed" if system else "ipc")
+
+        return Broken()
+
+    monkeypatch.setattr(t0._Factory, "__call__", construct)
+    if scenario == "honeypot-blocked":
+        monkeypatch.setattr(t0, "hits", lambda token, texts: 1)
+    out = tmp_path / "out"
+    code = run(installed, out, packs=[p.rel for p in selected])
+    expected = 2 if scenario == "blocked" else 1
+    assert code == expected
+    for n, pack in enumerate(selected):
+        card = json.loads((out / pack.rel / "card.json").read_bytes())
+        validate("card_ring0", card)
+        gate = ("INVALID" if scenario == "honeypot-blocked" else
+                "BLOCKED" if scenario == "blocked" or n == 1 else "FAIL")
+        assert card["gate_verdict"] == gate
+        assert card["run_status"] == ("COMPLETE" if scenario == "fail-blocked" and n == 0 else "BLOCKED")
+        for item in card["items"]:
+            branch = pack.records[item["item_id"]]["branch"]
+            system = (scenario == "system-blocked" and branch == "B0" or
+                      scenario == "fail-blocked" and n == 0)
+            assert item["failure_class"] == ("SYSTEM_FAILURE" if system else "BLOCKED")
+    assert attempts
+    assert all(count == (1 if scenario == "fail-blocked" and rel == selected[0].rel or
+                         scenario == "system-blocked" and branch == "B0" else 3)
+               for (rel, branch), count in attempts.items())
+
+
+@pytest.mark.parametrize("fault,status,code,count", [
+    (HarnessFailed("ipc"), "INFRA_FAILURE", 2, 3),
+    (HarnessFailed("query_failed"), "FAIL", 1, 1),
+    (ValueError("host decode"), "INFRA_FAILURE", 2, 3)])
+def test_invariant_fault_attribution(fake_hosts, installed, tmp_path, monkeypatch,
+                                     fault, status, code, count):
+    factory, created = fake_hosts
+    original = t0.HermesMemoryHost.query
+    failures = []
+
+    def query(host, task, now):
+        if task["task_id"] == "new-b":
+            failures.append(host.options["root"])
+            raise fault
+        return original(host, task, now)
+
+    monkeypatch.setattr(t0.HermesMemoryHost, "query", query)
+    empty_audit = t0._audit([])
+    monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
+    out = tmp_path / "out"
+    assert run(installed, out, system="hermes-native", packs=[factory.pack.rel], hermes=tmp_path,
+               entry=factory.entry | dict(fresh_install_hash="1" * 64)) == code
+    verdicts = json.loads((out / "adapter_invariants.json").read_bytes())
+    expected = adapter_invariants(ReferenceStore, bound_s=5)
+    for verdict in verdicts:
+        assert Verdict(**verdict).to_obj() == verdict
+        if verdict["invariant"] != "INV-NEW":
+            assert verdict == expected[verdict["invariant"]].to_obj()
+            continue
+        assert verdict["status"] == status
+        assert verdict["members"] == 2 and verdict["uninformative"] == 0
+        assert verdict["infra"] == (["new-a", "new-b"] if status == "INFRA_FAILURE" else [])
+        assert verdict["failed"] == (["new-a", "new-b"] if status == "FAIL" else [])
+        assert verdict["inconclusive"] == []
+        assert verdict["reasons"] == (["infra"] if status == "INFRA_FAILURE" else ["system_failure"])
+    assert len(failures) == count and len(set(failures)) == count
+    assert created and all(host.closed == 1 for host in created)
+    card = json.loads((out / factory.pack.rel / "card.json").read_bytes())
+    validate("card_ring0", card)
+    assert card["run_status"] == ("BLOCKED" if status == "INFRA_FAILURE" else "COMPLETE")
+    assert card["gate_verdict"] == ("BLOCKED" if status == "INFRA_FAILURE" else "FAIL")
+    assert not (out / "work").exists()
+
+
+@pytest.mark.parametrize("fault", [HarnessFailed("worker_start"), OSError("serve bind failed")])
+def test_invariant_construction_infrastructure(fake_hosts, monkeypatch, fault):
+    factory, created = fake_hosts
+    calls = []
+
+    def broken(*args, **kwargs):
+        calls.append(kwargs["root"])
+        raise fault
+
+    monkeypatch.setattr(t0, "HermesMemoryHost", broken)
+    verdicts = factory.invariants(5)
+    assert len(calls) == len(set(calls)) == 3 * len(t0.INVARIANTS)
+    assert all(v.status == "INFRA_FAILURE" and v.reasons == ("infra",)
+               and not v.failed and not v.inconclusive and v.infra for v in verdicts.values())
+    assert created == []
 
 
 def assert_no_results(out):
