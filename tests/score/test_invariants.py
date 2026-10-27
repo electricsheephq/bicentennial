@@ -385,6 +385,20 @@ def test_run_evidence(cases):
         assert cases["forget-t1-" + name]["INV-FORGET"].status == "NOT_EXERCISED"
 
 
+@pytest.mark.parametrize("failure_class", ["N/A_EXPOSURE", "N/A_CLOCK"])
+def test_t0_na_verbatim_without_baseline_is_excluded(failure_class):
+    e = run_rows("LOCK-4417")[0]
+    verdicts = inv.run_invariants([replace(e, failure_class=failure_class, result=None)], tier="T0")
+    for verdict in verdicts.values():
+        assert verdict == inv.Verdict(verdict.invariant, "NOT_EXERCISED", 0, 0, (), (), (), ())
+
+
+def test_t0_verbatim_without_baseline_still_requires_baseline():
+    e = run_rows("LOCK-4417")[0]
+    with pytest.raises(ValueError, match="^fault-free baseline required$"):
+        inv.run_invariants([e], tier="T0")
+
+
 def test_requests(cases):
     for name in ("chat-pair", "responses-pair", "expected-present", "expected-later"):
         assert cases[name]["INV-PAIR"].status == "PASS"

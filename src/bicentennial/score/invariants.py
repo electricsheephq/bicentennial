@@ -258,6 +258,13 @@ def _api_script(factory, invariant, bound, snapshot):
 
 
 def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Verdict]:
+    """Run API-mode invariants against an adapter factory.
+
+    API-mode INV-PAIR certifies that the call and its result both survive the crash;
+    Answer exposes only output, citations and confidence_milli, not result call_id.
+    Call/result linkage is certified in Hermes mode, where the requests' call and
+    output ids are observable.
+    """
     output = {}
     for inv, ids, reason in zip(INVARIANTS, (("verb-1", "verb-2", "verb-3"), ("new-a", "new-b"),
             ("pair-call", "pair-result"), ("forget-1", "forget-2", "forget-store")),
@@ -301,11 +308,11 @@ def run_invariants(evidence, *, tier, requests=None, expected_call_ids=()) -> di
             raise ValueError("invalid failure class")
         if r is None and e.failure_class in (None, "FAIL_TASK"):
             raise ValueError("missing reader result")
+        if e.failure_class in ("N/A_EXPOSURE", "N/A_CLOCK"):
+            continue
         verb = e.record["direction"] == VERBATIM and bool(set(e.record["crossed"]) & set(STRESSES)) and bool(e.keys["required"])
         if tier == "T0" and verb and e.baseline_in_context is None:
             raise ValueError("fault-free baseline required")
-        if e.failure_class in ("N/A_EXPOSURE", "N/A_CLOCK"):
-            continue
         memberships = (verb, e.item["cell_id"] in NEW_CELLS and e.crosses_restart and bool(e.keys["required"]),
                        False, tier == "T0" and bool(e.keys["forbidden"]))
         for inv, member in zip(INVARIANTS, memberships, strict=True):
