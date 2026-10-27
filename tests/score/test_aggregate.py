@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -468,12 +469,12 @@ def test_fresh_process_import_orders(aggregate_first):
     assert r.stdout.strip() == 'card validated'
 
 
-def qa_singleton(item_id=None, stage='remember', track='Recall', failure=False):
+def qa_singleton(item_id=None, stage='remember', track='Recall', failure=False, cause=None):
     item = load('schemas/fixtures/gen/item.json')
     ident = identity(item_id=item_id or item['item_id'], stage=stage, track=track, cell_id=item['cell_id'],
-                     selected_option=None if failure else item['options'][0]['option_id'])
-    if failure:
-        return outcome(ident, None, cause='SYSTEM_FAILURE')
+                     selected_option=None if failure or cause else item['options'][0]['option_id'])
+    if failure or cause:
+        return outcome(ident, None, cause=cause or 'SYSTEM_FAILURE', infra_reruns=2 if cause == 'INFRA_FAILURE' else 0)
     return outcome(ident, score_qa(item, dict(item['options'][0]['envelope'], citation=None), evidence_texts=[]))
 
 
@@ -484,7 +485,8 @@ def singleton_card(single, life='life-g1'):
     c = card()
     c.update(items=items, singletons=[{'item_id': single['item_id'], 'life': life}],
              aggregates=r['aggregates'], sensitivity=r['sensitivity'], worst_case=r['worst_case'],
-             twin_consistency=r['twin_consistency'], per_item_accuracy=r['accuracy']['cells'])
+             twin_consistency=r['twin_consistency'], per_item_accuracy=r['accuracy']['cells'],
+             coverage={k: v for k, v in r['coverage'].items() if k != 'incomplete'})
     return c, r
 
 
@@ -545,3 +547,73 @@ def test_compare_forwards_declared_duties():
     assert all(r['violations'][0]['harmful_omission'] == 0 for r in compare(arms).values())
     assert all(r['violations'][0]['harmful_omission'] == 1
                for r in compare(arms, duty_items={'duty'}).values())
+
+
+@pytest.mark.parametrize('cause,key', [(None, None), ('INFRA_FAILURE', 'blocked'),
+                                       ('N/A_EXPOSURE', 'na_exposure'), ('N/A_CLOCK', 'na_clock')])
+def test_coverage_counts_singleton_units(cause, key):
+    single = qa_singleton(cause=cause)
+    r = reduce([single], [], singleton_lives={single['item_id']: 'life-g1'})
+    expected = dict(assigned=1, scored=0 if cause else 1, blocked=0, na_exposure=0, na_clock=0,
+                    coverage_milli=0 if cause else 1000, incomplete=bool(cause))
+    if key:
+        expected[key] = 1
+    assert r['coverage'] == expected
+
+
+@pytest.mark.parametrize('n,excluded,cause', [(20, 1, 'BLOCKED'), (19, 1, 'BLOCKED'), (40, 2, 'N/A_EXPOSURE'),
+                                              (40, 3, 'N/A_CLOCK')])
+def test_singleton_lowers_coverage_like_a_bundle(n, excluded, cause):
+    # Moving the excluded units from bundles to singletons changes no count, ratio or flag.
+    bundles = [dict(bundle_id=str(i), failure_class=cause if i < excluded else None) for i in range(n)]
+    singles = [(dict(item_id=str(i), failure_class=cause), 'life') for i in range(excluded)]
+    assert coverage(bundles[excluded:], singletons=singles) == coverage(bundles)
+
+
+@pytest.mark.parametrize('cause', [None, 'INFRA_FAILURE', 'N/A_EXPOSURE'])
+def test_card_coverage_must_count_singletons(cause):
+    c, r = singleton_card(qa_singleton(cause=cause))
+    # Fixture coverage is 12 units, 10 scored; the singleton adds one unit, scored only with a result.
+    assert (c['coverage']['assigned'], c['coverage']['scored']) == (13, 10 if cause else 11)
+    validate('card_ring0', c)
+    omitted = copy.deepcopy(c)
+    omitted['coverage'] = card()['coverage']
+    with pytest.raises(ValueError, match='coverage'):
+        validate('card_ring0', omitted)
+
+
+def test_blocked_singleton_shows_in_worst_case_blocked():
+    single = qa_singleton(cause='INFRA_FAILURE')
+    lives = {single['item_id']: 'life-g1'}
+    alone = reduce([single], [], singleton_lives=lives)
+    assert alone['worst_case'] == [dict(stage='remember', track='Recall', score_milli=None, blocked=1)]
+    f = fixture()
+    items = sorted(f['items'] + [single], key=lambda i: i['item_id'])
+    r = reduce(items, f['bundles'], singleton_lives=lives)  # shown and never charged: Recall stays -750
+    assert [x for x in r['worst_case'] if x['track'] == 'Recall'] == [
+        dict(stage='remember', track='Recall', score_milli=-750, blocked=1)]
+    out = compare(dict(system=(items, f['bundles']), wiped=(items, f['bundles'])), singleton_lives=lives)
+    assert all([x for x in arm['worst_case'] if x['track'] == 'Recall'][0]['blocked'] == 1
+               for arm in out.values())
+    c, _ = singleton_card(single)
+    validate('card_ring0', c)
+
+
+def test_score_act_reads_a_sqlite_row_commitment():
+    item = load('schemas/fixtures/gen/act-item.json')
+    table = load('tests/fixtures/decision_table/contracts.json')['contracts']['decision_table']
+    item.update(track='Tuesday', decision_table_ref=table['table_id'])
+    trace = (False, True, 300)
+    predicates = {name: name in table['admissible'] for name in [
+        *table['admissible'], *table['benign_extras'], *(r['predicate'] for r in table['disqualifiers'])]}
+    commitment = dict(fact_id='fact', trigger_kind='time', window_open_t=100, window_close_t=200,
+                      lures_json='[]')
+    db = sqlite3.connect(':memory:')
+    db.row_factory = sqlite3.Row
+    row = db.execute('SELECT :fact_id AS fact_id, :trigger_kind AS trigger_kind, :window_open_t AS window_open_t,'
+                     ' :window_close_t AS window_close_t, :lures_json AS lures_json', commitment).fetchone()
+    db.close()
+    assert type(row) is sqlite3.Row and not isinstance(row, dict)
+    expected = score_act(item, table, trace, predicates, commitment=commitment)
+    assert score_act(item, table, trace, predicates, commitment=row) == expected
+    assert expected.score_milli == 500

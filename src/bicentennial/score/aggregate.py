@@ -46,7 +46,7 @@ def _rows(bundles, items, *, keep=None, minus_one=None, mode="bundle", blocked=f
     for item, life in singletons:
         key = (item["stage"], item["track"])
         lives = groups.setdefault(key, {})
-        counts.setdefault(key, 0)
+        counts[key] = counts.get(key, 0) + (item["failure_class"] == "BLOCKED")  # shown, never charged
         if keep_items is not None and item["item_id"] not in keep_items and not (
                 mode == "worst" and item["failure_class"] == "SYSTEM_FAILURE"):  # A1, with A3's override
             continue
@@ -131,13 +131,14 @@ def accuracy(items, *, blocked_items=frozenset()):
                 incomplete=not cells or 20 * excluded > eligible + excluded, label=LABEL)
 
 
-def coverage(bundles, *, blocked=frozenset()):
+def coverage(bundles, *, blocked=frozenset(), singletons=()):
     counts = dict.fromkeys(("blocked", "na_exposure", "na_clock"), 0)
-    for bundle in bundles:
-        failure = "BLOCKED" if bundle["bundle_id"] in blocked else bundle["failure_class"]
+    failures = ["BLOCKED" if b["bundle_id"] in blocked else b["failure_class"] for b in bundles]
+    failures += [item["failure_class"] for item, _ in singletons]  # A2: a singleton is one unit
+    for failure in failures:
         if failure in NONRESULTS:
             counts[failure.lower().replace("n/a_", "na_")] += 1
-    assigned, excluded = len(bundles), sum(counts.values())
+    assigned, excluded = len(failures), sum(counts.values())
     return dict(assigned=assigned, scored=assigned - excluded, **counts,
                 coverage_milli=_ratio(assigned - excluded, assigned),
                 incomplete=not assigned or 20 * excluded > assigned)
@@ -186,7 +187,7 @@ def reduce(items, bundles, *, keep=None, blocked=frozenset(), blocked_items=froz
                 twin_consistency=twin_consistency(bundles, items, keep=keep),
                 violations=violations(items, duty_items=duty_items),
                 accuracy=accuracy(items, blocked_items=blocked_items),
-                coverage=coverage(bundles, blocked=blocked))
+                coverage=coverage(bundles, blocked=blocked, singletons=options["singletons"]))
 
 
 def common_valid(arms) -> frozenset[str]:

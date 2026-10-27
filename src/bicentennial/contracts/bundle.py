@@ -217,12 +217,10 @@ def _card(card):
              "volatile_surface_paths")
     for row in card["per_item_accuracy"]:
         _ratio(row["correct"], row["eligible"], row["accuracy_milli"])
-    coverage = card["coverage"]
-    counts = [sum(b["failure_class"] == c for b in card["bundles"]) for c in NONRESULTS]
-    _require([coverage[k] for k in ("blocked", "na_exposure", "na_clock")] == counts,
+    coverage, expected = card["coverage"], aggregate.coverage(bundles, singletons=singles)
+    _require(all(coverage[k] == expected[k] for k in ("blocked", "na_exposure", "na_clock")),
              "coverage exclusions mismatch")
-    _require(coverage["assigned"] == len(card["bundles"])
-             and coverage["scored"] == len(card["bundles"]) - sum(counts), "coverage counts mismatch")
+    _require(all(coverage[k] == expected[k] for k in ("assigned", "scored")), "coverage counts mismatch")
     _ratio(coverage["scored"], coverage["assigned"], coverage["coverage_milli"])
     _require(max(card["carry_over_milli"], card["competing_milli"]) <= 1000,
              "system share exceeds 1000")

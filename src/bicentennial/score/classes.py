@@ -57,5 +57,5 @@ def score_act(item, table, trace, predicates, *, commitment=None) -> ActionResul
     if type(trace) is not tuple or len(trace) != 3:
         raise ValueError("score_act: a three-element trace tuple required")
     window = ((commitment["window_open_t"], commitment["window_close_t"])
-              if isinstance(commitment, dict) else None)
+              if hasattr(commitment, "keys") else None)  # a dict or G01's sqlite3.Row
     return score_action(item, table, Trace(*trace), predicates, window=window)
