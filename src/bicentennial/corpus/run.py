@@ -146,7 +146,7 @@ def _close(adapter, infra=(), error=None):
     if adapter is not None and hasattr(adapter, "close"):
         try:
             _call(adapter, "close", infra=infra)
-        except BaseException as close_error:
+        except Exception as close_error:
             if error is None:
                 raise
             error.add_note(f"close() failed: {close_error!r}")

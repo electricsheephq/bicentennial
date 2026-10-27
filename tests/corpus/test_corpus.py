@@ -567,6 +567,23 @@ def test_close_preserves_system_fault(catalogue, corpus, tmp_path):
     assert not list(tmp_path.iterdir())
 
 
+def test_close_interrupt_is_not_swallowed(catalogue, corpus, tmp_path):
+    from bicentennial.api.adapters.reference_store import ReferenceStore
+    from bicentennial.corpus.run import drive, regenerate
+
+    class Host(ReferenceStore):
+        def ingest(self, event):
+            raise RuntimeError("ingest")
+
+        def close(self):
+            raise KeyboardInterrupt
+
+    case = corpus[0]
+    with regenerate(case, root=tmp_path, catalogue=catalogue) as (life, worlds, keys, items):
+        with pytest.raises(KeyboardInterrupt):
+            drive(life, "B0", worlds, keys, items, Host, oracle=False, forget=True, bound_s=5)
+
+
 def test_cli_hash_seeds(corpus, tmp_path):
     outputs = []
     for seed in ("0", "random"):
