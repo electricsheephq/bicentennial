@@ -429,6 +429,9 @@ def independent_closure(roots, root):
         if relative in found:
             continue
         found.add(relative)
+        if relative == "contracts/run.py":
+            queue.extend(sorted(path for path in modules.values()
+                                if Path(path).parent == Path("contracts")))
         package = ".".join(("bicentennial", *Path(relative).parts[:-1]))
         names = []
         for node in ast.walk(ast.parse((root / relative).read_text())):
@@ -721,6 +724,49 @@ def test_purity_rejects_identifier_positions(source):
 
 def test_purity_allows_optional_identifier_names():
     assert_pure(ast.parse("allowed(**options)\nfrom . import allowed"))
+
+
+def test_controls_hash_includes_runtime_contract_validators():
+    assert {"contracts/run.py", "contracts/pack.py", "contracts/reader_keys.py",
+            "contracts/stream.py", "contracts/env_seed.py"} <= set(cache.CONTROL_FILES)
+
+
+def test_runtime_contract_byte_edit_invalidates_controls(tmp_path):
+    inp, _ = fixture_input()
+    root = tmp_path / "package"
+    shutil.copytree(cache.PACKAGE_ROOT, root, ignore=shutil.ignore_patterns("__pycache__"))
+    before = cache.code_sha256(cache.CONTROL_FILES, root=root)
+    assert before == cache.code_sha256(cache.CONTROL_FILES)
+    key = cache.cache_key(inp, harness_pin=PIN, root=root)
+    path = tmp_path / "controls.json"
+    cache.write_entry(path, computed())
+    assert cache.read_entry(path, key) is not None
+    source = root / "contracts/stream.py"
+    source.write_bytes(source.read_bytes() + b" ")
+    assert cache.code_sha256(cache.CONTROL_FILES, root=root) != before
+    changed = cache.cache_key(inp, harness_pin=PIN, root=root)
+    assert {field for field in key if key[field] != changed[field]} == {"controls_sha256"}
+    assert cache.read_entry(path, changed) is None
+
+
+@pytest.mark.parametrize("reaches_runner", [False, True])
+def test_import_closure_expands_contracts_only_when_runner_is_reachable(tmp_path, reaches_runner):
+    sources = {
+        "__init__.py": "",
+        "start.py": "import bicentennial.contracts.run" if reaches_runner else "",
+        "contracts/__init__.py": "",
+        "contracts/run.py": "",
+        "contracts/future.py": "from bicentennial import transitive",
+        "transitive.py": "",
+        "unused.py": "",
+    }
+    for relative, source in sorted(sources.items()):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    expected = tuple(sorted(set(sources) - {"unused.py"})) if reaches_runner else ("start.py",)
+    assert cache.import_closure(("start.py",), root=tmp_path) == expected
+    assert independent_closure(("start.py",), tmp_path) == expected
 
 
 if __name__ == "__main__":

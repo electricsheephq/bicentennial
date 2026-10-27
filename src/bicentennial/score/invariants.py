@@ -250,11 +250,20 @@ def _api_script(factory, invariant, bound, snapshot):
                 for i, q in (("forget-1", "yard gate code"), ("forget-2", "loading")))
     data = _checkpoint(holder[0], bound)
     needles = needles_for(["GATE-4410"])
-    scans = [search_store(root, needles).verdict for root in snapshot(holder[0])] if snapshot else []
-    hit = any(n in data for n in needles) or "found" in scans
+    if any(n in data for n in needles):
+        yield ("forget-store", "FAIL", "store_hit")
+        return
+    scans = []
+    if snapshot:
+        for root in snapshot(holder[0]):
+            scan = search_store(root, needles).verdict
+            if scan == "found":
+                yield ("forget-store", "FAIL", "store_hit")
+                return
+            scans.append(scan)
     opaque = not searchable_bytes(data) or "inconclusive" in scans
-    yield ("forget-store", "FAIL" if hit else "INCONCLUSIVE" if opaque else "PASS",
-           "store_hit" if hit else "opaque_store" if opaque else "")
+    yield ("forget-store", "INCONCLUSIVE" if opaque else "PASS",
+           "opaque_store" if opaque else "")
 
 
 def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Verdict]:
