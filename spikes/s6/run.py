@@ -449,13 +449,21 @@ def run_command(args):
         mem0_pin = isinstance(exc, PinMismatch) and args.arm == "mem0-oss"
         label = ("initial_settle_failed" if isinstance(exc, HarnessFailed) and
                  exc.args == ("initial_settle_failed",) else type(exc).__name__)
-        _arm_write(root, dict(status="not_run", reason="mem0_pin_mismatch", inputs=metadata) if mem0_pin else
-                   dict(status="stopped", stop_reason="init_failed:" + label, inputs=metadata))
+        result = (dict(status="not_run", reason="mem0_pin_mismatch", inputs=metadata) if mem0_pin else
+                  dict(status="stopped", stop_reason="init_failed:" + label, inputs=metadata))
+        _arm_write(root, result)
         try:
             if adapter is not None:
                 adapter.close()
         finally:
             drain_login(cred, root)
+        try:
+            result["credential_scan"] = scan(login, [root], run)
+        finally:
+            drain_login(cred, root)
+        _arm_write(root, result)
+        if result["credential_scan"]["hits"] or result["credential_scan"]["unreadable"]:
+            return 1
         if mem0_pin:
             print("mem0_pin_mismatch")
             return 2

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from bicentennial.contracts.run import scan_script, validate
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.director.upstream import Upstream
+from bicentennial.director.upstream.login import account_pin
 from bicentennial.harness.hermes import adapter as adapter_module
 from bicentennial.harness.hermes.adapter import HermesAdapter
 from bicentennial.harness.hermes.config import hermes_config
@@ -30,6 +32,34 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE_SPEC = importlib.util.spec_from_file_location("s6_runner", Path(__file__).with_name("run.py"))
 s6 = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(s6)
+
+
+@pytest.fixture
+def offline_login(tmp_path, monkeypatch):
+    token, lease = "offline-synthetic-access-token", "offline-lease"
+    store = dict(tokens=dict(access_token=token))
+    login = SimpleNamespace(path=tmp_path / "offline-auth.json", dead=False,
+                            lock=threading.Lock(), log=[], token=lambda: token,
+                            snapshot=lambda: (store, lease),
+                            learn_only=lambda _: {token: "synthetic_access_token"})
+
+    def drain():
+        with login.lock:
+            rows = login.log[:]
+            login.log.clear()
+            return rows
+
+    def refuse(reason):
+        login.dead = reason
+
+    def open_login(*args):
+        login.path.with_name("director-pin.json").write_bytes(canon({
+            args[-1]: dict(pin=account_pin(token), lease_id=lease)}))
+        return login
+
+    login.drain, login.refuse = drain, refuse
+    monkeypatch.setattr(s6, "open_login", open_login)
+    return login
 
 
 @pytest.fixture(scope="module")
@@ -684,7 +714,8 @@ def test_native_empty_initialisation_settles(tmp_path):
 
 
 @pytest.mark.parametrize("missing,reason", [(True, "mem0_source_missing"), (False, "mem0_pin_mismatch")])
-def test_measured_mem0_missing_source_and_install_refusal(built, tmp_path, monkeypatch, capsys, missing, reason):
+def test_measured_mem0_missing_source_and_install_refusal(
+        built, tmp_path, monkeypatch, capsys, offline_login, missing, reason):
     entry = s6.load_entry("mem0-oss")
     entry["artifact"]["sha256"] = "a" * 64
     original = s6.load_entry
@@ -692,8 +723,7 @@ def test_measured_mem0_missing_source_and_install_refusal(built, tmp_path, monke
     # Only the artifact pin is tested here; no source tree, login or worker is real.
     monkeypatch.setattr(s6.registry, "unmeasured", lambda entry: [])
     ready_preflight(monkeypatch)
-    login = SimpleNamespace(drain=lambda: [])
-    monkeypatch.setattr(s6, "open_login", lambda *a: login)
+    login = offline_login
     cred = SimpleNamespace(login=login)
     monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, cred, None))
     closed = []
@@ -722,15 +752,18 @@ def test_measured_mem0_missing_source_and_install_refusal(built, tmp_path, monke
         assert json.loads((root / "arm.json").read_bytes())["reason"] == reason
 
 
-def test_stack_reaches_responses_and_accounts_live_write_without_worker(built, tmp_path, responses_server):
+def test_stack_reaches_responses_and_accounts_live_write_without_worker(
+        built, tmp_path, responses_server, offline_login):
     from bicentennial.director.core import Director
+    from bicentennial.director.scripted import Call
     from bicentennial.ledger import Guard
 
     base, bodies, outbound = responses_server
     script = json.loads((built[0] / "script.json").read_bytes())
     entry = s6.load_entry("hermes-native")
-    routed, cred, _ = s6.build_stack(entry, tmp_path / "spend.json", auth=lambda: {"Authorization": "Bearer t"},
+    routed, cred, _ = s6.build_stack(entry, tmp_path / "spend.json", auth=None, login=offline_login,
                                     base_url=base, max_output=100, max_sends=20)
+    assert type(cred) is s6.CredentialResponder
     faults = FaultLite.load([], script)
     director = Director(script, RouteTable.load(s6.routes("hermes-native")), "hermes-native",
         s6.LIFE_ID, "B0", "p06-director-unit", ("memory",), routed,
@@ -757,6 +790,13 @@ def test_stack_reaches_responses_and_accounts_live_write_without_worker(built, t
     assert not any(row.get("role") == "unknown" for row in rows)
     assert cred.state()["sends"] == 1
     assert json.loads((tmp_path / "spend.json").read_bytes())["settled"] == 0
+    assert routed.served_identities() == cred.served_identities() == {s6.MODEL: "fake-served"}
+    assert routed.state()["login_stop"] is None
+    with pytest.raises(ValueError, match="^bridge_unmapped_key:logprobs$"):
+        routed.respond(Call("write_turn", "write_turn", "chat", dict(messages=[], logprobs=True),
+                            s6.MODEL, None, "bridge-stop"))
+    assert s6.stop_reason(cred) == "bridge_unmapped_key:logprobs"
+    assert routed.state() == cred.state()
 
 
 def test_reference_checkout_symlink_is_also_refused(tmp_path, monkeypatch):
@@ -852,17 +892,11 @@ def test_unusable_scratch_is_preflight_refusal(tmp_path, monkeypatch, capsys, sc
     ("initialise", s6.HarnessFailed("initial_settle_failed"), 4, "initial_settle_failed"),
     ("initialise", s6.CredentialLeak("private diagnostic"), 1, "CredentialLeak")])
 def test_initialisation_failures_record_attempt_and_drain_login(
-        built, tmp_path, monkeypatch, capsys, phase, exception, code, label):
+        built, tmp_path, monkeypatch, capsys, offline_login, phase, exception, code, label):
     ready_preflight(monkeypatch)
-    pending = [dict(type="offline_login", label="synthetic")]
-
-    def drain():
-        rows = pending[:]
-        pending.clear()
-        return rows
-
-    login = SimpleNamespace(drain=drain)
-    monkeypatch.setattr(s6, "open_login", lambda *a: login)
+    login = offline_login
+    pending = login.log
+    pending.append(dict(type="offline_login", label="synthetic"))
     monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, SimpleNamespace(login=login), None))
     closed = []
     adapter = SimpleNamespace(director=SimpleNamespace(guard=None), close=lambda: closed.append(True))
@@ -885,17 +919,67 @@ def test_initialisation_failures_record_attempt_and_drain_login(
     assert closed == ([True] if phase == "initialise" else [])
     out = tmp_path / "summary.json"
     summary_args = ["summarise", "--scratch", str(tmp_path), "--life", str(built[0]), "--out", str(out)]
-    assert s6.main(summary_args) == 1  # Even an init failure requires a credential scan.
-    assert not out.exists()
-    result["credential_scan"] = dict(hits={}, unreadable=0)
-    s6._arm_write(root, result)
     assert s6.main(summary_args) == 0
-    reported = s6.read_json(out)["arms"]["hermes-native"]
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+    obj = s6.read_json(out)
+    reported = obj["arms"]["hermes-native"]
     assert reported["status"] == "stopped" and reported["stop_reason"] == "init_failed:" + label
+    for key in ("bytes", "terms", "projection"):
+        assert obj[key]["hermes-native"] == dict(status="not_run", reason="incomplete_life")
+
+
+@pytest.mark.parametrize("relative,unreadable", [
+    ("clock.json", False), ("ledger/init.json", False), ("home/init.txt", False), ("home/init.txt", True)])
+def test_initialisation_failure_scans_root(built, tmp_path, monkeypatch, offline_login, relative, unreadable):
+    ready_preflight(monkeypatch)
+    monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, SimpleNamespace(login=offline_login), None))
+    adapter = SimpleNamespace(director=SimpleNamespace(guard=None), close=lambda: None)
+    monkeypatch.setattr(s6, "HermesAdapter", lambda *a, **k: adapter)
+    root = tmp_path / "p06-hermes-native"
+    planted = root / relative
+
+    def fail(*args):
+        planted.parent.mkdir(parents=True, exist_ok=True)
+        planted.write_text(offline_login.token())
+        raise s6.HarnessFailed("initial_settle_failed")
+
+    monkeypatch.setattr(s6, "initialise", fail)
+    read_bytes = Path.read_bytes
+
+    def read(path):
+        if unreadable and path == planted:
+            raise PermissionError("offline unreadable file")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    scan = s6.scan
+    scans = []
+
+    def scan_and_log(login, paths, run):
+        assert login is offline_login and paths == [root] and run.startswith("p06-")
+        assert not login.log  # The first drain precedes the scan.
+        result = scan(login, paths, run)
+        scans.append(result)
+        login.log.append(dict(type="offline_scan", label="synthetic"))
+        return result
+
+    monkeypatch.setattr(s6, "scan", scan_and_log)
+    args = run_args(tmp_path)
+    args[args.index("--life") + 1] = str(built[0])
+    assert s6.main(args) == 1
+    result = s6.read_json(root / "arm.json")
+    assert scans == [result["credential_scan"]]
+    assert result["credential_scan"]["hits"] == ({} if unreadable else {"synthetic_access_token": 1})
+    assert result["credential_scan"]["unreadable"] == int(unreadable)
+    assert not offline_login.log  # The scan's new login rows are drained again.
+    assert s6.read_json(root / "login.jsonl") == dict(type="offline_scan", label="synthetic")
+    out = tmp_path / "summary.json"
+    assert s6.main(["summarise", "--scratch", str(tmp_path), "--life", str(built[0]), "--out", str(out)]) == 1
+    assert not out.exists()
 
 
 @pytest.mark.parametrize("mode", ["stop", "swap"])
-def test_real_stack_spend_stop_and_wiring_swap(tmp_path, responses_server, monkeypatch, mode):
+def test_real_stack_spend_stop_and_wiring_swap(tmp_path, responses_server, monkeypatch, offline_login, mode):
     base, bodies, outbound = responses_server
     monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     monkeypatch.setattr(adapter_module, "DRAIN_QUIET_S", 0.01)
@@ -907,8 +991,9 @@ def test_real_stack_spend_stop_and_wiring_swap(tmp_path, responses_server, monke
     root.mkdir()
     entry = s6.load_entry("hermes-native")
     routed, cred, holds = s6.build_stack(entry, root / "spend.json",
-        auth=lambda: {"Authorization": "Bearer t"}, base_url=base, max_output=100,
+        auth=None, login=offline_login, base_url=base, max_output=100,
         max_sends=1 if mode == "stop" else 20)
+    assert type(cred) is s6.CredentialResponder
     faults = [dict(kind="swap", session=2, turn=None)] if mode == "swap" else []
     adapter = HermesAdapter(entry, script=script, route_table=RouteTable.load(s6.routes("hermes-native")),
         schedule=FaultLite.load(faults, script), responder=routed,
