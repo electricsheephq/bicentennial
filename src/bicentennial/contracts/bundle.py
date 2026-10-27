@@ -146,6 +146,8 @@ def _ratio(correct, eligible, result):
 
 
 def _card(card):
+    from bicentennial.score import aggregate
+
     if card["tier"] == "T1":
         _require("scripted_model" in card["labels"], "T1 requires scripted model label")
     items = {item["item_id"]: item for item in card["items"]}
@@ -161,6 +163,8 @@ def _card(card):
         _require(all(i in items for i in bundle["items"]), "unknown bundle item")
         a, b = (items[i] for i in bundle["items"])
         _require(bundle["cell_id"] == a["cell_id"], "bundle cell mismatch")
+        _require((a["stage"], a["track"]) == (b["stage"], b["track"]),
+                 "twins must share stage and track")
         expected = bundle_outcome(a, b)
         _require(all(bundle[k] == v for k, v in expected.items()), "bundle reduction mismatch")
     # DESIGN §5.1a: each action item is in exactly one bundle, so no outcome is dropped or counted twice.
@@ -168,6 +172,21 @@ def _card(card):
     _require(len(members) == len(set(members)), "an item sits in two bundles")
     _require({i for i, item in items.items() if item["stage"] == "act"} <= set(members),
              "an action item belongs to no bundle")
+    # S06 A2: an unbundled QA item is its own unit, so the card names its life.
+    ids = [s["item_id"] for s in card.get("singletons", [])]
+    _require(ids == sorted(set(ids)), "singletons must be unique and sorted by item id")
+    _require(set(ids) == {i for i, item in items.items() if item["stage"] != "act"} - set(members),
+             "every unbundled QA item needs exactly one singleton entry")
+    bundles, singles = card["bundles"], [(items[s["item_id"]], s["life"]) for s in card.get("singletons", [])]
+    _require(card["aggregates"] == aggregate.stage_track_rows(bundles, items, singletons=singles),
+             "aggregate recomputation mismatch")
+    for key, value in (("minus_one_at_zero", 0), ("minus_one_at_minus_two", -2000)):
+        _require(card["sensitivity"][key] == aggregate.stage_track_rows(
+            bundles, items, minus_one=value, singletons=singles), "sensitivity recomputation mismatch")
+    _require(card["worst_case"] == aggregate.worst_case_rows(bundles, items, singletons=singles),
+             "worst-case recomputation mismatch")
+    _require(card["twin_consistency"] == aggregate.twin_consistency(bundles, items),
+             "twin consistency recomputation mismatch")
     # PREREG §3: per-cell accuracy counts come from the card's own action outcomes.
     counts = {}
     for item in items.values():
@@ -198,12 +217,10 @@ def _card(card):
              "volatile_surface_paths")
     for row in card["per_item_accuracy"]:
         _ratio(row["correct"], row["eligible"], row["accuracy_milli"])
-    coverage = card["coverage"]
-    counts = [sum(b["failure_class"] == c for b in card["bundles"]) for c in NONRESULTS]
-    _require([coverage[k] for k in ("blocked", "na_exposure", "na_clock")] == counts,
+    coverage, expected = card["coverage"], aggregate.coverage(bundles, singletons=singles)
+    _require(all(coverage[k] == expected[k] for k in ("blocked", "na_exposure", "na_clock")),
              "coverage exclusions mismatch")
-    _require(coverage["assigned"] == len(card["bundles"])
-             and coverage["scored"] == len(card["bundles"]) - sum(counts), "coverage counts mismatch")
+    _require(all(coverage[k] == expected[k] for k in ("assigned", "scored")), "coverage counts mismatch")
     _ratio(coverage["scored"], coverage["assigned"], coverage["coverage_milli"])
     _require(max(card["carry_over_milli"], card["competing_milli"]) <= 1000,
              "system share exceeds 1000")
