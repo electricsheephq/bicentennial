@@ -189,7 +189,8 @@ class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
-                 memory: bool = True, toolsets=None, env_server=None):
+                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None):
+        self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
             reasons.append("benchmark_operator_forbidden")
@@ -279,6 +280,8 @@ class HermesAdapter:
                     history = after
                     t["resume"].append(_ms(t0))
             t["drain"].append(self._drain())
+            if self.before_shutdown is not None:
+                self.before_shutdown()
             t0 = time.monotonic()
             end_threads = self._end()
             self.end_threads = end_threads
