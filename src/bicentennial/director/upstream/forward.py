@@ -73,6 +73,12 @@ def sol_category(status, text):
     return "server" if status >= 500 else "other"
 
 
+def _typed(text, calls):
+    if not isinstance(text, str) or not all(isinstance(c["name"], str) and isinstance(c["arguments"], str) for c in calls):
+        raise TypeError("non-string reply field")
+    return dict(text=text, tool_calls=calls, forward=True)
+
+
 def wire_body(call):
     if call.wire == "responses":
         return dict(call.body, model=call.model, stream=True, input=typed(call.body.get("input")))
@@ -86,7 +92,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def send(up, data, headers):
     result = dict(status=-1, category=None, retry_after_s=None, body_shape=None, n_unparsed=0,
-                  n_dropped_items=0, served_model=None, usage=None, text="", tool_calls=(), forward=False, stop_reason=None)
+                  n_dropped_items=0, served_model=None, usage=None, text="", tool_calls=(), forward=False, stop_reason=None, body_read_error=None)
     req = urllib.request.Request(up.base_url.rstrip("/") + ("/responses" if up.wire == "responses" else "/chat/completions"),
                                  data=data, headers=headers, method="POST")
     try:
@@ -102,7 +108,13 @@ def send(up, data, headers):
             if status in (401, 403) or (400 <= status < 500 and status != 429):
                 result.update(category="other", stop_reason=f"upstream_{status}" if status in (401, 403) else f"upstream_invalid_request_{status}")
                 return result
-            raw = response.read(MAX_BODY + 1)
+            try:
+                raw = response.read(MAX_BODY + 1)
+            except Exception as exc:
+                if status == 200:
+                    raise
+                result.update(category=sol_category(status, ""), body_read_error=type(exc).__name__)
+                return result
         if len(raw) > MAX_BODY:
             result["category"] = "error:oversize"
             return result
@@ -134,18 +146,20 @@ def send(up, data, headers):
                 messages = [i for i in items if i.get("type") == "message"]
                 text = "".join(p.get("text") or "" for i in messages for p in i.get("content") or [] if p.get("type") == "output_text") if messages else "".join(e.get("delta") or "" for e in events if e.get("type") == "response.output_text.delta")
                 calls = tuple({"name": i["name"], "arguments": i.get("arguments") if isinstance(i.get("arguments"), str) else "{}"} for i in items if i.get("type") == "function_call")
-                result.update(text=text, tool_calls=calls, n_dropped_items=sum(i.get("type") not in ("message", "function_call") for i in items), forward=True)
+                result.update(_typed(text, calls), n_dropped_items=sum(i.get("type") not in ("message", "function_call") for i in items))
             except (TypeError, KeyError, AttributeError):
                 result["category"], result["n_unparsed"] = "unparsed", 1
     else:
         try:
             body = json.loads(raw)
-            if isinstance(body, dict) and isinstance(body.get("error"), dict) and body["error"]:
-                error = body["error"]
+            if isinstance(body, dict) and body.get("error"):
+                # a non-dict error is wrapped as {"message": ...} and categorised by its text, as the Responses wire does
+                error = body["error"] if isinstance(body["error"], dict) else {"message": str(body["error"])}
                 result["category"] = sol_category(0, json.dumps({k: error[k] for k in ERROR_FIELDS if k in error}))
             else:
                 msg = body["choices"][0]["message"]
-                result.update(text=msg.get("content") or "", tool_calls=tuple({"name": t["function"]["name"], "arguments": t["function"]["arguments"]} for t in msg.get("tool_calls") or []), forward=True)
+                content = "" if msg.get("content") is None else msg["content"]
+                result.update(_typed(content, tuple({"name": t["function"]["name"], "arguments": t["function"]["arguments"]} for t in msg.get("tool_calls") or [])))
         except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             body, result["category"], result["n_unparsed"] = {}, "unparsed", 1
     usage = body.get("usage") if isinstance(body, dict) else None

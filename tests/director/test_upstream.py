@@ -816,11 +816,93 @@ def test_responses_malformed_items_are_unparsed(setup, item):
     assert not str(r.state()["stop_reason"] or "").startswith("responder_error")
 
 
-@pytest.mark.parametrize("message", ["rate limit exceeded, slow down", "missing message field"])
-def test_chat_string_error_is_unparsed(setup, message):
-    r, _, _, _ = setup([(200, {}, json.dumps({"error": message}).encode())], wire="chat")
+@pytest.mark.parametrize("message,category", [("rate limit exceeded, slow down", "rate"), ("missing message field", "other")])
+def test_chat_string_error_is_categorised(setup, message, category):
+    r, server, _, _ = setup([(200, {}, json.dumps({"error": message}).encode()), (200, {}, chat())], wire="chat")
     reply = r.respond(call("chat"))
-    assert reply.status == 503 and tries(reply)[0]["category"] == "unparsed"
+    assert tries(reply)[0]["category"] == category and tries(reply)[0]["n_unparsed"] == 0
+    assert (reply.status, len(server.seen)) == ((200, 2) if category == "rate" else (503, 1))
+    if category == "other":
+        assert r.respond(call("chat")).status == 200
+
+
+@pytest.mark.parametrize("wire,raw", [
+    ("responses", frames({"type": "response.output_item.done", "item": {"type": "function_call", "name": 1.5, "arguments": "{}"}},
+                         {"type": "response.completed", "response": {"model": "probe-model"}})),
+    ("chat", chat(text=1.5)),
+    ("chat", chat(text=[{"type": "text", "text": "hi"}])),
+    ("chat", json.dumps({"model": "probe-model", "choices": [{"message": {"content": None, "tool_calls": [
+        {"function": {"name": 1.5, "arguments": "{}"}}]}}]}).encode()),
+    ("chat", json.dumps({"model": "probe-model", "choices": [{"message": {"content": None, "tool_calls": [
+        {"function": {"name": "tool", "arguments": {"x": 1.5}}}]}}]}).encode()),
+    ("chat", json.dumps({"model": "probe-model", "choices": [{"message": {"content": None, "tool_calls": [
+        {"function": {"name": None, "arguments": "{}"}}]}}]}).encode()),
+])
+def test_non_string_reply_fields_are_unparsed(setup, wire, raw):
+    r, _, _, _ = setup([(200, {}, raw)], wire=wire)
+    reply = r.respond(call(wire))
+    assert reply.status == 503 and tries(reply)[0]["category"] == "unparsed" and tries(reply)[0]["n_unparsed"] == 1
+    assert r.state()["unparsed_streak"] == 1 and not r.state()["stopped"]
+
+
+@pytest.mark.parametrize("wire,body,sent", [
+    ("responses", {}, {"max_output_tokens": 1000}), ("responses", {"max_output_tokens": 0}, {"max_output_tokens": 1000}),
+    ("responses", {"max_output_tokens": 50}, {"max_output_tokens": 50}), ("chat", {}, {"max_tokens": 1000}),
+    ("chat", {"max_completion_tokens": None}, {"max_completion_tokens": 1000}),
+    ("chat", {"max_tokens": 50}, {"max_tokens": 50}),
+])
+def test_fallback_output_cap_is_sent(setup, wire, body, sent):
+    raw = completed(usage={"input_tokens": 0, "output_tokens": 5000}) if wire == "responses" else chat()
+    r, server, _, _ = setup([(200, {}, raw)], wire=wire)
+    reply = r.respond(call(wire, body=body))
+    request = server.seen[0]["body"]
+    assert {k: request[k] for k in ("max_output_tokens", "max_completion_tokens", "max_tokens") if k in request} == sent
+    assert tries(reply)[0]["reserved"] == PRICE.cost(len(server.seen[0]["raw"]), next(iter(sent.values())))
+
+
+def test_slow_auth_is_admitted_again(setup):
+    r, server, clock, _ = setup(default=(200, {}, completed()), rate=180, price=Price(0, 0))
+    entered, go, lock, count = threading.Semaphore(0), threading.Event(), threading.Lock(), [0]
+
+    def auth():
+        with lock:
+            count[0] += 1
+            slow = count[0] <= 2
+        if slow:
+            entered.release()
+            assert go.wait(timeout=5)
+        return {"Authorization": "Bearer synthetic"}
+
+    r.auth = auth
+    slow_replies = []
+    threads = [threading.Thread(target=lambda: slow_replies.append(r.respond(call(run_key="slow")))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    assert entered.acquire(timeout=5) and entered.acquire(timeout=5)
+    with clock.lock:
+        clock.now += 10
+    go.set()
+    for t in threads:
+        t.join(timeout=5)
+    assert not any(t.is_alive() for t in threads) and [p.status for p in slow_replies] == [200, 200]
+    replies = [r.respond(call()) for _ in range(189)]
+    assert len(server.seen) == 191
+    assert_windows([d["t_sent_ms"] for p in slow_replies + replies for d in tries(p)])
+
+
+def test_retryable_status_with_unreadable_body(setup, monkeypatch):
+    r, server, _, _ = setup([(503, {}, b"{}"), (200, {}, completed())])
+    real = http.client.HTTPResponse.read
+
+    def read(self, n=None):
+        if self.status == 503:
+            raise http.client.IncompleteRead(b"", 10)
+        return real(self, n)
+
+    monkeypatch.setattr(http.client.HTTPResponse, "read", read)
+    reply = r.respond(call())
+    assert reply.status == 200 and len(server.seen) == 2
+    assert [(d["category"], d["body_read_error"]) for d in tries(reply)] == [("overload", "IncompleteRead"), (None, None)]
 
 
 def test_auth_exception_and_corrupt_spend_never_raise(setup):

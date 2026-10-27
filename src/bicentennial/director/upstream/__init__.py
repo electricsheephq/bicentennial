@@ -44,7 +44,7 @@ class LiveResponder:
         return dict(kind="try", try_=n, upstream=up.name if up else None, account=self.account, sent=False,
                     status=0, category=None, retry_wait_s=0, retry_after_s=None, pace_wait_ms=0, t_sent_ms=0,
                     t_ms=0, reserved=None, charged=None, sent_sha256=None, served_model=None, effort_is_pin=None,
-                    n_unparsed=0, n_dropped_items=0, body_shape=None)
+                    n_unparsed=0, n_dropped_items=0, body_shape=None, body_read_error=None)
 
     def _reply(self, call, served, diags, result=None):
         reply = Reply(200 if result else 503, served, "live", call.model, result["text"] if result else "",
@@ -70,8 +70,12 @@ class LiveResponder:
             d["try"] = d.pop("try_")
             return self._reply(call, served, [d])
         body = forward.wire_body(call)
+        keys = ("max_output_tokens",) if call.wire == "responses" else ("max_completion_tokens", "max_tokens")
+        cap = next((body[k] for k in keys if type(body.get(k)) is int and body[k] > 0), None)
+        if cap is None:  # the fallback is sent too, so the request and the reservation share one bound
+            cap = up.max_output_tokens
+            body.update({k: cap for k in keys if k in body} or {keys[-1]: cap})
         data = canon(body)
-        cap = next((body[k] for k in (("max_output_tokens",) if call.wire == "responses" else ("max_completion_tokens", "max_tokens")) if type(body.get(k)) is int and body[k] > 0), up.max_output_tokens)
         while True:
             for wait in (5, 15, 45, None):
                 t0 = self.pacer.clock()
@@ -151,7 +155,10 @@ class LiveResponder:
             if d["pace_wait_ms"] is None or self.state()["stopped"]:
                 d["pace_wait_ms"] = 0
                 return None, "live_stopped"
+            t_auth = self.pacer.clock()
             headers = {**self.auth(), "Content-Type": "application/json", "Accept": "text/event-stream" if up.wire == "responses" else "application/json"}
+            if self.pacer.rate and self.pacer.clock() - t_auth > 1 / self.pacer.rate:
+                d["pace_wait_ms"] += self.pacer.acquire() or 0  # a slow auth let the bucket refill: admit again before sending
             with self.lock:
                 if self.pacer.stop.is_set():
                     return None, "live_stopped"
@@ -162,7 +169,7 @@ class LiveResponder:
             d.update(sent=True, sent_sha256=sha256(data).hexdigest(), t_sent_ms=round(self.pacer.clock() * 1000), effort_is_pin=(body.get("reasoning") or {}).get("effort") == up.effort if up.effort and up.wire == "responses" else None)
             t0 = self.pacer.clock()
             result = forward.send(up, data, headers)
-            d.update({k: result[k] for k in ("status", "category", "retry_after_s", "body_shape", "n_unparsed", "n_dropped_items", "served_model")}, t_ms=round((self.pacer.clock() - t0) * 1000))
+            d.update({k: result[k] for k in ("status", "category", "retry_after_s", "body_shape", "body_read_error", "n_unparsed", "n_dropped_items", "served_model")}, t_ms=round((self.pacer.clock() - t0) * 1000))
             return result, None
         finally:
             if rid is not None:
