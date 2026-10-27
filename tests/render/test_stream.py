@@ -264,6 +264,23 @@ def test_lint_nested_keys_nfc_and_roles(world):
     assert content({"payload": {"z": ["last", {"b": "two", "a": "one"}], "a": 42}}) == "lastonetwo"
 
 
+def test_lint_numeric_tool_argument(world):
+    db, schedule = world
+    row = next(r for r in cutting(db, schedule).rows if r["kind"] == "tool")
+    fact(db, "fact-numeric", "6632")
+    altered = row | {"tool": {"name": "repo.read", "args": {"count": 6632}}}
+    assert lint(db, [altered]) == [("tool-event", "fact-numeric-token")]
+
+
+def test_numeric_tool_argument_is_not_linked_evidence(tmp_path):
+    db, schedule = build(tmp_path / "numeric.db", token="6632", tool_payload={
+        "tool": {"name": "repo.read", "args": {"count": 6632}},
+        "result": {"stdout": "nothing"}})
+    with pytest.raises(ValueError, match="missing linked token: tool-event"):
+        cutting(db, schedule)
+    db.close()
+
+
 def golden_schedule():
     return build_schedule("g09-golden", "life-a", named("t1"))
 
@@ -457,6 +474,39 @@ def test_twin_stability_and_history_set(tmp_path):
             history_set_hash(invalid)
 
 
+@pytest.mark.parametrize("field,value", [("exclude_sha256", "c" * 64),
+                                       ("exclude_sha256", None),
+                                       ("principal_id", "principal-2")])
+def test_history_set_refuses_twin_input_mismatch(world, tmp_path, field, value):
+    result = cutting(*world, exclude_tokens=frozenset([TOKEN]))
+    manifest = write_branch(tmp_path, result)
+    twin = manifest | {"branch": "B1", field: value}
+    with pytest.raises(ValueError):
+        history_set_hash([manifest, twin])
+
+
+@pytest.mark.parametrize("implicit_branches", [("B0", "B1"), ("B0",), ("B1",)])
+def test_history_set_requires_explicit_twin_exclusions(world, tmp_path, implicit_branches):
+    db, schedule = world
+    manifests = [write_branch(tmp_path, cutting(
+        db, schedule, branch=branch,
+        exclude_tokens=None if branch in implicit_branches else frozenset([TOKEN])))
+        for branch in ("B0", "B1")]
+    with pytest.raises(ValueError, match=f"explicit twin exclusions required: {re.escape(schedule.life)}"):
+        history_set_hash(manifests)
+
+
+def test_history_set_allows_different_expected_states(world, tmp_path):
+    db, schedule = world
+    expected = states(schedule)
+    expected[1] = dict(expected[1], env_state_hash="c" * 64)
+    manifests = [write_branch(tmp_path, cutting(db, schedule, branch=branch, expected_state=state,
+                                              exclude_tokens=frozenset([TOKEN])))
+                 for branch, state in (("B0", states(schedule)), ("B1", expected))]
+    assert manifests[0]["expected_state_sha256"] != manifests[1]["expected_state_sha256"]
+    assert history_set_hash(manifests) == history_set_hash(reversed(manifests))
+
+
 def test_cache_files_and_bank(world, tmp_path):
     db, schedule = world
     first, second = cutting(db, schedule), cutting(db, schedule)
@@ -531,6 +581,32 @@ def test_render_key_covers_principal_and_expected_state(world, tmp_path):
         assert manifest["expected_state_sha256"] == result.expected_state_sha256
         assert manifest["render_key"] == result.render_key
         assert verify_branch(out, "B0") == manifest
+
+
+@pytest.mark.parametrize("case", ["manifest", "sessions", "reordered"])
+def test_cache_expected_state_digest(world, tmp_path, case):
+    db, schedule = world
+    expected = states(schedule)
+    expected[1] = dict(expected[1], env_state_hash="c" * 64)
+    result = cutting(db, schedule, expected_state=expected)
+    manifest = write_branch(tmp_path, result)
+    if case == "manifest":
+        manifest["expected_state_sha256"] = "0" * 64
+    else:
+        rows = [dict(row) for row in result.sessions]
+        if case == "sessions":
+            rows[0]["expected_state"] = states(schedule)[1]
+        else:
+            rows.reverse()
+        data = sessions_bytes(rows)
+        (tmp_path / "sessions.B0.jsonl").write_bytes(data)
+        manifest["sessions_hash"] = sha256(data).hexdigest()
+    (tmp_path / "history.B0.json").write_bytes(canon(manifest))
+    if case == "reordered":
+        assert verify_branch(tmp_path, "B0") == manifest
+    else:
+        with pytest.raises(ValueError, match="expected state hash mismatch"):
+            verify_branch(tmp_path, "B0")
 
 
 @pytest.mark.parametrize("case", ["byte", "manifest", "row-seal", "canonical", "session", "missing"])

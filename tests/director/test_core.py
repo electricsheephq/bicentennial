@@ -258,7 +258,9 @@ def test_micro_life_replay_on_both_wires(wire, tmp_path, no_egress):
             assert rec["sim_now"] == start_s + STEP * rec["cursor"]["turn"]
             sim[session] = rec["sim_now"]
         else:
-            assert rec["sim_now"] == sim.get(session, start_s)
+            quoted = next((t for t in reversed(d.turns) if t["session"] == session and
+                           roles.h16(t["user"].strip()) in row["shape"]["user_hashes"]), None)
+            assert rec["sim_now"] == (start_s + STEP * quoted["turn"] if quoted else sim.get(session, start_s))
     if wire == "chat":  # r6 request 128: Hermes's title fallback to the main client is a title
         rec = recs[[row["seq"] for row, *_ in results].index(128)]
         assert (rec["role"], rec["subrole"], rec["model_in"]) == ("aux", "title_generation", "bicentennial-main")
@@ -304,6 +306,160 @@ def post(d, path, body, headers=None):
     status, hdrs, data = d.handle("POST", path, {"Authorization": "x", **(headers or {})},
                                   body if isinstance(body, bytes) else json.dumps(body).encode())
     return status, hdrs["Content-Type"], data
+
+
+def title_order_run(tmp, wire, title_first, sessions=1, *, script=None, title_chars=None):
+    tmp.mkdir()
+    if script is None:
+        script = dict(SCRIPT, sessions=[dict(s, turns=s["turns"][:1]) for s in SCRIPT["sessions"][:sessions]])
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp, fake, script=script)
+    path = "chat/completions" if wire == "chat" else "responses"
+    try:
+        for session in script["sessions"]:
+            start(d, tmp, session["index"])
+            user = session["turns"][0]["user"]
+            main = turn_body(user) if wire == "chat" else {
+                "model": "bicentennial-main", "input": user, "tools": tools_of(1, False)}
+            snippet = user.strip()[:title_chars]
+            title = {"model": "bicentennial-aux-title_generation", **(
+                {"messages": [{"role": "user", "content": f"  {snippet}\n"}]} if wire == "chat" else
+                {"input": f"  {snippet}\n"})}
+            requests = [(f"/aux/title_generation/v1/{path}", title), (f"/main/v1/{path}", main)]
+            for target, body in requests if title_first and session is script["sessions"][0] else reversed(requests):
+                clock_before = d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s
+                status, ctype, data = post(d, target, body)
+                assert status == 200
+                if body is main:
+                    _, ids = answer(ctype, data)
+                else:
+                    assert (d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s) == clock_before
+            # Carry the minted main call into a later request, as the harness does.
+            if wire == "chat":
+                main["messages"] += [{"role": "assistant", "content": "", "tool_calls": [
+                    {"id": ids[0], "type": "function", "function": {"name": "memory", "arguments": "{}"}}]},
+                                     {"role": "tool", "tool_call_id": ids[0], "content": "saved"}]
+            else:
+                main["input"] = [{"role": "user", "content": user},
+                                 {"type": "function_call", "call_id": ids[0], "name": "memory", "arguments": "{}"},
+                                 {"type": "function_call_output", "call_id": ids[0], "output": "saved"}]
+            assert post(d, f"/main/v1/{path}", main)[0] == 200
+    finally:
+        d.close()
+    return records(tmp), d.run_values
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_title_arrival_order_keeps_the_same_stable_digest(wire, tmp_path):
+    first, fv = title_order_run(tmp_path / "title-first", wire, True)
+    last, lv = title_order_run(tmp_path / "main-first", wire, False)
+    assert stable_digest(first, fv) == stable_digest(last, lv)
+    bodies = []
+    for name, recs in (("title-first", first), ("main-first", last)):
+        store = BlobStore(tmp_path / name / "ledger/blobs", None)
+        bodies.append({(r["role"], r["subrole"]): json.loads(store.get(r["resp"])) for r in recs})
+        assert all(r["sim_now"] == BASE + DAY + STEP for r in recs)
+        if wire == "chat":
+            assert all(obj["created"] == BASE + DAY + STEP for obj in bodies[-1].values())
+    assert bodies[0] == bodies[1]
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("user", [
+    pytest.param(("word " * 400).strip(), id="cut-ends-in-space"),
+    pytest.param(next(s for s in SCRIPT["sessions"] if s["index"] == 6)["turns"][0]["user"], id="session-six"),
+    pytest.param("short opening turn", id="short"),
+])
+def test_hermes_title_transform_keeps_digest_and_created(wire, user, tmp_path):
+    session = next(s for s in SCRIPT["sessions"] if s["index"] == 6)
+    turn = dict(session["turns"][0], user=f"  \n{user}\t ")
+    script = dict(SCRIPT, sessions=[dict(session, turns=[turn])])
+    first, fv = title_order_run(tmp_path / "title-first", wire, True, script=script, title_chars=1000)
+    last, lv = title_order_run(tmp_path / "main-first", wire, False, script=script, title_chars=1000)
+    assert stable_digest(first, fv) == stable_digest(last, lv)
+    bodies = []
+    for name, recs in (("title-first", first), ("main-first", last)):
+        store = BlobStore(tmp_path / name / "ledger/blobs", None)
+        bodies.append({(r["role"], r["subrole"]): json.loads(store.get(r["resp"])) for r in recs})
+        assert all(r["sim_now"] == BASE + 6 * DAY + STEP for r in recs)
+        if wire == "chat":
+            assert all(obj["created"] == BASE + 6 * DAY + STEP for obj in bodies[-1].values())
+    assert bodies[0] == bodies[1]
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_second_session_ids_ignore_first_session_title_order(wire, tmp_path):
+    first, fv = title_order_run(tmp_path / "title-first", wire, True, sessions=2)
+    last, lv = title_order_run(tmp_path / "main-first", wire, False, sessions=2)
+    first = [r for r in first if r["attempt_id"] == "attempt-s2"]
+    last = [r for r in last if r["attempt_id"] == "attempt-s2"]
+    assert stable_digest(first, fv) == stable_digest(last, lv)
+    store = BlobStore(tmp_path / "title-first/ledger/blobs", None)
+    for rec in first:
+        obj = json.loads(store.get(rec["resp"]))
+        rid = obj["id"] if wire == "chat" else obj["sse"][0]["response"]["id"]
+        seed = "attempt-s2" if rec["cursor"] else canon(["attempt-s2", rec["role"]]).decode()
+        assert rid == mint_id(seed, 3 if rec["subrole"] == "tool_results" else 1)
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_non_cursor_instants_use_latest_quoted_turn_and_fallback(wire, tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    users = [t["user"] for t in SCRIPT["sessions"][0]["turns"][:2]]
+    for user in users:
+        assert post(d, "/main/v1/chat/completions", turn_body(user, tools=("todo",)))[0] == 200
+    snapshot = d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s
+    path = "chat/completions" if wire == "chat" else "responses"
+    # History order differs from script order; match both individual blocks and their joined text.
+    for texts, turn in ((users[::-1], 2), ([users[0]], 1), (["not a scripted user"], 2)):
+        items = [{"role": "user", "content": [{"type": "text" if wire == "chat" else "input_text", "text": part}
+                                              for part in f"  {text}\n".split("\n")]} for text in texts]
+        body = {"model": "bicentennial-summariser", "messages" if wire == "chat" else "input": items}
+        status, _, data = post(d, f"/v1/{path}", body)
+        assert status == 200
+        assert records(tmp_path)[-1]["sim_now"] == BASE + DAY + STEP * turn
+        if wire == "chat":
+            assert json.loads(data)["created"] == BASE + DAY + STEP * turn
+        assert (d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s) == snapshot
+    d.close()
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_repeated_text_does_not_stamp_an_unreached_turn(wire, tmp_path):
+    session = SCRIPT["sessions"][0]
+    turns = [dict(t, user="Thanks!" if t["n"] in (2, 5) else t["user"]) for t in session["turns"]]
+    script = dict(SCRIPT, sessions=[dict(session, turns=turns)])
+    d = make(tmp_path, Fake(), script=script)
+    start(d, tmp_path)
+    try:
+        for turn in turns[:3]:
+            assert post(d, "/main/v1/chat/completions", turn_body(turn["user"], tools=("todo",)))[0] == 200
+        assert d.ctx.cursor == 3
+        snapshot = d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s
+        items = [{"role": "user", "content": "  Thanks!\n"}]
+        body = {"model": "bicentennial-summariser", "messages" if wire == "chat" else "input": items}
+        path = "chat/completions" if wire == "chat" else "responses"
+        status, _, data = post(d, f"/v1/{path}", body)
+        assert status == 200
+        assert records(tmp_path)[-1]["sim_now"] == BASE + DAY + 2 * STEP
+        if wire == "chat":
+            assert json.loads(data)["created"] == BASE + DAY + 2 * STEP
+        assert (d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s) == snapshot
+        assert d.ctx.cursor == 3
+    finally:
+        d.close()
+
+
+def test_embeddings_use_identifiable_turn_instant(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    snapshot = d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s
+    assert post(d, "/v1/embeddings", {"model": "embed", "input": f" {TURN1['user']}\n"})[0] == 200
+    assert records(tmp_path)[0]["sim_now"] == BASE + DAY + STEP
+    assert (d.clock.path.read_bytes(), d.clock.path.stat().st_ino, d.clock.sim_t_s) == snapshot
+    d.close()
 
 
 def test_write_turn_tool_calls_then_the_scripted_turn(tmp_path):

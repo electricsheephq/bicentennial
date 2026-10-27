@@ -29,6 +29,8 @@ SERVED_WIRES = {"openai_chat": "chat", "openai_responses": "responses",
                 "openai_responses_compact": "responses_compact"}
 JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
+# Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
+HERMES_TITLE_INPUT_CHARS = 1000
 
 
 class ResponderError(Exception):
@@ -70,6 +72,7 @@ class Director:
         self.pending, self.id_roles = {}, {}  # director-issued call id -> its scripted turn; -> (role, subrole)
         self.ledger = self.route = self.attempt_id = None
         self.n_ids = self.inflight = self.write_failures = self.send_errors = 0
+        self.role_ids = {}
         self.stopped, self._lock, self._count = False, threading.Lock(), threading.Lock()
 
     def start_session(self, index, sim_t_s, lock_hash, attempt_id, ledger_root) -> None:
@@ -81,6 +84,8 @@ class Director:
             self.ledger = Ledger(ledger_root, self.guard, lock_hash=lock_hash, attempt_id=attempt_id)
             self.route = self.table.resolve(self.system, index, self.schedule)
             self.attempt_id, self.n_ids = attempt_id, 0
+            self.role_ids = {}
+            self.session_index, self.session_sim_t_s = index, sim_t_s
             self.clock.set_session(sim_t_s)
 
     def bind_port(self, port: int) -> None:  # serve() names the bound port, so the masks remove the real one
@@ -129,7 +134,8 @@ class Director:
                         rec.update(subrole=f"director_error_{type(e).__name__.lower()}", served="director_error")
                         status, ctype, out, resp, req, hold = _refusal(500, "internal error", self._req)
                     rec.update(type="request", run=self.run, method=method, path=path, life=self.life,
-                               branch=self.branch, system=self.system, status=status, sim_now=self.clock.sim_t_s,
+                               branch=self.branch, system=self.system, status=status,
+                               sim_now=rec.get("sim_now", self.clock.sim_t_s),
                                incoming_auth_dropped="authorization" in names, t=t,
                                load=[round(x * 1000) for x in os.getloadavg()],
                                req=self.ledger.blob(req), resp=self.ledger.blob(resp),
@@ -192,6 +198,9 @@ class Director:
                    n_tools=len(body["tools"]) if isinstance(body.get("tools"), list) else 0,
                    n_messages=0 if wire == "embeddings" or not isinstance(items, (list, str))
                    else len(items) if wire == "chat" else len(responses.typed(items)))
+        stamped_turn = self._request_turn(body)
+        rec["sim_now"] = (self.session_sim_t_s + self.clock.step_s * stamped_turn["turn"] if stamped_turn
+                          else self.clock.sim_t_s)
         if wire == "embeddings":
             return self._embeddings(body, rec)
         return self._classified(wire, path, body, rec)
@@ -226,6 +235,7 @@ class Director:
         roles.advance(self.ctx, s1)
         if sub == "cursor":  # a new integer turn, replay or probe; a retry, continuation or tool result never ticks
             self.clock.tick()
+            rec["sim_now"] = self.clock.sim_t_s
         if role in ("replay_main", "write_turn"):  # the scripted turn: its cursor, a retry, or its tool results
             text, calls, rec["served"] = turn["assistant"], (), "script_retry" if sub == "retry" else "script"
             if role == "replay_main" and sub == "cursor" and _tool_names(wire, body) & set(self.write_tools):
@@ -234,7 +244,7 @@ class Director:
                     return _refuse(rec, 503, "identity_mismatch", "served model identity mismatch", body)
                 if calls:
                     text, rec["served"] = "", "write_tool_calls"
-            return self._answer(wire, body, text, calls, ("write_turn", "tool_results", "write_turn", turn),
+            return self._answer(wire, body, text, calls, ("write_turn", "tool_results", "write_turn", turn), rec,
                                 hold=not calls)
         reply = self._ask(Call(role, sub, wire, deepcopy(body), self._model(role, sub), cursor, self.attempt_id), rec)
         if reply is None:
@@ -242,7 +252,21 @@ class Director:
         if reply.status != 200:
             return _refuse(rec, reply.status, rec["served"], "responder refused", body)
         issued = (role, "tool_results" if sub in ("cursor", "retry") else sub, s1[0], turn)
-        return self._answer(wire, body, reply.text, reply.tool_calls, issued, usage=reply.usage)
+        return self._answer(wire, body, reply.text, reply.tool_calls, issued, rec, usage=reply.usage)
+
+    def _request_turn(self, body):
+        """Latest reached/next turn quoted in this session, including Hermes's truncated title input."""
+        items = body.get("messages", body.get("input", []))
+        if isinstance(items, str):
+            items = [{"content": items}]
+        hashes = set()
+        for item in items if isinstance(items, list) else []:
+            content = item.get("content") if isinstance(item, dict) else None
+            blocks = roles._blocks(content) if isinstance(content, (str, list)) else []
+            hashes.update(roles.h16(text.strip()) for text in [*blocks, "\n".join(blocks)] if text.strip())
+        return next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
+                     and (roles.h16(t["user"].strip()) in hashes
+                          or roles.h16(t["user"].strip()[:HERMES_TITLE_INPUT_CHARS].strip()) in hashes)), None)
 
     def _write_turn(self, wire, body, cursor, rec):
         """-> the write-tool calls to return (empty: serve the scripted turn), or None on an identity mismatch."""
@@ -315,14 +339,17 @@ class Director:
         self._upstream(call, reply, rec)
         return None if self.stopped else reply
 
-    def _mint(self) -> str:
+    def _mint(self, role, turn) -> str:
+        if turn is None:
+            self.role_ids[role] = self.role_ids.get(role, 0) + 1
+            return mint_id(canon([self.attempt_id, role]).decode(), self.role_ids[role])
         self.n_ids += 1
         return mint_id(self.attempt_id, self.n_ids)
 
-    def _answer(self, wire, body, text, calls, issued, usage=None, hold=False):
+    def _answer(self, wire, body, text, calls, issued, rec, usage=None, hold=False):
         role, sub, s1_role, turn = issued
-        rid = self._mint()
-        ids = [self._mint() for _ in calls]
+        rid = self._mint(rec["role"], turn)
+        ids = [self._mint(rec["role"], turn) for _ in calls]
         for cid in ids:
             self.id_roles[cid] = (role, sub)
             self.ctx.issued.setdefault(cid, s1_role)
@@ -334,7 +361,7 @@ class Director:
             if calls:
                 msg["tool_calls"] = [{"id": i, "type": "function", "function": {
                     "name": c["name"], "arguments": c["arguments"]}} for i, c in zip(ids, calls, strict=True)]
-            resp = chat.build_response(dict(body, model=model), msg, response_id=rid, created=self.clock.sim_t_s)
+            resp = chat.build_response(dict(body, model=model), msg, response_id=rid, created=rec["sim_now"])
             resp["usage"] = usage or resp["usage"]
             if body.get("stream") is True:
                 return 200, SSE, chat.sse_bytes(resp), {"sse": chat.sse_chunks(resp)}, body, hold
