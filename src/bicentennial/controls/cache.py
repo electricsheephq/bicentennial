@@ -33,6 +33,10 @@ def import_closure(roots, *, root=PACKAGE_ROOT):
     while pending:
         path = min(pending)
         found.add(path)
+        if path == "contracts/run.py":
+            # Model _load_checks importing every sibling contracts module at run time.
+            pending.update(p.relative_to(root).as_posix()
+                           for p in sorted((root / "contracts").glob("*.py")))
         package = ("bicentennial", *Path(path).parts[:-1])
         for node in ast.walk(ast.parse((root / path).read_bytes())):
             if isinstance(node, ast.Import):
