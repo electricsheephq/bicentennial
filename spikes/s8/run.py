@@ -326,7 +326,8 @@ def build_script(life, mode, *, branch, paths):
             users = [attach("Please keep this image for later.", inbox, mode, paths),
                      f"The image file is in the workspace at {workspace}. Please inspect it."]
             turns = [turn(users[0], 1, kind), turn(users[1], 2, kind, [
-                {"name": "vision_analyze", "args": {"image_url": str(workspace), "question": ANALYSIS_PROMPT}}])]
+                {"name": "vision_analyze", "args": {"image_url": str(workspace), "question": ANALYSIS_PROMPT}}]),
+                turn("Thanks. Please keep both images in mind.", 3, kind)]
         else:
             users = [q["user"] for q in questions(life, branch)] if index == 6 else [
                 f"Day {index}: let us review the garden schedule.", f"Day {index}: the next task is organising the shelf."]
@@ -506,6 +507,7 @@ def probe_vision(model, *, director):
 
 def run_arm(scratch, mode, life, arm, cache, responders, table, checkout, inputs, started, *, image_kind=None,
             descriptions=(), worker_argv=None):
+    arm_started = time.monotonic()
     readings = gate()
     label = arm + ("-" + image_kind if image_kind else "")
     root = scratch / f"p08-{mode}-{life}-{label}"
@@ -597,7 +599,7 @@ def run_arm(scratch, mode, life, arm, cache, responders, table, checkout, inputs
         receipt["cache_events"] = cache.events[event_start:]
         receipt["states"] = [r.state() for r in responders]
         receipt["identities"] = [r.served_identities() for r in responders]
-        receipt["wall_ms"] = int((time.monotonic() - started) * 1000)
+        receipt["wall_ms"] = int((time.monotonic() - arm_started) * 1000)
         _write(root / "receipt.json", receipt)
     if receipt["stop"]:
         raise Stopped(receipt["stop"])
@@ -696,11 +698,15 @@ def summarise(scratch, fidelity=None):
     for mode, view in result["modes"].items():
         lives = list(view.pop("lives").values())
         base = [(life, key) for life in lives for key in life.get("M", {})]
+        qualified = [(life, key) for life, key in base if life.get("D", {}).get(key) is True]
         view["accuracy"] = {}
         for arm in ("D", "M", "F", "R", "T", "S", "H"):
-            values = [life[arm][key] for life, key in base if key in life.get(arm, {}) and
-                      (arm != "M" or life.get("D", {}).get(key) is True)]
+            values = [life[arm][key] for life, key in (base if arm == "D" else qualified) if key in life.get(arm, {})]
             view["accuracy"][arm] = {"n": len(values), "milli": 1000 * sum(values) // len(values) if values else None}
+        view["accuracy_all"] = {}
+        for arm in ("F", "S"):
+            values = [life[arm][key] for life, key in base if key in life.get(arm, {})]
+            view["accuracy_all"][arm] = {"n": len(values), "milli": 1000 * sum(values) // len(values) if values else None}
         if mode == "native":
             view["accuracy"]["R"] = {"not_applicable": True}
         bounds = {f"{arm}-F": bootstrap(mode, f"{arm}-F", [[(life[arm][key], life["F"][key]) for key in life.get(arm, {}) if key in life.get("F", {})] for life in lives]) for arm in ("D", "S")}

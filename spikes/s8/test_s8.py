@@ -751,6 +751,139 @@ def test_boundary_stop_rules(tmp_path):
         run.boundary([], run.time.monotonic(), {"non_loopback": ["fixture"]})
 
 
+def test_summary_delayed_arms_share_reader_qualified_items(tmp_path, monkeypatch):
+    fidelity = {"n": 200, "legible_milli": 1000, "verifier_recall_milli": 1000}
+    monkeypatch.setattr(run, "images", lambda: iter(()))
+    monkeypatch.setattr(run, "ledger", lambda root: ([], {}))
+    for mode in ("text", "native"):
+        for index in range(10):
+            life = f"s8-life-{index:02d}"
+            keys = [q["id"] for q in run.questions(life)]
+            for arm in ("M", "F", "R", "T", "H", "D"):
+                root = tmp_path / f"p08-{mode}-{life}-{arm}"
+                root.mkdir()
+                answers = {key: (index != 0 or n != 0) if arm == "D" else n != 1
+                           for n, key in enumerate(keys)}
+                receipt = {"mode": mode, "life": life, "arm": arm, "answers": answers,
+                           "shuffled": {key: n != 1 for n, key in enumerate(keys)},
+                           "inputs": {"script_hashes": {}, "hermes_pin": {}, "hermes_commit": "fixture", "models": {}},
+                           "egress": {"non_loopback": []}, "states": [], "identities": [],
+                           "sessions": [], "marker": [], "wall_ms": 1, "stop": None}
+                (root / "receipt.json").write_bytes(canon(receipt))
+    result = run.summarise(tmp_path, fidelity)
+    for mode, view in result["modes"].items():
+        # These are the unchanged 260eb6c admission results for the same receipts.
+        assert view["admission"] == {"rules": {"fidelity": True, "sample": True, "reader": True,
+                                              "direct": False, "shuffle": True},
+                                     "admitted": False, "state": "evaluated"}
+        assert (view["n"], view["n_lives"], view["na_reader"]) == (40, 10, 1)
+        for arm in ("M", "F", "T", "S", "H", *(["R"] if mode == "text" else [])):
+            assert view["accuracy"][arm] == {"n": 39, "milli": 743}
+        assert view["accuracy"]["D"] == {"n": 40, "milli": 975}
+        assert view["accuracy_all"] == {arm: {"n": 40, "milli": 750} for arm in ("F", "S")}
+    assert result["modes"]["native"]["accuracy"]["R"] == {"not_applicable": True}
+    path = tmp_path / "p08-text-s8-life-00-R/receipt.json"
+    receipt = json.loads(path.read_bytes())
+    del receipt["answers"][run.questions("s8-life-00")[2]["id"]]
+    path.write_bytes(canon(receipt))
+    assert run.summarise(tmp_path, fidelity)["modes"]["text"]["accuracy"]["R"] == {"n": 38, "milli": 736}
+
+
+def test_workspace_vision_result_reaches_live_write_turn(tmp_path, no_egress):
+    from bicentennial.director.serve import serve, shutdown
+
+    life = "s8-life-00"
+    paths = {"home": tmp_path / "home", "workspace": tmp_path / "workspace", "attachments": {}}
+    paths["home"].mkdir()
+    script = run.build_script(life, "text", branch="B0", paths=paths)
+    live = FakeResponder("write complete")
+    d = run.Director(run.script_of(life, [script["sessions"][1]]), run.routes("text", "text", "vision"),
+                     "hermes-native", life, "B0", "fixture",
+                     ("memory",), run.Routed(live, run.ScriptedResponder(run.load_entry())),
+                     run.SimClock(tmp_path / "clock.json", run.BASE, run.STEP), run.Guard([]),
+                     {"sandbox_root": str(tmp_path), "director_port": "0"}, write_prompt="Remember the images.")
+    # Adapt the existing offline worker's tool list and result, keeping its protocol,
+    # history and HTTP loop. Launch directly so this check needs no priority change.
+    caption = "FAKE_WORKSPACE_VISION_CAPTION"
+    source = (run.REPO / "tests/harness/fake_worker.py").read_text()
+    source = source.replace('("memory", "session_search")', '("memory", "session_search", "vision_analyze")')
+    source = source.replace('"content": "saved"',
+                            f'"content": {caption!r} if c["function"]["name"] == "vision_analyze" else "saved"')
+    server = serve(d, 0)
+    try:
+        d.start_session(2, run.BASE + 2 * run.DAY, "ab" * 32, "session-2", tmp_path / "ledger")
+        config = {"model": {"base_url": f"http://127.0.0.1:{server.port}/main/v1",
+                            "default": "bicentennial-main", "api_key": "fixture"}}
+        (paths["home"] / "config.yaml").write_bytes(canon(config))
+        commands = [{"op": "open", "session_id": None, "cwd": str(tmp_path)},
+                    *({"op": "turn", "text": t["user"]} for t in script["sessions"][1]["turns"]), {"op": "end"}]
+        proc = subprocess.run([sys.executable, "-c", source],
+                              input="".join(json.dumps(op) + "\n" for op in commands), capture_output=True, text=True,
+                              env={"PATH": os.defpath, "HERMES_HOME": str(paths["home"])}, timeout=30, check=True)
+        assert all(row.get("ok", row.get("ready")) for row in map(json.loads, proc.stdout.splitlines()))
+        records, blobs = run.ledger(tmp_path)
+        results = [r for r in records if r["subrole"] == "tool_results" and
+                   any(m.get("role") == "tool" and m.get("content") == caption
+                       for m in blobs[r["req"]]["messages"])]
+        assert results and results[0]["cursor"] == {"session": 2, "turn": 2}
+        writes = [call for call in live.calls if call.role == "write_turn" and
+                  any(m.get("role") == "tool" and m.get("content") == caption for m in call.body["messages"])]
+        assert writes, "No live write_turn received the workspace vision result"
+        assert writes[0].cursor == {"session": 2, "turn": 3}
+        assert any(r["seq"] > results[0]["seq"] and r["cursor"] == writes[0].cursor and
+                   r.get("write_turn_readback") for r in records)
+        third = script["sessions"][1]["turns"][2]
+        assert third == run.turn("Thanks. Please keep both images in mind.", 3, "replay")
+        assert no_egress["outbound"] == 0
+    finally:
+        shutdown(server)
+        d.close()
+
+
+def test_arm_wall_time_is_local_and_mode_boundary_is_shared(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from bicentennial.runner.guard import Marker
+
+    clock = [100.0]
+    shared_started = 0.0
+    boundary_starts = []
+    original_boundary = run.boundary
+    def boundary(responders, started, egress=None):
+        boundary_starts.append(started)
+        return original_boundary(responders, started, egress)
+    class Adapter:
+        def __init__(self, entry, **kw):
+            self.egress = SimpleNamespace(summary=lambda: {"non_loopback": []})
+        def run_session(self, index, **kw):
+            clock[0] += 5.0
+            return SimpleNamespace(finals=[(n, "wrong") for n in range(1, 5)], gate=(), timings_ms={})
+        def records(self):
+            return []
+        def close(self):
+            return {"non_loopback": []}
+    monkeypatch.setattr(run.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(run, "read_marker", lambda: Marker(0, False, "idle"))
+    monkeypatch.setattr(run, "HermesAdapter", Adapter)
+    monkeypatch.setattr(run, "boundary", boundary)
+    walls = []
+    for arm in ("F", "R"):
+        root = run.run_arm(tmp_path, "text", "s8-life-00", arm, run.CaptionCache(FakeResponder("unused")), [],
+                           run.routes("text", "text", "vision"), tmp_path / "checkout",
+                           {"script_hashes": {}, "hermes_pin": {}, "hermes_commit": "fixture", "models": {}},
+                           shared_started)
+        walls.append(json.loads((root / "receipt.json").read_bytes())["wall_ms"])
+    assert boundary_starts == [shared_started] * 4
+    clock[0] = shared_started + run.MODE_WALL_S
+    with pytest.raises(run.Stopped, match="MODE_WALL_S"):
+        run.run_arm(tmp_path, "text", "s8-life-00", "M", run.CaptionCache(FakeResponder("unused")), [],
+                    run.routes("text", "text", "vision"), tmp_path / "checkout",
+                    {"script_hashes": {}, "hermes_pin": {}, "hermes_commit": "fixture", "models": {}}, shared_started)
+    stopped = json.loads((tmp_path / "p08-text-s8-life-00-M/receipt.json").read_bytes())
+    assert stopped["stop"] == "MODE_WALL_S" and stopped["sessions"] == []
+    assert walls == [5000, 5000]
+
+
 def test_all_arm_scripts_and_delivery_with_adapter_double(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
