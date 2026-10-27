@@ -391,3 +391,8 @@ def test_a_descendant_selector_matches_inside_a_match():
     masked = apply_masks(body, RUN_VALUES)
     assert masked == {"tool_calls": [{"id": "{HARNESS_TOOL_CALL_ID}", "metadata": {
         "tool_calls": [{"id": "{HARNESS_TOOL_CALL_ID}"}]}}]}
+
+
+def test_a_wildcard_selects_object_values():
+    masked = apply_masks({"tool_calls": {"first": {"id": "call-a"}}}, RUN_VALUES)
+    assert masked == {"tool_calls": {"first": {"id": "{HARNESS_TOOL_CALL_ID}"}}}
