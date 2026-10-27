@@ -169,6 +169,7 @@ def _finish(db, schedule, principal) -> None:
 @dataclass(frozen=True, kw_only=True)
 class Mix:
     deadlines: tuple[int, ...] = (1, 2)
+    deadline_at: tuple = ()
     constraints: int = 4
     relaxed: int = 1
     decisions: int = 4
@@ -240,7 +241,9 @@ def build_g1(db, schedule, *, mix=MIX) -> G1World:
                      for i in range(mix.constants)]
         chained = [c for c in constants if c[1] or c[2]]
         write_corrections(db, schedule, [
-            *(spec(Chain, "milestone", i, f"deadline-{i}", depth=d) for i, d in enumerate(mix.deadlines)),
+            *(spec(Chain, "milestone", i, f"deadline-{i}", depth=d,
+                   at=mix.deadline_at[i] if i < len(mix.deadline_at) else None)
+              for i, d in enumerate(mix.deadlines)),
             *(spec(Chain, "constraint", i, depth=1) for i in range(mix.relaxed)),
             *(spec(Chain, "constant", i, depth=d, mention=m) for i, d, m in chained)], principal=principal)
         write_statements(db, schedule, [

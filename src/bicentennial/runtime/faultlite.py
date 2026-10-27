@@ -42,7 +42,7 @@ class FaultLite:
                          if fault["session"] == session and fault["turn"] == turn])
 
     def replay_prefix(self, session: int) -> tuple[int, ...]:
-        """Replay indices through this point in timeline order, including this replay."""
+        """Replay indices through this point; empty before the first replay."""
         if type(session) is not int:
             raise ValueError("session must be an integer index")
         prefix = []
@@ -50,8 +50,6 @@ class FaultLite:
             if kind == "replay":
                 prefix.append(index)
             if index == session:
-                if not prefix:
-                    raise ValueError("probe has no preceding replay session")
                 return tuple(prefix)
         raise ValueError("session is not in the script")
 

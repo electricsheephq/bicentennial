@@ -592,10 +592,12 @@ def test_refusals_catalog_and_control(tmp_path):
     assert set(d.control()) == {"inflight", "cursor", "stopped", "write_failures", "send_errors"}
 
 
-def test_scripted_tool_calls_need_the_compiler(tmp_path):
+def test_probe_tool_calls_are_the_readers(tmp_path):
     script = json.loads(json.dumps(SCRIPT))
+    script["sessions"][0]["kind"] = script["sessions"][0]["turns"][0]["kind"] = "probe"
+    script["sessions"][0]["turns"] = script["sessions"][0]["turns"][:1]
     script["sessions"][0]["turns"][0]["tool_calls"] = [{"name": "terminal", "args": {}}]
-    with pytest.raises(ValueError, match="scripted tool calls need the tool-call compiler"):
+    with pytest.raises(ValueError, match="probe tool calls are the reader's"):
         make(tmp_path, Fake(), script=script)
 
 
