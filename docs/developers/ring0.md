@@ -130,7 +130,7 @@ Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs 
 
 ## 7. Run T1 as a merge gate
 
-Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, with its own `.venv`. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately.
+Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, with its own `.venv`. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
 
 Build and install the T1 tier, then run native memory twice:
 

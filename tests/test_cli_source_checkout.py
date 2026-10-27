@@ -1,7 +1,9 @@
 """Source-checkout refusal happens before parsing, re-exec or runner work."""
 
+import os
 import shutil
 import subprocess
+import sys
 from os import fspath
 
 import pytest
@@ -20,7 +22,7 @@ def _guard_runners(monkeypatch):
 
 
 def test_real_source_checkout():
-    assert cli.REPO is t0.REPO
+    assert cli.REPO == t0.REPO
     assert cli._source_checkout(t0.REPO)
 
 
@@ -112,4 +114,21 @@ def test_source_copy_inside_unrelated_repository(tmp_path, monkeypatch, capsys):
     assert cli.main(["t0", "--system", "reference_store", "--pack", "all", "--packs", "p",
                      "--pack-hash", "0" * 64, "--out", str(out)]) == 3
     assert capsys.readouterr().err == "source_checkout_required\n"
+    assert not out.exists()
+
+
+def test_package_without_checkout_refuses_before_runner_imports(tmp_path):
+    root = tmp_path / "package-only"
+    shutil.copytree(t0.REPO / "src" / "bicentennial", root / "src" / "bicentennial",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    script = ("import sys; sys.path.insert(0, sys.argv[1]); from bicentennial import cli; "
+              "assert cli.__file__.startswith(sys.argv[1]); sys.argv[1:] = sys.argv[2:]; "
+              "raise SystemExit(cli.main())")
+    out = tmp_path / "out"
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(root / "src"), "t0", "--system", "reference_store",
+         "--pack", "all", "--packs", "p", "--pack-hash", "0" * 64, "--out", str(out)],
+        capture_output=True, text=True, env={**os.environ, "PYTHONHASHSEED": "0"}, cwd=tmp_path,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (3, "", "source_checkout_required\n")
     assert not out.exists()

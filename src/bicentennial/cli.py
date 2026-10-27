@@ -4,10 +4,25 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-from bicentennial.runner.compare import run_t1
-from bicentennial.runner.guard import reexec_niced
-from bicentennial.runner.t0 import REPO, run_t0
+# The runners load schema-backed contracts at import, so they load only after the source-checkout check.
+REPO = Path(__file__).resolve().parents[2]
+
+
+def reexec_niced(argv):
+    from bicentennial.runner.guard import reexec_niced as reexec
+    return reexec(argv)
+
+
+def run_t0(**kwargs):
+    from bicentennial.runner.t0 import run_t0 as run
+    return run(**kwargs)
+
+
+def run_t1(**kwargs):
+    from bicentennial.runner.compare import run_t1 as run
+    return run(**kwargs)
 
 
 class _Parser(argparse.ArgumentParser):
