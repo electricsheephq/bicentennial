@@ -46,7 +46,10 @@ def apply_masks(obj, run_values: dict[str, str]):
         if isinstance(value, str):
             return pattern.sub(lambda m: replacements[m[0]], value)
         if isinstance(value, dict):
-            return {k: replace(v) for k, v in value.items()}
+            masked = {replace(k): replace(v) for k, v in value.items()}
+            if len(masked) != len(value):
+                raise ValueError("masking merged two object keys")
+            return masked
         return [replace(v) for v in value] if isinstance(value, list) else value
 
     return replace(obj)

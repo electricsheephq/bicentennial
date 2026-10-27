@@ -68,9 +68,14 @@ class Ledger:
             line = self.guard.check(canon(rec) + b"\n")
             if rec["type"] == "request":
                 validate("ledger-record", rec)
-            self._file.write(line)
-            self._file.flush()
-            os.fsync(self._file.fileno())
+            try:
+                self._file.write(line)
+                self._file.flush()
+                os.fsync(self._file.fileno())
+            except BaseException:
+                # The bytes may be on disk; only a reopen rescans the chain and its tail.
+                self._file.close()
+                raise
             self._seq, self._prev = rec["seq"], rec["hash"]
             return rec
 

@@ -345,3 +345,42 @@ def test_a_run_value_inside_a_hex_digest_is_not_masked(tmp_path):
     b = [dict(a[0])]
     assert stable_digest(a, RUN_VALUES) == stable_digest(
         b, {"sandbox_root": "/sandbox/run-b", "director_port": "49123"})
+
+
+def test_an_escaped_credential_is_refused(tmp_path, monkeypatch):
+    # Built at runtime with a quote and a backslash, which canon escapes.
+    needle = "".join(chr(n) for n in [102, 97, 107, 101, 34, 107, 101, 121, 92, 118, 97, 108])
+    monkeypatch.setenv("R02_TEST_CREDENTIAL", needle)
+    writer = ledger(tmp_path, Guard(["R02_TEST_CREDENTIAL"]))
+    try:
+        for operation in (lambda: writer.append({"type": "lifecycle", "text": needle}),
+                          lambda: writer.blob({"text": needle})):
+            with pytest.raises(CredentialLeak):
+                operation()
+        assert writer.append({"type": "lifecycle"})["seq"] == 1
+    finally:
+        writer.close()
+
+
+def test_a_failed_fsync_retires_the_writer(tmp_path):
+    writer = ledger(tmp_path)
+    with patch("bicentennial.ledger.ledger.os.fsync", side_effect=OSError("synthetic")):
+        with pytest.raises(OSError, match="synthetic"):
+            writer.append({"type": "lifecycle"})
+    with pytest.raises(ValueError, match="closed"):
+        writer.append({"type": "lifecycle"})
+    reopened = ledger(tmp_path)
+    try:
+        assert reopened.append({"type": "lifecycle"})["seq"] == 2
+    finally:
+        reopened.close()
+    assert verify(tmp_path)["chain_breaks"] == 0
+
+
+def test_run_values_are_masked_in_object_keys():
+    a = apply_masks({"files": {"/sandbox/run-a/data": "same"}}, RUN_VALUES)
+    b = apply_masks({"files": {"/sandbox/run-b/data": "same"}},
+                    dict(RUN_VALUES, sandbox_root="/sandbox/run-b"))
+    assert a == b == {"files": {"{SANDBOX_ROOT}/data": "same"}}
+    with pytest.raises(ValueError, match="merged"):
+        apply_masks({"/sandbox/run-a/x": 1, "{SANDBOX_ROOT}/x": 2}, RUN_VALUES)
