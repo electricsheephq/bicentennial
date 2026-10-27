@@ -79,6 +79,17 @@ def session(a, index):
     return a.run_session(index, sim_t_s=BASE + index * DAY, lock_hash=LOCK, attempt_id=f"attempt-s{index}")
 
 
+def test_fake_worker_full_window_config(tmp_path):
+    a = make(tmp_path, "full-window", faults=[], window=131072)
+    try:
+        session(a, 1)
+        cfg = json.loads((a.paths["hermes_home"] / "config.yaml").read_bytes())
+        assert cfg["compression"]["threshold_tokens"] == 131072
+        assert cfg["model"]["context_length"] == cfg["auxiliary"]["compression"]["context_length"] == 524288
+    finally:
+        a.close()
+
+
 def test_boundary_resume_named_session_retains_saved_summary(tmp_path, niced):
     a = make(tmp_path, "boundary-resume", faults=[])
     try:
