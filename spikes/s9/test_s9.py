@@ -350,9 +350,10 @@ def test_life_identity_stop_and_flag(arm):
     ({"login_stop": "fixture"}, {"reasons": [], "held_ms": 0}, "login_stop"),
 ])
 def test_life_stops_on_live_boundary_admission(arm, state, held, reason):
+    reads = iter([{}])  # clean before session 1, so the stop arrives at the first boundary
     record, code = s9.run_life(arm, "live", "r", {}, wait_s=0, sleep=lambda _: None,
                                script=s9.micro_script(sessions=[1, 2, 3, 4]),
-                               responder=SimpleNamespace(state=lambda: state),
+                               responder=SimpleNamespace(state=lambda: next(reads, state)),
                                holds=SimpleNamespace(at_boundary=lambda _: held))
     assert record["sessions_run"] == [1] and record["stop"] == reason and code == 2
     assert record["boundaries"][0]["holds"] == held
@@ -828,3 +829,129 @@ def test_twin_digest_mismatch_preserves_later_arms(offline_execution, monkeypatc
     assert constructed == closed == [f"{label}.micro-{suffix}" for label in args.arms for suffix in ("u", "p")]
     record = s9.json.loads((args.out / "arms/hermes-native.micro-p.json").read_bytes())
     assert record["stop"] == "twin_digest_mismatch"
+
+
+ADMISSION_FAILURES = [
+    ({"stopped": True, "stop_reason": "upstream_failures"}, "responder_stopped:upstream_failures"),
+    ({"stopped": True, "stop_reason": "unparsed"}, "responder_stopped:unparsed"),
+    ({"stopped": True, "stop_reason": "MAX_SENDS"}, "responder_stopped:MAX_SENDS"),
+    ({"spend_stopped": True}, "spend_stop"),
+    ({"identity_drift": {"model": "changed"}}, "identity_drift"),
+    ({}, "budget"),
+]
+
+
+@pytest.mark.parametrize(("failure", "reason"), ADMISSION_FAILURES)
+@pytest.mark.parametrize("stubbed_life", [False, True])
+def test_mid_session_admission_failure_ends_part(offline_execution, monkeypatch, failure, reason, stubbed_life):
+    args, constructed, closed = offline_execution
+    state, now = {"sends": 0}, [0]
+    responder = SimpleNamespace(state=lambda: dict(state), served_identities=lambda: {})
+    monkeypatch.setattr(s9, "live_responder", lambda *a: (responder, None, None))
+    clock = s9.ActiveClock
+    monkeypatch.setattr(s9, "ActiveClock", lambda: clock(lambda: now[0]))
+
+    def fail():
+        state.update(failure)
+        if reason == "budget":
+            now[0] = s9.BUDGET_S[args.part] + 1
+
+    if stubbed_life:
+        def life(arm, *a, **kw):
+            fail()
+            return {"arm": arm.label, "stop": "harness_failed", "sessions_run": []}, 1
+        monkeypatch.setattr(s9, "run_life", life)
+    else:
+        original = s9.build_arm
+
+        def build(*a, **kw):
+            arm, routes = original(*a, **kw)
+
+            def session(*a, **kw):
+                fail()
+                raise s9.HarnessFailed("synthetic upstream refusal")
+            arm.adapter.run_session = session
+            return arm, routes
+        monkeypatch.setattr(s9, "build_arm", build)
+
+    code = s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None)
+    assert constructed == closed == ["hermes-native.micro"]
+    records = {p.stem: s9.json.loads(p.read_bytes()) for p in (args.out / "arms").glob("*.json")}
+    stopped = records["hermes-native.canary" if stubbed_life else "hermes-native.micro"]
+    assert stopped["stop"] == reason and stopped["sessions_run"] == []
+    assert set(records) == {"hermes-native.micro", *(["hermes-native.canary"] if stubbed_life else [])}
+    assert code == (1 if stubbed_life else 2)
+    assert s9.json.loads((args.out / "run.json").read_bytes())["exit"] == code
+
+
+@pytest.mark.parametrize(("failure", "reason"), ADMISSION_FAILURES)
+def test_life_admission_checked_before_first_session(arm, failure, reason):
+    record, code = s9.run_life(arm, "live", "r", {}, script=s9.micro_script(sessions=[1, 2]), wait_s=0,
+        responder=SimpleNamespace(state=lambda: failure),
+        active_seconds=lambda: s9.BUDGET_S["live"] + 1 if reason == "budget" else 0)
+    assert arm.adapter.ran == [] and record["sessions_run"] == []
+    assert record["stop"] == reason and code == 2
+
+
+def test_light_arm_mid_part_marker_ten_is_admitted(tmp_path, monkeypatch):
+    adapter_type = s9.HermesAdapter
+    marker = SimpleNamespace(exit=10, state="busy")
+    monkeypatch.setattr(sys.modules[adapter_type.__module__], "read_marker", lambda: marker)
+    monkeypatch.setattr(s9, "read_marker", lambda: marker)
+
+    def construct(entry, **kwargs):
+        adapter = FakeAdapter(kwargs["root"])
+        adapter.entry = entry
+        adapter._gate = adapter_type._gate.__get__(adapter)
+        return adapter
+    monkeypatch.setattr(s9, "HermesAdapter", construct)
+    active = s9.ActiveClock()
+    arm, _ = s9.build_arm("hermes-native", tmp_path / "cell", s9.micro_script(), "r", active)
+    assert arm.entry["machine_class"] == "light"
+    readings = []
+    arm.adapter._gate(readings)
+    assert readings == active.markers == [{"exit": 10, "state": "busy"}] * 2
+
+
+def test_mid_part_unset_marker_publishes_earlier_arms(tmp_path, monkeypatch):
+    args = SimpleNamespace(part="live", out=tmp_path / "out", run="synthetic",
+        arms=["hermes-native", "wiped", "no-memory"], mem0_source=None,
+        max_output_tokens=1024, wait_s=86400, resume_auth=None)
+    constructed, closed = [], []
+    marker = SimpleNamespace(exit=0, state="fixture")
+    monkeypatch.setattr(s9, "read_marker", lambda: marker)
+    responder = SimpleNamespace(state=lambda: {"sends": 0}, served_identities=lambda: {})
+    monkeypatch.setattr(s9, "live_responder", lambda *a: (responder, None, None))
+
+    def construct(entry, **kwargs):
+        assert constructed == closed
+        constructed.append(kwargs["root"].name)
+        adapter = FakeAdapter(kwargs["root"])
+        adapter.paths["root"] = kwargs["root"]
+        adapter._gate = lambda readings: readings.append({"exit": marker.exit, "state": marker.state})
+        original_session = adapter.run_session
+
+        def session(index, **kw):
+            if constructed[-1] == "hermes-native.canary":
+                marker.state = "unset"
+            adapter._gate([])
+            return original_session(index, **kw)
+        adapter.run_session = session
+        return adapter
+
+    def finish(arm, record):
+        closed.append(constructed[len(closed)])
+        record.update(unknown_requests=0, non_loopback=0, auth_path_requests=0,
+                      digest="ab" * 32, ledger={})
+
+    monkeypatch.setattr(s9, "HermesAdapter", construct)
+    monkeypatch.setattr(s9, "finish_arm", finish)
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == 2
+    assert constructed == closed == ["hermes-native.micro", "hermes-native.canary"]
+    records = {p.stem: s9.json.loads(p.read_bytes()) for p in (args.out / "arms").glob("*.json")}
+    assert records["hermes-native.micro"]["stop"] is None
+    assert records["hermes-native.canary"]["stop"] == "marker_refused"
+    assert s9.json.loads((args.out / "canary.json").read_bytes())["verdict"] == "not_run"
+    run = s9.json.loads((args.out / "run.json").read_bytes())
+    assert run["exit"] == 2 and run["markers"][-1] == {"exit": 0, "state": "unset"}
+    assert {"exit": 0, "state": "fixture"} in run["markers"]

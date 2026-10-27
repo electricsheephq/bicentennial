@@ -365,8 +365,12 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
     record = {"arm": label, "part": part, "sessions_run": [], "stop": None,
               "fresh": _digests(_snapshot(arm)), "boundaries": [], "results": [], "flagged_sessions": []}
     failed, resume_sid, summaries = False, None, []
+    held = {}
     arm.resume_record, arm.finals = None, []
     for position, session in enumerate(script["sessions"]):
+        record["stop"] = admission_stop(responder.state() if responder else {}, held, active_seconds(), part)
+        if record["stop"]:
+            return record, 2
         index = session["index"]
         attempt = f"{arm.execution or label}-s{index}"
         options = {"resume_session_id": resume_sid} if resume_sid else {}
@@ -374,10 +378,12 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
             result = adapter.run_session(index, sim_t_s=BASE + index * DAY, lock_hash=lock,
                                          attempt_id=attempt, **options)
         except HarnessFailed:
-            record["stop"] = "resume_failed" if resume_sid else "harness_failed"
+            held = holds.at_boundary(attempt) if holds else {}
+            reason = admission_stop(responder.state() if responder else {}, held, active_seconds(), part)
+            record["stop"] = reason or ("resume_failed" if resume_sid else "harness_failed")
             if arm.resume_record:
                 arm.resume_record["resumed_ok"] = False
-            return record, 1
+            return record, 2 if reason else 1
         arm.after, arm.surface_hash = index, result.surface_hash
         arm.finals.extend(getattr(result, "finals", ()))
         record["sessions_run"].append(index)
@@ -537,7 +543,7 @@ def build_arm(label, root, script, run, active, *, responder=None, login=None,
                 active.omit(gate, readings)
                 marker = active.omit(read_marker)
                 readings.append({"exit": marker.exit, "state": marker.state})
-                if marker.exit != 0 or marker.state == "unset":
+                if marker.state == "unset":
                     raise Stop("marker_refused")
             finally:
                 active.markers.extend(readings[start:])
@@ -638,7 +644,12 @@ def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
                 continue
             execution = f"{label}.{life}" + (f"-{suffix}" if suffix else "")
             script = (probe if label == "no-memory" else system) if life == "canary" else micro_script(label == "no-memory")
-            record = {"arm": label, "part": args.part, "stop": "interrupted"}
+            record = {"arm": label, "part": args.part, "stop": "interrupted", "sessions_run": []}
+            reason = admission_stop(responder.state() if responder else {}, {}, active(), args.part)
+            if reason:
+                records[execution] = dict(record, stop=reason)
+                code = 2 if code != 1 else code
+                break
             try:
                 arm, routes = build_arm(label, out / "cells" / execution, script, args.run, active,
                     responder=responder, login=login, checkout=checkout, mem0_source=args.mem0_source,
@@ -647,6 +658,7 @@ def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
                 records[execution] = {"arm": label, "part": args.part, "stop": "blocked"}
                 code = 2 if code != 1 else code
                 continue
+            refused = False
             try:
                 arm.execution = f"{label}.{life}"
                 delay = args.wait_s if args.part == "resume24" else (0 if suffix == "u" else PAUSE_S)
@@ -667,6 +679,8 @@ def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
                                  "post_resume": {}, "account_switched": False, "spare_account": "not run (deferred)"},
                                  dropped_items=ev["dropped_items"], encrypted_bodies=ev["encrypted_bodies"],
                                  drift=responder.state().get("identity_drift"))
+            except Stop as exc:
+                record["stop"], status, refused = str(exc), 2, True
             finally:
                 finish_arm(arm, record)
             record["execution"] = execution
@@ -676,7 +690,7 @@ def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
             code = 1 if 1 in (code, status) else max(code, status)
             if suffix == "p" and not record["stop"] and records.get(f"{label}.micro-u", {}).get("digest") != record["digest"]:
                 record["stop"], code = "twin_digest_mismatch", 1
-            if (record["stop"] in {"identity_drift", "spend_stop", "login_stop", "hold:quota", "budget", "unexpected_request"}
+            if (refused or record["stop"] in {"identity_drift", "spend_stop", "login_stop", "hold:quota", "budget", "unexpected_request"}
                     or (record["stop"] or "").startswith("responder_stopped:")):
                 break
         if args.part == "twin":
