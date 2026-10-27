@@ -20,6 +20,7 @@ from bicentennial.controls import cache, full_history, no_memory, oracle_evidenc
 from bicentennial.controls.common import ControlInput, check
 from bicentennial.keyed import uniform_int
 from bicentennial.sandbox.envserver.state import State, trace
+from bicentennial.score import aggregate
 from bicentennial.score.classes import score_act
 from bicentennial.score.qa import score_qa
 from bicentennial.world.tokens import estimate_tokens
@@ -317,6 +318,76 @@ def test_pin_changes_recompute(tmp_path, change):
     assert cache.read_entry(path, key) == second
 
 
+@pytest.mark.parametrize("field", ["reader_sha256", "scorer_sha256", "controls_sha256"])
+def test_stale_code_misses_before_live_validation(tmp_path, monkeypatch, field):
+    entry = computed()
+    path = tmp_path / "controls.json"
+    cache.write_entry(path, entry)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("stale code must not validate or recompute")
+
+    monkeypatch.setattr(cache, "validate", unexpected)
+    monkeypatch.setattr(cache, "_aggregates", unexpected)
+    key = dict(entry["key"], **{field: "f" * 64})
+    assert cache.read_entry(path, key) is None
+
+
+def test_changed_scorer_misses_and_ensure_overwrites(tmp_path, monkeypatch):
+    inp, score = fixture_input()
+    path = tmp_path / "controls.json"
+    first = cache.ensure(inp, path, score=score, harness_pin=PIN)
+    original_rows, original_key = aggregate._rows, cache.cache_key
+
+    def changed_rows(*args, **kwargs):
+        return [dict(row, score_milli=None if row["score_milli"] is None else row["score_milli"] - 1)
+                for row in original_rows(*args, **kwargs)]
+
+    def changed_key(*args, **kwargs):
+        return dict(original_key(*args, **kwargs), scorer_sha256="f" * 64)
+
+    monkeypatch.setattr(aggregate, "_rows", changed_rows)
+    monkeypatch.setattr(cache, "cache_key", changed_key)
+    key = cache.cache_key(inp, harness_pin=PIN)
+    assert key != first["key"] and cache.read_entry(path, key) is None
+    calls = []
+
+    def counted(item, result):
+        calls.append(item["item_id"])
+        return score(item, result)
+
+    second = cache.ensure(inp, path, score=counted, harness_pin=PIN)
+    assert len(calls) == 27 and second["key"] == key
+    assert second["arms"]["no_memory"]["aggregates"] != first["arms"]["no_memory"]["aggregates"]
+    assert path.read_bytes() == canon(second) != canon(first)
+    assert cache.read_entry(path, key) == second
+
+
+@pytest.mark.parametrize("change", ["digest", "key-digest", "canary", "shape", "canonical", "expected"])
+def test_code_stale_still_checks_integrity(tmp_path, change):
+    entry = computed()
+    key = dict(entry["key"], scorer_sha256="f" * 64)
+    expected = None
+    if change == "digest":
+        entry["digest"] = "f" * 64
+    elif change == "key-digest":
+        entry["key_sha256"] = "f" * 64
+        reseal(entry)
+    elif change == "canary":
+        entry["canary"] = "wrong"
+        reseal(entry)
+    elif change == "shape":
+        entry["extra"] = None
+        reseal(entry)
+    elif change == "expected":
+        expected = "f" * 64
+    data = canon(entry) + (b"\n" if change == "canonical" else b"")
+    path = tmp_path / "controls.json"
+    path.write_bytes(data)
+    with pytest.raises(cache.ControlsTampered):
+        cache.read_entry(path, key, expected_sha256=expected)
+
+
 def test_code_hashes_read_contents_and_self_exclusion(tmp_path):
     inp, _ = fixture_input()
     root = tmp_path / "package"
@@ -327,7 +398,8 @@ def test_code_hashes_read_contents_and_self_exclusion(tmp_path):
     cache.write_entry(path, computed())
     for relative, field in (("probe/__init__.py", "reader_sha256"),
                             ("score/__init__.py", "scorer_sha256"),
-                            ("api/contract.py", "controls_sha256")):
+                            ("api/contract.py", "controls_sha256"),
+                            ("contracts/items.py", "controls_sha256")):
         source = root / relative
         source.write_bytes(source.read_bytes() + b" ")
         changed = cache.cache_key(inp, harness_pin=PIN, root=root)
@@ -499,7 +571,7 @@ def test_determinism():
     assert outputs[0] == outputs[1] == canon(computed())
 
 
-def test_purity():
+def assert_pure(tree):
     allowed = {"json", "os", "tempfile", "hashlib", "re", "fractions", "pathlib", "dataclasses",
                "collections.abc", "bicentennial.canon", "bicentennial.contracts.run",
                "bicentennial.contracts.items", "bicentennial.api.contract",
@@ -507,20 +579,50 @@ def test_purity():
                "bicentennial.api.adapters.reference_store", "bicentennial.probe.scripted_reader",
                "bicentennial.score.classes", "bicentennial.score.bundle", "bicentennial.score.aggregate",
                "bicentennial.world.scale", "bicentennial.world.tokens"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(n.name in allowed for n in node.names)
+        if isinstance(node, ast.ImportFrom):
+            assert node.level == 1 or node.module in allowed
+        if isinstance(node, ast.Name):
+            assert "gold" not in node.id.lower()
+        if isinstance(node, ast.Attribute):
+            assert "gold" not in node.attr.lower()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            assert "gold" not in node.name.lower()
+        if isinstance(node, (ast.arg, ast.keyword)) and node.arg is not None:
+            assert "gold" not in node.arg.lower()
+        if isinstance(node, ast.alias):
+            assert "gold" not in node.name.lower()
+            assert node.asname is None or "gold" not in node.asname.lower()
+        if isinstance(node, ast.Constant):
+            assert type(node.value) is not float
+            assert not isinstance(node.value, str) or "gold" not in node.value.lower()
+
+
+def test_purity():
     for path in sorted((cache.PACKAGE_ROOT / "controls").glob("*.py")):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                assert all(n.name in allowed for n in node.names)
-            if isinstance(node, ast.ImportFrom):
-                assert node.level == 1 or node.module in allowed
-            if isinstance(node, ast.Name):
-                assert "gold" not in node.id.lower()
-            if isinstance(node, ast.Attribute):
-                assert "gold" not in node.attr.lower()
-            if isinstance(node, ast.Constant):
-                assert type(node.value) is not float
-                assert not isinstance(node.value, str) or "gold" not in node.value.lower()
+        assert_pure(ast.parse(path.read_text()))
+
+
+@pytest.mark.parametrize("source", [
+    "def gold(): pass",
+    "async def gold(): pass",
+    "class gold: pass",
+    "def allowed(gold): pass",
+    "def allowed(*, gold): pass",
+    "allowed(gold=1)",
+    "from . import gold",
+    "import json as gold",
+    "from . import allowed as gold",
+])
+def test_purity_rejects_identifier_positions(source):
+    with pytest.raises(AssertionError):
+        assert_pure(ast.parse(source))
+
+
+def test_purity_allows_optional_identifier_names():
+    assert_pure(ast.parse("allowed(**options)\nfrom . import allowed"))
 
 
 if __name__ == "__main__":

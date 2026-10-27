@@ -20,7 +20,8 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 READER_FILES = ("probe/__init__.py", "probe/argtemplate.py", "probe/probe_responder.py",
                 "probe/scripted_reader.py")
 CONTROL_FILES = ("api/adapters/nomemory.py", "api/adapters/oracle_evidence.py",
-                 "api/adapters/reference_store.py", "api/contract.py", "controls/__init__.py",
+                 "api/adapters/reference_store.py", "api/contract.py", "contracts/items.py",
+                 "controls/__init__.py",
                  "controls/cache.py", "controls/common.py", "controls/full_history.py",
                  "controls/no_memory.py", "controls/oracle_evidence.py", "world/tokens.py")
 MIN_GAP_MILLI = 500
@@ -117,6 +118,9 @@ def read_entry(path, key, *, expected_sha256=None):
         if (entry["canary"] != _canary() or entry["digest"] != sha256_canon(payload)
                 or entry["key_sha256"] != sha256_canon(entry["key"])):
             raise ValueError("entry hash mismatch")
+        if any(entry["key"][field] != key[field] for field in
+               ("reader_sha256", "scorer_sha256", "controls_sha256")):
+            return None
         arms = entry["arms"]
         if set(arms) != {"no_memory", "oracle_evidence", "full_history"}:
             raise ValueError("invalid arms")
