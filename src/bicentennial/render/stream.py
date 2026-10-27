@@ -51,7 +51,7 @@ def _evidence_form(row):
 
 
 def _lint_form(row):
-    tool = () if "text" in row else _strings(row["tool"], keys=True)
+    tool = () if "text" in row else (canon(row["tool"]).decode(), *_strings(row["tool"], keys=True))
     return _evidence_form(row) + tuple(unicodedata.normalize("NFC", part) for part in tool)
 
 
@@ -123,6 +123,7 @@ def verify_branch(out_dir, branch):
         manifest = json.loads(raw)
         if canon(manifest) != raw or manifest["branch"] != branch or manifest["canary"] != _canary():
             raise ValueError("invalid history manifest")
+        sessions = []
         for name in ("stream", "sessions"):
             raw = (Path(out_dir) / f"{name}.{branch}.jsonl").read_bytes()
             if sha256(raw).hexdigest() != manifest[f"{name}_hash"]:
@@ -133,6 +134,11 @@ def verify_branch(out_dir, branch):
                 if canon(row) + b"\n" != line or (name == "stream" and
                                                         row["sha256"] != event_sha256(row)):
                     raise ValueError(f"invalid {name} row")
+                if name == "sessions":
+                    sessions.append(row)
+        expected_state = [row["expected_state"] for row in sorted(sessions, key=lambda row: row["index"])]
+        if sha256_canon(expected_state) != manifest["expected_state_sha256"]:
+            raise ValueError("expected state hash mismatch")
         return manifest
     except (OSError, KeyError, TypeError, UnicodeError) as error:
         raise ValueError("invalid branch cache") from error
@@ -147,10 +153,12 @@ def history_set_hash(manifests):
         if branch in branches:
             raise ValueError("duplicate life and branch")
         branches[branch] = {k: manifest[k] for k in
-                            ("world_hash", "schedule_sha256", "stream_hash", "sessions_hash", "render_key")}
+                            ("world_hash", "schedule_sha256", "exclude_sha256", "principal_id",
+                             "stream_hash", "sessions_hash", "render_key")}
     for life in sorted(history):
         branches = history[life]
-        if set(branches) != {"B0", "B1"} or (
-                branches["B0"]["schedule_sha256"] != branches["B1"]["schedule_sha256"]):
-            raise ValueError("incomplete twins or schedule mismatch")
+        if set(branches) != {"B0", "B1"} or any(
+                branches["B0"][key] != branches["B1"][key]
+                for key in ("schedule_sha256", "exclude_sha256", "principal_id")):
+            raise ValueError("incomplete twins or twin input mismatch")
     return sha256_canon({"history_set": history})
