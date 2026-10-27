@@ -29,11 +29,16 @@ _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model
                      "custom_providers", "moa", "curator", "delegation"}
 
 
-def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None) -> dict:
+def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None,
+                  memory: bool = True) -> dict:
     if type(port) is not int or not 0 < port < 65536 or not isinstance(alias, str) or not alias:
         raise ValueError("a port and an alias are required")
     if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
         raise ValueError("a memory plug-in is named by ^[a-z0-9][a-z0-9_-]*$")
+    if type(memory) is not bool:
+        raise ValueError("memory is a bool")
+    if not memory and (plugin is not None or plugin_config):
+        raise ValueError("a memory plug-in or plugin_config requires memory enabled")
     base = f"http://127.0.0.1:{port}"
     aux = {t: {"provider": "auto", "model": "bicentennial-summariser" if t == "compression"
                else f"bicentennial-aux-{t}", "base_url": f"{base}/aux/{t}/v1", "api_key": PLACEHOLDER_KEY}
@@ -59,6 +64,9 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         if _OWNED_ROUTE_KEYS & plugin_config.keys():
             raise ValueError("plugin_config touches adapter-owned routes")
         _merge_plugin(cfg, plugin_config)
+    if not memory:
+        cfg["memory"] = {"memory_enabled": False, "user_profile_enabled": False, "provider": ""}
+        cfg["platform_toolsets"] = {"acp": [t for t in T1_TOOLSETS if t not in ("memory", "session_search")]}
     canon(cfg)  # preserve the canonical, no-float contract for plug-in settings too
     return cfg
 
