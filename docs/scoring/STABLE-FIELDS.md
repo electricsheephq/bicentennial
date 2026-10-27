@@ -1,11 +1,14 @@
 # Stable-field partition
 
-Import `bicentennial.contracts.bundle` once to register scoring semantics, then use
-`bicentennial.contracts.run.validate(name, obj)`. K13 owns structural validation.
+Validate with `bicentennial.contracts.run.validate(name, obj)`; it loads the scoring
+semantics in `bicentennial.contracts.bundle` itself. K13 owns structural validation.
 Paths describe schema properties; `[]` denotes each array element. Open envelope
 `value` payloads inherit stable status, including every nested key.
 All times/latencies are integer milliseconds; load is scaled by 1000.
 Pins bind the named artifact bytes; `masks_hash` pins K13's named masks table.
+Each card array has one valid order (RING0 §4: byte-identical `card.json`): ascending by
+the key named in its row, compared as strings by code point (tuples element by element),
+with no repeated key; the validator rejects any other order.
 
 | Property path | Stability | Source |
 | --- | --- | --- |
@@ -35,7 +38,7 @@ Pins bind the named artifact bytes; `masks_hash` pins K13's named masks table.
 | `card.labels.voice` | stable | RING0 §4 |
 | `card.labels.act` | stable | RING0 §4 |
 | `card.labels.scripted_model` | stable | RING0 §4 |
-| `card.items` | stable | RING0 §4; PREREG §3/§7 |
+| `card.items` | stable | RING0 §4; PREREG §3/§7; order: `item_id` |
 | `card.items[].item_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.items[].cell_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.items[].stage` | stable | RING0 §4; PREREG §3/§7 |
@@ -56,34 +59,37 @@ Pins bind the named artifact bytes; `masks_hash` pins K13's named masks table.
 | `card.items[].envelope.citation.quote` | stable | RING0 §4; PREREG §3/§7 |
 | `card.items[].envelope.citation.context_offset` | stable | RING0 §4; PREREG §3/§7 |
 | `card.items[].selected_option` | stable | RING0 §4; PREREG §3/§7 |
-| `card.items[].competing_present` | stable | RING0 §4; PREREG §3/§7 |
+| `card.items[].competing_present` | stable | RING0 §4; PREREG §3/§7; order: option id |
 | `card.items[].carry_over` | stable | RING0 §4; PREREG §3/§7 |
 | `card.items[].stage_attribution` | stable | RING0 §4; PREREG §3/§7 |
-| `card.bundles` | stable | RING0 §4; PREREG §3/§7 |
+| `card.bundles` | stable | RING0 §4; PREREG §3/§7; order: `bundle_id` |
 | `card.bundles[].bundle_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.bundles[].cell_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.bundles[].twin_type` | stable | RING0 §4; PREREG §3/§7 |
-| `card.bundles[].items` | stable | RING0 §4; PREREG §3/§7 |
+| `card.bundles[].items` | stable | RING0 §4; PREREG §3/§7; order: item id |
 | `card.bundles[].score_milli` | stable | RING0 §4; PREREG §3/§7 |
 | `card.bundles[].failure_class` | stable | RING0 §4; PREREG §3/§7 |
-| `card.aggregates` | stable | RING0 §4 |
+| `card.aggregates` | stable | RING0 §4; order: (`stage`, `track`) |
 | `card.aggregates[].stage` | stable | RING0 §4 |
 | `card.aggregates[].track` | stable | RING0 §4 |
 | `card.aggregates[].score_milli` | stable | RING0 §4 |
 | `card.sensitivity` | stable | RING0 §4; PREREG §3/§7 |
-| `card.sensitivity.minus_one_at_zero` | stable | RING0 §4; PREREG §3/§7 |
+| `card.sensitivity.minus_one_at_zero` | stable | RING0 §4; PREREG §3/§7; order: (`stage`, `track`) |
 | `card.sensitivity.minus_one_at_zero[].stage` | stable | RING0 §4; PREREG §3/§7 |
 | `card.sensitivity.minus_one_at_zero[].track` | stable | RING0 §4; PREREG §3/§7 |
 | `card.sensitivity.minus_one_at_zero[].score_milli` | stable | RING0 §4; PREREG §3/§7 |
-| `card.sensitivity.minus_one_at_minus_two` | stable | RING0 §4; PREREG §3/§7 |
+| `card.sensitivity.minus_one_at_minus_two` | stable | RING0 §4; PREREG §3/§7; order: (`stage`, `track`) |
 | `card.sensitivity.minus_one_at_minus_two[].stage` | stable | RING0 §4; PREREG §3/§7 |
 | `card.sensitivity.minus_one_at_minus_two[].track` | stable | RING0 §4; PREREG §3/§7 |
 | `card.sensitivity.minus_one_at_minus_two[].score_milli` | stable | RING0 §4; PREREG §3/§7 |
-| `card.per_item_accuracy` | stable | RING0 §4; PREREG §3/§7 |
+| `card.per_item_accuracy` | stable | RING0 §4; PREREG §3/§7; order: `cell_id` |
 | `card.per_item_accuracy[].cell_id` | stable | RING0 §4; PREREG §3/§7 |
 | `card.per_item_accuracy[].correct` | stable | RING0 §4; PREREG §3/§7 |
 | `card.per_item_accuracy[].eligible` | stable | RING0 §4; PREREG §3/§7 |
 | `card.per_item_accuracy[].accuracy_milli` | stable | RING0 §4; PREREG §3/§7 |
+| `card.per_item_accuracy[].blocked` | stable | PREREG §3 (excluded, disclosed) |
+| `card.per_item_accuracy[].na_exposure` | stable | PREREG §3 (excluded, disclosed) |
+| `card.per_item_accuracy[].na_clock` | stable | PREREG §3 (excluded, disclosed) |
 | `card.coverage` | stable | RING0 §4; PREREG §3/§7 |
 | `card.coverage.assigned` | stable | RING0 §4; PREREG §3/§7 |
 | `card.coverage.scored` | stable | RING0 §4; PREREG §3/§7 |
@@ -97,11 +103,15 @@ Pins bind the named artifact bytes; `masks_hash` pins K13's named masks table.
 | `card.controls.oracle_evidence` | stable | RING0 §4; RING0 §1/§6 |
 | `card.controls.full_history` | stable | RING0 §4; RING0 §1/§6 |
 | `card.controls.naive_rag` | stable | RING0 §4; RING0 §1/§6 |
-| `card.diagnostics` | stable | RING0 §4; RING0 §1/§6 |
+| `card.diagnostics` | stable | RING0 §4; RING0 §1/§6; order: `track` |
 | `card.diagnostics[].track` | stable | RING0 §4; RING0 §1/§6 |
 | `card.diagnostics[].competing_milli` | stable | RING0 §4; RING0 §1/§6 |
 | `card.diagnostics[].carry_over_milli` | stable | RING0 §4; RING0 §1/§6 |
 | `card.carry_over_milli` | stable | RING0 §4 |
+| `card.competing_milli` | stable | RING0 §1 (system share) |
+| `card.volatile_surface_paths` | stable | RING0 §5; order: (`surface`, `path`) |
+| `card.volatile_surface_paths[].surface` | stable | RING0 §5 |
+| `card.volatile_surface_paths[].path` | stable | RING0 §5 (registry `surfaces[].volatile_paths`) |
 | `card.gate_verdict` | stable | RING0 §4; RING0 §1/§6 |
 | `receipt.canary` | volatile | RING0 §4 |
 | `receipt.run_status` | volatile | RING0 §4 |
