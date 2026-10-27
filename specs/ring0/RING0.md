@@ -150,7 +150,7 @@ The determinism check names the first stable field that differs.
 - Mem0's vector directory and its history database, moved inside the sandbox (S5 finding 2);
 - a server's data directory.
 
-**The fresh-install hash.** A surface's fresh-install hash is sha256 over a canonical listing of its tree, computed after install and configuration and before the first ingest. The listing has one line per path: relative path, mode, size and the sha256 of the content. The only paths left out are those the registry entry declares volatile, such as logs and lock files; each one is listed on the card.
+**The fresh-install hash.** A surface's fresh-install hash is sha256 over a canonical listing of its tree, computed after install and configuration and before the first ingest (for when that is at v0.1, see §13 E1). The listing has one line per path: relative path, mode, size and the sha256 of the content. The only paths left out are those the registry entry declares volatile, such as logs and lock files; each one is listed on the card.
 
 **Verified empty** means every declared surface hashes to its fresh-install hash. A run starts only from verified-empty surfaces (DESIGN §6.8).
 
@@ -219,6 +219,8 @@ The oracle-evidence, full-history and naive-RAG columns are cached with the pack
 
 A first run has no baseline card. If every other condition holds, it is a labelled conformance PASS.
 
+**Verdicts** (§13 E3): PASS, or the labelled conformance PASS; FAIL; INVALID, when the wiped control passed; BLOCKED, when benchmark infrastructure failed after its reruns and no known failure exists. A known failure wins over a blocked entry: the verdict is then FAIL, and the run status still lists every blocked entry.
+
 **Budget:** ≤ 10 min and $0. That is an engineering budget, not a bar (PREREG §6). For scale, take S6a's measured fixed time per Hermes session, about 30 s on a shared machine, and its mean probe session, about 26 s. At those figures, 2 × 80 replay sessions and 2 × 24 probe sessions come to about 100 min run serially, and about 25 min across 4 parallel sandbox roots. Scripted responders remove S6a's upstream time, so the real figure should be lower, but it is not measured. Loop time is measured and published idle and busy, and a miss is disclosed. If the measured T1 misses by more than 2×, v0.2 cuts the probe budget first, then B1's full replay.
 
 ## 7. T0 surfaces
@@ -243,8 +245,8 @@ The T0 and T1 runners use these exit codes:
 | Code | Meaning |
 |---|---|
 | 0 | pass |
-| 1 | fail: the gate is FAIL, or an invariant or corpus case failed |
-| 2 | BLOCKED: benchmark infrastructure failed after its reruns (PREREG §7) |
+| 1 | fail: the gate is FAIL or INVALID (the wiped control passed), or an invariant or corpus case failed |
+| 2 | BLOCKED: benchmark infrastructure failed after its reruns, with no known failure (PREREG §7) |
 | 3 | guard refused: the busy marker, the load guard, a pinned-artifact hash mismatch, `PYTHONHASHSEED` not 0, or a refused system (§12) |
 
 - Any other code means the tool itself failed, and no result exists. For example, `keyed.assert_hashseed` exits 70 when a library process starts without the seed, and an uncaught exception exits 1 by Python's convention. The runners therefore check their own preconditions before work and exit 3.
@@ -285,7 +287,7 @@ Each route deviation is disclosed. For Mem0 that is the hosted extraction model 
 
 **The adapter contract** gains one step: `settle`, before every checkpoint and every probe, for systems whose writes become searchable only after background work (S5 finding 1; `docs/ERRATA-v2.2.md`).
 - **Settled** means the system was observed to report its queue drained, within its declared bound.
-- **Reaching the bound without that observation** is a SYSTEM_FAILURE for the items that settle precedes, even if the settle call itself returns normally. No probe reads a store that has not settled.
+- **Reaching the bound without that observation** is a SYSTEM_FAILURE for the items that settle precedes, even if the settle call itself returns normally. No probe reads a store that has not settled. At v0.1 this holds for scoring, not for execution (§13 E2).
 
 **What this selection is not.** It is not C-9. It confers no roster place, ranks nothing, and is not the public adoption metric.
 
@@ -295,6 +297,14 @@ Each route deviation is disclosed. For Mem0 that is the hosted extraction model 
 - The benchmark session never runs it at Ring 0. The runners refuse it under the benchmark operator's identity, with exit 3.
 - LCM-X's own lanes may run the public kit, on equal terms with every other system (PREREG §10, the firewall).
 - No unit configures, tunes or advises on LCM-X.
+
+## 13. v0.1 errata
+
+These record where the v0.1 Kit's runners depart from the text above, and why. Each one is disclosed on the card.
+
+- **E1. Verified empty is taken before configuration** (§5). Hermes writes `config.yaml` when the harness first starts, and there is no hook before the first turn. So for Hermes native memory and the controls, the verified-empty proof is the marker-only home, taken before configuration. The configuration files are benchmark-written. For a Hermes plug-in, the baseline is its install snapshot, taken after the plug-in's own install-time files and the benchmark's configuration are written. Card disclosure: "verified empty: before configuration; configuration is benchmark-written".
+- **E2. Unsettled checkpoints still run their probes** (§11). The scripted director accepts only the next expected turn and cannot skip a session. So an unsettled checkpoint's probe sessions still run, on clones. Every item of that checkpoint is a SYSTEM_FAILURE (`unsettled`) whatever its reader result. Scoring reads the class before any reader result.
+- **E3. The gate's verdicts and exit codes** (§6, §8). INVALID, when the wiped control passed, exits 1. BLOCKED, when infrastructure failed after its reruns with no known failure, exits 2. A known failure wins over a blocked entry, so a rerunnable fault never masks a known failure. The card's `gate_verdict` accepts `BLOCKED` only with run status `BLOCKED`.
 
 ## References
 
