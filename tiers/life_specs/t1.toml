@@ -1,0 +1,47 @@
+# Generator input for Ring 0 T1 lives; never agent-visible (RING0 §10).
+canary = "c168e5f8-3948-4553-8554-7aa162054723"
+tier = "T1"
+scale = "t1"
+window = 16384
+window_label = "provisional C-5"
+levers_label = "uncalibrated (v0.2)"
+checkpoints = [10, 20]
+cold_restart = "every session start after the first"
+min_distance_sessions = 2
+early_sessions = 2
+min_early_bundles = 2
+qa_per_checkpoint = 6
+act_per_checkpoint = 2
+not_exercised = ["KEEP-FORGET", "KEEP-NEIGH", "TUE-EVENT"]
+
+[kill]
+session = 11
+turn = 1
+
+[swap]
+session = 15
+wiring_only = true
+from_alias = "bicentennial-main"
+to_alias = "bicentennial-swap"
+
+[compaction]
+min_sprints = 2
+
+[g1]
+deadline_at = [[[1, 1], [2, 1]], [[1, 2], [2, 2]]]
+
+[[lives]]
+life = "t1-g1"
+genre = "G1"
+seed = 1
+reads_session = 1
+
+[[lives]]
+life = "t1-g2"
+genre = "G2"
+seed = 2
+
+[selection]
+g1 = ["drift-chain", "drift-chain-fault", "drift-config", "recall-value", "wake-loop"]
+g2 = ["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"]
+pinned = { "drift-chain-fault" = 20 }
