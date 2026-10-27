@@ -1033,3 +1033,94 @@ def test_effect_replace_rewrites_the_whole_entry():
         result = ef.effects(calls, reqs, {"memory": store}, "responses")
         assert result["gaps"] == [], act  # Hermes: replace makes the entry its new content, patch splices a span
         assert result["calls"][0]["operations"][0]["superseded_by"] == ["bcw00002:1"]
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_embeddings_input_is_never_conversation(wire):
+    data = fixture(wire)
+    rows, blobs, _, _ = data
+    for row in rows:
+        row["path"] = ENDPOINT[wire]
+    blobs["emb"] = {"model": "embed", "input": "discarded draft"}  # an embeddings request after the replay
+    rows.append({"seq": 4, "role": "embeddings", "path": "/v1/embeddings", "req": "emb"})
+    assert rb.request_wire(rows[-1], wire) == "embeddings"  # the director dispatches it as its own wire
+    report = run(data, wire)
+    assert (report["A5"]["whole_content_hits"], report["A5"]["text_hits"]) == ([], [])
+    assert report["A5"]["non_content_collisions"] == [{"record": 4, "write_record": 1}]
+    assert rb.failures(report) == []
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_non_write_call_reaching_an_aux_request_on_the_other_wire(wire):
+    data = fixture(wire)
+    rows, blobs, _, _ = data
+    for row in rows:
+        row["path"] = ENDPOINT[wire]
+    up = blobs[rows[0]["upstream"][0]["resp"]]
+    if wire == "chat":
+        up["choices"][0]["message"]["tool_calls"].append(
+            {"id": "review-term", "function": {"name": "terminal", "arguments": "{}"}})
+        blobs["aux"] = {"input": [{"type": "function_call", "call_id": "review-term", "name": "terminal",
+                                   "arguments": "{}"}, {"type": "function_call_output", "call_id": "review-term",
+                                                        "output": "{}"}]}
+    else:
+        up["sse"] += "data: " + json.dumps({"type": "response.output_item.done", "item": {
+            "type": "function_call", "call_id": "review-term", "name": "terminal", "arguments": "{}"}}) + "\n\n"
+        blobs["aux"] = {"messages": [{"role": "assistant", "content": "", "tool_calls": [{"id": "review-term",
+                        "type": "function", "function": {"name": "terminal", "arguments": "{}"}}]},
+                        {"role": "tool", "tool_call_id": "review-term", "content": "{}"}]}
+    other = "responses" if wire == "chat" else "chat"
+    rows.append({"seq": 4, "role": "aux", "path": "/aux/review" + ENDPOINT[other].removeprefix("/main"),
+                 "req": "aux"})
+    a3 = run(data, wire)["A3"]
+    assert (a3["non_write_attempts"], a3["non_write_blocked"]) == (1, 0)
+    assert {"record": 1, "kind": "non_write_reached_harness", "call": "review-term"} in a3["failures"]
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_next_session_snapshot_on_the_other_wire(wire):
+    data = fixture(wire)
+    rows, blobs, _, _ = data
+    for row in rows:
+        row["path"] = ENDPOINT[wire]
+    other = "responses" if wire == "chat" else "chat"
+    rows[-1]["path"] = ENDPOINT[other]
+    blobs[rows[-1]["req"]] = ({"instructions": "saved note", "input": "later question"} if other == "responses" else
+                              {"messages": [{"role": "system", "content": "saved note"},
+                                            {"role": "user", "content": "later question"}]})
+    report = run(data, wire)
+    assert (report["A4"]["gaps"], report["A4"]["visible_next_session"], rb.failures(report)) == ([], 1, [])
+
+
+def test_whole_entry_edit_after_a_patch_finds_the_entry():
+    def call(rec, args, result='{"success":true}'):
+        return {"record": rec, "session": 1, "id": f"bcw{rec:05d}", "arguments": json.dumps(args), "result": result}
+    add = call(1, {"target": "memory", "action": "add", "content": "alpha beta note"})
+    patch = {"action": "patch", "old_text": "alpha", "content": "gamma"}
+    replace = {"action": "replace", "old_text": "beta", "content": "delta note"}
+    reqs = [({"seq": 4, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "delta note"})]
+    cases = {"single": [add, call(2, dict(patch, target="memory")), call(3, dict(replace, target="memory"))],
+             "batch": [add, call(2, {"target": "memory", "operations": [patch, replace]})],
+             "recorded": [call(2, dict(patch, target="memory"), json.dumps(  # the entry predates the ledger
+                 {"success": True, "patched_entry_before": "alpha beta note", "patched_entry_after": "gamma beta note"})),
+                 call(3, dict(replace, target="memory"))],
+             "recorded_batch": [call(2, {"target": "memory", "operations": [patch]}, json.dumps(
+                 {"success": True, "patched_entries_after": {"1": "gamma beta note"}})),
+                 call(3, {"target": "memory", "action": "remove", "old_text": "beta"})]}  # a batch never empties
+    for name, calls in cases.items():
+        store = "" if name == "recorded_batch" else "delta note"
+        reqs[0][1]["instructions"] = store or "empty"
+        result = ef.effects(calls, reqs, {"memory": store}, "responses")
+        assert result["gaps"] == [], name
+        patched = next(o for r in result["calls"] for o in r["operations"] if o["action"] == "patch")
+        assert patched["superseded_by"] == [("bcw00002:2" if name == "batch" else "bcw00003:1")], name
+    for name in ("recorded", "recorded_batch"):  # without the recorded entry the span alone is tracked: a gap
+        calls = copy.deepcopy(cases[name])
+        calls[0]["result"] = '{"success":true}'
+        store = "" if name == "recorded_batch" else "delta note"
+        reqs[0][1]["instructions"] = store or "empty"
+        assert ef.effects(calls, reqs, {"memory": store}, "responses")["gaps"] == ["bcw00002"], name
+    reqs[0][1]["instructions"] = "alpha beta note"  # the patch never applied: its own span is still checked
+    out = ef.effects(cases["single"][:2], reqs, {"memory": "alpha beta note"}, "responses")
+    assert out["gaps"] == ["bcw00001", "bcw00002"]
+    assert "absent_from_final_store" in out["calls"][1]["operations"][0]["reasons"]

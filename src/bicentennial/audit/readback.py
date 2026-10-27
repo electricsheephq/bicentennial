@@ -8,7 +8,7 @@ from collections import Counter
 from compression import zstd
 from pathlib import Path
 
-from bicentennial.audit.effects import strings
+from bicentennial.audit.effects import request_wire, strings
 from bicentennial.keyed import mint_id
 from bicentennial.ledger import BlobStore, verify
 
@@ -209,21 +209,13 @@ def _n_calls(obj):
 def _items(body, wire):
     """A request's history items. A string input is one user message; token ids and other non-object
     items (an embeddings request's input) carry no history, and their strings stay in the other channel."""
-    items = body.get("messages" if wire == "chat" else "input", [])
+    items = [] if wire == "embeddings" else body.get("messages" if wire == "chat" else "input", [])
     items = [{"type": "message", "role": "user", "content": items}] if isinstance(items, str) else items
     return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
 
 
-def request_wire(row, wire):
-    """A request's own wire, from its recorded endpoint (the director dispatches each request by path), else the
-    replay's: one ledger may mix wires, such as Responses turns and a chat title request."""
-    path = str(row.get("path", "")).split("?")[0].rstrip("/")
-    return ("chat" if path.endswith("/chat/completions") else
-            "responses" if path.endswith(("/responses", "/responses/compact")) else wire)
-
-
 def conversation(body, wire):
-    if wire == "chat":
+    if wire != "responses":
         return list(strings([m.get("content", "") for m in _items(body, wire) if m.get("role") != "tool"]))
     return list(strings([body.get("instructions", ""), [m.get("content", "") for m in _items(body, wire)
                         if m.get("type", "message") == "message"]]))
@@ -328,18 +320,18 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 # the harness gets the calls only: no reply or reasoning text
                 a5["served_write_text"].append(seq)
             following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
-                              rr.get("cursor") == cursor and results(bb, wire)), None)
+                              rr.get("cursor") == cursor and results(bb, request_wire(rr, wire))), None)
             if following is None:
                 following = next(((rr, bb) for rr, bb in requests if rr["seq"] > seq and
                                   rr.get("role") in {"replay_main", "write_turn", "probe_main"}), None)
             new_results, seen_at = {}, {}  # one turn's results may arrive over several continuation requests
             for rr, bb in requests:
                 if rr["seq"] > seq and rr.get("cursor") == cursor:
-                    for tid, out in results(bb, wire).items():
+                    for tid, out in results(bb, request_wire(rr, wire)).items():
                         new_results.setdefault(tid, out)
                         seen_at.setdefault(tid, rr["seq"])
             if not new_results and following:
-                new_results = results(following[1], wire)
+                new_results = results(following[1], request_wire(following[0], wire))
                 seen_at = dict.fromkeys(new_results, following[0]["seq"])
             for tid in new_results.keys() - results(body, wire).keys() - {tc["id"] for tc in served}:
                 if not issued_at.get(tid, float("inf")) < seen_at[tid]:  # another record's earlier call is not unissued
@@ -375,12 +367,13 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                         label = tc["id"] if tc["id"] is not None else f"{seq}:{n}:{j}"
                         # reachability counts only calls and results new relative to the triggering request
                         prior_calls, prior_results = {c for c, _ in calls_in(body, wire)}, results(body, wire).keys()
-                        new_calls = calls_in(following[1], wire) - calls_in(body, wire) if following else set()
+                        new_calls = (calls_in(following[1], request_wire(following[0], wire)) - calls_in(body, wire)
+                                     if following else set())
                         later = set()  # calls and results are new against their own kind: an old call, new result is new
                         for rr, bb in requests:
-                            if rr["seq"] > seq:
-                                later |= {c for c, _ in calls_in(bb, wire)} - prior_calls
-                                later |= results(bb, wire).keys() - prior_results
+                            if rr["seq"] > seq:  # each later request read on its own wire
+                                later |= {c for c, _ in calls_in(bb, request_wire(rr, wire))} - prior_calls
+                                later |= results(bb, request_wire(rr, wire)).keys() - prior_results
                         blocked = (not any(c["name"] == tc["name"] for c in served) and not any(
                             nm == tc["name"] for _, nm in new_calls) and (tc["id"] is None or tc["id"] not in later
                             and not any(i == tc["id"] for i, _ in new_calls)))  # a kit attempt has no id clauses

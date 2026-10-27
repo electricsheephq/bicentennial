@@ -31,6 +31,15 @@ def blocks(content):
             and p.get("type") in (None, "text", "input_text", "output_text")] if isinstance(content, list) else []
 
 
+def request_wire(row, wire):
+    """A request's own wire, from its recorded endpoint (the director dispatches each request by path, embeddings
+    included), else the replay's: one ledger may mix wires, such as Responses turns and a chat title request."""
+    path = str(row.get("path", "")).split("?")[0].rstrip("/")
+    return ("chat" if path.endswith("/chat/completions") else
+            "responses" if path.endswith(("/responses", "/responses/compact")) else
+            "embeddings" if path.endswith("/embeddings") else wire)
+
+
 def snapshot(body, wire):
     """The memory snapshot a request carries: chat system and developer messages; Responses instructions and the
     system and developer messages in input, as the director extracts them (roles._items)."""
@@ -63,10 +72,14 @@ def effects(calls, requests, stores, wire):
         reports.append(report)
         args = args if isinstance(args, dict) else {}
         listed = args.get("operations", [args])
+        # the entry each patch produced, when the result records it (memory_tool_store: patch, _batch)
+        produced = (result.get("patched_entries_after") if "operations" in args else
+                    {"1": result.get("patched_entry_after")}) if isinstance(result, dict) else None
+        produced = produced if isinstance(produced, dict) else {}
         for i, op in enumerate(listed if isinstance(listed, list) else [{}]):
             ops.append(dict(op if isinstance(op, dict) else {}, target=args.get("target", "memory"),
                             record=call["record"], session=call["session"], applied=applied, report=report,
-                            id=f"{call['id']}:{i + 1}"))
+                            id=f"{call['id']}:{i + 1}", produced=produced.get(str(i + 1))))
     for op in ops:
         action = op.get("action")
         raw = op.get("old_text", "") if action == "remove" else op.get("content", op.get("new_text", ""))
@@ -77,6 +90,24 @@ def effects(calls, requests, stores, wire):
             raise ValueError(f"malformed_memory_target:{op['record']}")
         if op["applied"] and not op["needle"]:
             raise ValueError(f"empty_memory_content:{op['record']}")
+    held = {}  # each target's entries as tracked here: a patch splices its span into the entry it locates
+    for op in ops:
+        act, op["entry"] = op.get("action"), op["needle"]  # the text a later whole-entry operation locates
+        if not op["applied"] or not known(act) or not op["needle"] or not isinstance(op["target"], str):
+            continue
+        entries, old = held.setdefault(op["target"], []), "" if act == "add" else norm(op.get("old_text", ""))
+        at = next((j for j, e in enumerate(entries) if e == old), None)  # a whole-entry match first, as Hermes
+        at = next((j for j, e in enumerate(entries) if old and old in e), None) if at is None else at
+        if act == "patch":
+            recorded = op["produced"]
+            op["entry"] = (norm(recorded) if isinstance(recorded, str) and recorded.strip() else
+                           entries[at].replace(old, op["needle"], 1) if at is not None else op["needle"])
+        if at is None:
+            entries += [] if act == "remove" else [op["entry"]]
+        elif act == "remove":
+            del entries[at]
+        elif act != "add":
+            entries[at] = op["entry"]
     for i, op in enumerate(ops):
         action, needle = op.get("action"), op["needle"]
         if not known(action) or not needle or not isinstance(op["target"], str):
@@ -92,8 +123,9 @@ def effects(calls, requests, stores, wire):
         def state(until, start, i=i, op=op):
             """The expected effect at `until`, through later applied calls on the same target: ("present", text)
             or ("absent", text). A removal is undone by a later call whose new text carries the removed text.
-            Hermes `replace` rewrites the whole matched entry; `patch` splices only its span (memory_tool_store)."""
-            (kind, value), changed = start, []
+            Hermes `replace` rewrites the whole matched entry; `patch` splices only its span (memory_tool_store).
+            A later replace or remove also finds the owning entry through its text outside a patched span."""
+            (kind, value), changed, entry = start, [], op["entry"]
             for later in ops[i + 1:]:
                 act = later.get("action")
                 if (later["record"] >= until or not later["applied"] or later["target"] != op["target"]
@@ -101,15 +133,18 @@ def effects(calls, requests, stores, wire):
                     continue
                 old = norm(later.get("old_text", "")) if act in {"patch", "replace", "remove"} else ""
                 new = "" if act == "remove" else norm(later.get("content", later.get("new_text", "")))
-                if kind == "present" and old and (old in value or value in old):
-                    # a patch span inside this content is replaced; a replace, or a span that encompasses it,
-                    # replaces all of it
+                if kind == "present" and old and (old in value or value in old or act != "patch" and old in entry):
+                    # a patch span inside this content is replaced; a replace or remove of its entry, or a span
+                    # that encompasses it, replaces all of it
                     changed.append(later["id"])
                     patched = ("" if act == "remove" else value.replace(old, new) if act == "patch" and old in value
                                else new)
+                    entry = entry.replace(old, new, 1) if act == "patch" and old in entry else patched
                     kind, value = ("present", patched) if patched else ("absent", value)
+                elif kind == "present" and act == "patch" and old and old in entry:
+                    entry = entry.replace(old, new, 1)  # a span elsewhere in the owning entry
                 elif kind == "absent" and new and value in new:
-                    kind = "present"
+                    kind, entry = "present", later["entry"]
                     changed.append(later["id"])
             return (kind, value), changed
         def holds(expect, text):
@@ -125,7 +160,7 @@ def effects(calls, requests, stores, wire):
         visible, next_ok, next_side_ok, next_changed, wanted = None, None, None, [], final
         if nxt:
             r, b = nxt
-            snap = norm(snapshot(b, wire))
+            snap = norm(snapshot(b, request_wire(r, wire)))
             wanted, next_changed = state(r["seq"], start)
             visible = needle in snap
             next_ok = holds(wanted, snap)
