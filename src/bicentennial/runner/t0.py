@@ -11,6 +11,7 @@ import unicodedata
 from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -513,7 +514,7 @@ def _verb_member(pack, item):
     return record["direction"] == VERBATIM and bool(set(record["crossed"]) & set(STRESSES)) and bool(key["required"])
 
 
-def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts):
+def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts, *, baseline_infra=()):
     evidence = []
     intrinsic = pack.template.fault if hasattr(pack.template, "fault") else False
     for item in sorted(pack.pack["items"], key=lambda i: i["item_id"]):
@@ -525,6 +526,11 @@ def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts)
             outcomes[iid]["failure_class"], crosses, False if intrinsic else baseline.get(iid),
             roots[record["branch"]]))
     verdicts = run_invariants(evidence, tier="T0")
+    if baseline_infra:
+        verb = verdicts["INV-VERB"]
+        verdicts["INV-VERB"] = replace(verb,
+            status="INFRA_FAILURE" if verb.status in ("PASS", "INCONCLUSIVE", "NOT_EXERCISED") else verb.status,
+            infra=tuple(sorted(set(verb.infra) | set(baseline_infra))))
     if intrinsic:
         verdicts["INV-VERB"] = adapter_verdicts["INV-VERB"]
     return [verdicts[inv].to_obj() for inv in INVARIANTS]
@@ -557,18 +563,22 @@ def _branches(index, pack, entry, pack_hash, real, work, workers, *, bound_s, ho
         f for row in rows for f in row[3]]
 
 
-def _baseline_context(pack, baseline, results):
+def _baseline_members(pack, baseline):
     fields = ("branch", "template_id", "template_version", "instance_key")
-    by_identity = {tuple(r[k] for k in fields): results.get(i) for i, r in baseline.records.items()}
-    context = {}
+    by_identity = {tuple(r[k] for k in fields): i for i, r in baseline.records.items()}
+    members = {}
     for item in sorted(pack.pack["items"], key=lambda i: i["item_id"]):
         if _verb_member(pack, item):
             identity = tuple(pack.records[item["item_id"]][k] for k in fields)
             if identity not in by_identity:
                 raise T0Refused("baseline_missing")
-            result = by_identity[identity]
-            context[item["item_id"]] = result.in_context is True if result else False
-    return context
+            members[item["item_id"]] = by_identity[identity]
+    return members
+
+
+def _baseline_context(pack, baseline, results):
+    return {i: results[twin].in_context is True if results.get(twin) else False
+            for i, twin in _baseline_members(pack, baseline).items()}
 
 
 def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", hermes=None,
@@ -782,16 +792,20 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers):
                     expected_lock=locks[pack.rel])
                 factories.extend(made)
                 baseline = {}
+                baseline_infra = []
                 if (not getattr(pack.template, "fault", False) and
                         any(_verb_member(pack, i) for i in pack.pack["items"])):
                     twin = by_row[pack.meta["row"]["baseline"]]
-                    base_results, _, _, baseline_factories = _branches(index, twin, entry, pack_hash,
+                    base_results, base_outcomes, _, baseline_factories = _branches(index, twin, entry, pack_hash,
                         real, work / pack.pack["pack_id"] / "baseline", count,
                         bound_s=bound_s, host_options=options,
                         expected_lock=_lock(index, twin, entry, pack_hash, real))
                     factories.extend(baseline_factories)
                     baseline = _baseline_context(pack, twin, base_results)
-                verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts)
+                    baseline_infra = [i for i, twin_id in _baseline_members(pack, twin).items()
+                                      if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
+                verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
+                                           baseline_infra=baseline_infra)
                 audit = _audit(made)
                 # Audit every auxiliary host too; only the selected drive enters its card digest.
                 auxiliary = _audit([f for f in factories if f not in made])

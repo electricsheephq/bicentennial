@@ -224,6 +224,33 @@ def test_single_adapter_invariant_matches_batch(factory):
     assert canon([v.to_obj() for v in batch.values()]) == canon([v.to_obj() for v in singles.values()])
 
 
+def test_probe_injected_context_task_and_time():
+    calls = []
+
+    class Injected(ReferenceStore):
+        def probe(self, task, now):
+            calls.append(("probe", task, now))
+            return ["Extracted fact: SLOT-2202"]
+
+        def query(self, task, now):
+            calls.append(("query", task, now))
+            return dict(output="", citations=[], confidence_milli=0)
+
+    result = inv._probe(Injected(), 5, "new-a", "deploy window preference", "SLOT-2202", old="SLOT-1101")
+    assert result.in_context is True and result.selected_option == "a-new"
+    task = dict(task_id="new-a", prompt="deploy window preference")
+    assert calls == [("probe", task, 100), ("query", task, 100)]
+
+
+def test_probe_exception_is_system_fault():
+    class Broken(ReferenceStore):
+        def probe(self, task, now):
+            raise ValueError("probe failed")
+
+    with pytest.raises(inv.SystemFault):
+        inv._probe(Broken(), 5, "new-a", "deploy window preference", "SLOT-2202", old="SLOT-1101")
+
+
 def test_store_search(tmp_path):
     needle = inv.needles_for([TOKEN])
     assert needle == (b"GATE-4410", b"gate-4410")
