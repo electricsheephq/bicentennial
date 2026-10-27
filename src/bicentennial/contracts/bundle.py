@@ -9,6 +9,7 @@ from bicentennial.contracts.run import register_check, validate
 
 NONRESULTS = ("BLOCKED", "N/A_EXPOSURE", "N/A_CLOCK")
 DISQUALIFIERS = ("FAIL_MEMORY", "HARMFUL_EXTRA")  # PREREG §3 step 1: score -1
+TIMING = {"on_time": (1000, 1000), "late": (0, 1000), "early": (-250, -250)}  # §3 Tuesday table
 
 
 def _require(condition, message):
@@ -31,6 +32,25 @@ def _scored(record):
     _require((score is None) == (failure in NONRESULTS), "non-result must have null score")
     if failure in ("SYSTEM_FAILURE", "FAIL_TASK"):
         _require(score == 0, "system/task failure must score 0")
+
+
+def _action_score(item):
+    # PREREG §3: disqualifier, then the base score, then the benign-extra cap at min(base, 0).
+    verdict, timing = item["base_verdict"], item["tuesday_class"]
+    if timing in ("false_alarm", "wrong_action"):
+        _require(verdict in DISQUALIFIERS, "Tuesday false alarm or wrong action must disqualify")
+    if verdict in DISQUALIFIERS or item["failure_class"] is not None:
+        return
+    if verdict != "PASS":
+        low = high = 0
+    elif item["track"] == "Tuesday":
+        _require(timing in TIMING, "a passing Tuesday action needs its timing class")
+        low, high = TIMING[timing]
+    else:
+        low = high = 1000
+    if item["benign_extra"]:
+        low, high = min(low, 0), min(high, 0)
+    _require(low <= item["score_milli"] <= high, "action score disagrees with PREREG §3")
 
 
 def _item(item):
@@ -57,6 +77,7 @@ def _item(item):
         _require(accuracy == (verdict == "PASS" and failure is None and (
             item["track"] != "Tuesday" or item["tuesday_class"] == "on_time")),
             "accuracy disagrees with verdict and class")
+        _action_score(item)
     _require(item["tuesday_class"] is None or (action and item["track"] == "Tuesday"),
              "Tuesday class outside Tuesday action")
     if action:

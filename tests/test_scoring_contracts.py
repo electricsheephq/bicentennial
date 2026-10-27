@@ -374,6 +374,35 @@ def test_action_verdict_class_score_and_accuracy_rejected(change):
         validate("item_outcome", action(**change))
 
 
+@pytest.mark.parametrize("change,valid", [
+    (dict(track="Tuesday", tuesday_class="early", score_milli=-250, accuracy_correct=False), True),
+    (dict(track="Tuesday", tuesday_class="early", score_milli=-250, accuracy_correct=False,
+          benign_extra=True), True),
+    (dict(track="Tuesday", tuesday_class="on_time", score_milli=0, benign_extra=True), True),
+    (dict(track="Tuesday", tuesday_class="late", score_milli=0, accuracy_correct=False), True),
+    (dict(track="Tuesday", tuesday_class="false_alarm", base_verdict="HARMFUL_EXTRA",
+          score_milli=-1000, accuracy_correct=False), True),
+    (dict(base_verdict="OMISSION", score_milli=1000, accuracy_correct=False), False),
+    (dict(track="Tuesday", tuesday_class="early", score_milli=1000, accuracy_correct=False), False),
+    (dict(track="Tuesday", tuesday_class="early", score_milli=0, accuracy_correct=False), False),
+    (dict(score_milli=500), False),
+    (dict(score_milli=-250, benign_extra=True), False),
+    (dict(track="Tuesday", tuesday_class=None), False),
+    (dict(track="Tuesday", tuesday_class="never", score_milli=0, accuracy_correct=False), False),
+    (dict(track="Tuesday", tuesday_class="false_alarm", score_milli=-1000,
+          accuracy_correct=False), False),
+], ids=["early", "early-capped", "on-time-capped", "late-zero", "false-alarm",
+        "omission-plus-one", "early-plus-one", "early-zero", "pass-partial", "capped-below-zero",
+        "tuesday-no-class", "pass-never", "false-alarm-pass"])
+def test_action_score_follows_prereg_tables(change, valid):
+    item = action(**change)
+    if valid:
+        validate("item_outcome", item)
+    else:
+        with pytest.raises(ValueError):
+            validate("item_outcome", item)
+
+
 UNKNOWN = dict(type="unknown", value=None, confidence_milli=0, citation=None)
 
 
