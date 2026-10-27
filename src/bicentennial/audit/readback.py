@@ -375,7 +375,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                         # reachability counts only calls and results new relative to the triggering request
                         prior_calls, prior_results = {c for c, _ in calls_in(body, wire)}, results(body, wire).keys()
                         new_calls = (calls_in(following[1], request_wire(following[0], wire)) - calls_in(body, wire)
-                                     if following else set())
+                                     if following and r["served"] == "write_tool_calls" else set())
                         later = set()  # calls and results are new against their own kind: an old call, new result is new
                         for rr, bb in requests:
                             if rr["seq"] > seq:  # each later request read on its own wire

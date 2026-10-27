@@ -135,18 +135,22 @@ def compile_script(out_dir, branch, schedule, db, *, items=(), step_s):
         groups.setdefault(k, []).append(item)
         sealed.add(item["item_id"])
         sealed.update(o["option_id"] for o in item["options"])
+    index, checkpoint_probes = len(plans) + 1, {}
     for k, group in sorted(groups.items()):
         qa, acts = [i for i in group if i["stage"] != "act"], [i for i in group if i["stage"] == "act"]
         if len(qa) > 6 or len(acts) > 2:
             raise ValueError("too many probe items")
         for batch in ([qa] if qa else []) + [[i] for i in acts]:
-            index, p = len(script_sessions) + 1, plans[k - 1]
+            p = plans[k - 1]
             sim_t_s = p.t_end - len(batch) * step_s
             if sim_t_s < p.t_start:
                 raise ValueError("probe starts before checkpoint")
             turns = [turn(n, "probe", i["prompt"], []) for n, i in enumerate(batch, 1)]
             probes.append(ProbeSession(index, k, tuple(i["item_id"] for i in batch), sim_t_s))
-            script_sessions.append(dict(index=index, kind="probe", turns=turns))
+            checkpoint_probes.setdefault(k, []).append(dict(index=index, kind="probe", turns=turns))
+            index += 1
+    script_sessions = [s for replay in script_sessions
+                       for s in [replay, *checkpoint_probes.get(replay["index"], [])]]
     script = dict(canary=manifest["canary"], life_id=schedule.life,
                   genre=db.execute("SELECT genre FROM meta").fetchone()[0], harness="hermes", sessions=script_sessions)
     validate("script", script)

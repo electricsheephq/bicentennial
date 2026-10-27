@@ -34,6 +34,7 @@ from bicentennial.director.compiler.check import (
     expected_probe_env,
     precondition_holds,
 )
+from bicentennial.director.routes import segment_of
 from bicentennial.director.serve import serve, shutdown
 from bicentennial.genres.g1_software.diffs import (
     CALLS,
@@ -58,6 +59,7 @@ from bicentennial.keyed import uniform_int
 from bicentennial.render.session_cut import cut
 from bicentennial.render.stream import _canary, seal, stream_bytes, write_branch
 from bicentennial.runtime.clock import SimClock
+from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.score.classes import IDENTITY, RerunRequired, outcome
 from bicentennial.world import create_world
 from bicentennial.world.scale import TURN_S, named
@@ -149,7 +151,7 @@ def test_fixture_compilation(worlds, tmp_path):
         assert [(p.index, p.checkpoint) for p in result.probes] == [(21, 10), (22, 20), (23, 20)]
         for p in result.probes:
             assert p.sim_t_s == world[2].sessions[p.checkpoint - 1].t_end - len(p.item_ids) * 60
-        for session in result.script["sessions"][:20]:
+        for session in (s for s in result.script["sessions"] if s["kind"] == "replay"):
             for turn in session["turns"]:
                 assert turn["assistant"] == ASSISTANT
                 assert all(c["name"] == "terminal" and set(c["args"]) == {"command"} for c in turn["tool_calls"])
@@ -169,6 +171,40 @@ def test_fixture_compilation(worlds, tmp_path):
         finally:
             world[1].set_trace_callback(None)
         assert all(s.startswith("SELECT") for s in statements)
+
+
+def test_probe_checkpoint_order(worlds):
+    result = compiled(worlds["G2"])
+    assert [s["index"] for s in result.script["sessions"]] == [*range(1, 11), 21, *range(11, 21), 22, 23]
+
+
+def test_probe_checkpoint_fault_prefix(worlds):
+    result = compiled(worlds["G2"])
+    faults = FaultLite.load([{"kind": "kill", "session": 11, "turn": 1},
+                             {"kind": "swap", "session": 15, "turn": None}], result.script)
+    assert faults.replay_prefix(21) == tuple(range(1, 11))
+
+
+def test_probe_checkpoint_segments(worlds):
+    result = compiled(worlds["G2"])
+    faults = FaultLite.load([{"kind": "kill", "session": 11, "turn": 1},
+                             {"kind": "swap", "session": 15, "turn": None}], result.script)
+    assert segment_of(21, faults) == "seg0"
+    assert segment_of(22, faults) == segment_of(23, faults) == "seg1"
+
+
+def test_audit_turns_follow_checkpoint_order(worlds):
+    turns = rb.turns_from_script(compiled(worlds["G2"]).script)
+    assert [s for s, n, _ in turns if n == 1] == [*range(1, 11), 21, *range(11, 21), 22, 23]
+
+
+def test_audit_probe_future_at_checkpoint_only(worlds):
+    turns = rb.turns_from_script(compiled(worlds["G2"]).script)
+    prompt = next(t["user"] for s, _, t in turns if s == 21)
+    at_10 = next(i for i, (s, _, _) in enumerate(turns) if s == 10)
+    at_11 = next(i for i, (s, _, _) in enumerate(turns) if s == 11)
+    assert prompt in [t["user"] for _, _, t in turns[at_10 + 1:]]
+    assert prompt not in [t["user"] for _, _, t in turns[at_11 + 1:]]
 
 
 def test_hash_seed_determinism(worlds):
@@ -289,12 +325,21 @@ def test_dialect_and_normalization_keyed_200():
 @pytest.mark.parametrize("retry", [False, True])
 @pytest.mark.parametrize("n_calls", [0, 1])
 def test_director_scripted_calls_and_audit(tmp_path, retry, n_calls):
+    class Fake(CORE["Fake"]):
+        def respond(self, call):
+            reply = super().respond(call)
+            if call.role == "write_turn":
+                assert all(t["function"]["name"] != "terminal" for t in call.body["tools"])
+                return replace(reply, tool_calls=(*reply.tool_calls, {
+                    "name": "terminal", "arguments": '{"command":"unoffered attempt"}'}))
+            return reply
+
     script = copy.deepcopy(CORE["SCRIPT"])
     script["sessions"] = script["sessions"][:1]
     script["sessions"][0]["turns"] = script["sessions"][0]["turns"][:1]
     turn = script["sessions"][0]["turns"][0]
     turn["tool_calls"] = [hermes_call(*CALLS[0]), hermes_call(*CALLS[-1])]
-    fake = CORE["Fake"]()
+    fake = Fake()
     fake.n_calls = n_calls
     d = CORE["make"](tmp_path, fake, script=script)
     CORE["start"](d, tmp_path)
@@ -336,6 +381,7 @@ def test_director_scripted_calls_and_audit(tmp_path, retry, n_calls):
                       model_for=lambda s: "probe-model", suffix=None, write_tools=("memory",), id_needles=[],
                       effects=lambda calls, requests, w: ef.effects(calls, requests, {"memory": "", "user": ""}, w))
     assert rb.failures(report) == [], report["A3"]["failures"]
+    assert report["A3"]["non_write_attempts"] == report["A3"]["non_write_blocked"] == 1
     # An id that no reply issued still fails the same audit.
     blobs[rows[-2]["req"]]["messages"].append({"role": "tool", "tool_call_id": "unissued", "content": "{}"})
     report = rb.audit(rows, blobs, rb.turns_from_script(script), "chat", fmt="kit",
