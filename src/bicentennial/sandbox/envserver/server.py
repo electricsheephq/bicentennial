@@ -9,6 +9,7 @@ from pathlib import Path
 from bicentennial.canon import canon
 
 from .state import State, state_hash
+from .tools_g2 import G2_ENV_ID, G2State
 
 
 def _object(pairs):
@@ -64,7 +65,7 @@ def _tools(state):
     for tool in state.tools.values():
         props = {tool["key_arg"]: {"type": "string"}}
         if tool["value_arg"] is not None:
-            props[tool["value_arg"]] = {}
+            props[tool["value_arg"]] = tool.get("value_schema", {})
         tools.append({"name": tool["name"], "description": tool["description"],
                       "inputSchema": {"type": "object", "properties": props,
                                       "required": list(props), "additionalProperties": False}})
@@ -75,7 +76,7 @@ def _tools(state):
 
 
 def serve(seed, log_dir, clock, source, sink):
-    state, seq = State(seed), 0
+    state, seq = (G2State if type(seed) is dict and seed.get("env_id") == G2_ENV_ID else State)(seed), 0
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     with (log_dir / "env_actions.jsonl").open("ab") as log:
