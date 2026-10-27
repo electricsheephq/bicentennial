@@ -796,3 +796,50 @@ class NoCrash(RowTemplate):
             if any(t <= kill for t in positions for kill in kills):
                 raise ValueError(self.template_id)
         return entries
+
+
+@pytest.mark.parametrize("seed", (-1, True, "1"))
+def test_micro_schedule_seed_refusals(seed):
+    with pytest.raises(ValueError):
+        MicroSpec(genre="G2", seed=2, sessions=3, distance=1, wake="none", recipe="seed",
+                  schedule_seed=seed)
+
+
+def test_micro_schedule_seed(tmp_path):
+    from dataclasses import replace
+
+    from bicentennial.world.targeted import micro_life, micro_schedule
+
+    template = micro_templates()[0]
+    spec = MicroSpec(genre="G2", seed=1, sessions=3, distance=1, wake="none", recipe="t-fork")
+    changed = replace(spec, seed=2, schedule_seed=1)
+    assert micro_schedule(spec, template).sessions == micro_schedule(changed, template).sessions
+    assert micro_schedule(changed, template).seed == "2"
+    assert changed.to_obj(template)["schedule_seed"] == 1
+    lives = []
+    try:
+        for i, value in enumerate((spec, changed)):
+            lives.append(micro_life(value, template, micro_recipe(template), out_dir=tmp_path / str(i)))
+        assert lives[0].manifest["world_hash_b0"] != lives[1].manifest["world_hash_b0"]
+    finally:
+        for life in lives:
+            life.twin.b1.close()
+
+
+@pytest.mark.parametrize("index,genre,digest", (
+    (0, "G2", "7fcb1b0e13f6d192758dcdd3261b80fc31a4b08c4333090da827e993330565b6"),
+    (-1, "G1", "f491ad51ee3452f562659a563e0728779426e0832d9bb397955fca21b2a27b04"),
+))
+def test_micro_default_manifest_unchanged(tmp_path, index, genre, digest):
+    from bicentennial.canon import sha256_canon
+    from bicentennial.world.targeted import micro_life
+
+    template = micro_templates()[index]
+    spec = MicroSpec(genre=genre, seed=1, sessions=3, distance=1, wake="none", recipe=template.template_id)
+    assert spec.to_obj(template) == dict(genre=genre, seed=1, sessions=3, distance=1, wake="none",
+                                        recipe=template.template_id, template=template.ref)
+    life = micro_life(spec, template, micro_recipe(template), out_dir=tmp_path / "life")
+    try:
+        assert sha256_canon(life.manifest) == digest
+    finally:
+        life.twin.b1.close()

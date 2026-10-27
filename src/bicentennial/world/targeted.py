@@ -112,9 +112,12 @@ class MicroSpec:
     distance: int
     wake: str
     recipe: str
+    schedule_seed: int | None = None
 
     def __post_init__(self):
         seed_text(self.seed)
+        if self.schedule_seed is not None:
+            seed_text(self.schedule_seed)
         if self.genre not in ("G1", "G2") or type(self.recipe) is not str or not self.recipe:
             raise PlacementError("composition")
         if type(self.sessions) is not int or not 1 <= self.sessions <= 3:
@@ -129,7 +132,10 @@ class MicroSpec:
         return self.sessions - self.distance
 
     def to_obj(self, template):
-        return asdict(self) | {"template": template.ref}
+        obj = asdict(self) | {"template": template.ref}
+        if self.schedule_seed is None:
+            del obj["schedule_seed"]
+        return obj
 
 
 def life_id(spec, template):
@@ -137,9 +143,10 @@ def life_id(spec, template):
 
 
 def micro_schedule(spec, template):
-    return build_schedule(seed_text(spec.seed), life_id(spec, template),
-                          named("t0-micro", sessions=spec.sessions,
-                                wake=None if spec.wake == "none" else spec.wake))
+    schedule = build_schedule(seed_text(spec.seed if spec.schedule_seed is None else spec.schedule_seed),
+                              life_id(spec, template), named("t0-micro", sessions=spec.sessions,
+                              wake=None if spec.wake == "none" else spec.wake))
+    return replace(schedule, seed=seed_text(spec.seed))
 
 
 @dataclass(frozen=True)
