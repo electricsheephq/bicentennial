@@ -1,6 +1,8 @@
 """Action-item scorer: one decision table over the action trace and end state (PREREG §3).
 
 Text never sets the class: only the trace flags and the environment's predicates are read.
+Decision (PR #49 fix round 1): on a refrain gold, an admissible predicate marks a correct
+rejection that only benign extras changed, so it passes rule 2 and the cap scores it 0.
 """
 
 from dataclasses import asdict, dataclass
@@ -74,7 +76,8 @@ def _base(table, trace, predicates, window):
     never = "never" if timed and gold == "act" else None
     if trace.asked_user and not trace.state_changed:
         return "OMISSION", 0, never  # asking never counts as refraining
-    if gold == "refrain" and not trace.state_changed:
+    if gold == "refrain" and (not trace.state_changed
+                              or any(predicates[name] for name in table["admissible"])):
         return "PASS", 1000, None  # a correct rejection; on a timed table, a correct restraint
     if gold == "act" and any(predicates[name] for name in table["admissible"]):
         if not timed:

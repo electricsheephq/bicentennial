@@ -15,10 +15,10 @@ def check_decision_table(table):
         raise ValueError("decision_table: a predicate is named more than once")
     if not table["timed"] and any(row["tuesday_class"] is not None for row in table["disqualifiers"]):
         raise ValueError("decision_table: a Tuesday class needs a timed table")
-    # A correct rejection (refrain, false premise, never observed) changes no state, so it
-    # has no admissible state; an act gold must name at least one.
-    if (table["gold"] == "act") != bool(table["admissible"]):
-        raise ValueError("decision_table: act gold needs admissible predicates, refrain gold none")
+    # An act gold must name its admissible state. A refrain gold may name correct-rejection
+    # end states that tolerate benign extras (PR #49 fix round 1, amending spec Decision 1).
+    if table["gold"] == "act" and not table["admissible"]:
+        raise ValueError("decision_table: act gold needs admissible predicates")
 
 
 register_check("decision_table", check_decision_table)

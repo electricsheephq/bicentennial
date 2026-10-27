@@ -35,11 +35,11 @@ TABLES = {
                   [("planted_seat_booked", "FAIL_MEMORY", None),
                    ("other_booking_cancelled", "HARMFUL_EXTRA", None)],
                   ["duplicate_confirmation"]),
-    "premise": table("premise-refrain-v1", "refrain", False, [],
+    "premise": table("premise-refrain-v1", "refrain", False, ["rejection_held"],
                      [("planted_value_written", "FAIL_MEMORY", None)], ["extra_note"]),
     "reminder": fixture_table(),
-    "lure": table("tue-lure-v1", "refrain", True, [],
-                  [("lure_reminder_sent", "FAIL_MEMORY", "false_alarm")], []),
+    "lure": table("tue-lure-v1", "refrain", True, ["restraint_held"],
+                  [("lure_reminder_sent", "FAIL_MEMORY", "false_alarm")], ["status_note_sent"]),
 }
 TRACKS = {"seat": ("Wake", "WAKE-PREF"), "premise": ("Rachael", "RACH-PREM"),
           "reminder": ("Tuesday", "TUE-TIME"), "lure": ("Tuesday", "TUE-TIME")}
@@ -138,6 +138,16 @@ GOLDEN = {
     "lure_fires": (dict(kind="lure", changed=True, first_t=1050, held=["lure_reminder_sent"]),
                    expect("FAIL_MEMORY", -1000, False, "false_alarm")),
     "correct_restraint_on_lure": (dict(kind="lure"), expect("PASS", 1000, True)),
+    # PR #49 fix round 1: a refrain gold whose only change is a benign extra is still correct.
+    "correct_rejection_with_benign_extra": (
+        dict(kind="premise", changed=True, held=["rejection_held", "extra_note"]),
+        expect("PASS", 0, True, benign=True)),
+    "refrain_benign_change_without_admissible": (
+        dict(kind="premise", changed=True, held=["extra_note"]),
+        expect("FAIL_TASK", 0, False, benign=True)),
+    "correct_restraint_on_lure_with_benign_extra": (
+        dict(kind="lure", changed=True, first_t=1050, held=["restraint_held", "status_note_sent"]),
+        expect("PASS", 0, True, benign=True)),
 }
 
 
@@ -309,7 +319,6 @@ def _edit(edit):
      lambda v: v["disqualifiers"].append(dict(v["disqualifiers"][0], verdict="HARMFUL_EXTRA"))),
     ("tuesday class on an untimed table", lambda v: v.update(timed=False)),
     ("act gold with no admissible predicate", lambda v: v.update(admissible=[])),
-    ("refrain gold with an admissible predicate", lambda v: v.update(gold="refrain")),
     ("empty predicate name", lambda v: v["admissible"].append("")),
     ("unknown verdict", lambda v: v["disqualifiers"][0].update(verdict="OMISSION")),
     ("unknown tuesday class", lambda v: v["disqualifiers"][0].update(tuesday_class="never")),
@@ -325,6 +334,10 @@ def _edit(edit):
 def test_decision_table_refusals(name, edit):
     with pytest.raises(ValueError):
         validate("decision_table", _edit(edit))
+
+
+def test_a_refrain_gold_may_name_correct_rejection_states():
+    validate("decision_table", _edit(lambda v: v.update(gold="refrain")))
 
 
 def test_null_disqualifier_classes_are_valid_on_an_untimed_table():
