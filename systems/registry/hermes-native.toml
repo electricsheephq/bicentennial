@@ -6,8 +6,9 @@ write_tools = [{tool = "memory", actions = ["add", "patch", "remove"]}]
 read_tools = ["session_search"]
 recall = {tool = "session_search", argument_template = {query = "{prompt}"}}
 # Directory root includes memories/MEMORY.md, memories/USER.md, state.db and WAL/SHM.
-# No volatile exclusions; R12 checkpoints WAL before measuring this configured tree.
-surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = []}]
+# Only logs and locks are volatile: every subcommand writes HERMES_HOME/logs, and MCP
+# discovery creates .mcp-discovery.lock. R12 checkpoints WAL before measuring the tree.
+surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
 fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
 own_model_routes = [
     {role = "compaction", alias = "bicentennial-compaction"},

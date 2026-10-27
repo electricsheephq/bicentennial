@@ -164,7 +164,11 @@ def test_hermes_manifest_and_wal_preservation():
     assert entry["artifact"]["sha256"] != ZERO_HASH
     for name in ("hermes-native", "lcm-x"):
         surfaces = load(REGISTRY / f"{name}.toml")["surfaces"]
-        assert surfaces == [{"root": "HERMES_HOME", "relative": ".", "volatile_paths": []}]
+        assert surfaces == [{"root": "HERMES_HOME", "relative": ".",
+                             "volatile_paths": [".mcp-discovery.lock", "logs"]}]
+        for path in surfaces[0]["volatile_paths"]:
+            assert path == "logs" or path.endswith(".lock")
+            assert not path.startswith(("state.db", "memories"))
 
 
 def test_admission_unmeasured_and_measured_hermes():
