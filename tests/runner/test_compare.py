@@ -457,6 +457,41 @@ def test_corpus_attribution(policy, cases, monkeypatch, tmp_path, fault, status,
     assert compare.SYSTEM_CAUSES is t0.SYSTEM_CAUSES
 
 
+def test_corpus_receipt_inputs(policy, cases, monkeypatch, tmp_path):
+    row = dict(type="request", role="probe_main", t_ms=7, seq=1, req="q", resp="r", served_by="scripted")
+
+    class Host(ReferenceStore):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.gate, self.egress = [dict(exit=10, state="row")], SimpleNamespace(summary=dict)
+
+        def records(self):
+            return [row]
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    audit, gates = [], []
+    compare.corpus(policy.ctx, "system", cases[:1], catalogue=catalogue(), work=tmp_path / "work",
+                   audit=audit, gates=gates)
+    assert row in audit and dict(exit=10, state="row") in gates
+
+
+def test_receipt_counts_corpus(synth):
+    base = compare._receipt(synth, "system", "COMPLETE", 0, 10)
+    assert loop_time(base) == (10, False)
+    row = dict(type="request", role="probe_main", t_ms=7, seq=10**6, req="q", resp="r")
+    receipt = compare._receipt(synth, "system", "COMPLETE", 0, 10, corpus_rows=[row],
+                               corpus_gates=[dict(exit=10, state="row")])
+    # A busy reading taken only while the corpus ran still marks the run busy.
+    assert loop_time(receipt) == (10, True)
+
+    def probe_ms(r):
+        return sum(x["ms"] for x in r["runtime_by_role"] if x["role"] == "probe_main")
+
+    assert probe_ms(receipt) == probe_ms(base) + 7
+    assert receipt["latency_ms"] == [*base["latency_ms"], 7]
+    assert receipt["raw_body_digest"] != base["raw_body_digest"]
+
+
 def catalogue():
     return compare.load_catalogue(compare.REPO / compare.CATALOGUE[0],
         c7_path=compare.REPO / compare.CATALOGUE[1], tier_path=compare.REPO / compare.CATALOGUE[2])
