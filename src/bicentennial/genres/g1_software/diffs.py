@@ -158,7 +158,7 @@ def _check_call(name, args):
 def expected_result(db, schedule, *, boundary, name, args) -> dict:
     _check_call(name, args)
     commits = history(db, schedule)
-    if name == "git" and args["argv"] == list(LOG_ARGV):
+    if canon((name, args)) == canon(CALLS[0]):
         return {"stdout": "\n".join(
             f"{datetime.fromtimestamp(c.t, ZoneInfo(schedule.tz)).isoformat()} {c.name} {c.subject}"
             for c in reversed(commits) if c.t <= boundary)}

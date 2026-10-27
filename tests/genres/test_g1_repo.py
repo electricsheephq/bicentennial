@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from bicentennial.canon import sha256_canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.surfaces import tree_hash
 from bicentennial.genres.g1_software import diffs as model
 from bicentennial.genres.g1_software import repo
@@ -295,6 +295,26 @@ def test_generated_tests_every_commit(tmp_path):
 def reads(session=18):
     return [Read(id=f"read-{i}", session=session, turn=i % 5 + 1, name=name, args=args)
             for i, (name, args) in enumerate(CALLS)]
+
+
+@pytest.mark.parametrize("argv", [LOG_ARGV, *(tuple(args["argv"]) for name, args in CALLS[1:] if name == "git")])
+def test_tuple_argv_results_and_reads(tmp_path, argv):
+    db, schedule, principal = world(tmp_path)
+    try:
+        tuple_args, list_args = {"argv": argv}, {"argv": list(argv)}
+        boundary = start_boundary(schedule, 18)
+        expected = expected_result(db, schedule, boundary=boundary, name="git", args=list_args)
+        assert expected_result(db, schedule, boundary=boundary, name="git", args=tuple_args) == expected
+        rs = [Read(id=f"argv-{i}", session=18, turn=1, name="git", args=args)
+              for i, args in enumerate((tuple_args, list_args))]
+        ids = write_reads(db, schedule, rs, principal=principal)
+        payloads = [json.loads(db.execute("SELECT payload_json FROM event WHERE id=?", (eid,)).fetchone()[0])
+                    for eid in ids]
+        assert payloads[0] == payloads[1]
+        assert payloads[0]["result"] == expected
+        assert canon(payloads[0]["tool"]["args"]) == canon(tuple_args) == canon(list_args)
+    finally:
+        db.close()
 
 
 def test_reads_in_world(tmp_path):
