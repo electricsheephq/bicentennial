@@ -111,9 +111,9 @@ def _inline_flags(text):
         selected = subs
         if len(subs) == 2:
             selected = tuple(sorted({tier.lower() for tier in re.findall(r"\bT[01]\b", line)})) or subs
-        flags = [flag for span in re.findall(r"`([^`\n]+)`", line)
-                 if span.startswith("--")
-                 for flag in re.findall(r"--[a-z][a-z-]*", span)]
+        # The whole leading token, so a misspelled flag such as `--pack_hash` is not cut to a real one.
+        flags = [span.split()[0] for span in re.findall(r"`([^`\n]+)`", line)
+                 if span.startswith("--")]
         if flags:
             for sub in selected:
                 yield sub, flags
@@ -141,22 +141,24 @@ def test_doc_commands_exist(capsys):
                         assert hasattr(module, alias.name)
 
 
-@pytest.mark.parametrize("section, flag", [
-    ("5. Run T0 in your own CI", "--mode"),
-    ("5. Run T0 in your own CI", "--workers"),
-    ("5. Run T0 in your own CI", "--cache"),
-    ("7. Run T1 as a merge gate", "--cache"),
+@pytest.mark.parametrize("section, flag, replacement", [
+    ("5. Run T0 in your own CI", "--mode", "--removed-flag"),
+    ("5. Run T0 in your own CI", "--workers", "--removed-flag"),
+    ("5. Run T0 in your own CI", "--cache", "--removed-flag"),
+    ("7. Run T1 as a merge gate", "--cache", "--removed-flag"),
+    # A misspelling whose prefix is a real flag must not pass as that flag.
+    ("5. Run T0 in your own CI", "--workers", "--workers_n"),
 ])
-def test_doc_rejects_unknown_inline_flag(tmp_path, monkeypatch, capsys, section, flag):
+def test_doc_rejects_unknown_inline_flag(tmp_path, monkeypatch, capsys, section, flag, replacement):
     text = GUIDE.read_text()
     start = text.index("## " + section)
     end = text.index("\n## ", start)
-    changed = text[start:end].replace("`" + flag, "`--removed-flag", 1)
+    changed = text[start:end].replace("`" + flag, "`" + replacement, 1)
     assert changed != text[start:end]
     guide = tmp_path / "ring0.md"
     guide.write_text(text[:start] + changed + text[end:])
     monkeypatch.setitem(globals(), "GUIDE", guide)
-    with pytest.raises(AssertionError, match="--removed-flag"):
+    with pytest.raises(AssertionError, match=replacement):
         test_doc_commands_exist(capsys)
 
 
