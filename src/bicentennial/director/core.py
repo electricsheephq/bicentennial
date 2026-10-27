@@ -236,7 +236,7 @@ class Director:
                     text, rec["served"] = "", "write_tool_calls"
             return self._answer(wire, body, text, calls, ("write_turn", "tool_results", "write_turn", turn),
                                 hold=not calls)
-        reply = self._ask(Call(role, sub, wire, deepcopy(body), self._model(role), cursor, self.attempt_id), rec)
+        reply = self._ask(Call(role, sub, wire, deepcopy(body), self._model(role, sub), cursor, self.attempt_id), rec)
         if reply is None:
             return _refuse(rec, 503, "identity_mismatch", "served model identity mismatch", body)
         if reply.status != 200:
@@ -269,8 +269,8 @@ class Director:
         rec["write_calls"] = len(calls)
         return calls  # any text the model wrote is discarded
 
-    def _model(self, role: str) -> str:
-        return self.route["summariser"] if role == "summariser" else self.route["probe_model"]
+    def _model(self, role: str, subrole: str = "") -> str:
+        return self.route["summariser"] if role == "summariser" or (role, subrole) == ("aux", "summariser") else self.route["probe_model"]
 
     def _blob(self, obj) -> str:
         try:
