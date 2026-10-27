@@ -22,7 +22,7 @@ def _ratio(n, d):
 
 
 def _rows(bundles, items, *, keep=None, minus_one=None, mode="bundle", blocked=frozenset(),
-          singletons=(), keep_items=None):
+          blocked_items=frozenset(), singletons=(), keep_items=None):
     if keep is not None and set(keep) - {b["bundle_id"] for b in bundles}:
         raise ValueError("keep names an unknown bundle")
     groups, counts = {}, {}
@@ -46,7 +46,8 @@ def _rows(bundles, items, *, keep=None, minus_one=None, mode="bundle", blocked=f
     for item, life in singletons:
         key = (item["stage"], item["track"])
         lives = groups.setdefault(key, {})
-        counts[key] = counts.get(key, 0) + (item["failure_class"] == "BLOCKED")  # shown, never charged
+        excluded = item["failure_class"] == "BLOCKED" or item["item_id"] in blocked_items
+        counts[key] = counts.get(key, 0) + excluded  # shown, never charged
         if keep_items is not None and item["item_id"] not in keep_items and not (
                 mode == "worst" and item["failure_class"] == "SYSTEM_FAILURE"):  # A1, with A3's override
             continue
@@ -70,8 +71,10 @@ def stage_track_rows(bundles, items, *, keep=None, minus_one=None, singletons=()
     return _rows(bundles, items, keep=keep, minus_one=minus_one, singletons=singletons)
 
 
-def worst_case_rows(bundles, items, *, keep=None, blocked=frozenset(), singletons=()):
-    return _rows(bundles, items, keep=keep, blocked=blocked, mode="worst", singletons=singletons)
+def worst_case_rows(bundles, items, *, keep=None, blocked=frozenset(), blocked_items=frozenset(),
+                    singletons=()):
+    return _rows(bundles, items, keep=keep, blocked=blocked, blocked_items=blocked_items, mode="worst",
+                 singletons=singletons)
 
 
 def single_item_rows(bundles, items, *, keep=None):
@@ -131,10 +134,11 @@ def accuracy(items, *, blocked_items=frozenset()):
                 incomplete=not cells or 20 * excluded > eligible + excluded, label=LABEL)
 
 
-def coverage(bundles, *, blocked=frozenset(), singletons=()):
+def coverage(bundles, *, blocked=frozenset(), blocked_items=frozenset(), singletons=()):
     counts = dict.fromkeys(("blocked", "na_exposure", "na_clock"), 0)
     failures = ["BLOCKED" if b["bundle_id"] in blocked else b["failure_class"] for b in bundles]
-    failures += [item["failure_class"] for item, _ in singletons]  # A2: a singleton is one unit
+    failures += ["BLOCKED" if item["item_id"] in blocked_items else item["failure_class"]
+                 for item, _ in singletons]  # A2: a singleton is one unit
     for failure in failures:
         if failure in NONRESULTS:
             counts[failure.lower().replace("n/a_", "na_")] += 1
@@ -182,12 +186,14 @@ def reduce(items, bundles, *, keep=None, blocked=frozenset(), blocked_items=froz
     return dict(aggregates=_rows(bundles, items, **options),
                 sensitivity=dict(minus_one_at_zero=_rows(bundles, items, minus_one=0, **options),
                                  minus_one_at_minus_two=_rows(bundles, items, minus_one=-2000, **options)),
-                worst_case=_rows(bundles, items, mode="worst", blocked=blocked, **options),
+                worst_case=_rows(bundles, items, mode="worst", blocked=blocked, blocked_items=blocked_items,
+                                 **options),
                 single_item=_rows(bundles, items, mode="single", **options),
                 twin_consistency=twin_consistency(bundles, items, keep=keep),
                 violations=violations(items, duty_items=duty_items),
                 accuracy=accuracy(items, blocked_items=blocked_items),
-                coverage=coverage(bundles, blocked=blocked, singletons=options["singletons"]))
+                coverage=coverage(bundles, blocked=blocked, blocked_items=blocked_items,
+                                  singletons=options["singletons"]))
 
 
 def common_valid(arms) -> frozenset[str]:
@@ -198,7 +204,7 @@ def common_valid(arms) -> frozenset[str]:
 
 def compare(arms, *, singleton_lives=None, duty_items=frozenset()) -> dict:
     """singleton_lives and duty_items are shared by every arm; a singleton with no result in some arm
-    is dropped from all."""
+    is dropped from all, and one BLOCKED in some arm is counted blocked in all (PREREG §7)."""
     from bicentennial.contracts.run import validate
 
     identities, blocked, blocked_items, keep_items = None, set(), set(), set(singleton_lives or {})
