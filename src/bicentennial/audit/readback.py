@@ -214,6 +214,14 @@ def _items(body, wire):
     return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
 
 
+def request_wire(row, wire):
+    """A request's own wire, from its recorded endpoint (the director dispatches each request by path), else the
+    replay's: one ledger may mix wires, such as Responses turns and a chat title request."""
+    path = str(row.get("path", "")).split("?")[0].rstrip("/")
+    return ("chat" if path.endswith("/chat/completions") else
+            "responses" if path.endswith(("/responses", "/responses/compact")) else wire)
+
+
 def conversation(body, wire):
     if wire == "chat":
         return list(strings([m.get("content", "") for m in _items(body, wire) if m.get("role") != "tool"]))
@@ -422,7 +430,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
         for r, body in requests:
             if r["seq"] > origin:
                 hit = {"record": r["seq"], "write_record": origin}
-                conv, tool, other = channels(body, wire)  # case-sensitive substring, every string, labelled
+                conv, tool, other = channels(body, request_wire(r, wire))  # case-sensitive substring, every string, labelled
                 if any(text in part for part in conv):
                     a5["text_hits"].append(hit)
                     if text in conv:

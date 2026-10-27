@@ -32,10 +32,11 @@ def blocks(content):
 
 
 def snapshot(body, wire):
-    """The memory snapshot a request carries: chat system messages; Responses instructions and the system and
-    developer messages in input, as the director extracts them (roles._items)."""
+    """The memory snapshot a request carries: chat system and developer messages; Responses instructions and the
+    system and developer messages in input, as the director extracts them (roles._items)."""
     if wire != "responses":
-        return " ".join(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]))
+        return " ".join(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") in (
+            "system", "developer")]))
     items = body.get("input") if isinstance(body.get("input"), list) else []  # a string input is a user message
     found = [body["instructions"]] if isinstance(body.get("instructions"), str) else []
     for it in items:
@@ -90,7 +91,8 @@ def effects(calls, requests, stores, wire):
                     r.get("role") in {"replay_main", "probe_main"}), None)
         def state(until, start, i=i, op=op):
             """The expected effect at `until`, through later applied calls on the same target: ("present", text)
-            or ("absent", text). A removal is undone by a later call whose new text carries the removed text."""
+            or ("absent", text). A removal is undone by a later call whose new text carries the removed text.
+            Hermes `replace` rewrites the whole matched entry; `patch` splices only its span (memory_tool_store)."""
             (kind, value), changed = start, []
             for later in ops[i + 1:]:
                 act = later.get("action")
@@ -100,9 +102,11 @@ def effects(calls, requests, stores, wire):
                 old = norm(later.get("old_text", "")) if act in {"patch", "replace", "remove"} else ""
                 new = "" if act == "remove" else norm(later.get("content", later.get("new_text", "")))
                 if kind == "present" and old and (old in value or value in old):
-                    # a span inside this content is replaced; a span that encompasses it replaces all of it
+                    # a patch span inside this content is replaced; a replace, or a span that encompasses it,
+                    # replaces all of it
                     changed.append(later["id"])
-                    patched = "" if act == "remove" else value.replace(old, new) if old in value else new
+                    patched = ("" if act == "remove" else value.replace(old, new) if act == "patch" and old in value
+                               else new)
                     kind, value = ("present", patched) if patched else ("absent", value)
                 elif kind == "absent" and new and value in new:
                     kind = "present"
