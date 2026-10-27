@@ -18,7 +18,7 @@ from bicentennial.director.responder import Call, Reply
 from bicentennial.director.route_role import RouteState, route
 from bicentennial.director.wire import chat, embeddings, responses, writeturn
 from bicentennial.keyed import mint_id
-from bicentennial.ledger import CredentialLeak, Ledger, apply_masks
+from bicentennial.ledger import Ledger, apply_masks
 from bicentennial.runtime.faultlite import FaultLite
 
 # Hermes's auxiliary tasks (spikes/s6a/replay.py AUX_TASKS), each with a /aux/{task}/ base URL and a model alias
@@ -29,6 +29,14 @@ SERVED_WIRES = {"openai_chat": "chat", "openai_responses": "responses",
                 "openai_responses_compact": "responses_compact"}
 JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
+
+
+class ResponderError(Exception):
+    """A responder raised or replied invalidly: answered 500 and recorded with its request; admission continues."""
+
+
+class _Unrecorded(Exception):
+    """A guard or ledger failure inside dispatch: never taken for a responder error; nothing is recorded or sent."""
 
 
 def _alias(task: str) -> tuple[str, frozenset]:
@@ -108,15 +116,18 @@ class Director:
                        "model_in": "none", "n_messages": 0, "n_tools": 0,
                        "req_chars": len(raw_body.decode("utf-8", "replace"))}
                 try:  # a guard or ledger failure stops admission: nothing unrecorded is ever sent
+                    self._req = {}  # the parsed body, kept as the evidence of a failed request
                     try:
                         status, ctype, out, resp, req, hold = self._dispatch(method, path, names, raw_body, rec)
-                    except CredentialLeak:
-                        raise
-                    except Exception as e:  # noqa: BLE001 - every other failure is answered and recorded
-                        rec = {k: rec[k] for k in ("served_by", "model_in", "n_messages", "n_tools", "req_chars")} | {
-                            "role": "unknown", "subrole": f"director_error_{type(e).__name__.lower()}", "cursor": None,
-                            "upstream": [], "served": "director_error"}
-                        status, ctype, out, resp, req, hold = _refusal(500, "internal error", {})
+                    except _Unrecorded as e:
+                        raise e.__cause__ from None
+                    except ResponderError:  # the record keeps the request, its role, subrole, cursor and upstream
+                        rec["served"] = "director_error"
+                        status, ctype, out, resp, req, hold = _refusal(500, "responder error", self._req)
+                    except Exception as e:  # noqa: BLE001 - a director fault: recorded with its request, then stop
+                        self.stopped = True
+                        rec.update(subrole=f"director_error_{type(e).__name__.lower()}", served="director_error")
+                        status, ctype, out, resp, req, hold = _refusal(500, "internal error", self._req)
                     rec.update(type="request", run=self.run, method=method, path=path, life=self.life,
                                branch=self.branch, system=self.system, status=status, sim_now=self.clock.sim_t_s,
                                incoming_auth_dropped="authorization" in names, t=t,
@@ -176,7 +187,7 @@ class Director:
         except (ValueError, TypeError):
             rec["subrole"] = "malformed_body"
             return _refuse(rec, 400, "refused_unknown", "malformed request body", {"body_sha256": sha256(raw).hexdigest()})
-        items = body.get("messages") if wire == "chat" else body.get("input")
+        self._req, items = body, body.get("messages") if wire == "chat" else body.get("input")
         rec.update(model_in=body["model"] if isinstance(body.get("model"), str) and body["model"] else "none",
                    n_tools=len(body["tools"]) if isinstance(body.get("tools"), list) else 0,
                    n_messages=0 if wire == "embeddings" or not isinstance(items, (list, str))
@@ -240,12 +251,9 @@ class Director:
         call = Call("write_turn", "write_turn", wire, writeturn.expected_write_body(
             body, wire, model, self.write_prompt, write_tools=tools), model, cursor, self.attempt_id)
         try:
-            reply = self._respond(call)
-        except CredentialLeak:
-            raise
-        except Exception as e:  # noqa: BLE001 - a responder error serves the scripted turn
-            reply, failed = None, f"error_{type(e).__name__.lower()}"
-            rec["upstream"].append({"role": "write_turn", "req": self.ledger.blob(call.body), "error": failed})
+            reply = self._respond(call, rec)
+        except ResponderError as e:  # a responder error serves the scripted turn; a ledger error propagates
+            reply, failed = None, str(e)
         rec["write_turn_readback"] = writeturn.readback(call.body, expected)
         if reply is not None:
             self._upstream(call, reply, rec)
@@ -264,8 +272,22 @@ class Director:
     def _model(self, role: str) -> str:
         return self.route["summariser"] if role == "summariser" else self.route["probe_model"]
 
-    def _respond(self, call: Call) -> Reply:
-        reply = self.responder.respond(call)
+    def _blob(self, obj) -> str:
+        try:
+            return self.ledger.blob(obj)
+        except BaseException as e:
+            raise _Unrecorded(type(e).__name__) from e
+
+    def _respond(self, call: Call, rec) -> Reply:
+        try:
+            return self._valid(self.responder.respond(call), call)
+        except Exception as e:  # noqa: BLE001 - the call's body is recorded with the error's class
+            failed = f"error_{type(e).__name__.lower()}"
+            rec["upstream"].append({"role": call.role, "req": self._blob(call.body), "error": failed})
+            raise ResponderError(failed) from e
+
+    @staticmethod
+    def _valid(reply, call) -> Reply:
         if (not isinstance(reply, Reply) or type(reply.status) is not int or not 100 <= reply.status < 600
                 or not isinstance(reply.served, str)
                 or not _NAME.fullmatch(reply.served) or reply.served_by not in ("scripted", "live") or not reply.model
@@ -273,12 +295,15 @@ class Director:
                     isinstance(c, dict) and isinstance(c.get("name"), str) and isinstance(c.get("arguments"), str)
                     for c in reply.tool_calls)):
             raise ValueError("invalid responder reply")
+        canon(asdict(reply))  # a float in a reply is the responder's fault, never the ledger's
+        if call.wire == "embeddings" and reply.status == 200:
+            embeddings.to_wire(reply.embedding, reply.scale)
         return reply
 
     def _upstream(self, call, reply, rec) -> None:
         """Records the call and its reply, then checks the served identity (DESIGN §6.2 job 6)."""
-        rec["upstream"].append({"role": call.role, "req": self.ledger.blob(call.body), "model": reply.model,
-                                "resp": self.ledger.blob(asdict(reply)), "status": reply.status,
+        rec["upstream"].append({"role": call.role, "req": self._blob(call.body), "model": reply.model,
+                                "resp": self._blob(asdict(reply)), "status": reply.status,
                                 "served_by": reply.served_by, "diagnostics": list(reply.upstream)})
         if call.role != "write_turn":
             rec.update(served=f"responder_{reply.served}", served_by=reply.served_by)
@@ -286,7 +311,7 @@ class Director:
             self.stopped = True  # admission stops: this request gets identity_mismatch, every later one stopped
 
     def _ask(self, call: Call, rec) -> Reply | None:
-        reply = self._respond(call)
+        reply = self._respond(call, rec)
         self._upstream(call, reply, rec)
         return None if self.stopped else reply
 
