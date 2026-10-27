@@ -254,3 +254,14 @@ def test_a_prompt_may_span_lines_but_not_be_empty():
     item["prompt"] = ""
     with pytest.raises(ValueError):
         validate("item", item)
+
+
+def test_a_locked_token_in_another_items_prompt_is_refused():
+    pack = fixture("pack")
+    validate("pack", pack)
+    token = next(t for item in pack["items"] for o in item["options"] for t in o["tokens"])
+    other = next(i for i in pack["items"]
+                 if token not in [t for o in i["options"] for t in o["tokens"]])
+    other["prompt"] = f"About {token}?"
+    with pytest.raises(ValueError, match="probe prompt"):
+        validate("pack", pack)

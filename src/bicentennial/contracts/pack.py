@@ -1,6 +1,7 @@
 """Pack manifest; importing this module installs all generator semantic checks."""
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from . import stream as _stream  # noqa: F401 -- install session/event checks
@@ -26,6 +27,13 @@ def check_pack(value):
         if any(i not in by_id or by_id[i]["cell_id"] != bundle["cell_id"]
                for i in bundle["items"]):
             raise ValueError("pack: bundle item missing or from a different cell")
+    # RING0 §1: no locked token may occur in any probe prompt, another item's included.
+    prompts = [unicodedata.normalize("NFC", item["prompt"]) for item in value["items"]]
+    for item in value["items"]:
+        for option in item["options"]:
+            for token in option["tokens"]:
+                if any(unicodedata.normalize("NFC", token) in p for p in prompts):
+                    raise ValueError("pack: a locked token occurs in a probe prompt")
     # DESIGN §5.1a: each action item is in exactly one twin bundle. Survive bundles may hold QA items.
     members = [i for bundle in value["bundles"] for i in bundle["items"]]
     unique(members, "bundle items")
