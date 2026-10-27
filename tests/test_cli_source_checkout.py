@@ -1,0 +1,90 @@
+"""Source-checkout refusal happens before parsing, re-exec or runner work."""
+
+import shutil
+import subprocess
+
+import pytest
+
+from bicentennial import cli
+from bicentennial.runner import t0
+
+
+def _unexpected(*args, **kwargs):
+    raise AssertionError("source-checkout refusal must happen first")
+
+
+def _guard_runners(monkeypatch):
+    for name in ("reexec_niced", "run_t0", "run_t1"):
+        monkeypatch.setattr(cli, name, _unexpected)
+
+
+def test_real_source_checkout():
+    assert cli.REPO is t0.REPO
+    assert cli._source_checkout(t0.REPO)
+
+
+@pytest.mark.parametrize("sub", ["t0", "t1", "--bogus"])
+def test_empty_source_checkout(tmp_path, monkeypatch, capsys, sub):
+    root = tmp_path / "empty"
+    root.mkdir()
+    out = tmp_path / "out"
+    monkeypatch.setattr(cli, "REPO", root)
+    _guard_runners(monkeypatch)
+    argv = [sub]
+    if sub in ("t0", "t1"):
+        argv += ["--system", "reference_store" if sub == "t0" else "hermes-native",
+                 "--packs", "packs", "--pack-hash", "0" * 64, "--out", str(out)]
+        if sub == "t0":
+            argv += ["--pack", "all"]
+    assert cli.main(argv) == 3
+    captured = capsys.readouterr()
+    assert captured.err == "source_checkout_required\n"
+    assert captured.out == ""
+    assert not out.exists()
+    assert list(root.iterdir()) == []
+
+
+@pytest.mark.parametrize("shape", ["project_only", "schemas_only", "schemas_file"])
+def test_partial_source_checkout(tmp_path, monkeypatch, capsys, shape):
+    root = tmp_path / "partial"
+    root.mkdir()
+    if shape != "schemas_only":
+        (root / "pyproject.toml").touch()
+    if shape == "schemas_only":
+        (root / "schemas").mkdir()
+    elif shape == "schemas_file":
+        (root / "schemas").touch()
+    monkeypatch.setattr(cli, "REPO", root)
+    _guard_runners(monkeypatch)
+    assert cli.main(["t0", "--help"]) == 3
+    assert capsys.readouterr().err == "source_checkout_required\n"
+
+
+def test_complete_source_root_reaches_help(tmp_path, monkeypatch):
+    root = tmp_path / "complete"
+    root.mkdir()
+    (root / "pyproject.toml").touch()
+    (root / "schemas").mkdir()
+    monkeypatch.setattr(cli, "REPO", root)
+    _guard_runners(monkeypatch)
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["t0", "--help"])
+    assert caught.value.code == 0
+
+
+def test_source_copy_inside_unrelated_repository(tmp_path, monkeypatch, capsys):
+    parent = tmp_path / "unrelated"
+    parent.mkdir()
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    root = parent / "copy"
+    shutil.copytree(t0.REPO, root, ignore=shutil.ignore_patterns(
+        ".git", ".venv", "build", "runs", "__pycache__", ".pytest_cache", ".ruff_cache",
+    ))
+    assert not (root / ".git").exists()
+    monkeypatch.setattr(cli, "REPO", root)
+    _guard_runners(monkeypatch)
+    out = tmp_path / "out"
+    assert cli.main(["t0", "--system", "reference_store", "--pack", "all", "--packs", "p",
+                     "--pack-hash", "0" * 64, "--out", str(out)]) == 3
+    assert capsys.readouterr().err == "source_checkout_required\n"
+    assert not out.exists()

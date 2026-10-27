@@ -11,7 +11,7 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 > - **PREREG-v0.4 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
 > - **The run-time rule:** the full-tier runs (the board with its seasonal study, each delta board and the Image board) execute in locked, resumable segments from the same commit and stores. Every replaying arm's run of a life finishes within a day, and each system's work fits a work bound in each of its board, study and Image board runs. It is sized by the measured capacity of each model lane, per account. Paid-lane spend is capped at $100 per full-tier run, all systems together. The Image board, when it runs, is a run separate from the Text board, under the same rule. The pilot's runs of record run contiguously, within wall-time ceilings.
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
-> - There is no benchmark code and there are no results yet.
+> - The v0.1 developer kit (Ring 0 T0 and T1) runs from a source checkout; no results are published yet.
 
 ## The capability map
 
@@ -78,7 +78,16 @@ Every failure is attributed to the stage that broke: perceived (for media), stor
 - a sealed full core board once per season, plus delta boards on a new GA; only these sealed boards certify, a delta board only when powered;
 - a seasonal robustness study: fault reruns, the storage-budget curve, a model-swap comparator, and a second agent family (the replication family), with the Learn chains and erasure probes as terminal forks.
 
+## Run Ring 0 on your system (v0.1 kit)
+
+The v0.1 developer kit ships T0 probe packs and T1 CI smoke only. Use T0 for model-free checks in your own CI and T1 for a scripted merge gate against your own previous accepted card. T2, T3, the fault finder, Ring 1 and Ring 2 are outside this kit.
+
+**v0.1 runs only from a source checkout.** Elsewhere, `bicentennial` exits 3 with `source_checkout_required`. Ring 0 results are developer signals carrying the label "not predictive of the full tier; never certifies". The reader checks evidence availability, not a model's judgement.
+
+Follow [Run Ring 0 on your system](docs/developers/ring0.md) for requirements, pack installation, CI commands, registry admission, exit codes and output interpretation.
+
 ## Documents
+- [`docs/developers/ring0.md`](docs/developers/ring0.md): run the v0.1 developer kit from a source checkout.
 - [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.2).
 - [`prereg/PREREG-v0.4.md`](prereg/PREREG-v0.4.md): the pre-registration (the superseded v0 to v0.3 are kept beside it). It is the only normative source for frozen quantities.
 - [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0 to v2.2, which the other documents cite as DV1-DV47 (DV42 decided in v2.1, DV47 added in v2.2).
