@@ -7,19 +7,21 @@ from typing import Literal
 from .responses import typed
 
 
-def expected_write_body(trigger_body: dict, wire: Literal["chat", "responses"], model: str, suffix: str,
+def expected_write_body(trigger_body: dict, wire: Literal["chat", "responses"], model: str, suffix: str | None,
                         write_tools=frozenset({"memory"})) -> dict:
-    """write_tools: the system's declared write tools (PREREG §10); S7's reconstruction used Hermes's."""
+    """write_tools: the system's declared write tools (PREREG §10); S7's reconstruction used Hermes's.
+
+    suffix None adds no prompt item: Ring 0 sends no write prompt (RING0 §2, C-6)."""
     if wire not in ("chat", "responses"):
         raise ValueError("unsupported_write_wire")
     out = {k: v for k, v in trigger_body.items()
            if wire != "chat" or k not in {"model", "stream", "stream_options"}}
     if wire == "chat":
-        out["messages"] = trigger_body["messages"] + [{"role": "user", "content": suffix}]
+        out["messages"] = trigger_body["messages"] + ([] if suffix is None else [{"role": "user", "content": suffix}])
         out["tools"] = [t for t in trigger_body.get("tools", []) if t.get("function", {}).get("name") in write_tools]
     else:
-        out["input"] = typed(trigger_body.get("input", [])) + [
-            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": suffix}]}]
+        out["input"] = typed(trigger_body.get("input", [])) + ([] if suffix is None else [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": suffix}]}])
         out["tools"] = [t for t in trigger_body.get("tools", []) if t.get("name") in write_tools]
     return deepcopy(dict(out, model=model, stream=wire == "responses"))
 

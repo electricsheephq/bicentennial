@@ -225,6 +225,13 @@ def test_write_body_filters_to_the_declared_write_tools():
     assert got["tools"] == []
 
 
+def test_write_body_without_a_prompt_adds_no_item():
+    chat = {"model": "x", "messages": [{"role": "user", "content": "q"}], "tools": []}
+    assert writeturn.expected_write_body(chat, "chat", "m", None)["messages"] == chat["messages"]
+    body = {"model": "x", "input": "q", "tools": []}
+    assert writeturn.expected_write_body(body, "responses", "m", None)["input"] == responses.typed("q")
+
+
 @pytest.mark.parametrize("value", ["synthetic text", ["one", "two"], [1, 2], [[1], [2, 3]]])
 def test_embeddings_request_and_http_round_trip(value):
     request = {"model": "synthetic-embedding", "input": value, "dimensions": 3}
