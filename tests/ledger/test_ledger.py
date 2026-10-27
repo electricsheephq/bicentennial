@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 from compression import zstd
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from bicentennial.canon import canon
+from bicentennial.keyed import mint_id
 from bicentennial.ledger import (
     BlobCorrupt,
     BlobStore,
@@ -39,6 +41,91 @@ def request(**changes):
 
 def ledger(root, guard=None):
     return Ledger(root, guard or Guard([]), lock_hash=LOCK, attempt_id="attempt-a")
+
+
+@pytest.mark.parametrize("cleanup", ["close", "append_failure", "constructor_failure"])
+def test_reopen_with_inherited_description(tmp_path, monkeypatch, cleanup):
+    """dup retains exactly the open description a pre-exec child inherits at fork."""
+    import bicentennial.ledger.ledger as module
+
+    retained = []
+    writer = None
+
+    def fail_scan(path):
+        # Called after flock succeeds; retain the constructor's open description.
+        retained.append(os.dup(constructing[0]._file.fileno()))
+        raise RuntimeError("injected scan failure")
+
+    try:
+        if cleanup == "constructor_failure":
+            constructing = []
+            original_scan, original_init = module._scan, Ledger.__init__
+
+            def capture(self, *args, **kwargs):
+                constructing.append(self)
+                original_init(self, *args, **kwargs)
+
+            with monkeypatch.context() as patcher:
+                patcher.setattr(Ledger, "__init__", capture)
+                patcher.setattr(module, "_scan", fail_scan)
+                with pytest.raises(RuntimeError, match="injected scan failure"):
+                    ledger(tmp_path)
+            assert module._scan is original_scan
+        else:
+            writer = ledger(tmp_path)
+            retained.append(os.dup(writer._file.fileno()))
+            # Still refuse an independent writer while the owner is active.
+            with pytest.raises(LedgerBusy):
+                ledger(tmp_path)
+            if cleanup == "append_failure":
+                with monkeypatch.context() as patcher:
+                    def fail_sync(fd):
+                        raise OSError("injected fsync failure")
+                    patcher.setattr(module.os, "fsync", fail_sync)
+                    with pytest.raises(OSError, match="injected fsync failure"):
+                        writer.append({"type": "lifecycle"})
+            else:
+                writer.close()
+            assert writer._file.closed
+        # The inherited reference stays open throughout reopen, append and close.
+        reopened = ledger(tmp_path)
+        try:
+            if writer is not None:
+                writer.close()  # idempotent cleanup must not unlock the next writer
+            with pytest.raises(LedgerBusy):
+                ledger(tmp_path)
+            reopened.append({"type": "lifecycle"})
+            assert verify(tmp_path)["chain_breaks"] == 0
+        finally:
+            reopened.close()
+    finally:
+        if writer is not None:
+            writer.close()
+        for fd in retained:
+            os.close(fd)
+
+
+def test_port_collision_preserves_director_ids_and_body_digests():
+    # A real minted id with an ephemeral-port substring: no search or random port.
+    cid = mint_id("attempt-a", 1)
+    assert cid == "bcw-70c22c5884931088"
+    projections, digests = [], []
+    for root, port in (("/sandbox/a", "58849"), ("/sandbox/b", "49123")):
+        values = dict(sandbox_root=root, director_port=port)
+        body = {"id": cid, "tool_calls": [{"id": cid}], "tool_call_id": cid,
+                "text": f"result for {cid} at {root}/file via 127.0.0.1:{port}",
+                "references": {cid: cid}}
+        masked = apply_masks(body, values)
+        assert masked["id"] == masked["tool_call_id"] == cid
+        assert masked["tool_calls"] == [{"id": cid}]
+        assert masked["references"] == {cid: cid}
+        assert masked["text"] == f"result for {cid} at {{SANDBOX_ROOT}}/file via 127.0.0.1:{{DIRECTOR_PORT}}"
+        projections.append(masked)
+        digest = sha256(canon(masked)).hexdigest()
+        digests.append(stable_digest([request(run=cid, req_masked_sha256=digest,
+            resp_masked_sha256=digest)], values))
+    assert projections[0] == projections[1]
+    assert digests[0] == digests[1]
 
 
 def snapshot(root):
