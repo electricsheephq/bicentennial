@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from bicentennial.genres.g1_software.codebase_model import PATHS, state_at
 from bicentennial.genres.g1_software.world import EXPLICIT
+from bicentennial.items.checks.repo import RepoCheck
 from bicentennial.items.compile import _id
 from bicentennial.items.levers import wake_points
 from bicentennial.items.protocol import CANARY, Option, Template
@@ -162,13 +163,15 @@ def table(table_id, *, gold, timed, admissible, disqualifiers=()):
                 benign_extras=[])
 
 
-def repo_checks(template, db, schedule, *, check_type):
-    """Build OR-groups with the consumer's RepoCheck constructor (G16 is independent)."""
+def repo_checks(template, db, schedule, *, check_type=RepoCheck):
+    """Build constant OR-groups, reducing changed to end-state holds because G1 templates
+    refuse preexisting target names and drift-config's S0 holds the original, not the hedge.
+    """
     result = {}
     for i in template.instances(db, schedule):
         tab = next(t for t in template.decision_tables if t["table_id"] == i.decision_table_ref)
         names = [*tab["admissible"], *(r["predicate"] for r in tab["disqualifiers"])]
-        result[i.key] = {p: tuple(tuple(check_type(kind=p.split(":")[0], **s["tool"]["args"])
+        result[i.key] = {p: tuple(tuple(check_type(kind="constant", **s["tool"]["args"])
                                             for s in o.plan["steps"])
                                   for o in i.options if role(o.key) == p.split(":")[1] and o.plan["steps"])
                          for p in names}

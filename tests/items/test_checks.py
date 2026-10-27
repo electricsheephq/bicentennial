@@ -512,6 +512,32 @@ def test_g1_path_refusals(tmp_path, path):
             check(tmp_path, *args)
 
 
+def test_repo_checks_path_obstructions(tmp_path):
+    path = "service/app.py"
+    constant_path = PATHS["endpoint"]
+    checks = {
+        "holds:hardcodes": ((RepoCheck(kind="hardcodes", path=path, value="VALUE-0001"),),),
+        "holds:defines": ((RepoCheck(kind="defines", path=path, name="setting"),),),
+        "holds:constant": ((RepoCheck(kind="constant", path=constant_path, name="setting", value="VALUE-0001"),),),
+    }
+    for obstruction in ("service-file", "app-directory"):
+        root = tmp_path / obstruction
+        (root / "config").mkdir(parents=True)
+        for filename in ("flags.toml", "settings.toml"):
+            (root / "config" / filename).write_text("", encoding="utf-8")
+        (root / "docs").mkdir()
+        (root / "docs/decisions.md").write_text("# Decisions\n", encoding="utf-8")
+        if obstruction == "service-file":
+            (root / "service").write_text("regular file", encoding="utf-8")
+        else:
+            (root / path).mkdir(parents=True)
+            (root / constant_path).mkdir()
+        assert not hardcodes(root, path, "VALUE-0001")
+        assert not defines(root, path, "setting")
+        assert not file_constant(root, constant_path, "setting", "VALUE-0001")
+        assert repo_predicates(root, checks, tz="UTC") == {p: False for p in checks}
+
+
 @pytest.mark.parametrize("fields", [dict(kind="constant", path="config/settings.toml", name="x"),
                                     dict(kind="defines", path="service/app.py"), dict(kind="hardcodes"),
                                     dict(kind="branch", value="extra"), dict(kind="unknown")])

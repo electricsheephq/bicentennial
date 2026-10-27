@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +32,7 @@ from bicentennial.genres.g1_software.world import (
     write_statements,
 )
 from bicentennial.items.bundle import compile_life
+from bicentennial.items.checks.repo import RepoCheck, repo_state_predicates
 from bicentennial.items.compile import compile_branch
 from bicentennial.items.templates.g1 import (
     G1_MUTANT_ROLES,
@@ -389,40 +390,49 @@ def test_200_keyed_placements(tmp_path):
             db.close()
 
 
-@dataclass(frozen=True, kw_only=True)
-class Check:
-    kind: str
-    path: str
-    name: str
-    value: str
+@pytest.mark.parametrize("which", [w for w in LIVES if CATALOGUE[LIVES[w]].decision_tables])
+def test_repo_checks_default(lives, which):
+    life = lives[which]
+    template, = life.templates
+    for db in life.dbs:
+        checks = repo_checks(template, db, life.schedule)
+        assert checks and set(checks) == {i.key for i in template.instances(db, life.schedule)}
+        for mappings in checks.values():
+            assert mappings
+            for groups in mappings.values():
+                assert isinstance(groups, tuple) and groups
+                for group in groups:
+                    assert isinstance(group, tuple) and group
+                    assert all(isinstance(c, RepoCheck) and c.kind == "constant" for c in group)
 
 
-def evaluate_groups(groups, state0, state):
-    # changed is group-level: all steps hold, and at least one differs from S0.
-    return any(all(state[c.path].get(c.name) == c.value for c in g)
-               and (g[0].kind == "holds" or any(state0[c.path].get(c.name) != c.value for c in g)) for g in groups)
-
-
-def test_or_groups_and_depth_two(tmp_path):
+def test_or_groups_and_depth_two(tmp_path, lives):
     db, s, e = new_world(tmp_path / "groups.db", "g14-groups")
     try:
         writers(db, s, e, "chain", depth=2)
         writers(db, s, e, "tue")
-        for template in (replace(CATALOGUE["drift-chain"], depth=2), CATALOGUE["tue-ticket"]):
-            inst, = template.instances(db, s)
-            mappings = repo_checks(template, db, s, check_type=Check)[inst.key]
-            state0 = repo_state(db, s, 3)
+        cases = [(t, d, life.schedule, f"{which}-B{b}")
+                 for which, life in lives.items() for t in life.templates if t.decision_tables
+                 for b, d in enumerate(life.dbs)]
+        cases += [(t, db, s, "g14-groups") for t in (
+            replace(CATALOGUE["drift-chain"], depth=2), CATALOGUE["tue-ticket"])]
+        for template, case_db, schedule, world in cases:
+            inst, = template.instances(case_db, schedule)
+            mappings = repo_checks(template, case_db, schedule)[inst.key]
+            state0 = repo_state(case_db, schedule, 3)
+            assert not any(repo_state_predicates(state0, {
+                p: g for p, g in mappings.items() if p.startswith("changed:")}).values()), (template.ref, world)
             table = next(t for t in template.decision_tables if t["table_id"] == inst.decision_table_ref)
             for opt in inst.options:
                 state = apply_steps(state0, opt.plan["steps"])
-                assert {p: evaluate_groups(g, state0, state) for p, g in mappings.items()} == predicates(table, inst, state0, state)
-            if template.template_id == "drift-chain":
+                assert repo_state_predicates(state, mappings) == predicates(table, inst, state0, state)
+            if template.template_id == "drift-chain" and template.depth == 2:
                 assert len(mappings["changed:other"]) == 2
-                groups = tuple(tuple(replace(c, kind="holds") for c in g) for g in mappings["changed:other"])
+                groups = {"changed:other": mappings["changed:other"]}
                 for opt in inst.options[1:3]:
-                    assert evaluate_groups(groups, state0, apply_steps(state0, opt.plan["steps"]))
-                assert not evaluate_groups(groups, state0, apply_steps(state0, inst.options[0].plan["steps"]))
-                assert not evaluate_groups(groups, state0, state0)
+                    assert repo_state_predicates(apply_steps(state0, opt.plan["steps"]), groups)["changed:other"]
+                assert not repo_state_predicates(apply_steps(state0, inst.options[0].plan["steps"]), groups)["changed:other"]
+                assert not repo_state_predicates(state0, groups)["changed:other"]
     finally:
         db.close()
 
