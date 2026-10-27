@@ -70,7 +70,7 @@ def create_world(path: str | Path, meta: Meta) -> sqlite3.Connection:
         # The file was reserved by this call, so a failed build leaves no partial world.
         if db is not None:
             db.close()
-        path.unlink()
+        path.unlink(missing_ok=True)
         raise
 
 
