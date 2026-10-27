@@ -301,7 +301,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     calls, drafts, issued = [], [], 0
     issued_at = {}  # each call id served to the harness, by the record that served it
     for r in rows:
-        if r.get("served") == "write_tool_calls" and not refused(r, blobs.get(r.get("resp"))):
+        if r.get("served") in {"write_tool_calls", "script_tool_calls", "script_tool_calls_retry"} and not refused(r, blobs.get(r.get("resp"))):
             for tc in output(blobs[r["resp"]], wire)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
     minted = _minted_ids(rows, blobs) if fmt == "kit" else {}
@@ -322,7 +322,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
             idx = turn_index(seq, cursor)
             want = expected(body, wire, model_for(cursor["session"]), suffix, write_tools)
             verdicts = []
-            served, served_texts = ([], []) if bad else output(blobs[r["resp"]], wire)
+            served, served_texts = output(blobs[r["resp"]], wire) if not bad and r.get("served") == "write_tool_calls" else ([], [])
             if not bad and r.get("served") == "write_tool_calls" and (any(served_texts) or reasoning(blobs[r["resp"]], wire)):
                 # the harness gets the calls only: no reply or reasoning text
                 a5["served_write_text"].append(seq)
@@ -375,7 +375,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                         # reachability counts only calls and results new relative to the triggering request
                         prior_calls, prior_results = {c for c, _ in calls_in(body, wire)}, results(body, wire).keys()
                         new_calls = (calls_in(following[1], request_wire(following[0], wire)) - calls_in(body, wire)
-                                     if following else set())
+                                     if following and r["served"] == "write_tool_calls" else set())
                         later = set()  # calls and results are new against their own kind: an old call, new result is new
                         for rr, bb in requests:
                             if rr["seq"] > seq:  # each later request read on its own wire

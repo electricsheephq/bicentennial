@@ -38,7 +38,7 @@ class G1Template(Template):
     @property
     def lever_mix(self):
         return dict(label=LEVER_MIX_LABEL, primary=PRIMARY_LEVER[self.cell_id],
-                    value=getattr(self, "depth", None), others="neutral", rungs="uncalibrated (v0.2)")
+                    value=getattr(self, "depth", None), others="not neutralised at v0.1", rungs="uncalibrated (v0.2)")
 
 
 def linking(db, fact_ids, t):
