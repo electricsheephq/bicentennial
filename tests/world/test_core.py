@@ -231,6 +231,15 @@ def test_readonly_existing_file_and_connections(tmp_path):
             reader.close()
 
 
+def test_failed_create_leaves_no_file(tmp_path):
+    path = tmp_path / 'bad.sqlite'
+    with pytest.raises(sqlite3.IntegrityError):
+        create_world(path, {**META, 'scale': 0})
+    assert not path.exists()
+    create_world(path, META).close()
+    assert open_world(path).execute('SELECT count(*) FROM meta').fetchone()[0] == 1
+
+
 def test_json_canonical_foreign_keys_and_integer_constraints(populated):
     assert populated.execute('PRAGMA foreign_keys').fetchone()[0] == 1
     assert not populated.execute('PRAGMA foreign_key_check').fetchall()
