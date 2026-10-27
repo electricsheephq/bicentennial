@@ -541,8 +541,9 @@ def test_pairing_stop_policy(policy, replay, wire, label, plugin, mixed, status,
     pair = next(v for v in arm.verdicts if v.invariant == "INV-PAIR")
     assert pair.status == status
     infra = label is not None and (cls == "INFRA_FAILURE" or plugin)
-    assert pair.infra == (("expected-1", "expected-2") if infra else ())
+    assert pair.infra == (("expected-blocked-1", "expected-blocked-2") if infra else ())
     assert bool(pair.failed) == (status == "FAIL")
+    assert not set(pair.failed) & set(pair.infra)
     unit = next(u for u in arm.units if (u.life, u.branch) == (pack.life, "B0"))
     assert len(unit.runs) == (3 if infra else 1)
     if label:
@@ -570,7 +571,7 @@ def test_pairing_infra_stop_checks_carried_ids(policy, replay, wire, broken):
 
     pair = next(v for v in replay.run(mutate).arms["system"].verdicts if v.invariant == "INV-PAIR")
     assert pair.status == ("FAIL" if broken else "INFRA_FAILURE")
-    assert pair.infra == (("expected-1", "expected-2") if broken else ("expected-2",))
+    assert pair.infra == (("expected-blocked-1", "expected-blocked-2") if broken else ("expected-blocked-1",))
     assert pair.failed == (("req-1",) if broken else ())
 
 
@@ -632,8 +633,10 @@ def test_pairing_stop_fake_worker(completed, tmp_path, monkeypatch, label, mixed
     pair = next(v for v in arm.verdicts if v.invariant == "INV-PAIR")
     assert pair.status == status
     ids = sorted({i for u in arm.units for i in u.runs[-1].expected_call_ids})
-    assert pair.infra == (tuple(sorted(f"expected-{n}" for n, i in enumerate(ids, 1)
-        if i in unit.runs[-1].expected_call_ids)) if infra else ())
+    blocked = set(unit.runs[-1].expected_call_ids)
+    assert pair.infra == (tuple(sorted(f"expected-blocked-{n}" for n in range(1, len(blocked) + 1)))
+        if infra else ())
+    assert not set(pair.failed) & set(pair.infra) and set(ids) >= blocked
     evaluated = pairing_gate(result)
     assert evaluated.verdict == gate
     assert ("invariant:INV-PAIR" in evaluated.blocked) == infra

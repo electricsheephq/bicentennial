@@ -355,8 +355,8 @@ def _arm(arm, packs, units, scores, labels, voids):
         values = run_invariants(evidence, tier="T1", requests=requests, expected_call_ids=tuple(sorted(ids)))
         if blocked_ids:
             pair = values["INV-PAIR"]
-            # Keep S05's expected-id probe form, numbered over the unfiltered arm ids.
-            infra = {f"expected-{n}" for n, i in enumerate(sorted(ids | blocked_ids), 1) if i in blocked_ids}
+            # S05 numbers expected-<n> over the ids it was given, so blocked ids get their own form.
+            infra = {f"expected-blocked-{n}" for n in range(1, len(blocked_ids) + 1)}
             values["INV-PAIR"] = replace(pair, infra=tuple(sorted(set(pair.infra) | infra)),
                 status="INFRA_FAILURE" if pair.status in ("PASS", "NOT_EXERCISED") else pair.status)
         verdicts = tuple(values[name] for name in INVARIANTS)
