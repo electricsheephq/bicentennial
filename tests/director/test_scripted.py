@@ -68,8 +68,15 @@ def body(wire, messages=None, names=("memory",), limit=None):
     return out
 
 
+# The test's role names, as R08's Director sends them: (ledger role, subrole).
+LEDGER = {"write_turn": ("write_turn", "cursor"), "memory_write": ("memory_write", "background_review"),
+          "compaction": ("summariser", "compression"), "summariser": ("aux", "summariser"),
+          "extraction": ("aux", "extraction"), "title": ("aux", "title_generation"),
+          "aux": ("aux", "other_task")}
+
+
 def call(role="write_turn", wire="chat", request=None):
-    return Call(role, "irrelevant-subrole", wire, body(wire) if request is None else request,
+    return Call(*LEDGER.get(role, (role, "")), wire, body(wire) if request is None else request,
                 "route-model", {"session": 1, "turn": 1}, "attempt-one")
 
 
@@ -308,3 +315,25 @@ def test_full_fake_replay_has_no_sockets(wire, tmp_path, socket_guard):
     assert len(writes) == count and all(r["write_turn_readback"] for r in writes)
     assert director.write_failures == 0
     assert socket_guard == {"loopback": 0, "non_loopback": 0}
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_director_routed_titles_and_compactions(wire, tmp_path):
+    # Recorded title and compaction shapes reach the responder as R08 routes them.
+    fixture = runpy.run_path(str(Path(__file__).with_name("test_core.py")))
+    director = fixture["make"](tmp_path, responder())
+    rows = fixture["FIX"][fixture["WIRE_SOURCE"][wire]]["rows"]
+    try:
+        fixture["start"](director, tmp_path, session=1)
+        for expected in ("title", "compaction"):
+            row = next(row for row in rows if row["expected"] == expected)
+            method, path, request = fixture["rehydrate"](row, {}, "synthetic system prompt")
+            status, headers, data = director.handle(method, path, {}, canon(request))
+            assert status == 200
+            text, ids = fixture["answer"](headers["Content-Type"], data)
+            assert ids == []
+            assert text == "Session" if expected == "title" else text != "Session"
+    finally:
+        director.close()
+    roles = {(r["role"], r["subrole"]) for r in fixture["records"](tmp_path) if r.get("status") == 200}
+    assert ("aux", "title_generation") in roles and ("summariser", "compression") in roles

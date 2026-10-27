@@ -56,6 +56,18 @@ def _vector(text, dimension):
     return vector
 
 
+def _kind(call):
+    """The Director's ledger roles (R08 route_role): compaction arrives as summariser, and
+    titles, summaries and extraction arrive as aux with their task as the subrole."""
+    if call.role in ("write_turn", "memory_write"):
+        return "write"
+    if call.role == "summariser" or (call.role == "aux" and call.subrole in ("summariser", "extraction")):
+        return "extract"
+    if call.role == "aux":
+        return "title" if call.subrole == "title_generation" else "empty"
+    raise ValueError("unsupported scripted role")
+
+
 class ScriptedResponder:
     """Implement R08's Responder for a loaded R13a system-entry dictionary."""
 
@@ -89,16 +101,15 @@ class ScriptedResponder:
             vectors, scale = [_vector(t, dimension) for t in inputs], VECTOR_SCALE
             usage_body = {"messages": inputs, "tools": []}
         else:
-            if call.role not in ("write_turn", "memory_write", "compaction", "summariser", "extraction", "title", "aux"):
-                raise ValueError("unsupported scripted role")
+            kind = _kind(call)
             messages = _messages(call)
-            if call.role in ("write_turn", "memory_write"):
+            if kind == "write":
                 calls = self._write(call, messages)
-            elif call.role in ("compaction", "summariser", "extraction"):
+            elif kind == "extract":
                 text = _cut("\n".join(_text(m.get("content"))[:240] for m in messages
                                      if m.get("type", "message") == "message"
                                      and m.get("role") in ("user", "assistant")), call)
-            elif call.role == "title":
+            elif kind == "title":
                 text = "Session"
             usage_body = call.body if call.wire == "chat" else {
                 "messages": messages, "tools": call.body.get("tools", [])}
