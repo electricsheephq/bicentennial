@@ -290,7 +290,7 @@ def questions(life, branch="B0"):
                      ("list", "ITEMS", "items", [v[f"ITEM{i}"] for i in range(1, 4)])]
         else:
             pairs = [("code", "CODE1", f"code on the {v['OBJECT1'].lower()}", v["CODE1"]),
-                     ("list", "OBJECTS", "objects with legible tags", [v[f"OBJECT{i}"] for i in range(1, 5)])]
+                     ("list", "OBJECTS", "other objects with legible tags", [v[f"OBJECT{i}"] for i in range(2, 5)])]
         for type_, field, label, gold in pairs:
             suffix = {"number": "number", "code": "code", "string": "string", "list": "comma-separated list"}[type_]
             result.append({"id": f"{kind}:{field}", "image_id": record["image_id"], "channel": channel,
@@ -333,8 +333,10 @@ def build_script(life, mode, *, branch, paths):
             turns = [turn(user, n, kind) for n, user in enumerate(users, 1)]
         sessions.append({"index": index, "kind": kind, "turns": turns})
     obj = script_of(life, sessions)
-    values = [v for b in ("B0", "B1") for r in world(life, b) for v in r["values"].values()]
-    if scan_script(obj, [], values):
+    disclosed = {("desk", "OBJECT1")}  # Named by the code question; never gold.
+    values = [v.casefold() for b in ("B0", "B1") for r in world(life, b) for f, v in r["values"].items()
+              if (r["kind"], f) not in disclosed]
+    if scan_script(json.loads(canon(obj).decode().casefold()), [], values):
         raise ValueError("script_value_leak")
     return obj
 
@@ -621,6 +623,7 @@ def summarise(scratch, fidelity=None):
     scratch = Path(scratch)
     fidelity = fidelity or {"n": 200, "state": "pending_human_key"}
     result = {"canary": CANARY, "claim_class": "advisory", "mode": "live", "inputs": {}, "fidelity": fidelity,
+              "disclosures": ["The desk code question names OBJECT1, which is excluded from the list gold."],
               "lane": _read(scratch / "lane.json") if (scratch / "lane.json").exists() else {"state": "not_run"},
               "modes": {}, "operating": {"unknown_total": 0, "scan": scan(scratch)}}
     image_ids = {sha256(im["png"]).hexdigest(): im["record"]["image_id"] for im in images()}

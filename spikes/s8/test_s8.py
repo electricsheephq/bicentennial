@@ -160,6 +160,41 @@ def test_system_firewall():
             assert all(module.split(".")[0] not in ("urllib", "socket", "http") for module in modules)
 
 
+def test_keysheet_distinct_entries_and_fidelity_n(tmp_path, monkeypatch):
+    images = list(run.images())
+    identities = {id(entry): (image["id"], entry["field"])
+                  for image in images for entry in image["manifest"]}
+    selected = []
+    verify = render.verify
+
+    def checked(png, manifest):
+        selected.extend(identities[id(entry)] for entry in manifest)
+        return verify(png, manifest)
+
+    monkeypatch.setattr(render, "verify", checked)
+    rows = render.keysheet(images)
+    key = tmp_path / "key.csv"
+    with key.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("id", "crop", "typed"))
+        writer.writeheader()
+        writer.writerows({"id": row["id"], "crop": row["crop"], "typed": row["value"]} for row in rows)
+    distinct = len(set(selected))
+    assert render.fidelity(rows, key)["n"] == distinct
+    assert len(rows) == distinct == 200
+
+
+@pytest.mark.parametrize("count", (0, 199))
+def test_keysheet_refuses_insufficient_candidates(count):
+    candidates = []
+    for image in run.images():
+        manifest = image["manifest"][:count - sum(len(i["manifest"]) for i in candidates)]
+        candidates.append(dict(image, manifest=manifest))
+        if sum(len(i["manifest"]) for i in candidates) == count:
+            break
+    with pytest.raises(ValueError, match="insufficient keysheet candidates"):
+        render.keysheet(candidates)
+
+
 class FakeResponder:
     def __init__(self, text, status=200):
         self.text, self.status, self.calls = text, status, []
@@ -222,6 +257,54 @@ def test_image_request_predicate_and_scoring():
 def fixture_paths(tmp_path):
     return {"home": tmp_path / "home", "workspace": tmp_path / "workspace", "attachments": {},
             "native_text": lambda text, path: text + " fixture attachment " + path}
+
+
+def test_desk_list_gold_excludes_named_object_200_cases():
+    for index in range(200):
+        life = f"s8-life-{index:02d}"
+        for branch in ("B0", "B1"):
+            questions = run.questions(life, branch)
+            desk_list = next((q for q in questions if q["id"] == "desk:OBJECTS"), None)
+            if desk_list is None:
+                continue
+            values = run.world(life, branch)[2]["values"]
+            named = values["OBJECT1"].casefold()
+            assert all(named not in str(q["gold"]).casefold() for q in questions)
+            assert desk_list["gold"] == [values[f"OBJECT{i}"] for i in range(2, 5)]
+            for value in desk_list["gold"]:
+                assert all(value.casefold() not in q["user"].casefold() for q in questions)
+            assert "other objects" in desk_list["user"]
+
+
+def test_built_scripts_case_insensitive_value_scan(tmp_path):
+    for index in range(10):
+        life = f"s8-life-{index:02d}"
+        for mode in ("text", "native"):
+            for branch in ("B0", "B1"):
+                script = run.build_script(life, mode, branch=branch, paths=fixture_paths(tmp_path))
+                asked = [value.casefold() for b in ("B0", "B1") for q in run.questions(life, b)
+                         for value in (q["gold"] if isinstance(q["gold"], list) else [q["gold"]])]
+                assert run.scan_script(json.loads(canon(script).decode().casefold()), [], asked) == []
+
+
+@pytest.mark.parametrize("mode", ("text", "native"))
+@pytest.mark.parametrize("branch", ("B0", "B1"))
+def test_build_script_refuses_lowercase_gold(tmp_path, monkeypatch, mode, branch):
+    life = "s8-life-01"
+    gold = next(q["gold"][0] for q in run.questions(life, branch) if q["id"] == "desk:OBJECTS")
+    turn = run.turn
+
+    def injected(text, n, kind="probe", calls=()):
+        return turn(text + " " + gold.lower() if kind == "replay" else text, n, kind, calls)
+
+    monkeypatch.setattr(run, "turn", injected)
+    with pytest.raises(ValueError, match="script_value_leak"):
+        run.build_script(life, mode, branch=branch, paths=fixture_paths(tmp_path))
+
+
+def test_summary_discloses_named_object_exception(tmp_path):
+    summary = run.summarise(tmp_path)
+    assert "The desk code question names OBJECT1, which is excluded from the list gold." in summary["disclosures"]
 
 
 def test_scripts_and_gold(tmp_path):
@@ -645,7 +728,7 @@ def test_summary_identity_attribution_cost_cache_and_controls(tmp_path, monkeypa
         assert len(row["vision_calls"]) == 1
     assert result["modes"]["native"]["accuracy"]["R"] == {"not_applicable": True}
     assert b"PRIVATE_CAPTION" not in canon(result)
-    assert b"gold" not in canon(result)
+    assert b'"gold":' not in canon(result)
 
 
 def test_boundary_stop_rules(tmp_path):

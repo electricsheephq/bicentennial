@@ -307,10 +307,11 @@ def verify(png_bytes, manifest):
 def keysheet(images, n=200):
     """Return sampled crops and private answer metadata; the CLI writes only blank keys."""
     candidates = [(image, entry) for image in images for entry in image["manifest"]]
+    if len(candidates) < n:
+        raise ValueError("insufficient keysheet candidates")
+    candidates = shuffle("p08", ("p08", "keysheet"), 0, "entry", candidates)
     rows = []
-    for index in range(n):
-        selected = uniform_int("p08", ("p08", "keysheet"), 0, f"entry#{index}", 0, len(candidates) - 1)
-        image, entry = candidates[selected]
+    for index, (image, entry) in enumerate(candidates[:n]):
         checked = verify(image["png"], [entry])
         rows.append({"id": str(index), "crop": f"crop-{index:03d}.png", "value": entry["value"],
                      "matched": checked["matched"] == 1,
