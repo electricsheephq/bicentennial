@@ -297,8 +297,9 @@ class Login:
             sync_folder(self.path.parent)
         return store["tokens"]["access_token"]
 
-    def _learn(self, store):
-        needles = dict(self._needles)
+    @staticmethod
+    def _needles_of(store, base):
+        needles = dict(base)
         for name, token in store["tokens"].items():
             if isinstance(token, str):
                 needles[token] = f"tokens.{name}"
@@ -306,15 +307,18 @@ class Login:
                     for k, v in (value.items() if isinstance(value, dict) else [(key, value)]):
                         if isinstance(v, str) and re.search(r"account|user|email|org|^sub$", k):
                             needles.setdefault(v, f"claim.{k}")
-        self._needles = needles
+        return needles
+
+    def _learn(self, store):
+        self._needles = self._needles_of(store, self._needles)
 
     def needles(self):
         return dict(self._needles)
 
     def learn_only(self, store=None):
         if store is not None:
-            self._needles = {}
-        self._learn(json.loads(self.path.read_text()) if store is None else store)
+            return self._needles_of(store, {})
+        self._learn(json.loads(self.path.read_text()))
         return self.needles()
 
     def drain(self):
@@ -387,6 +391,14 @@ class CredentialResponder:
     def respond(self, call):
         reply = self.inner.respond(call)
         reason = self.inner.state()["stop_reason"]
+        if reason not in CREDENTIAL_STOPS:
+            for attempt in reply.upstream:
+                if attempt.get("kind") != "try":
+                    continue
+                reason = {401: "upstream_401", 403: "upstream_403"}.get(attempt.get("status"),
+                    "upstream_sse_auth" if attempt.get("category") == "auth_sse" else reason)
+                if reason in CREDENTIAL_STOPS:
+                    break
         with self.lock:
             if reason in CREDENTIAL_STOPS and not self.latched:
                 self.login.refuse(reason)

@@ -984,6 +984,40 @@ def test_credential_stops_latch(home, setup, status, raw, reason):
     wrapped.stop("fake-stop")
 
 
+@pytest.mark.parametrize("status,raw,reason", [(401, b"{}", "upstream_401"), (403, b"{}", "upstream_403"),
+    (200, frames({"type": "error", "message": "Unauthorized fake token"}), "upstream_sse_auth")])
+def test_inflight_credential_refusal_latches_after_other_stop(home, setup, monkeypatch, status, raw, reason):
+    auth, posts = login(home), []
+    r, server, _, _ = setup([(status, {}, raw)])
+    wrapped = attach(r, auth)
+    send, received, release, replies = UP["forward"].send, threading.Event(), threading.Event(), []
+    def pending_send(*args):
+        result = send(*args)
+        received.set()
+        assert release.wait(3)
+        return result
+    monkeypatch.setattr(UP["forward"], "send", pending_send)
+    with mock.patch.object(auth, "refuse", wraps=auth.refuse) as refuse:
+        worker = threading.Thread(target=lambda: replies.append(wrapped.respond(call())))
+        worker.start()
+        try:
+            assert received.wait(3)
+            wrapped.stop("upstream_invalid_request_400")
+        finally:
+            release.set()
+            worker.join(3)
+        assert not worker.is_alive() and len(replies) == 1
+        assert replies[0].status == 503 and len(server.seen) == 1
+        assert wrapped.state()["stop_reason"] == "upstream_invalid_request_400"
+        assert wrapped.state()["login_stop"] == reason
+        assert json.loads(auth.sentinel.read_text())["reason"] == reason
+        assert wrapped.respond(call()).status == 503
+        refuse.assert_called_once_with(reason)
+    with pytest.raises(sd.Stop, match=f"^login_latched:{reason}$"):
+        open_login(home, post=lambda *a: posts.append(1))
+    assert not posts and len(server.seen) == 1
+
+
 @pytest.mark.parametrize("kind,reason,n", [("invalid", "upstream_invalid_request_400", 1),
                                          ("unparsed", "upstream_unparsed_3_in_a_row", 3)])
 def test_noncredential_stops_do_not_latch(home, setup, kind, reason, n):
@@ -1248,6 +1282,27 @@ def test_refresh_learns_old_and_successor_needles(tmp_path):
     needles = auth.needles()
     for value in list(old.values()) + [jwt(3600, 1), jwt(3600, 2), "rt-fake-rotated"]:
         same(value in needles, True)
+
+
+def test_scan_preserves_rotated_login_needles_and_snapshot_report(tmp_path):
+    path = store(tmp_path, 60)
+    old = json.loads(path.read_text())["tokens"]
+    auth = login(path, post=rotated)
+    auth.token()
+    before = auth.needles()
+    ledger = tmp_path / "fake-ledger"
+    ledger.mkdir()
+    (ledger / "old.json").write_bytes(canon({"fake": old["access_token"]}))
+    (ledger / "current.json").write_bytes(canon({"fake": "rt-fake-rotated"}))
+    expected = {"files_scanned": 2, "needles": 6, "hits": {"tokens.refresh_token": 1}, "unreadable": 0}
+    assert sd.scan(login(path), [ledger]) == expected
+    assert sd.scan(auth, [ledger]) == expected
+    with pytest.raises(CredentialLeak, match="^tokens.access_token reached a ledger write$"):
+        sd.NeedleGuard(auth).check(canon({"fake": old["access_token"]}))
+    same(auth.needles(), before)
+    for name in ("access_token", "refresh_token", "id_token"):
+        with pytest.raises(CredentialLeak, match=rf"^tokens\.{name} reached a ledger write$"):
+            sd.NeedleGuard(auth).check(canon({"fake": old[name]}))
 
 
 def test_refusal_at_startup_returns_holder_and_refresh_row(tmp_path):
