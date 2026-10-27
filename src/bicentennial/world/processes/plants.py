@@ -10,7 +10,7 @@ from ..lineage import Ev, atomic, ids, on_record, write_event, write_fact
 
 PLANT_KINDS = {kind: ('chat', 'mail') for kind in ('forged_agreement', 'third_party_claim', 'false_premise')}
 PLANT_SPEECH_ACTS = ('assert', 'quote')
-RESERVED = ('authorised_for', 'forget')
+RESERVED = ('authorised_for', 'forget', 'forget_ref')
 
 
 @dataclass(frozen=True)

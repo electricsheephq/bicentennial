@@ -24,7 +24,7 @@ MARKERS = {
 CHANNELS = ("chat", "issue_thread", "review_comment", "standup_note", "mail", "email_digest",
             "ci_log", "tool_result", "file_content", "commit", "calendar", "notes", "tracker")
 SLOT = re.compile(r"\{(subject|predicate|object|when)\}")
-KEYS = {"bank_id", "calibrated", "markers", "channels", "when", "factless", "forget", "cells"}
+KEYS = {"bank_id", "calibrated", "markers", "channels", "when", "factless", "forget", "forget_ref", "cells"}
 
 
 class Phrase(NamedTuple):
@@ -42,6 +42,7 @@ class PhraseBank:
     when: Phrase
     factless: tuple[Phrase, ...]
     forget: tuple[Phrase, ...]
+    forget_ref: tuple[Phrase, ...]
     cells: dict[tuple[str, str, str, str], tuple[Phrase, ...]]
 
     def cell(self, speech_act: str, modality: str, strength: int, polarity: str) -> tuple[Phrase, ...]:
@@ -114,6 +115,8 @@ def load(path: str | Path | None = None) -> PhraseBank:
     factless = tuple(Phrase(f"factless#{i}", _phrase(p, none, tuple(MARKERS))) for i, p in enumerate(_list(data["factless"])))
     forget = tuple(Phrase(f"forget#{i}", _phrase(p, {**none, "subject": 1, "object": 1}, ("hedge", "propose", "quote")))
                    for i, p in enumerate(_list(data["forget"])))
+    forget_ref = tuple(Phrase(f"forget_ref#{i}", _phrase(p, {**none, "object": 1}, tuple(MARKERS)))
+                       for i, p in enumerate(_list(data["forget_ref"])))
     cells = {}
     for act, by_modality in _exact(data["cells"], SPEECH_ACTS, "cells").items():
         banned = {"assert": ("hedge", "propose"), "hedge": ("assert",), "propose": ("assert",)}.get(act, ())
@@ -128,7 +131,7 @@ def load(path: str | Path | None = None) -> PhraseBank:
                                                      None if act == "assert" else act))
                         for i, p in enumerate(_list(phrases)))
     return PhraseBank(data["bank_id"], data["calibrated"], sha256(raw).hexdigest(), {k: tuple(v) for k, v in markers.items()},
-                      dict(channels), Phrase("when", when), factless, forget, cells)
+                      dict(channels), Phrase("when", when), factless, forget, forget_ref, cells)
 
 
 @cache
