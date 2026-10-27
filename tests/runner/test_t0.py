@@ -1,0 +1,1076 @@
+"""Offline T0 acceptance over installed public micro packs."""
+
+import ast
+import json
+import os
+import runpy
+import shutil
+import stat
+import subprocess
+import sys
+import time
+import unicodedata
+import xml.etree.ElementTree as ET
+from hashlib import sha256
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from bicentennial.api.adapters.reference_store import ReferenceStore
+from bicentennial.canon import canon
+from bicentennial.contracts.run import validate
+from bicentennial.harness.hermes.adapter import HarnessFailed
+from bicentennial.harness.hermes.plugin_host import GateRefused
+from bicentennial.keyed import uniform_int
+from bicentennial.packs import build
+from bicentennial.packs.catalogue import load_catalogue
+from bicentennial.packs.install import install
+from bicentennial.runner import t0
+from bicentennial.score.invariants import SystemFault
+from bicentennial.systems.registry import REGISTRY, load
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="module")
+def installed(tmp_path_factory):
+    root = tmp_path_factory.mktemp("t0-installed")
+    catalogue = load_catalogue(ROOT / "packs/catalogue-v0.toml",
+        c7_path=ROOT / "specs/ring0/c7-partial.json", tier_path=ROOT / "tiers/life_specs/t0.toml")
+    rows = catalogue.by_id()
+    names = ["g2-keep-incidental-mft-1", "g2-drift-booking-mft-1", "g2-keep-forget-mft-1",
+             "g2-recall-count-mft-1", "g2-drift-asof-dir-2", "g1-recall-value-mft-1"]
+    names.append(rows["g2-drift-asof-dir-2"].baseline)
+    start = time.monotonic_ns()
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            # A11: small-row fixtures cannot satisfy the tier-wide shares.
+            # Follow G19's test-local stub; production distribution gates stay intact.
+            patch.setattr(build, "check_distribution", lambda packs, **kwargs:
+                          SimpleNamespace(ok=True, to_obj=lambda: {}))
+            built = build.build_tier("T0", root / "build", harness_artifacts=[
+                load(REGISTRY / "hermes-native.toml")["artifact"]], rows=[rows[n] for n in names])
+    finally:
+        print(f"fixture build_attempt_ms={(time.monotonic_ns() - start) // 1_000_000}")
+    built_ms = (time.monotonic_ns() - start) // 1_000_000
+    start = time.monotonic_ns()
+    digest = install(root / "build/T0", root / "installed")
+    print(f"fixture build_ms={built_ms} install_ms={(time.monotonic_ns() - start) // 1_000_000}")
+    assert digest == built["pack_hash"]
+    try:
+        yield root / "installed", built["index"], digest
+    finally:
+        for path in [root / "installed", *sorted((root / "installed").rglob("*"))]:
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
+def packs(installed):
+    root, index, _ = installed
+    return [t0._Pack(root, rel) for rel in sorted(index["packs"])]
+
+
+def snapshotter(root):
+    count = 0
+
+    def snapshot(adapter):
+        nonlocal count
+        path = root / str(count)
+        count += 1
+        path.mkdir(parents=True)
+        (path / "checkpoint.bin").write_bytes(adapter.checkpoint())
+        return (path,)
+    return snapshot
+
+
+def test_installed_reference_branch_drives(installed, tmp_path):
+    for pack in packs(installed):
+        start = time.monotonic_ns()
+        for branch in ("B0", "B1"):
+            results, outcomes, roots = t0.drive_branch(pack, branch, ReferenceStore,
+                bound_s=t0.REFERENCE_BOUND_S, snapshot=snapshotter(tmp_path / pack.pack["pack_id"] / branch))
+            expected = {i["item_id"] for i in pack.pack["items"]
+                        if pack.records[i["item_id"]]["branch"] == branch}
+            assert set(results) == set(outcomes) == expected
+            assert all(r["failure_class"] != "SYSTEM_FAILURE" for r in outcomes.values())
+            assert bool(roots) == bool(expected)
+            assert canon(list(outcomes.values()))
+        elapsed_ms = (time.monotonic_ns() - start) // 1_000_000
+        print(f"{pack.meta['row']['id']} branch_drive_ms={elapsed_ms}")
+        assert elapsed_ms < 60_000
+
+
+def test_ingest_and_forget_from_installed_world(installed, tmp_path):
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    for branch in ("B0", "B1"):
+        ingested, selectors = [], []
+
+        class Spy(ReferenceStore):
+            def ingest(self, event, recorded=ingested):
+                recorded.append(event)
+                super().ingest(event)
+
+            def forget(self, selector, recorded=selectors):
+                recorded.append(selector)
+                super().forget(selector)
+
+        t0.drive_branch(pack, branch, Spy, bound_s=5, snapshot=snapshotter(tmp_path / branch))
+        assert ingested == json.loads((pack.root / f"visible/events.{branch}.json").read_bytes())["events"]
+        if branch == "B0":
+            assert selectors and all(s.keys() == {"event_ids"} for s in selectors)
+            db = t0.open_world(pack.root / "sealed/life/world.B0.db", readonly=True)
+            try:
+                requests = {r["event_id"]: json.loads(r["covered_fact_ids_json"])
+                            for r in db.execute("SELECT * FROM forget_request")}
+                tokens = db.execute("SELECT fact_id, value FROM locked_token").fetchall()
+                expected = []
+                for index, event in enumerate(ingested):
+                    if event["event_id"] in requests:
+                        needles = [unicodedata.normalize("NFC", r["value"]) for r in tokens
+                                   if r["fact_id"] in requests[event["event_id"]]]
+                        expected.append(dict(event_ids=sorted(e["event_id"] for e in ingested[:index + 1]
+                            if any(token in unicodedata.normalize("NFC", e["text"]) for token in needles))))
+                assert selectors == expected
+            finally:
+                db.close()
+        else:
+            assert selectors == []
+
+
+def test_settle_false_is_system_failure(installed, tmp_path):
+    class Unsettled(ReferenceStore):
+        def settle(self, bound_s):
+            return False
+
+    pack = packs(installed)[0]
+    results, outcomes, _ = t0.drive_branch(pack, "B0", Unsettled,
+        bound_s=5, snapshot=snapshotter(tmp_path))
+    assert not results
+    assert outcomes and all(i["failure_class"] == "SYSTEM_FAILURE" for i in outcomes.values())
+
+
+@pytest.mark.parametrize("reason,system", [("query_failed", True), ("ingest_failed", True),
+    ("tool_failed", True), ("drain_failed", True), ("forget_unsettled", True),
+    ("open_failed", False), ("unknown", False)])
+def test_harness_failure_cause(reason, system):
+    class Broken(ReferenceStore):
+        def query(self, task, now):
+            raise HarnessFailed(reason)
+
+    with pytest.raises(SystemFault if system else HarnessFailed):
+        t0._Guarded(Broken()).query({}, 0)
+
+
+def test_refusal_escapes_guard():
+    class Refused(ReferenceStore):
+        def settle(self, bound_s):
+            raise GateRefused("marker")
+
+    with pytest.raises(GateRefused):
+        t0._Guarded(Refused()).settle(5)
+
+
+def test_answer_contract_keyed_cases():
+    class Answer(ReferenceStore):
+        def query(self, task, now):
+            return self.reply
+
+    adapter = Answer()
+    for draw in range(200):
+        confidence = uniform_int("t0-guard", ("answer",), draw, "confidence", -200, 1200)
+        adapter.reply = dict(output="evidence", citations=["event"], confidence_milli=confidence)
+        if 0 <= confidence <= 1000:
+            assert t0._Guarded(adapter).query({}, 0) == adapter.reply
+        else:
+            with pytest.raises(SystemFault):
+                t0._Guarded(adapter).query({}, 0)
+    for reply in (None, {}, dict(output="ok", citations=[False], confidence_milli=1000),
+                  dict(output="ok", citations=[], confidence_milli=True)):
+        adapter.reply = reply
+        with pytest.raises(SystemFault):
+            t0._Guarded(adapter).query({}, 0)
+
+
+def test_purity():
+    from bicentennial import cli
+
+    for module in (t0, cli):
+        _pure_module(module)
+
+
+def _pure_module(module):
+    tree = ast.parse(Path(module.__file__).read_bytes())
+    forbidden = {"socket", "ssl", "http", "urllib", "requests", "random"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(a.name.split(".")[0] not in forbidden for a in node.names)
+        if isinstance(node, ast.ImportFrom):
+            assert node.module.split(".")[0] not in forbidden
+            assert node.module != "bicentennial.director.upstream"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            assert "lcm" not in node.value.casefold()
+        for field in ("id", "attr", "name", "arg"):
+            value = getattr(node, field, None)
+            assert not isinstance(value, str) or "lcm" not in value.casefold()
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if ast.unparse(node.func) in ("os.environ.get", "os.getenv"):
+                assert node.args[0].value == "PYTHONHASHSEED"
+        if isinstance(node, ast.Subscript) and ast.unparse(node.value) == "os.environ":
+            assert node.slice.value == "PYTHONHASHSEED"
+
+
+def test_resume_lock(installed):
+    _, index, digest = installed
+    for pack in packs(installed):
+        lock = t0._lock(index, pack, dict(name="reference_store", surfaces=[]), digest, False)
+        assert lock["pack_hash"] == digest
+        assert lock["harness_artifacts"] == index["harness_artifacts"]
+        assert lock["account_pool"] == []
+        assert lock["analysis_commit"] == lock["benchmark_commit"] == lock["director_commit"]
+
+
+def test_corpus_equality_deferred(installed, tmp_path):
+    corpus = pytest.importorskip("bicentennial.corpus.run", reason="S12 not on base")
+    catalogue = load_catalogue(ROOT / "packs/catalogue-v0.toml",
+        c7_path=ROOT / "specs/ring0/c7-partial.json", tier_path=ROOT / "tiers/life_specs/t0.toml")
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    row = catalogue.by_id()[pack.meta["row"]["id"]]
+    case = SimpleNamespace(catalogue_row=row.id, template=pack.template.ref,
+        c7_entry_sha256=pack.manifest["pins"]["c7_entries"][pack.template.ref],
+        levers=row.micro_spec().to_obj(pack.template), case_id=row.id,
+        fault_points=pack.schedule.fault_lite(), items=sorted(pack.records),
+        **{k: pack.meta["generator"][k] for k in (
+            "generator_version", "world_hash_b0", "world_hash_b1", "history_set_hash")})
+    with corpus.regenerate(case, root=tmp_path / "corpus", catalogue=catalogue) as (life, worlds, keys, items):
+        for branch in ("B0", "B1"):
+            assert [e for _, e in pack.events[branch]] == build.api_events(worlds[branch][1])
+            expected = corpus.drive(life, branch, worlds, keys, items, ReferenceStore,
+                                     oracle=False, forget=True, bound_s=5)
+            results, _, _ = t0.drive_branch(pack, branch, ReferenceStore, bound_s=5,
+                                            snapshot=snapshotter(tmp_path / "snap" / branch))
+            assert [corpus.outcome(results[i]) for i in sorted(results)] == expected
+
+
+def test_recomputed_c7(installed, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    freeze = ROOT / "specs/ring0/c7-partial.json"
+    for pack in packs(installed):
+        t0._check_c7(pack, freeze)
+    pack = packs(installed)[0]
+    copied = tmp_path / "c7.json"
+    obj = json.loads(freeze.read_bytes())
+    del obj["entries"][pack.template.ref]
+    copied.write_bytes(canon(obj))
+    with pytest.raises(t0.T0Refused, match="c7_missing"):
+        t0._check_c7(pack, copied)
+    templates = t0.TEMPLATES_BY_GENRE[pack.meta["genre"]]
+    changed = replace(pack.template, statement_id="decision-changed")
+    monkeypatch.setitem(templates, pack.template.template_id, changed)
+    with pytest.raises(t0.T0Refused, match="c7_changed"):
+        t0._check_c7(pack, freeze)
+
+
+def test_retry_classification(installed, tmp_path, monkeypatch):
+    pack = packs(installed)[0]
+    calls = []
+
+    class Intermittent(ReferenceStore):
+        def query(self, task, now):
+            calls.append(task["task_id"])
+            if len(calls) <= 2:
+                raise HarnessFailed("ipc")
+            return super().query(task, now)
+
+    monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Intermittent)
+    results, outcomes, roots, factories = t0._attempts(installed[1], pack, "B0",
+        dict(name="reference_store", surfaces=[]), installed[2], False, tmp_path, 0,
+        bound_s=5, host_options={})
+    try:
+        assert results and roots and len(factories) == 3
+        assert all(o["infra_reruns"] == 2 for o in outcomes.values())
+    finally:
+        t0._remove_units(factories)
+    assert not list(tmp_path.rglob("checkpoint.bin"))
+
+
+@pytest.mark.parametrize("system", [False, True])
+def test_exhausted_or_system_cause(installed, tmp_path, monkeypatch, system):
+    class Broken(ReferenceStore):
+        def query(self, task, now):
+            raise HarnessFailed("query_failed" if system else "ipc")
+
+    monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Broken)
+    results, outcomes, _, factories = t0._attempts(installed[1], packs(installed)[0], "B0",
+        dict(name="reference_store", surfaces=[]), installed[2], False, tmp_path, 0,
+        bound_s=5, host_options={})
+    try:
+        assert not results
+        assert len(factories) == (1 if system else 3)
+        assert {o["failure_class"] for o in outcomes.values()} == {
+            "SYSTEM_FAILURE" if system else "BLOCKED"}
+    finally:
+        t0._remove_units(factories)
+
+
+def test_retry_lock_change_refuses(installed, tmp_path, monkeypatch):
+    class Broken(ReferenceStore):
+        def query(self, task, now):
+            raise HarnessFailed("ipc")
+
+    monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Broken)
+    commits = iter(["1" * 40, "1" * 40, "2" * 40])
+    monkeypatch.setattr(t0, "_commit", lambda: next(commits))
+    with pytest.raises(t0.LockMismatch) as raised:
+        t0._attempts(installed[1], packs(installed)[0], "B0", dict(name="reference_store", surfaces=[]),
+            installed[2], False, tmp_path, 0, bound_s=5, host_options={})
+    assert raised.value.fields == ("analysis_commit", "benchmark_commit", "director_commit")
+
+
+@pytest.fixture
+def fake_hosts(installed, tmp_path, monkeypatch):
+    created = []
+
+    class FakeHost(ReferenceStore):
+        def __init__(self, entry, **options):
+            super().__init__()
+            self.options = options
+            self.paths = dict(workspace=options["root"] / "workspace")
+            self.paths["workspace"].mkdir()
+            self.store = options["root"] / "store"
+            self.store.mkdir()
+            self.closed = 0
+            self.log = []
+            created.append(self)
+
+        def surfaces(self):
+            (self.store / "events.json").write_bytes(self.checkpoint())
+            return [(self.store, [])]
+
+        def close(self):
+            self.closed += 1
+            assert self.closed == 1
+
+        def settle(self, bound_s):
+            self.log.append("settle")
+            return True
+
+        def begin_session(self, index):
+            assert index > 1 and self.log[-1] == "settle"
+            self.log.append("begin_session")
+
+        def probe(self, task, now):
+            assert self.log[-1] == "settle"
+            self.log.append("probe")
+            return ()
+
+    monkeypatch.setattr(t0, "HermesMemoryHost", FakeHost)
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    entry = load(REGISTRY / "hermes-native.toml")
+    lock = t0._lock(installed[1], pack, entry, installed[2], True)
+    factory = t0._Factory(pack, "B0", tmp_path / "unit", entry, lock, real=True)
+    yield factory, created
+    factory.close()
+
+
+def test_owned_host_drive(fake_hosts):
+    factory, created = fake_hosts
+    results, outcomes, roots = t0.drive_branch(factory.pack, "B0", factory,
+        bound_s=5, snapshot=factory.snapshot)
+    factory.close()
+    assert results and outcomes and roots
+    assert all(h.closed == 1 for h in created)
+    for host in created:
+        assert host.options["sim_epoch_s"] == 0
+        assert factory.pack.manifest["canary"].encode() not in (
+            host.paths["workspace"] / "pack/answer_key.json").read_bytes()
+
+
+def test_invariant_hosts_closed(fake_hosts):
+    factory, created = fake_hosts
+    verdicts = factory.invariants(5)
+    assert all(v.status == "PASS" for v in verdicts.values())
+    assert created and all(h.closed == 1 for h in created)
+
+
+def test_invariant_factory_refusal(fake_hosts, monkeypatch):
+    factory, created = fake_hosts
+
+    def refuse(*args, **kwargs):
+        raise GateRefused("marker")
+
+    monkeypatch.setattr(t0, "HermesMemoryHost", refuse)
+    with pytest.raises(GateRefused):
+        factory.invariants(5)
+    assert created == []
+    # The refusal remains captured; teardown also re-raises it unless acknowledged.
+    factory.refusals.clear()
+
+
+def test_invariant_adapter_refusal(fake_hosts, monkeypatch):
+    factory, created = fake_hosts
+
+    def refuse(self, bound_s):
+        raise GateRefused("marker")
+
+    # Capture a refusal thrown after construction, before S05 converts it.
+    original = t0.HermesMemoryHost
+    monkeypatch.setattr(original, "settle", refuse)
+    with pytest.raises(GateRefused):
+        factory.invariants(5)
+    assert created and all(h.closed == 1 for h in created)
+    factory.refusals.clear()
+
+
+def preflight(installed, **changes):
+    args = dict(system="reference_store", packs=installed[0], selected=["all"],
+                pack_hash=installed[2])
+    return t0._preflight(**(args | changes))
+
+
+def test_preflight_resolves_packs(installed):
+    index, selected, rows, entry, _, admission, options, bound_s = preflight(installed)
+    assert index == installed[1]
+    assert [p.rel for p in selected] == sorted(index["packs"])
+    assert len(selected) == len(rows) == 7
+    assert entry == dict(name="reference_store", surfaces=[])
+    assert admission.admitted and options == {} and bound_s == 5
+    chosen = selected[0]
+    assert preflight(installed, selected=[chosen.rel])[1][0].rel == chosen.rel
+    assert preflight(installed, selected=[chosen.pack["pack_id"]])[1][0].rel == chosen.rel
+
+
+@pytest.mark.parametrize("changes,code", [
+    (dict(system="nomemory"), "unknown_system"),
+    (dict(system="../outside"), "unknown_system"),
+    (dict(system="no-memory"), "harness_not_hermes"),
+    (dict(system="hermes-native"), "unmeasured:fresh_install_hash"),
+    (dict(selected=["unknown"]), "unknown_pack"),
+    (dict(selected=["all", "unknown"]), "unknown_pack"),
+    (dict(mode="hermes"), "mode_unavailable:hermes"),
+    (dict(workers=0), "positive integer roots required"),
+    (dict(pack_hash="0" * 64), "pinned_artifact_changed"),
+])
+def test_preflight_refusals(installed, changes, code, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("a preflight refusal constructed a host")
+
+    monkeypatch.setattr(t0, "HermesMemoryHost", forbidden)
+    with pytest.raises((t0.T0Refused, t0.SystemRefused, t0.PinnedArtifactChanged)) as raised:
+        preflight(installed, **changes)
+    error = raised.value
+    assert code in (*getattr(error, "reasons", ()), getattr(error, "code", ""))
+
+
+def test_preflight_busy_marker(installed, monkeypatch):
+    from bicentennial.runner.guard import Marker
+
+    monkeypatch.setattr(t0, "read_marker", lambda: Marker(11, False, "busy"))
+    with pytest.raises(t0.T0Refused, match="marker exit 11"):
+        preflight(installed)
+
+
+def test_preflight_registry_requirements(installed, tmp_path):
+    entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)
+    with pytest.raises(t0.T0Refused, match="missing_input"):
+        preflight(installed, system="hermes-native", entry=entry)
+    prepared = preflight(installed, system="hermes-native", entry=entry,
+                         host_overrides={"checkout": tmp_path})
+    assert prepared[6]["checkout"] == tmp_path
+    assert prepared[6]["harness_pin"] == installed[1]["harness_artifacts"][0]
+
+
+def test_preflight_c7_before_host(installed, monkeypatch):
+    entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)
+    original = t0.c7_entries
+
+    def missing(path):
+        entries = dict(original(path))
+        del entries[packs(installed)[0].template.ref]
+        return entries
+
+    monkeypatch.setattr(t0, "c7_entries", missing)
+    with pytest.raises(t0.T0Refused, match="c7_missing"):
+        preflight(installed, system="hermes-native", entry=entry, hermes="stub")
+
+
+def test_parallel_pack_invariants_and_baseline(installed, tmp_path):
+    index, selected, by_row, entry, _, _, _, bound_s = preflight(installed)
+    adapter_verdicts = t0.adapter_invariants(ReferenceStore, bound_s=bound_s)
+    assert all(v.status == "PASS" for v in adapter_verdicts.values())
+    for pack in selected:
+        factories = []
+        try:
+            results, outcomes, roots, made = t0._branches(index, pack, entry, installed[2], False,
+                tmp_path / pack.pack["pack_id"] / "main", 2, bound_s=bound_s, host_options={})
+            factories.extend(made)
+            baseline = {}
+            if any(t0._verb_member(pack, i) for i in pack.pack["items"]):
+                twin = by_row[pack.meta["row"]["baseline"]]
+                twin_results, _, _, made = t0._branches(index, twin, entry, installed[2], False,
+                    tmp_path / pack.pack["pack_id"] / "baseline", 1, bound_s=bound_s, host_options={})
+                factories.extend(made)
+                baseline = t0._baseline_context(pack, twin, twin_results)
+                assert baseline and all(baseline.values())
+            verdicts = t0._pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts)
+            assert [v["invariant"] for v in verdicts] == list(t0.INVARIANTS)
+            by_inv = {v["invariant"]: v for v in verdicts}
+            if pack.meta["row"]["id"] == "g2-keep-forget-mft-1":
+                assert by_inv["INV-FORGET"]["status"] == "PASS"
+                assert by_inv["INV-FORGET"]["members"] >= 1
+            if pack.meta["row"]["id"] == "g2-drift-asof-dir-2":
+                assert by_inv["INV-VERB"]["status"] == "PASS"
+                assert by_inv["INV-VERB"]["members"] == 1
+            assert canon(verdicts)
+        finally:
+            t0._remove_units(factories)
+
+
+def test_refused_branches_remove_units(installed, tmp_path, monkeypatch):
+    class Refused(ReferenceStore):
+        def query(self, task, now):
+            raise GateRefused("marker")
+
+    monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Refused)
+    with pytest.raises(GateRefused):
+        t0._branches(installed[1], packs(installed)[0], dict(name="reference_store", surfaces=[]),
+            installed[2], False, tmp_path, 2, bound_s=5, host_options={})
+    assert not list(tmp_path.rglob("checkpoint.bin"))
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_host_unknown_cause_is_infrastructure(fake_hosts, monkeypatch, malformed):
+    factory, _ = fake_hosts
+    host = factory()
+
+    def query(task, now):
+        if malformed:
+            return {"output": "invalid answer"}
+        raise ValueError("host IPC decode")
+
+    monkeypatch.setattr(host.host, "query", query)
+    with pytest.raises(SystemFault if malformed else ValueError):
+        t0._Guarded(host).query({}, 0)
+
+
+def run(installed, out, **changes):
+    return t0.run_t0(**(dict(system="reference_store", packs=["all"], packs_dir=installed[0],
+                            pack_hash=installed[2], out=out) | changes))
+
+
+def no_floats(value):
+    assert not isinstance(value, float)
+    if isinstance(value, dict):
+        for child in value.values():
+            no_floats(child)
+    elif isinstance(value, list):
+        for child in value:
+            no_floats(child)
+
+
+def validate_outputs(out, installed):
+    for rel in sorted(installed[1]["packs"]):
+        directory = out / rel
+        for filename, schema in (("card.json", "card_ring0"), ("receipt.json", "receipt")):
+            data = (directory / filename).read_bytes()
+            value = json.loads(data)
+            validate(schema, value)
+            assert data == canon(value)
+        xml = ET.parse(directory / "junit.xml").getroot()
+        assert xml.tag == "testsuites" and set(xml.attrib) == {"name", "tests", "failures", "errors"}
+        assert len(xml) == 3
+        for suite in xml:
+            assert suite.tag == "testsuite"
+            assert set(suite.attrib) == {"name", "tests", "failures", "errors", "skipped"}
+            cases = suite.findall("testcase")
+            assert int(suite.attrib["tests"]) == len(cases)
+            assert len({c.attrib["name"] for c in cases}) == len(cases)
+            assert all(c.attrib.keys() == {"name", "classname"} and len(c) <= 1 for c in cases)
+            for case in cases:
+                for detail in case:
+                    assert detail.tag in {"failure", "error", "skipped"}
+                    assert set(detail.attrib) == {"type", "message"} and not len(detail)
+            for tag, count in (("failure", "failures"), ("error", "errors"), ("skipped", "skipped")):
+                assert int(suite.attrib[count]) == sum(c.find(tag) is not None for c in cases)
+        for count in ("tests", "failures", "errors"):
+            assert int(xml.attrib[count]) == sum(int(s.attrib[count]) for s in xml)
+        if shutil.which("xmllint"):
+            subprocess.run(["xmllint", "--noout", "--schema", str(ROOT / "schemas/junit.xsd"),
+                            str(directory / "junit.xml")], capture_output=True, check=True)
+        invariants = json.loads((directory / "invariants.json").read_bytes())
+        assert [v["invariant"] for v in invariants] == list(t0.INVARIANTS)
+    for path in sorted(out.rglob("*.json")):
+        no_floats(json.loads(path.read_bytes()))
+
+
+def test_reference_whole_run(installed, tmp_path, monkeypatch):
+    out, baselines, times = tmp_path / "out", [], {}
+    original_branch, original_report = t0._branches, t0._report_pack
+
+    def branches(*args, **kwargs):
+        if "baseline" in Path(args[5]).parts:
+            baselines.append(args[1].meta["row"]["id"])
+        return original_branch(*args, **kwargs)
+
+    def report(pack, *args, **kwargs):
+        result = original_report(pack, *args, **kwargs)
+        times[pack.meta["row"]["id"]] = t0.time.time_ns() // 1_000_000 - args[-1]
+        return result
+
+    monkeypatch.setattr(t0, "_branches", branches)
+    monkeypatch.setattr(t0, "_report_pack", report)
+    assert run(installed, out) == 0
+    validate_outputs(out, installed)
+    assert all(v["status"] == "PASS" for v in json.loads((out / "adapter_invariants.json").read_bytes()))
+    assert len(times) == 7 and all(ms < 60_000 for ms in times.values())
+    print("whole_run_pack_ms=" + json.dumps(times, sort_keys=True))
+    print("xmllint=" + str(shutil.which("xmllint")))
+    for pack in packs(installed):
+        card = json.loads((out / pack.rel / "card.json").read_bytes())
+        verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
+        assert card["masked_ledger_digest"] == sha256(b"[]").hexdigest()
+        assert "scripted_model" not in card["labels"]
+        assert card["controls"]["wiped_store"] == "not run at T0"
+        assert card["controls"]["naive_rag"] == "not run in v0.1"
+        if pack.meta["row"]["id"] == "g2-keep-forget-mft-1":
+            assert verdicts["INV-FORGET"]["status"] == "PASS"
+            assert verdicts["INV-FORGET"]["members"] >= 1
+        if pack.meta["row"]["id"] == "g2-drift-asof-dir-2":
+            assert verdicts["INV-VERB"]["status"] == "PASS"
+            assert verdicts["INV-VERB"]["members"] == 1
+            assert pack.meta["row"]["baseline"] in baselines
+        if pack.meta["row"]["id"] == "g2-recall-count-mft-1":
+            assert len(card["items"]) == 1 and card["bundles"] == []
+            assert card["singletons"] == [dict(item_id=card["items"][0]["item_id"], life=pack.meta["life"])]
+            assert card["gate_verdict"] == "PASS"
+    relations = json.loads((out / "relations.json").read_bytes())["relations"]
+    assert len(relations) == 1
+    assert (relations[0]["row"], relations[0]["base"], relations[0]["test"]) == (
+        "g2-drift-asof-dir-2", next(p.meta["row"]["baseline"] for p in packs(installed)
+                                 if p.meta["row"]["id"] == "g2-drift-asof-dir-2"), "DIR")
+
+
+def stable_files(out):
+    names = {"card.json", "junit.xml", "invariants.json", "adapter_invariants.json", "relations.json"}
+    return {p.relative_to(out).as_posix(): p.read_bytes() for p in sorted(out.rglob("*")) if p.name in names}
+
+
+def test_reference_determinism_and_workers(installed, tmp_path):
+    first, second = tmp_path / "one", tmp_path / "two"
+    assert run(installed, first) == run(installed, second, workers=2) == 0
+    assert stable_files(first) == stable_files(second)
+    print("card_sha256=" + json.dumps({p: sha256(data).hexdigest() for p, data in stable_files(first).items()
+                                      if p.endswith("card.json")}, sort_keys=True))
+
+
+def cli_command(installed, out, *extra):
+    return [sys.executable, "-m", "bicentennial.cli", "t0", "--system", "reference_store", "--pack", "all",
+            "--packs", str(installed[0]), "--pack-hash", installed[2], "--out", str(out), *extra]
+
+
+def test_cli_subprocess_determinism(installed, tmp_path):
+    outputs, failures = [], []
+    for name in ("one", "two"):
+        out = tmp_path / name
+        result = subprocess.run(cli_command(installed, out), capture_output=True, text=True,
+                                env=dict(os.environ, PYTHONHASHSEED="0"))
+        if result.returncode and ("PermissionError: [Errno 1]" in result.stderr or
+                                   "taskpolicy: setpriority(): Operation not permitted" in result.stderr):
+            failures.append(result.stderr.splitlines()[-1])
+        else:
+            assert result.returncode == 0, result.stderr
+            outputs.append(stable_files(out))
+    if failures:
+        pytest.skip("sandbox scheduling denied: " + "; ".join(failures))
+    assert outputs[0] == outputs[1]
+    print("subprocess_card_sha256=" + json.dumps({p: sha256(data).hexdigest() for p, data in outputs[0].items()
+                                                 if p.endswith("card.json")}, sort_keys=True))
+
+
+@pytest.mark.parametrize("system,failed", [
+    ("forget_ignored", {"INV-FORGET"}), ("stale_wins", {"INV-NEW"}),
+    ("wipe_on_restart", {"INV-VERB", "INV-NEW", "INV-PAIR"})])
+def test_mutant_whole_runs(installed, tmp_path, system, failed):
+    out = tmp_path / "out"
+    assert run(installed, out, system=system) == 1
+    verdicts = json.loads((out / "adapter_invariants.json").read_bytes())
+    assert {v["invariant"] for v in verdicts if v["status"] == "FAIL"} == failed
+    assert all(json.loads(p.read_bytes())["gate_verdict"] == "FAIL" for p in out.rglob("card.json"))
+    validate_outputs(out, installed)
+
+
+@pytest.mark.parametrize("kind,code,failure", [("settle", 1, "SYSTEM_FAILURE"),
+    ("twice", 1, None), ("always", 2, "BLOCKED"), ("system", 1, "SYSTEM_FAILURE")])
+def test_whole_run_failure_classes(installed, tmp_path, monkeypatch, kind, code, failure):
+    attempts = {}
+    original = t0._attempts
+
+    def isolated(*args, **kwargs):
+        # The selected baseline row is also driven independently as an auxiliary.
+        # Count attempts within each drive, rather than sharing query counts across drives.
+        attempts.clear()
+        return original(*args, **kwargs)
+
+    class Broken(ReferenceStore):
+        def settle(self, bound_s):
+            return kind != "settle"
+
+        def query(self, task, now):
+            iid = task["task_id"]
+            attempts[iid] = attempts.get(iid, 0) + 1
+            if kind == "system":
+                raise HarnessFailed("query_failed")
+            if kind == "always" or kind == "twice" and attempts[iid] <= 2:
+                raise HarnessFailed("ipc")
+            return super().query(task, now)
+
+    monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Broken)
+    monkeypatch.setattr(t0, "_attempts", isolated)
+    out = tmp_path / "out"
+    assert run(installed, out) == code
+    validate_outputs(out, installed)
+    for path in sorted(out.rglob("card.json")):
+        card = json.loads(path.read_bytes())
+        assert card["run_status"] == ("BLOCKED" if kind == "always" else "COMPLETE")
+        if failure:
+            assert all(i["failure_class"] == failure for i in card["items"])
+        if kind == "twice":
+            assert all(i["infra_reruns"] == 2 for i in card["items"])
+
+
+def assert_no_results(out):
+    assert not any(p.name in {"card.json", "receipt.json", "junit.xml"} for p in out.rglob("*"))
+
+
+@pytest.mark.parametrize("changes,code", [
+    (dict(system="nomemory"), "unknown_system"), (dict(system="no-memory"), "harness_not_hermes"),
+    (dict(system="hermes-native"), "unmeasured:fresh_install_hash"),
+    (dict(packs=["unknown"]), "unknown_pack"), (dict(pack_hash="0" * 64), "pinned_artifact_changed"),
+    (dict(mode="hermes"), "mode_unavailable:hermes")])
+def test_library_refusals(installed, tmp_path, capsys, changes, code):
+    out = tmp_path / "out"
+    assert run(installed, out, **changes) == 3
+    assert code in capsys.readouterr().err
+    assert_no_results(out)
+
+
+@pytest.mark.parametrize("extra,seed,code", [
+    ([], "random", "hashseed"), (["--workers", "0"], "0", "usage"),
+    (["--unknown"], "0", "usage")])
+def test_cli_preconditions(installed, tmp_path, extra, seed, code):
+    out = tmp_path / "out"
+    result = subprocess.run(cli_command(installed, out, *extra), capture_output=True, text=True,
+                            env=dict(os.environ, PYTHONHASHSEED=seed))
+    assert result.returncode == 3 and code in result.stderr
+    assert_no_results(out)
+
+
+def test_cli_dispatch_order(installed, tmp_path, monkeypatch):
+    from bicentennial import cli
+
+    calls = []
+    monkeypatch.setattr(cli, "reexec_niced", lambda args: calls.append(args))
+    monkeypatch.setattr(cli, "run_t0", lambda **args: calls.append(args) or 2)
+    args = cli_command(installed, tmp_path / "out")[3:]
+    assert cli.main(args) == 2
+    assert calls[0] == ["-m", "bicentennial.cli", *args]
+    assert calls[1]["workers"] == 1 and calls[1]["mode"] == "api"
+
+
+def test_existing_out_and_operator_refused(installed, tmp_path, monkeypatch, capsys):
+    assert run(installed, tmp_path) == 3
+    assert "out_exists" in capsys.readouterr().err
+    monkeypatch.setenv("BICENTENNIAL_OPERATOR", "benchmark")
+    assert run(installed, tmp_path / "operator", system="lcm-x") == 3
+    assert "benchmark_operator_forbidden" in capsys.readouterr().err
+
+
+def test_busy_before_host(installed, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("BICENTENNIAL_BUSY_CMD", "printf '{\"glm\":false,\"state\":\"busy\"}'; exit 11")
+    monkeypatch.setattr(t0, "HermesMemoryHost", lambda *a, **kw: pytest.fail("host constructed"))
+    entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)
+    assert run(installed, tmp_path / "out", system="hermes-native", entry=entry, hermes=tmp_path) == 3
+    assert "marker exit 11" in capsys.readouterr().err
+
+
+def test_last_pack_spend_refuses_before_publication(installed, tmp_path, monkeypatch, capsys):
+    original, receipts = t0.build_receipt, []
+
+    def positive(**kwargs):
+        receipt = original(**kwargs)
+        receipts.append(receipt)
+        if len(receipts) == len(installed[1]["packs"]):
+            receipt["spend_micro_usd"] = 1
+        return receipt
+
+    monkeypatch.setattr(t0, "build_receipt", positive)
+    out = tmp_path / "out"
+    assert run(installed, out) == 3
+    assert "SpendRefused" in capsys.readouterr().err
+    assert len(receipts) == 7
+    assert_no_results(out)
+    assert json.loads((out / "refusal.json").read_bytes())["code"] == "SpendRefused"
+
+
+def test_run_lock_mismatch_is_durable(installed, tmp_path, monkeypatch):
+    original, changed = t0._commit, False
+
+    class Broken(ReferenceStore):
+        def query(self, task, now):
+            nonlocal changed
+            if task["task_id"] not in {"verb-1", "verb-2", "verb-3", "new-a", "new-b",
+                                      "pair-call", "pair-result", "forget-1", "forget-2"}:
+                changed = True
+                raise HarnessFailed("ipc")
+            return super().query(task, now)
+
+    monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Broken)
+    monkeypatch.setattr(t0, "_commit", lambda: "2" * 40 if changed else original())
+    out = tmp_path / "out"
+    assert run(installed, out, workers=1) == 3
+    assert_no_results(out)
+    assert json.loads((out / "refusal.json").read_bytes()) == dict(code="lock_mismatch",
+        fields=["analysis_commit", "benchmark_commit", "director_commit"])
+
+
+@pytest.mark.parametrize("mutation", ["append", "mode"])
+def test_installed_mutation_refused(installed, tmp_path, mutation, capsys):
+    copied = tmp_path / "installed"
+    shutil.copytree(installed[0], copied)
+    target = copied / sorted(installed[1]["packs"])[0] / "sealed/pack.json"
+    try:
+        target.chmod(0o644)
+        if mutation == "append":
+            target.write_bytes(target.read_bytes() + b" ")
+            target.chmod(0o444)
+        out = tmp_path / "out"
+        assert run(installed, out, packs_dir=copied) == 3
+        assert "pinned_artifact_changed" in capsys.readouterr().err
+        assert_no_results(out)
+    finally:
+        for p in [copied, *sorted(copied.rglob("*"))]:
+            p.chmod(p.stat().st_mode | stat.S_IWUSR)
+
+
+def test_second_verify_precedes_any_result(installed, tmp_path, monkeypatch):
+    original, calls = t0.verify, []
+
+    def verify(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            raise t0.PinnedArtifactChanged(["test_pin"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(t0, "verify", verify)
+    out = tmp_path / "out"
+    assert run(installed, out) == 3
+    assert len(calls) == 2 and "lock" in calls[1]
+    assert_no_results(out)
+    assert json.loads((out / "refusal.json").read_bytes())["fields"] == ["test_pin"]
+
+
+def test_c7_whole_run_refusal_before_host(installed, tmp_path, monkeypatch):
+    original = t0.c7_entries
+
+    def missing(path):
+        entries = dict(original(path))
+        del entries[packs(installed)[0].template.ref]
+        return entries
+
+    monkeypatch.setattr(t0, "c7_entries", missing)
+    monkeypatch.setattr(t0, "HermesMemoryHost", lambda *a, **kw: pytest.fail("host constructed"))
+    entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)
+    out = tmp_path / "out"
+    assert run(installed, out, system="hermes-native", entry=entry, hermes=tmp_path) == 3
+    assert_no_results(out)
+
+
+@pytest.mark.parametrize("during", ["factory", "settle"])
+def test_invariant_refusal_is_exit_three(installed, tmp_path, monkeypatch, during):
+    def refuse(*a, **kw):
+        raise GateRefused("marker")
+
+    if during == "factory":
+        monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", refuse)
+    else:
+        class Refused(ReferenceStore):
+            def settle(self, bound_s):
+                raise GateRefused("marker")
+
+        monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Refused)
+    out = tmp_path / "out"
+    assert run(installed, out) == 3
+    assert_no_results(out)
+
+
+@pytest.mark.parametrize("rows,egress,refused", [
+    ([dict(served_by="scripted", upstream=[dict(served_by="scripted", diagnostics=[])])], [], False),
+    ([dict(upstream=[dict(error="failed")])], [], False),
+    ([dict(served_by="live")], [], True),
+    ([dict(served_by="scripted", upstream=[dict(served_by="live")])], [], True),
+    ([dict(upstream=[dict(served_by="scripted", diagnostics=["forward"])])], [], True),
+    ([], ["remote:443"], True)])
+def test_audit_scripted_attempt_boundary(tmp_path, rows, egress, refused):
+    host = SimpleNamespace(records=lambda: rows,
+        egress=SimpleNamespace(summary=lambda: dict(non_loopback=egress)),
+        paths=dict(root=tmp_path), gate=[], pids=[], server=SimpleNamespace(port=1234), growth=0,
+        director=SimpleNamespace(run_values=dict(sandbox_root=str(tmp_path), director_port="1234")))
+    factories = [SimpleNamespace(hosts=[host])]
+    if refused:
+        with pytest.raises(t0.T0Refused, match="upstream_record"):
+            t0._audit(factories)
+    else:
+        assert t0._audit(factories)["records"] == rows
+
+
+def test_response_usage_streams(tmp_path):
+    store = t0.BlobStore(tmp_path / "ledger/blobs", t0.Guard([]))
+    req = store.put(dict(messages=[]))
+    responses = [dict(usage=dict(prompt_tokens=5, completion_tokens=2)),
+                 dict(sse=[dict(usage=None), dict(usage=dict(input_tokens=7, output_tokens=3))]),
+                 dict(sse=[dict(type="response.completed", response=dict(usage=dict(input_tokens=11,
+                                                                                   output_tokens=4)))])]
+    rows = [dict(type="request", req=req, resp=store.put(r), role="extraction", t_ms=10)
+            for r in responses]
+    host = SimpleNamespace(records=lambda: rows,
+        egress=SimpleNamespace(summary=lambda: dict(non_loopback=[])),
+        paths=dict(root=tmp_path), gate=[], pids=[], server=SimpleNamespace(port=1234), growth=0,
+        director=SimpleNamespace(run_values=dict(sandbox_root=str(tmp_path), director_port="1234")))
+    audited = t0._audit([SimpleNamespace(hosts=[host])])
+    assert audited["tokens"] == dict(extraction=(23, 9))
+    assert audited["runtime"] == dict(extraction=30)
+
+
+@pytest.fixture
+def stub_hosts(tmp_path, monkeypatch):
+    from bicentennial.harness.hermes.plugin_host import WORKER
+
+    write_tree = runpy.run_path(str(ROOT / "tests/harness/hermes_stub.py"))["write_tree"]
+    created, denied = [], []
+    raw = t0.HermesMemoryHost
+
+    class SpyHost(raw):
+        def __init__(self, *args, **kwargs):
+            if denied:
+                raise denied[0]
+            try:
+                super().__init__(*args, **kwargs)
+            except Exception as error:
+                denied.append(error)
+                raise
+            self.close_calls, self.calls = 0, []
+            created.append(self)
+
+        def ingest(self, event):
+            try:
+                return super().ingest(event)
+            except PermissionError as error:
+                denied.append(error)
+                raise
+
+        def settle(self, bound_s):
+            self.calls.append("settle")
+            return super().settle(bound_s)
+
+        def checkpoint(self):
+            assert self.calls[-1] == "settle"
+            self.calls.append("checkpoint")
+            return super().checkpoint()
+
+        def probe(self, task, now):
+            assert self.calls[-1] == "settle"
+            self.calls.append("probe")
+            return super().probe(task, now)
+
+        def begin_session(self, index):
+            assert index > 1 and self.calls[-1] == "settle"
+            self.calls.append("begin_session")
+            return super().begin_session(index)
+
+        def close(self):
+            self.close_calls += 1
+            assert self.close_calls == 1
+            # Audit before the runner removes the unit.
+            assert not self.egress.summary()["non_loopback"]
+            assert all(r.get("served_by") != "live" and all(
+                a.get("served_by") == "scripted" or "error" in a for a in r.get("upstream", []))
+                for r in self.records())
+            result = super().close()
+            for pid in self.pids:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    pytest.fail(f"worker survived: {pid}")
+            visible = self.paths["workspace"] / "pack"
+            for path in sorted(visible.rglob("*")):
+                if path.is_file():
+                    assert build.CANARY.encode() not in path.read_bytes()
+            return result
+
+    monkeypatch.setattr(t0, "HermesMemoryHost", SpyHost)
+
+    def options(mode="none"):
+        checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode)
+        return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
+                    dict(fresh_install_hash="1" * 64), host_overrides=dict(
+                    checkout=checkout, worker_argv=[sys.executable, str(WORKER)]))
+
+    yield options, created, denied
+    assert all(host.close_calls == 1 for host in created)
+
+
+def test_actual_stub_host_outputs_and_determinism(installed, tmp_path, stub_hosts):
+    options, created, denied = stub_hosts
+    kwargs = options()
+    outputs = []
+    for name in ("one", "two"):
+        out = tmp_path / name
+        code = run(installed, out, **kwargs)
+        if denied:
+            raise denied[0]
+        assert code in (0, 1)
+        validate_outputs(out, installed)
+        outputs.append(stable_files(out))
+    assert outputs[0] == outputs[1]
+    assert created and all(h.close_calls == 1 for h in created)
+    print("stub_card_sha256=" + json.dumps({p: sha256(data).hexdigest() for p, data in outputs[0].items()
+                                          if p.endswith("card.json")}, sort_keys=True))
+
+
+def test_actual_stub_keep_on_remove(installed, tmp_path, stub_hosts):
+    options, _, denied = stub_hosts
+    out = tmp_path / "out"
+    code = run(installed, out, **options("keep_on_remove"))
+    if denied:
+        raise denied[0]
+    assert code == 1
+    verdicts = json.loads((out / "adapter_invariants.json").read_bytes())
+    assert next(v for v in verdicts if v["invariant"] == "INV-FORGET")["status"] == "FAIL"
+
+
+def test_stub_busy_after_start(installed, tmp_path, stub_hosts, monkeypatch):
+    from bicentennial.harness.hermes import plugin_host
+    from bicentennial.runner.guard import Marker
+
+    options, created, _ = stub_hosts
+    monkeypatch.setattr(plugin_host, "read_marker", lambda: Marker(11, False, "busy"))
+    out = tmp_path / "out"
+    assert run(installed, out, **options()) == 3
+    assert created and all(h.pids == [] for h in created)
+    assert_no_results(out)
+    assert json.loads((out / "refusal.json").read_bytes())["code"] == "gate_refused"
+
+
+def test_close_error_preserves_system_cause(installed, tmp_path):
+    class Broken(ReferenceStore):
+        def query(self, task, now):
+            raise ValueError("system call")
+
+        def close(self):
+            raise HarnessFailed("cleanup")
+
+    results, outcomes, _ = t0.drive_branch(packs(installed)[0], "B0", Broken, bound_s=5,
+                                          snapshot=snapshotter(tmp_path))
+    assert not results and all(o["failure_class"] == "SYSTEM_FAILURE" for o in outcomes.values())
