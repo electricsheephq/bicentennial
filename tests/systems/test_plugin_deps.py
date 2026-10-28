@@ -63,6 +63,8 @@ class Marker:
         return self.marker == "sys_platform != 'win32'"
 markers = types.ModuleType('packaging.markers')
 markers.Marker = Marker
+for error in ('InvalidMarker', 'UndefinedComparison', 'UndefinedEnvironmentName'):
+    setattr(markers, error, type(error, (ValueError,), {{}}))
 sys.modules['packaging'] = types.ModuleType('packaging')
 sys.modules['packaging.markers'] = markers if {packaging!r} else None
 exec(sys.argv[3])
@@ -314,3 +316,12 @@ def test_all_mismatches_sorted(tmp_path, monkeypatch, capsys, tier):
     with pytest.raises((t0.T0Refused, t1.T1Refused), match="^plugin_deps_missing:a-pkg$"):
         prepared(tier, tmp_path, monkeypatch)
     assert capsys.readouterr().err == "a-pkg locked=2 installed=3\nz-pkg locked=1 installed=none\n"
+
+
+@pytest.mark.parametrize("marker", ["garbage", "python_version >", "python_version > '3' and"])
+def test_unusable_marker_is_an_invalid_lock(marker):
+    checked = subprocess.run([sys.executable, "-I", "-c", hp.WORKER_DISTS], capture_output=True, text=True,
+                             input=json.dumps([["demo", "1.0", marker], ["pip", "0", None]]), timeout=60)
+    assert checked.returncode == 0, checked.stderr
+    result = json.loads(checked.stdout)
+    assert result["invalid"] is True and "demo" not in result["applicable"]

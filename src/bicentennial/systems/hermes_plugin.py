@@ -84,9 +84,14 @@ normalise = lambda name: re.sub(r"[-_.]+", "-", name).lower()
 requirements = json.load(sys.stdin)
 applicable, invalid = {}, False
 if requirements:
-    from packaging.markers import Marker
+    from packaging.markers import InvalidMarker, Marker, UndefinedComparison, UndefinedEnvironmentName
 for name, version, marker in requirements:
-    if marker is None or Marker(marker).evaluate():
+    try:
+        applies = marker is None or Marker(marker).evaluate()
+    except (InvalidMarker, UndefinedComparison, UndefinedEnvironmentName):
+        invalid = True
+        continue
+    if applies:
         if name in applicable and applicable[name] != version:
             invalid = True
         applicable[name] = version
