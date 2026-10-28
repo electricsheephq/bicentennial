@@ -33,7 +33,7 @@ from bicentennial.systems.settle import settle
 PROVIDERS = {"holographic": "holographic", "mem0-oss": "mem0"}
 TREES = {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0")}
 # Benchmark-owned hash locks, covered by benchmark_commit.
-DEPENDENCIES = {"mem0-oss": "systems/locks/mem0-oss.txt"}
+DEPENDENCIES = {"holographic": "systems/locks/holographic.txt", "mem0-oss": "systems/locks/mem0-oss.txt"}
 MARKER = ".bicentennial-sandbox"
 MEM0_THREADS = ("mem0-prefetch", "mem0-sync")
 
