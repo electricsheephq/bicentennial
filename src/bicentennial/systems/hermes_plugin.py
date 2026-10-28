@@ -113,7 +113,7 @@ def normalise(name):
 def validate_dependencies(repo):
     for name, value in DEPENDENCIES.items():
         path = PurePosixPath(value)
-        if (name not in PROVIDERS or path.is_absolute() or ".." in path.parts or "\\" in value
+        if (not is_plugin(name) or path.is_absolute() or ".." in path.parts or "\\" in value
                 or path.parts[:2] != ("systems", "locks") or not (repo / path).is_file()):
             raise ValueError("plugin_deps_lock_invalid")
 
@@ -347,8 +347,11 @@ class PluginCell:
 def checkpoint_sqlite(directories):
     """Truncate SQLite WALs before hashing closed surfaces."""
     for directory in directories:
-        for path in directory.rglob("*"):
-            if not stat.S_ISREG(path.lstat().st_mode) or not path.with_name(path.name + "-wal").exists():
+        for path in sorted(directory.rglob("*")):
+            try:
+                if not stat.S_ISREG(path.lstat().st_mode) or not path.with_name(path.name + "-wal").exists():
+                    continue
+            except FileNotFoundError:  # a WAL that an earlier checkpoint in this walk removed
                 continue
             with path.open("rb") as stream:
                 sqlite = stream.read(16) == b"SQLite format 3\x00"

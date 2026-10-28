@@ -18,7 +18,12 @@ from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import WRITE_ARGS, ScriptedResponder
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed, HermesAdapter
-from bicentennial.harness.hermes.config import HERMES_TOOLSETS, hermes_config, layout, worker_env
+from bicentennial.harness.hermes.config import (
+    HERMES_TOOLSETS,
+    hermes_config,
+    layout,
+    worker_env,
+)
 from bicentennial.items.protocol import CANARY
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.runner import compare, t0, t1
@@ -111,10 +116,31 @@ def test_config_engine_and_owned_keys():
         assert sha256_canon(hermes_config(4321, "bicentennial-main", **kw)) == digest
     for kw in (dict(context_engine="compressor"), dict(context_engine="bad/name"),
                dict(context_engine="e", memory=False), dict(plugins_enabled=("d",), memory=False),
-               dict(plugins_enabled=("bad/name",)), dict(plugin_config={"context": {}}),
-               dict(plugin_config={"plugins": {}})):
+               dict(plugins_enabled=("bad/name",))):
         with pytest.raises(ValueError):
             hermes_config(4321, "main", **kw)
+
+
+@pytest.mark.parametrize("settings,key", [
+    ({"context": {"engine": "fixture"}}, "context.engine"),
+    ({"plugins": {"enabled": []}}, "plugins.enabled"),
+    ({"plugins": {"isolation": {}}}, "plugins.isolation"),
+    ({"context": None}, "context"),
+    ({"plugins": []}, "plugins"),
+])
+def test_config_owned_selection(settings, key):
+    with pytest.raises(ValueError, match=key.replace(".", r"\.")):
+        hermes_config(4321, "main", plugin_config=settings)
+
+
+def test_config_other_plugin_settings_merge():
+    settings = {"context": {"fixture_key": "fixture", "temperature": 1},
+                "plugins": {"fixture": {"depth": 2, "mcp_servers": {"fixture": True}}}}
+    cfg = hermes_config(4321, "main", context_engine="e", plugins_enabled=("d",), plugin_config=settings)
+    assert cfg["context"] == {"engine": "e", **settings["context"]}
+    assert cfg["plugins"] == {"enabled": ["d"], **settings["plugins"]}
+    cfg["plugins"]["fixture"]["depth"] = 3
+    assert settings["plugins"]["fixture"]["depth"] == 2
 
 
 @pytest.mark.parametrize("provider,directory,enabled", [(None, ENGINE, False), (None, "other-dir", True),
@@ -241,7 +267,7 @@ def test_live_fixture_engine(tmp_path, monkeypatch, mapped, archive):
         result = a.run_session(1, sim_t_s=1_600_000_000, lock_hash="ab" * 32, attempt_id="fixture")
         assert result.turns_ok == 1 and a.active_context_engine == ENGINE
         store = BlobStore(a.paths["root"] / "ledger/blobs", Guard([]))
-        row = next(r for r in a.records() if r.get("role") == "main" and r.get("type") == "request")
+        row = next(r for r in a.records() if r.get("path") == "/main/v1/chat/completions" and r.get("type") == "request")
         body = json.loads(store.get(row["req"]))
         assert "fixture_engine_probe" in [t["function"]["name"] for t in body["tools"]]
         cfg = json.loads((a.paths["hermes_home"] / "config.yaml").read_bytes())

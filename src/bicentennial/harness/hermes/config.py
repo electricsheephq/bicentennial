@@ -34,7 +34,7 @@ _SCRIPTED_AGENT = {"api_max_retries": 1, "auto_recovery_cycles": 0}
 # Same pin: agent/curator.py:_resolve_review_runtime reads legacy curator.auxiliary;
 # tools/delegate_tool_config.py:_load_config reads top-level delegation routes.
 _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model", "providers",
-                     "custom_providers", "moa", "curator", "delegation", "context", "plugins"}
+                     "custom_providers", "moa", "curator", "delegation"}
 
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None,
@@ -90,12 +90,24 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
     if plugin_config is not None:
         if not isinstance(plugin_config, dict):
             raise ValueError("plugin_config must be a dict")
+        for section, owned in (("context", ("engine",)), ("plugins", ("enabled", "isolation"))):
+            if section not in plugin_config:
+                continue
+            settings = plugin_config[section]
+            if not isinstance(settings, dict):
+                raise ValueError(f"plugin_config touches adapter-owned {section}")
+            for key in owned:
+                if key in settings:
+                    raise ValueError(f"plugin_config touches adapter-owned {section}.{key}")
         if _OWNED_ROUTE_KEYS & plugin_config.keys():
             raise ValueError("plugin_config touches adapter-owned routes")
         if ((isinstance(plugin_config.get("tools"), dict) and "tool_search" in plugin_config["tools"])
                 or (isinstance(plugin_config.get("agent"), dict) and _SCRIPTED_AGENT.keys() & plugin_config["agent"].keys())):
             raise ValueError("plugin_config touches adapter-owned scripted settings")
-        _merge_plugin(cfg, plugin_config)
+        _merge_plugin(cfg, {k: v for k, v in plugin_config.items() if k not in {"context", "plugins"}})
+        for section in ("context", "plugins"):
+            if section in plugin_config:
+                cfg.setdefault(section, {}).update(deepcopy(plugin_config[section]))
     if not memory:
         cfg["memory"] = {"memory_enabled": False, "user_profile_enabled": False, "provider": ""}
         cfg["platform_toolsets"] = {"acp": [t for t in toolsets if t not in ("memory", "session_search")]}

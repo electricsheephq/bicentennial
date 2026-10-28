@@ -202,7 +202,6 @@ Exit-3 codes and causes, including registry reasons above:
 | `schedule_mismatch` | Packed schedule differs from reconstructed schedule. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
 | `missing_input` | Required Hermes, plug-in source or model cache omitted, or an unused model cache supplied. |
-| `engine_inactive` | HarnessFailed: the configured context engine is not active, so Hermes fell back. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
 | `model_cache_changed` | Model-cache digest changed during the run. |
@@ -237,6 +236,8 @@ Busy-marker messages are `machine guard refused: marker exit N` for a refusing/u
 ## 9. Failure classes and stages
 
 Card `failure_class` values are FAIL_TASK, SYSTEM_FAILURE, BLOCKED, N/A_EXPOSURE and N/A_CLOCK. Attribution follows cause, not reporter. A benchmark-owned INFRA_FAILURE gets at most 2 reruns, then BLOCKED, never charged to the system; `infra_reruns` counts reruns ([PREREG §7](../../prereg/PREREG-v0.4.md#7-statistics)).
+
+The `engine_inactive` HarnessFailed stop label means the configured context engine is not active, so Hermes fell back.
 
 Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. Corpus statuses are PASS, FAIL (`mismatch`, `system_failure`, `stale_case`) and INFRA_FAILURE. Unsettled checkpoints still execute probes on clones, but every item becomes SYSTEM_FAILURE `unsettled`, regardless of reader result ([RING0 E2](../../specs/ring0/RING0.md#13-v01-errata)).
 

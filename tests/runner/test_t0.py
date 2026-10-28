@@ -1724,7 +1724,8 @@ def test_model_cache_prepare(installed, tmp_path, monkeypatch):
     cache.mkdir()
     (cache / "weights").write_bytes(b"fixture")
     monkeypatch.setitem(hp.WORKER_ENV, "holographic", {"MODEL_HOME": "{model_cache}"})
-    kw = dict(system="holographic", hermes=tmp_path, plugin_source=tmp_path)
+    kw = dict(system="holographic", hermes=tmp_path, plugin_source=tmp_path,
+              host_overrides={"worker_argv": ["fake"]})
     with pytest.raises(t0.T0Refused, match="^missing_input$"):
         preflight(installed, **kw)
     prepared = preflight(installed, model_cache=cache, **kw)

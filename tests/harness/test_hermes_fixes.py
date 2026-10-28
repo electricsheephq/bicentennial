@@ -374,7 +374,7 @@ def test_real_worker_reports_agent_memory_providers(monkeypatch, providers):
 
 
 def test_plugin_config_survives_every_spawn_and_is_recorded(tmp_path):
-    settings = {"context": {"engine": "fixture"}, "plugins": {"holographic": {"depth": 2}}}
+    settings = {"context": {"fixture_key": "fixture"}, "plugins": {"holographic": {"depth": 2}}}
     a = make(tmp_path, "settings", plugin="holographic", plugin_config=settings)
     try:
         session(a, 1)

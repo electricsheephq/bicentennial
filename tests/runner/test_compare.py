@@ -742,7 +742,7 @@ def test_cli(monkeypatch):
     args = ["t1", "--system", "s", "--packs", "p", "--pack-hash", "h", "--out", "o"]
     assert cli.main(args) == 2
     assert calls == [["-m", "bicentennial.cli", *args], dict(system="s", packs_dir="p",
-        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, cache=None)]
+        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, model_cache=None, cache=None)]
     assert cli.main(["t0", "--system", "s", "--pack", "all", "--packs", "p",
                      "--pack-hash", "h", "--out", "o"]) == 0
 
