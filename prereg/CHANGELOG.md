@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-28: Holographic's dependencies (#210)
+- **RING0 §13 E9:** Holographic gets a benchmark lock for numpy and snowballstemmer, at pinned Hermes's own versions, and runs on its own prepared copy of pinned Hermes. Before this, it ran without numpy, which turns off its holographic vectors and structural recall. No PREREG version change.
+
 ## Ring 0 contract change, 2026-10-28: the hashed-vector stub's scale and Mem0's extraction disclosure (#207, #208)
 - **RING0 §13 E10:** the hashed-vector stub maps token cosine c to (1 + c)/2 over D−1 hashed token coordinates, preserving similarity order for those token vectors while disclosing changed collisions and unvalidated hybrid weights and absolute thresholds.
 - **RING0 §13 E11:** pinned Mem0's automatic extraction stores no vector memories because it does not read the stub's reply format, so results cover explicit-write storage and recall wiring and disclose that extraction is not exercised.
