@@ -79,7 +79,7 @@ def resolve_worker_env(name, model_cache=None):
             if suffix and (not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", suffix)
                            or ".." in suffix.split("/")):
                 raise ValueError("invalid model cache path")
-        elif any(c in value for c in "/\\{:;"):
+        elif not re.fullmatch(r"[A-Za-z0-9._,=+-]*", value):  # a plain value never names a path
             raise ValueError("invalid worker environment value")
     return {k: v.replace("{model_cache}", str(model_cache)) if model_cache is not None else v
             for k, v in extra.items()}

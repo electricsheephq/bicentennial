@@ -196,7 +196,7 @@ def test_active_guard(tmp_path, monkeypatch, mapped, active, configured):
     ("BAD", "/absolute"), ("BAD", "{model_cache}//absolute"), ("BAD", "a\\b"),
     ("LD_PRELOAD", "{model_cache}/shim.so"), ("DYLD_INSERT_LIBRARIES", "{model_cache}/shim.dylib"),
     ("BAD", "{model_cache}/shim.so:/tmp/other.so"), ("BAD", "{model_cache}/a;b"), ("BAD", "{model_cache}/a b"),
-    ("BAD", "a:b"), ("BAD", "a;b")])
+    ("BAD", "a:b"), ("BAD", "a;b"), ("BAD", "~m1"), ("BAD", "a b"), ("BAD", "$HOME"), ("BAD", "a*b")])
 def test_env_recipe_refusals(monkeypatch, key, value):
     monkeypatch.setitem(hp.WORKER_ENV, NAME, {key: value})
     with pytest.raises(ValueError):
