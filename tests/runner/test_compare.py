@@ -147,6 +147,7 @@ def completed(installed, cases, tmp_path_factory):
 
 def test_full_run(completed, installed, cases):
     out = completed.root / "one"
+    assert {p.name for p in out.iterdir()} == {"system", "wiped"}
     valid(out)
     expected = {i["item_id"] for p in t1.prepare(system="hermes-native", packs=installed.root,
         pack_hash=installed.digest, entry=measured(), worker_argv=installed.worker).packs
@@ -214,6 +215,131 @@ def synth(replay, monkeypatch, cases):
 
 def set_run(monkeypatch, run):
     monkeypatch.setattr(compare, "run_arms", lambda ctx, **kwargs: run)
+
+
+@pytest.mark.parametrize("error", [OSError, KeyboardInterrupt, SystemExit])
+def test_write_failure_cleans_results(synth, installed, tmp_path, monkeypatch, capsys, error):
+    out, calls = tmp_path / "out", []
+    real = compare.write_run
+
+    def write(directory, **kwargs):
+        calls.append(directory)
+        if len(calls) == 2:
+            raise error("second arm")
+        return real(directory, **kwargs)
+
+    monkeypatch.setattr(compare, "write_run", write)
+    if error is OSError:
+        assert invoke(installed, out) == 70
+        stderr = capsys.readouterr().err
+        assert stderr.splitlines()[0] == "tool_failure"
+        assert "Traceback (most recent call last):" in stderr and "OSError: second arm" in stderr
+    else:
+        with pytest.raises(error, match="second arm"):
+            invoke(installed, out)
+    assert len(calls) == 2
+    no_results(out)
+    assert not (out / "staging").exists() and not (out / "refusal.json").exists()
+
+
+def test_cache_at_staging_survives_failure(synth, installed, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    cache = out / "staging"
+    real_controls = compare._controls
+
+    def controls(ctx, cache):
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "keep").write_bytes(b"cache")
+        return real_controls(ctx, cache)
+
+    monkeypatch.setattr(compare, "_controls", controls)
+    # The cache occupies the staging path, so staging cannot start; the cache must survive.
+    assert invoke(installed, out, cache=cache) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    no_results(out)
+    assert (cache / "keep").read_bytes() == b"cache"
+
+
+def test_publication_order_and_bytes(synth, installed, tmp_path, monkeypatch):
+    out, moves, staged = tmp_path / "out", [], {}
+    real = compare.os.replace
+
+    def move(source, target):
+        source, target = Path(source), Path(target)
+        if source.parent == out / "staging":
+            moves.append(source.name)
+            assert target == out / source.name
+            assert not (out / "system/card.json").exists()
+            if source.name == "system":
+                assert (out / "wiped/card.json").is_file()
+            staged.update({p.relative_to(out / "staging"): p.read_bytes()
+                           for p in source.rglob("*") if p.is_file()})
+        return real(source, target)
+
+    monkeypatch.setattr(compare.os, "replace", move)
+    assert invoke(installed, out) == 0
+    assert moves == ["wiped", "system"]
+    assert {p.name for p in out.iterdir()} == {"system", "wiped"}
+    assert len(staged) == 2 * len(RESULTS)
+    assert all((out / rel).read_bytes() == data for rel, data in staged.items())
+
+
+@pytest.mark.parametrize("error", [OSError, KeyboardInterrupt])
+def test_system_move_failure_rolls_back(synth, installed, tmp_path, monkeypatch, capsys, error):
+    out, moves = tmp_path / "out", []
+    real = compare.os.replace
+
+    def move(source, target):
+        source = Path(source)
+        if source.parent == out / "staging":
+            moves.append(source.name)
+            if source.name == "system":
+                raise error("system move")
+        return real(source, target)
+
+    monkeypatch.setattr(compare.os, "replace", move)
+    if error is OSError:
+        assert invoke(installed, out) == 70
+        assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    else:
+        with pytest.raises(error, match="system move"):
+            invoke(installed, out)
+    assert moves == ["wiped", "system"]
+    no_results(out)
+    assert not any(out.iterdir())
+
+
+def test_preflight_tool_failure(installed, tmp_path, monkeypatch, capsys):
+    def broken(**kwargs):
+        raise RuntimeError("preflight failed")
+
+    monkeypatch.setattr(t1, "prepare", broken)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 70
+    stderr = capsys.readouterr().err
+    assert stderr.splitlines()[0] == "tool_failure"
+    assert "RuntimeError: preflight failed" in stderr
+    assert not out.exists()
+
+
+def test_refusal_write_failure_cleans_results(synth, installed, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    real = Path.write_bytes
+
+    def refused(*args, **kwargs):
+        raise t1.T1Refused("test_refusal")
+
+    def write(path, data):
+        if path == out / "refusal.json":
+            real(path, data[:1])
+            raise OSError("refusal write")
+        return real(path, data)
+
+    monkeypatch.setattr(compare, "_execute", refused)
+    monkeypatch.setattr(Path, "write_bytes", write)
+    assert invoke(installed, out) == 70
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert not any(out.iterdir())
 
 
 def change_arm(run, arm, **changes):

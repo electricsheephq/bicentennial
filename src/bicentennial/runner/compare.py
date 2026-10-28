@@ -307,7 +307,7 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
     return junit_xml(suites)
 
 
-def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, start):
+def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, start, publication):
     run = run_arms(ctx, scratch=out / "work")
     rows = []
     for f in _runs(run, tuple(sorted(run.arms))):
@@ -361,52 +361,68 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
         if receipts[arm]["spend_micro_usd"] > 0:
             raise SpendRefused(receipts[arm]["spend_micro_usd"])
     verify(packs_dir, pack_hash=pack_hash, lock=ctx.current_lock(), expected_lock=ctx.lock)
+    staging = publication.begin()
     for arm in GATED:
-        directory = out / arm
+        directory = staging / arm
         directory.mkdir(parents=True)
         for name, data in (("invariants", canon(_invariants(run, arm))),
                            ("corpus", canon(corpus_objs[arm])), ("controls", controls)):
             (directory / f"{name}.json").write_bytes(data)
         write_run(directory, card=cards[arm], receipt=receipts[arm], junit=junit[arm])
+    publication.publish(("wiped", "system"))
     return 1 if vs in ("FAIL", "INVALID") else 2 if vs == "BLOCKED" else 0
 
 
 def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
            plugin_source=None, cache=None, entry=None, worker_argv=None, corpus_host=None) -> int:
     """Run the two-life comparison, returning the Ring 0 exit code."""
-    start = time.time_ns() // 1_000_000
-    out, created = Path(out), False
+    created, published, publication = False, False, None
     try:
-        if os.environ.get("PYTHONHASHSEED") != "0":
-            raise T1Refused("hashseed")
-        if out.exists() or out.is_symlink():
-            raise T1Refused("out_exists")
-        ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
-            plugin_source=plugin_source, entry=entry, worker_argv=worker_argv)
-        data = None
-        if baseline is not None:
-            try:
-                data = Path(baseline).read_bytes()
-            except OSError:
-                raise T1Refused("baseline_unreadable") from None
-            try:
-                check_baseline(data, system=ctx.entry["name"], pins=ctx.pins)
-            except BaselineMismatch:
-                raise
-            except ValueError:
-                raise T1Refused("baseline_invalid") from None
-        out.mkdir(parents=True)
-        created = True
-        return _execute(ctx, out=out, packs_dir=packs_dir, pack_hash=pack_hash, baseline=data,
-                        cache=cache, corpus_host=corpus_host, start=start)
-    except (*t1.REFUSALS, BaselineMismatch, SpendRefused) as error:
-        reasons = getattr(error, "reasons", ())
-        code = ("baseline_mismatch" if isinstance(error, BaselineMismatch) else
-            getattr(error, "code", None) or (",".join(sorted(reasons)) if reasons else
-            "SpendRefused" if isinstance(error, SpendRefused) else
-            "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
-        fields = [error.field] if isinstance(error, BaselineMismatch) else sorted(getattr(error, "fields", ()))
-        print(code, file=t0.sys.stderr)
+        start = time.time_ns() // 1_000_000
+        out = Path(out)
+        try:
+            if os.environ.get("PYTHONHASHSEED") != "0":
+                raise T1Refused("hashseed")
+            if out.exists() or out.is_symlink():
+                raise T1Refused("out_exists")
+            ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
+                plugin_source=plugin_source, entry=entry, worker_argv=worker_argv)
+            data = None
+            if baseline is not None:
+                try:
+                    data = Path(baseline).read_bytes()
+                except OSError:
+                    raise T1Refused("baseline_unreadable") from None
+                try:
+                    check_baseline(data, system=ctx.entry["name"], pins=ctx.pins)
+                except BaselineMismatch:
+                    raise
+                except ValueError:
+                    raise T1Refused("baseline_invalid") from None
+            out.mkdir(parents=True)
+            created = True
+            publication = t0._Publication(out)
+            code = _execute(ctx, out=out, packs_dir=packs_dir, pack_hash=pack_hash, baseline=data,
+                            cache=cache, corpus_host=corpus_host, start=start, publication=publication)
+            published = True
+            return code
+        except (*t1.REFUSALS, BaselineMismatch, SpendRefused) as error:
+            reasons = getattr(error, "reasons", ())
+            code = ("baseline_mismatch" if isinstance(error, BaselineMismatch) else
+                getattr(error, "code", None) or (",".join(sorted(reasons)) if reasons else
+                "SpendRefused" if isinstance(error, SpendRefused) else
+                "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
+            fields = [error.field] if isinstance(error, BaselineMismatch) else sorted(getattr(error, "fields", ()))
+            if created:
+                (out / "refusal.json").write_bytes(canon(dict(code=code, fields=fields)))
+            print(code, file=t0.sys.stderr)
+            return 3
+    except Exception:
+        print("tool_failure", file=t0.sys.stderr)
+        t0.traceback.print_exc()
         if created:
-            (out / "refusal.json").write_bytes(canon(dict(code=code, fields=fields)))
-        return 3
+            t0._remove_output(out / "refusal.json")
+        return 70
+    finally:
+        if publication is not None and not published:
+            publication.cleanup()
