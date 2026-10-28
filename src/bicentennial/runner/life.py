@@ -40,7 +40,7 @@ from bicentennial.harness.hermes.adapter import (
     PinMismatch,
 )
 from bicentennial.harness.hermes.config import HERMES_TOOLSETS
-from bicentennial.harness.hermes.envwire import EnvWiring
+from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
@@ -64,7 +64,6 @@ from bicentennial.world.targeted import expected_state
 
 ARMS = ("system", "wiped", "no_memory")
 STEP_S = 60
-ENV_END_WAIT_S = 10
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
@@ -350,10 +349,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             if genre == "G1" and workspace_hash(paths["workspace"]) != before:
                                 raise HarnessFailed("workspace_changed")
                             if genre == "G2":
-                                ends = [r for r in wiring.wait_end(index, ENV_END_WAIT_S) if r.get("type") == "boundary" and r.get("kind") == "session_end"]
+                                ends = [r for r in wiring.wait_end(index, END_WAIT_S) if r.get("type") == "boundary" and r.get("kind") == "session_end"]
                                 if not ends or ends[-1]["state_hash"] != expected[index]["env_state_hash"]:
                                     raise HarnessFailed("env_state")
                         elif by_id[probe.item_ids[0]]["stage"] == "act":
+                            if genre == "G2":  # the probe's server may still be writing its session_end
+                                wiring.wait_end(index, END_WAIT_S)
                             for iid in probe.item_ids:
                                 evidence.act[iid] = read_state(paths["workspace"]) if genre == "G1" else {
                                     "records": wiring.records(index)}

@@ -53,13 +53,15 @@ def test_wait_end_timeout(tmp_path, missing):
     assert 0.05 <= time.monotonic() - started < 1
 
 
-def test_wait_end_ignores_older_end(tmp_path):
+def test_wait_end_returns_only_the_newest_life(tmp_path):
+    # An older life's session_end (a killed server now writes one) must not stand in for the newest life's.
     wiring = wiring_at(tmp_path)
     log_at(tmp_path, 1).write_bytes(canon(END) + b"\n")
     log_at(tmp_path, 2).write_bytes(canon(START) + b"\n")
     started = time.monotonic()
-    assert wiring.wait_end(1, 0.06) == [END, START]
+    assert wiring.wait_end(1, 0.06) == [START]
     assert 0.05 <= time.monotonic() - started < 1
+    assert wiring.records(1) == [END, START]
 
 
 def test_wait_end_waits_past_an_unterminated_end(tmp_path):

@@ -9,6 +9,8 @@ from bicentennial.canon import canon
 from bicentennial.sandbox.envserver.state import State, state_hash
 
 ENV_SERVER = "envserver"
+# Longer than pinned Hermes's 3 s SIGTERM-to-SIGKILL grace for MCP servers, with margin for a loaded machine.
+END_WAIT_S = 10
 
 
 def _rows(life_dirs):
@@ -52,6 +54,8 @@ class EnvWiring:
 
     def __call__(self, session, reason):
         lives = self._lives(session)
+        if lives:  # the previous life's server may still be writing its session_end
+            self.wait_end(session, END_WAIT_S)
         seed = derived_seed(self.seeds[session], lives)
         directory = self.root / "env" / str(session) / f"life-{len(lives) + 1}"
         directory.mkdir(parents=True)
@@ -67,7 +71,10 @@ class EnvWiring:
         return _rows(self._lives(session))
 
     def wait_end(self, session, timeout_s):
-        """Wait for the newest server life to finish its durable session receipt."""
+        """Wait up to timeout_s for the newest server life's session_end, then return that life's rows only.
+
+        Pinned Hermes's worker exits without waiting for its MCP servers, so a server writes session_end after it.
+        An older life's session_end never stands in for the newest life's."""
         deadline = time.monotonic() + timeout_s
         while True:
             if _ended(self._lives(session)[-1:]):
@@ -76,4 +83,4 @@ class EnvWiring:
             if remaining <= 0:
                 break
             time.sleep(min(0.02, remaining))
-        return self.records(session)
+        return _rows(self._lives(session)[-1:])
