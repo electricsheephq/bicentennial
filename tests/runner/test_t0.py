@@ -575,17 +575,26 @@ def test_preflight_busy_marker(installed, monkeypatch):
         preflight(installed)
 
 
+def fake_worker_python(checkout):
+    python = checkout / ".venv/bin/python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("#!/bin/sh\ncat >/dev/null\necho '{\"applicable\":{},\"installed\":{},\"dists\":[]}'\n")
+    python.chmod(0o755)
+
+
 def test_preflight_registry_requirements(installed, tmp_path):
     entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)
     with pytest.raises(t0.T0Refused, match="missing_input"):
         preflight(installed, system="hermes-native", entry=entry)
+    fake_worker_python(tmp_path)
     prepared = preflight(installed, system="hermes-native", entry=entry,
                          host_overrides={"checkout": tmp_path})
     assert prepared[6]["checkout"] == tmp_path
     assert prepared[6]["harness_pin"] == installed[1]["harness_artifacts"][0]
 
 
-def test_preflight_c7_before_host(installed, monkeypatch):
+def test_preflight_c7_before_host(installed, tmp_path, monkeypatch):
+    fake_worker_python(tmp_path)
     entry = load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)
     original = t0.c7_entries
 
@@ -596,7 +605,7 @@ def test_preflight_c7_before_host(installed, monkeypatch):
 
     monkeypatch.setattr(t0, "c7_entries", missing)
     with pytest.raises(t0.T0Refused, match="c7_missing"):
-        preflight(installed, system="hermes-native", entry=entry, hermes="stub")
+        preflight(installed, system="hermes-native", entry=entry, hermes=tmp_path)
 
 
 def test_parallel_pack_invariants_and_baseline(installed, tmp_path):
@@ -723,6 +732,7 @@ def test_pack_invariant_rerun_keeps_known_failure(installed, tmp_path, monkeypat
 
 
 def test_pack_invariant_session_wakes(fake_hosts, installed, tmp_path, monkeypatch):
+    fake_worker_python(tmp_path)
     pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-drift-booking-mft-1")
     members = {i["item_id"] for i in pack.pack["items"]
                if pack.records[i["item_id"]]["evidence_session"] == 2 and i["probe_point"] == 3}
@@ -1070,6 +1080,7 @@ def test_clean_baseline_card_bytes(installed, tmp_path, monkeypatch):
 @pytest.mark.parametrize("close_fault", [False, True])
 def test_invariant_fault_attribution(fake_hosts, installed, tmp_path, monkeypatch,
                                      fault, status, code, count, close_fault):
+    fake_worker_python(tmp_path)
     factory, created = fake_hosts
     original = t0.HermesMemoryHost.query
     original_close = t0.HermesMemoryHost.close
@@ -1142,6 +1153,7 @@ def test_invariant_close_refusal_after_system_fault(fake_hosts, monkeypatch):
 
 @pytest.mark.parametrize("always", [False, True])
 def test_invariant_snapshot_infrastructure(fake_hosts, installed, tmp_path, monkeypatch, always):
+    fake_worker_python(tmp_path)
     factory, created = fake_hosts
     original = t0._Factory.snapshot
     attempts = []
@@ -1498,6 +1510,7 @@ def test_second_verify_precedes_any_result(installed, tmp_path, monkeypatch):
 
 
 def test_c7_whole_run_refusal_before_host(installed, tmp_path, monkeypatch):
+    fake_worker_python(tmp_path)
     original = t0.c7_entries
 
     def missing(path):

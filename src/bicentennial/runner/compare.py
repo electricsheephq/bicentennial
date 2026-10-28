@@ -17,7 +17,7 @@ from bicentennial.controls.cache import (
 from bicentennial.corpus.format import CORPUS_PATH, load_corpus
 from bicentennial.corpus.run import corpus_suite, run_case
 from bicentennial.director.routes import RouteTable
-from bicentennial.director.scripted import ScriptedResponder
+from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.harness.hermes.plugin_host import GateRefused, HermesMemoryHost
 from bicentennial.ledger import LedgerBusy, apply_masks
@@ -294,7 +294,8 @@ def _invariants(run, arm):
 
 def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=()):
     a, name = run.arms[arm], run.ctx.entry["name"]
-    extra = [*DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
+    extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
+        *stub_disclosures(run.ctx.entry, "t1"),
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
         ("t1.transforms", canon(list(a.transforms)).decode()),
         ("t1.reclassified", canon(sorted({i for u in a.units for i in u.reclassified})).decode()),
@@ -325,7 +326,7 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
     if arm == "system":
         floor = run.arms["no_memory"].outcomes
         suites.append(item_suite(dict(tier="T1", system=name, items=[floor[i] for i in sorted(floor)]),
-                                 "no_memory"))
+                                 "no_memory", run.ctx.worker_properties))
     return junit_xml(suites)
 
 

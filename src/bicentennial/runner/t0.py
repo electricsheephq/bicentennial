@@ -31,7 +31,7 @@ from bicentennial.controls.cache import (
     read_entry,
 )
 from bicentennial.director.routes import RouteTable, route_table_hash
-from bicentennial.director.scripted import ScriptedResponder
+from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import (
     ENTRYPOINT,
@@ -90,6 +90,7 @@ from bicentennial.systems.hermes_plugin import (
     prepare_cache,
     resolve_worker_env,
     validate_maps,
+    worker_properties,
 )
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
@@ -652,6 +653,8 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
                        model_cache=model_cache, model_cache_sha256=model_cache_sha256)
         if index["harness_artifacts"] != [harness_pin]:
             raise T0Refused("harness_artifact_mismatch")
+        options["run_properties"] = worker_properties(system, options["checkout"], REPO, "t0", T0Refused,
+                                                       options.get("worker_argv"))
     for rel in wanted:
         pack = all_packs[rel]
         needed = [pack]
@@ -725,7 +728,7 @@ def _audit(factories):
                 run_values=dict(hosts[0].director.run_values) if hosts else None)
 
 
-def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit, out, marker, start):
+def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit, out, marker, start, properties=()):
     items = [outcomes[i] for i in sorted(outcomes)]
     bundles = [make_bundle({**{k: b[k] for k in ("bundle_id", "cell_id", "twin_type")},
                            "life": pack.pack["lives"][0]}, *(outcomes[i] for i in b["items"]))
@@ -751,11 +754,13 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         ("t0.crash", "API-mode crash equals restart"), ("honeypot.hits", hit_count),
         ("invariants.forget_inconclusive", sum(len(v["inconclusive"]) for v in all_verdicts
                                               if v["invariant"] == "INV-FORGET")),
-        ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode")]
+        ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode"),
+        *stub_disclosures(entry, "t0")]
     if entry["name"] in ENGINES:
         extra.append(("t0.engine", "context engine not loaded at T0 (memory-layer host)"))
     if audit.get("model_cache_sha256") is not None:
         extra.append(("t0.model_cache", "sha256:" + audit["model_cache_sha256"]))
+    extra.extend(properties)
     if entry["name"] == "hermes-native":
         extra.append(("t0.injection", "The session-start memory snapshot is read; other harness prompt injection "
                       "is not exercised."))
@@ -846,6 +851,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
     options = dict(options)
     model_cache = options.pop("model_cache", None)
     model_cache_sha256 = options.pop("model_cache_sha256", None)
+    properties = options.pop("run_properties", ())
     (pack_root,) = {Path(p.rel).parts[0] for p in selected}
     run_start = time.time_ns() // 1_000_000
     real, work = bool(options), out / "work"
@@ -900,7 +906,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                 audit["model_cache_sha256"] = model_cache_sha256
                 controls = _controls(pack, index, cache)
                 reports[pack.rel] = _report_pack(pack, entry, locks[pack.rel], outcomes,
-                    verdicts, adapter, controls, audit, out, marker, start)
+                    verdicts, adapter, controls, audit, out, marker, start, properties=properties)
                 outcomes_by_row[pack.meta["row"]["id"]] = outcomes
             finally:
                 _remove_units(factories)
