@@ -3,7 +3,10 @@
 import argparse
 import json
 import os
+import select
+import signal
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from bicentennial.canon import canon
@@ -147,9 +150,49 @@ def serve(seed, log_dir, clock, source, sink):
     return state.state
 
 
+@contextmanager
+def _sigterm_source(source):
+    reader, writer = os.pipe()
+    stopped = False
+
+    def stop(signum, frame):
+        nonlocal stopped
+        if not stopped:
+            stopped = True
+            # Wake select without raising through a state change, fsync, or response write.
+            os.write(writer, b"\0")
+
+    def lines():
+        pending = b""
+        while not stopped:
+            if b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                yield line + b"\n"
+                continue
+            select.select([source, reader], [], [])
+            if stopped:
+                break
+            chunk = os.read(source.fileno(), 65536)
+            if not chunk:
+                if pending:
+                    yield pending
+                break
+            pending += chunk
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        yield lines()
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        os.close(reader)
+        os.close(writer)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("seed", "log-dir", "clock"):
         parser.add_argument(f"--{name}", required=True, type=Path)
     args = parser.parse_args()
-    serve(_load(args.seed.read_bytes()), args.log_dir, args.clock, sys.stdin.buffer, sys.stdout.buffer)
+    with _sigterm_source(sys.stdin.buffer) as source:
+        serve(_load(args.seed.read_bytes()), args.log_dir, args.clock, source, sys.stdout.buffer)

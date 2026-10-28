@@ -130,7 +130,8 @@ def main():
                 emit(dict(ok=True, final=msg.get("content") or "", history=len(history)))
             elif op["op"] == "end":
                 for proc in servers.values():
-                    proc.stdin.close()
+                    proc.terminate()
+                for proc in servers.values():
                     proc.wait(timeout=5)
                 emit(dict(ok=True, alive_threads=[]))
                 break
