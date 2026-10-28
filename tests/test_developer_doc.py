@@ -162,22 +162,29 @@ def test_doc_rejects_unknown_inline_flag(tmp_path, monkeypatch, capsys, section,
         test_doc_commands_exist(capsys)
 
 
-def _refusal_codes(path):
+# A code built as prefix + value is listed in the guide under this form.
+PREFIXED = {"mode_unavailable:": "mode_unavailable:hermes",
+            "plugin_deps_missing:": "plugin_deps_missing:<dist>"}
+
+
+def _refusal_codes(path, names=("T0Refused", "T1Refused")):
     for node in ast.walk(ast.parse(path.read_text())):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id in {"T0Refused", "T1Refused"} and node.args):
+                and node.func.id in names and node.args):
             arg = node.args[0]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 yield arg.value
             elif (isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add)
-                  and isinstance(arg.left, ast.Constant) and arg.left.value == "mode_unavailable:"):
-                yield "mode_unavailable:hermes"
+                  and isinstance(arg.left, ast.Constant) and arg.left.value in PREFIXED):
+                yield PREFIXED[arg.left.value]
 
 
 def _code_refusals():
     codes = set()
     for name in ("t0", "t1", "compare"):
         codes.update(_refusal_codes(REPO / f"src/bicentennial/runner/{name}.py"))
+    # The dependency check raises through the tier's refusal factory, passed in as `refused`.
+    codes.update(_refusal_codes(REPO / "src/bicentennial/systems/hermes_plugin.py", ("refused",)))
     tree = ast.parse((REPO / "src/bicentennial/systems/registry.py").read_text())
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
