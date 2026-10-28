@@ -11,6 +11,7 @@ from bicentennial.audit.readback import (
     audit,
     failures,
     life_ids,
+    output,
     route_models,
     run_status,
     turns_from_script,
@@ -177,15 +178,15 @@ def _pair_inputs(root, rows, kill, genre):
     ids, requests = [], []
     last = max((r["seq"] for r in rows if r.get("cursor") == cursor), default=0)
     for row in sorted(rows, key=lambda r: r["seq"]):
+        path = row.get("path", "")
+        wire = "chat" if path.endswith("/chat/completions") else (
+            "responses" if path.endswith("/responses") else None)
         if genre == "G1" and row.get("cursor") == cursor and row.get("served") == "script_tool_calls":
-            body = json.loads(store.get(row["resp"]))
-            ids.extend(c["id"] for c in body["choices"][0]["message"]["tool_calls"])
-        if last and row["seq"] > last and row.get("type") == "request":
-            path = row.get("path", "")
-            wire = "chat" if path.endswith("/chat/completions") else (
-                "responses" if path.endswith("/responses") else None)
-            if wire is not None:
-                requests.append((wire, json.loads(store.get(row["req"]))))
+            # A streamed reply is stored as its chunks; output() reads both stored forms.
+            calls, _ = output(json.loads(store.get(row["resp"])), wire or "chat")
+            ids.extend(c["id"] for c in calls)
+        if last and row["seq"] > last and row.get("type") == "request" and wire is not None:
+            requests.append((wire, json.loads(store.get(row["req"]))))
     return tuple(sorted(ids)), tuple(requests)
 
 
