@@ -79,7 +79,7 @@ CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_timeout", "end_timeout")) + tuple(
     (label, "INFRA_FAILURE") for label in (
         "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
-        "startup_timeout", "open_timeout", "worker_start"))
+        "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy"))
 TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only compiled workspace commands; "
                        "a live model could reach the Hermes home")
 
@@ -272,7 +272,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
                 plugin=PROVIDERS.get(entry["name"]), context_engine=ENGINES.get(entry["name"]),
                 plugins_enabled=(plugin_dir(entry["name"]),) if entry["name"] in ENABLED else (),
-                extra_env=extra_env if plugin else None, before_spawn=hook, **common))
+                extra_env=extra_env, before_spawn=hook, **common))
             paths = adapter.paths
             roots = {"HERMES_HOME": paths["hermes_home"], "SANDBOX_HOME": paths["home"]}
             surfaces = [(s, roots[s["root"]] / s["relative"]) for s in adapter.entry["surfaces"]]

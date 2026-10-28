@@ -584,6 +584,34 @@ def test_checkpoint_and_worker_guards(tmp_path):
         a.close()
 
 
+def test_checkpoint_refuses_a_held_wal(tmp_path, monkeypatch):
+    import sqlite3
+
+    from bicentennial.harness.hermes.adapter import HarnessFailed
+    from bicentennial.systems import hermes_plugin as hp
+
+    db = tmp_path / "store" / "test.db"
+    db.parent.mkdir()
+    writer, reader = sqlite3.connect(db), sqlite3.connect(db)
+    wal = db.with_name("test.db-wal")
+    monkeypatch.setattr(hp, "sqlite3", SimpleNamespace(connect=lambda path: sqlite3.connect(path, timeout=0.1)))
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE facts(text)")
+        writer.execute("INSERT INTO facts VALUES (?)", (NONCE,))
+        writer.commit()
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM facts").fetchone()  # a read transaction on the WAL
+        with pytest.raises(HarnessFailed, match="checkpoint_busy"):
+            hp.checkpoint_sqlite([db.parent])
+        assert wal.stat().st_size > 0
+    finally:
+        reader.close()
+        writer.close()
+    hp.checkpoint_sqlite([db.parent])
+    assert wal.stat().st_size == 0
+
+
 def test_import_boundaries():
     for filename in ("hermes_plugin.py", "settle.py"):
         tree = ast.parse((ROOT / "src/bicentennial/systems" / filename).read_text())

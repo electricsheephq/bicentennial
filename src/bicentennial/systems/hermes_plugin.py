@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 
 from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_listing
-from bicentennial.harness.hermes.adapter import PinMismatch
+from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.config import (
     _PASSED,
     _PLUGIN,
@@ -363,6 +363,8 @@ def checkpoint_sqlite(directories):
             if sqlite:
                 con = sqlite3.connect(path)
                 try:
-                    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    busy = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
                 finally:
                     con.close()
+                if busy:  # another connection holds a transaction, so the WAL would reach the hash
+                    raise HarnessFailed("checkpoint_busy")

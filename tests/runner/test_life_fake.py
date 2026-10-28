@@ -701,6 +701,21 @@ def test_raised_probe_restores_surfaces_and_keeps_unsettled(lives, tmp_path, mon
 
 
 @pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
+def test_non_plugin_life_gets_worker_env(lives, tmp_path, monkeypatch, harness, arm):
+    extra = {"MODEL_HOME": str(tmp_path / "cache")}
+
+    def session(self, index, **kw):
+        raise HarnessFailed("turn_failed")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    result = drive(lives["t1-g1", "B0"], tmp_path / "run", arm=arm, extra_env=extra)
+    made = harness.made[0]
+    assert made.plugin is None and made.context_engine is None
+    assert made.extra_env == (None if arm == "no_memory" else extra)
+    result.cleanup()
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
 def test_engine_only_life_uses_plugin_wake_and_env(lives, tmp_path, monkeypatch, harness, arm):
     from bicentennial.director.scripted import WRITE_ARGS
     from bicentennial.systems import hermes_plugin as hp
