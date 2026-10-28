@@ -13,7 +13,7 @@ from bicentennial.api.adapters import mutants
 from bicentennial.api.adapters.bm25 import BM25
 from bicentennial.api.adapters.nomemory import NoMemory
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
-from bicentennial.api.adapters.reference_store import ReferenceStore
+from bicentennial.api.adapters.reference_store import ReferenceStore, tokens
 from bicentennial.api.contract import shape
 from bicentennial.canon import canon
 from bicentennial.contracts.items import reader_view
@@ -53,6 +53,25 @@ SETTLE_BOUND_S = 5
 STATUSES = ("PASS", "FAIL", "INFRA_FAILURE")
 REASONS = ("", "mismatch", "system_failure", "stale_case", "infra")
 C7 = REPO / "specs/ring0/c7-partial.json"
+
+# Fixed, content-blind English function words used only for corpus stocking.
+_STOP_WORDS = frozenset("""
+a about above after again against all am an and any are as at be because been before
+being below between both but by can could did do does doing down during each few
+for from further had has have having he her here hers herself him himself his how
+i if in into is it its itself just me might more most must my myself neither no
+nor not now of off on once only or other our ours ourselves out over own same
+shall she should so some such than that the their theirs them themselves then
+there these they this those through to too under until up upon us very was we
+were what when where which while who whom why will with would you your yours
+yourself yourselves
+""".split())
+
+
+class _ContentWordReference(ReferenceStore):
+    def scores(self, prompt, events):
+        words = set(tokens(prompt)) - _STOP_WORDS
+        return [len(words & (set(tokens(e["text"])) - _STOP_WORDS)) for e in events]
 
 
 class SystemFault(ValueError):
@@ -369,6 +388,10 @@ def stock(catalogue, *, root):
             gold = [reader_view(i)["options"][0]["option_id"] for i in items]
             reference = [o["selected_option"] for o in expected[PASS_ORACLE]]
             if gold != reference:
+                continue
+            content = observe(life, worlds, keys, items, _ContentWordReference,
+                              oracle=False, forget=True)
+            if content == "system_failure" or [o["selected_option"] for o in content] != gold:
                 continue
             for name in MUTANTS:
                 result = expected[name]
