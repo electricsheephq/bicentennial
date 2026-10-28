@@ -85,6 +85,7 @@ def main():
     if cfg.get("mcp_servers") and not eager:
         tools.append("tool_call")
     emit(dict(ready=True))
+    clean_end = False
     try:
         for line in sys.stdin:
             op = json.loads(line)
@@ -93,8 +94,11 @@ def main():
                 path = store / f"{sid}.json"
                 history = json.loads(path.read_bytes()) if path.exists() else []
                 for name, config in cfg.get("mcp_servers", {}).items():
+                    # Its own session, as the pinned MCP SDK's stdio client starts servers, so the adapter's
+                    # killpg of this worker's group does not reach it after a clean end.
                     proc = servers[name] = subprocess.Popen([config["command"], *config["args"]],
-                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=dict(os.environ, **config["env"]))
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=dict(os.environ, **config["env"]),
+                        start_new_session=True)
                     rpc(proc, "initialize", {})
                     if eager:
                         tools[:] = [n for n in tools if not n.startswith(f"mcp__{name}__")] + [
@@ -129,17 +133,17 @@ def main():
                 path.write_text(json.dumps(history))
                 emit(dict(ok=True, final=msg.get("content") or "", history=len(history)))
             elif op["op"] == "end":
+                emit(dict(ok=True, alive_threads=[]))
                 for proc in servers.values():
                     proc.terminate()
-                for proc in servers.values():
-                    proc.wait(timeout=5)
-                emit(dict(ok=True, alive_threads=[]))
+                clean_end = True
                 break
     finally:
-        for proc in servers.values():
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+        if not clean_end:
+            for proc in servers.values():
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
 
 
 if __name__ == "__main__":

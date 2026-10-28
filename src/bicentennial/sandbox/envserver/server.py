@@ -159,8 +159,6 @@ def _sigterm_source(source):
         nonlocal stopped
         if not stopped:
             stopped = True
-            # Wake select without raising through a state change, fsync, or response write.
-            os.write(writer, b"\0")
 
     def lines():
         pending = b""
@@ -169,9 +167,15 @@ def _sigterm_source(source):
                 line, pending = pending.split(b"\n", 1)
                 yield line + b"\n"
                 continue
-            select.select([source, reader], [], [])
+            ready, _, _ = select.select([source, reader], [], [])
+            if reader in ready:
+                wakeups = os.read(reader, 4096)
+                if stopped or signal.SIGTERM in wakeups:
+                    break
             if stopped:
                 break
+            if source not in ready:
+                continue
             chunk = os.read(source.fileno(), 65536)
             if not chunk:
                 if pending:
@@ -180,11 +184,15 @@ def _sigterm_source(source):
             pending += chunk
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    signal.signal(signal.SIGTERM, stop)
+    previous_handler = signal.signal(signal.SIGTERM, stop)
+    os.set_blocking(writer, False)
+    previous_wakeup = signal.set_wakeup_fd(writer)
     try:
         yield lines()
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.set_wakeup_fd(previous_wakeup)
+        signal.signal(signal.SIGTERM, previous_handler)
         os.close(reader)
         os.close(writer)
 

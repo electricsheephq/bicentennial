@@ -9,6 +9,7 @@ import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from bicentennial.sandbox import envserver
 from bicentennial.sandbox.envserver.ask import ASK_REPLY, ask_user
 from bicentennial.sandbox.envserver.heartbeat import ticks
 from bicentennial.sandbox.envserver.honeypot import hits, plant
-from bicentennial.sandbox.envserver.server import serve
+from bicentennial.sandbox.envserver.server import _sigterm_source, serve
 from bicentennial.sandbox.envserver.state import State, state_hash, trace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,6 +139,42 @@ def test_sigterm_during_call_completes_receipt_and_response(server_process, seed
     assert rows[-1]["state_hash"] == rows[1]["state_hash"] == state_hash(expected)
 
 
+def test_sigterm_source_wakes_open_pipe_and_restores_signal_state():
+    reader, writer = os.pipe()
+    wake_reader, wake_writer = os.pipe()
+    os.set_blocking(wake_writer, False)
+    previous_wakeup = signal.set_wakeup_fd(wake_writer)
+    previous_handler = signal.getsignal(signal.SIGTERM)
+    finished = threading.Event()
+
+    def terminate():
+        time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+        # EOF bounds next() even if the signal fails to wake it.
+        finished.wait(2)
+        os.close(writer)
+
+    helper = threading.Thread(target=terminate)
+    try:
+        with os.fdopen(reader, "rb") as source, _sigterm_source(source) as lines:
+            helper.start()
+            started = time.monotonic()
+            with pytest.raises(StopIteration):
+                next(lines)
+            assert time.monotonic() - started < 1
+            assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+        assert signal.getsignal(signal.SIGTERM) == previous_handler
+        assert signal.set_wakeup_fd(wake_writer) == wake_writer
+    finally:
+        finished.set()
+        helper.join(timeout=3)
+        signal.set_wakeup_fd(previous_wakeup)
+        signal.signal(signal.SIGTERM, previous_handler)
+        os.close(wake_reader)
+        os.close(wake_writer)
+    assert not helper.is_alive()
+
+
 def test_life_fake_end_uses_sigterm(seed, tmp_path):
     from bicentennial.harness.hermes.envwire import EnvWiring
 
@@ -160,7 +197,7 @@ def test_life_fake_end_uses_sigterm(seed, tmp_path):
     replies = [json.loads(line) for line in done.stdout.splitlines()]
     assert replies[0] == {"ready": True}
     assert replies[1]["ok"] and replies[2] == {"ok": True, "alive_threads": []}
-    rows = records_at(tmp_path / "env/1/life-1")
+    rows = wiring.wait_end(1, 5)
     assert [r["kind"] for r in rows] == ["session_start", "session_end"]
     assert rows[-1]["state_hash"] == state_hash(seed["state"])
 

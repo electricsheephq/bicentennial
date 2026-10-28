@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from bicentennial.canon import canon
@@ -13,6 +14,19 @@ ENV_SERVER = "envserver"
 def _rows(life_dirs):
     return [json.loads(line) for directory in life_dirs
             if (path := directory / "env_actions.jsonl").exists() for line in path.read_bytes().splitlines()]
+
+
+def _ended(life_dirs):
+    # Only complete lines count: the server may be mid-write while wait_end polls.
+    for directory in life_dirs:
+        try:
+            raw = (directory / "env_actions.jsonl").read_bytes()
+        except FileNotFoundError:
+            continue
+        if any(row.get("type") == "boundary" and row.get("kind") == "session_end"
+               for row in map(json.loads, raw.split(b"\n")[:-1])):
+            return True
+    return False
 
 
 def derived_seed(seed, life_dirs):
@@ -51,3 +65,15 @@ class EnvWiring:
 
     def records(self, session):
         return _rows(self._lives(session))
+
+    def wait_end(self, session, timeout_s):
+        """Wait for the newest server life to finish its durable session receipt."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            if _ended(self._lives(session)[-1:]):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.02, remaining))
+        return self.records(session)
