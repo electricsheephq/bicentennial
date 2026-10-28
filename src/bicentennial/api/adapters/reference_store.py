@@ -1,4 +1,4 @@
-"""Verbatim store; Unicode casefolded word-set overlap, newest tie wins."""
+"""Verbatim store; newest overlap match, with assertion context for quotes/hedges."""
 
 import json
 import re
@@ -6,6 +6,8 @@ import re
 from bicentennial.canon import canon
 
 from ..contract import Adapter, answer, event_copy, integer, shape, task_ids
+
+NONASSERTIVE = re.compile(r"\b(?:maybe|might|not sure|perhaps|possibly|quote|said|wrote)\b", re.I)
 
 
 def tokens(text):
@@ -43,7 +45,23 @@ class ReferenceStore(Adapter):
         events = [e for e in self.events.values() if e["t_sim"] <= now]
         ranked = [(score, self.tie(e), e) for score, e in
                   zip(self.scores(task["prompt"], events), events, strict=True) if score > 0]
-        return answer([max(ranked, key=lambda row: row[:2])[2]] if ranked else [])
+        if not ranked:
+            return answer()
+        selected = max(ranked, key=lambda row: row[:2])[2]
+        context = [selected]
+        # A quote or hedge does not replace the earlier assertion it discusses.
+        # Return that evidence too; the reader still decides what to do with it.
+        if NONASSERTIVE.search(selected["text"]):
+            query_words = set(tokens(task["prompt"])) - {
+                "a", "an", "the", "for", "of", "to", "is", "in", "my", "on", "and", "with"}
+            overlap = query_words & set(tokens(selected["text"]))
+            prior = [row for row in ranked if row[2]["t_sim"] < selected["t_sim"]
+                     and row[2]["actor"] == selected["actor"]
+                     and overlap & set(tokens(row[2]["text"]))
+                     and not NONASSERTIVE.search(row[2]["text"])]
+            if prior:
+                context.append(max(prior, key=lambda row: row[:2])[2])
+        return answer(context)
 
     def checkpoint(self):
         return canon(sorted(self.events.values(), key=lambda e: (e["t_sim"], e["event_id"])))

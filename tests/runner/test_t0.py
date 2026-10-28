@@ -100,6 +100,33 @@ def test_installed_reference_branch_drives(installed, tmp_path):
         assert elapsed_ms < 60_000
 
 
+def test_reference_no_update_kill_packs(tmp_path, monkeypatch):
+    catalogue = load_catalogue(ROOT / "packs/catalogue-v0.toml",
+        c7_path=ROOT / "specs/ring0/c7-partial.json", tier_path=ROOT / "tiers/life_specs/t0.toml")
+    rows = catalogue.by_id()
+    names = ["g1-drift-quote-dir-2", "g2-drift-no-update-dir-2"]
+    names += [rows[n].baseline for n in names]
+    # As in installed(), a row subset cannot satisfy the tier-wide shares.
+    monkeypatch.setattr(build, "check_distribution", lambda packs, **kwargs:
+                        SimpleNamespace(ok=True, to_obj=lambda: {}))
+    built = build.build_tier("T0", tmp_path / "build", harness_artifacts=[
+        load(REGISTRY / "hermes-native.toml")["artifact"]], rows=[rows[n] for n in names])
+    destination = tmp_path / "installed"
+    digest = install(tmp_path / "build/T0", destination)
+    fixture = destination, built["index"], digest
+    out = tmp_path / "out"
+    assert run(fixture, out) == 0
+    for rel in built["index"]["packs"]:
+        card = json.loads((out / rel / "card.json").read_bytes())
+        assert card["gate_verdict"] == "PASS"
+        assert len(card["items"]) == 2
+        assert all(item["score_milli"] == 1000 for item in card["items"])
+        verdicts = {v["invariant"]: v for v in json.loads((out / rel / "invariants.json").read_bytes())}
+        kill = "kill" in rel
+        assert verdicts["INV-NEW"]["members"] == (2 if kill else 0)
+        assert verdicts["INV-NEW"]["status"] == ("PASS" if kill else "NOT_EXERCISED")
+
+
 def test_ingest_and_forget_from_installed_world(installed, tmp_path):
     pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
     for branch in ("B0", "B1"):
@@ -228,6 +255,31 @@ def test_resume_lock(installed):
         assert lock["harness_artifacts"] == index["harness_artifacts"]
         assert lock["account_pool"] == []
         assert lock["analysis_commit"] == lock["benchmark_commit"] == lock["director_commit"]
+
+
+@pytest.mark.parametrize("system", sorted(t0.REFERENCE_SYSTEMS))
+def test_reference_lock_tracks_inherited_code(installed, tmp_path, monkeypatch, system):
+    _, index, digest = installed
+    pack = packs(installed)[0]
+    files = ("api/contract.py", "api/adapters/reference_store.py", "api/adapters/bm25.py",
+             "api/adapters/mutants.py", "director/scripted.py")
+    for relative in files:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "src/bicentennial" / relative, target)
+    original_hash = t0.code_sha256
+    monkeypatch.setattr(t0, "code_sha256", lambda paths: original_hash(paths, root=tmp_path))
+    entry = dict(name=system, surfaces=[])
+    before = t0._lock(index, pack, entry, digest, False)["system_artifacts"]
+    module = system if system in ("reference_store", "bm25") else "mutants"
+    paths = ("api/contract.py", f"api/adapters/{module}.py")
+    if system != "reference_store":
+        paths += ("api/adapters/reference_store.py",)
+    assert before[0]["sha256"] == original_hash(paths, root=tmp_path)
+    reference = tmp_path / "api/adapters/reference_store.py"
+    reference.write_bytes(reference.read_bytes() + b"\n# changed inherited query\n")
+    after = t0._lock(index, pack, entry, digest, False)["system_artifacts"]
+    assert after[0]["sha256"] != before[0]["sha256"]
 
 
 def test_corpus_equality_deferred(installed, tmp_path):

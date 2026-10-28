@@ -48,11 +48,13 @@ def apply_masks(obj, run_values: dict[str, str]):
             obj = _visit(obj, tokens, entry)
     replacements = {run_values[e["target"]]: e["placeholder"]
                     for e in _MASKS if e["kind"] == "run_value"}
-    pattern = re.compile("|".join(re.escape(v) for v in sorted(replacements, key=lambda v: (-len(v), v))))
+    # RING0 §4: director-issued ids stay stable, even when their hex contains the port.
+    pattern = re.compile(r"(?P<director_id>bcw-[0-9a-f]{16})|" + "|".join(
+        re.escape(v) for v in sorted(replacements, key=lambda v: (-len(v), v))))
 
     def replace(value):
         if isinstance(value, str):
-            return pattern.sub(lambda m: replacements[m[0]], value)
+            return pattern.sub(lambda m: m[0] if m["director_id"] else replacements[m[0]], value)
         if isinstance(value, dict):
             masked = {replace(k): replace(v) for k, v in value.items()}
             if len(masked) != len(value):
