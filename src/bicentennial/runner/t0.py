@@ -281,7 +281,8 @@ def _lock(index, pack, entry, pack_hash, real):
     commit = _commit()
     module = ("mutants" if entry["name"] not in ("reference_store", "bm25") else entry["name"])
     artifacts = [entry["artifact"]] if real else [dict(name=entry["name"], version="r16a",
-        sha256=code_sha256(("api/contract.py", f"api/adapters/{module}.py")))]
+        sha256=code_sha256(("api/contract.py", f"api/adapters/{module}.py",
+                           *(("api/adapters/reference_store.py",) if module != "reference_store" else ()))))]
     return build_lock(benchmark_commit=commit, director_commit=commit, analysis_commit=commit,
         generator_version=index["generator_version"], seeds=index["seeds_manifest"]["seeds"],
         rendered_history_set_hash=index["rendered_history_set_hash"], pack_hash=pack_hash,
