@@ -50,8 +50,8 @@ def hermes_call(name, args):
         if name == "read_file" and set(args) == {"path"} and args["path"] in REPO_FILES:
             return {"name": "terminal", "args": {"command": shlex.join(["cat", "--", args["path"]])}}
         if name in ENV_TOOLS:
-            return {"name": "tool_call", "args": {"calls": [
-                {"name": f"mcp__{ENV_SERVER}__{name}", "arguments": args}]}}
+            # Tool search is off at the scripted tier (#191), so the pin offers MCP tools directly by this name
+            return {"name": f"mcp__{ENV_SERVER}__{name}", "args": args}
     except (TypeError, ValueError, KeyError):
         pass
     raise ValueError(f"invalid tool: {name}")

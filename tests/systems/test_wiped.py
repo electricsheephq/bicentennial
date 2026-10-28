@@ -121,7 +121,7 @@ def make(scratch, name, *, script=SCRIPT, faults=FAULTS, hook=None, floor=False,
 
 def session(a, index):
     result = a.run_session(index, sim_t_s=BASE + index * DAY, lock_hash=LOCK, attempt_id=f"attempt-s{index}")
-    expected = hermes_config(a.server.port, a._alias, memory=a.memory)
+    expected = hermes_config(a.server.port, a._alias, memory=a.memory, scripted=a.scripted)
     assert (a.paths["hermes_home"] / "config.yaml").read_bytes() == canon(expected) + b"\n"
     return result
 

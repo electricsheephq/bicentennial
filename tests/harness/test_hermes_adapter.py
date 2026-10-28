@@ -22,7 +22,7 @@ from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.harness import egress
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed, HermesAdapter
-from bicentennial.harness.hermes.config import CONFIG_DEVIATIONS
+from bicentennial.harness.hermes.config import CONFIG_DEVIATIONS, SCRIPTED_DEVIATIONS
 from bicentennial.ledger import BlobStore, Guard, verify
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
@@ -164,7 +164,9 @@ def test_replay_with_kill_restart_and_swap(tmp_path, niced):
                                       "sha256": ENTRY["artifact"]["sha256"], "entrypoint": "test-double",
                                       "config_deviations": ["model.context_length",
                                                             "auxiliary.compression.context_length",
-                                                            "agent.environment_probe"],
+                                                            "agent.environment_probe",
+                                                            "tools.tool_search.enabled", "agent.api_max_retries",
+                                                            "agent.auto_recovery_cycles"],
                                       "plugin_config": {}, "active_memory_providers": ["holographic"], "memory": True}
         assert a.honeypot_hits(token) == 0 and summary["non_loopback"] == []
         assert len(a.pids) == 6 and not a.director.control()["stopped"]
@@ -280,9 +282,12 @@ def test_a_plugin_entry_runs_on_the_harness_pin(tmp_path, monkeypatch):
         a.close()
     assert result.entrypoint == adapter.ENTRYPOINT and (result.turns_ok, result.finals_matched) == (5, 5)
     assert a.harness_record() == {**pin, "commit": a.commit, "entrypoint": adapter.ENTRYPOINT,
-                                  "config_deviations": list(CONFIG_DEVIATIONS), "plugin_config": {},
-                                  "active_memory_providers": ["holographic"], "memory": True}
-    assert json.loads((a.paths["hermes_home"] / "config.yaml").read_bytes())["memory"]["provider"] == "holographic"
+                                  "config_deviations": [*CONFIG_DEVIATIONS, *SCRIPTED_DEVIATIONS],
+                                  "plugin_config": {}, "active_memory_providers": ["holographic"], "memory": True}
+    spawned = json.loads((a.paths["hermes_home"] / "config.yaml").read_bytes())
+    assert spawned["memory"]["provider"] == "holographic"
+    assert spawned["tools"] == {"tool_search": {"enabled": "off"}}  # #191: every offered tool is eager
+    assert (spawned["agent"]["api_max_retries"], spawned["agent"]["auto_recovery_cycles"]) == (1, 0)  # #192
 
 
 def marker(tmp_path, first):

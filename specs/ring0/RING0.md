@@ -53,7 +53,7 @@ At T1 every request the harness or the system sends is answered by a determinist
 |---|---|
 | `replay_main` | the scripted turn at the cursor, through the tool-call compiler, as in S6a |
 | `write_turn` | the content-blind write rule (below) |
-| `probe_main` | the scripted reader's recall call (§1), then the envelope or the first step of the action plan |
+| `probe_main` | the scripted reader's recall call (§1), then the envelope, or the action plan one step per request and then the text `Noted.` (a refrain plan has no step). A probe reply is never empty: Hermes answers an empty main reply with retries that wait on the simulated clock |
 | `compaction`, `summariser`, `extraction` | the extractive stub (below) |
 | `memory_write` | the content-blind write rule. This role is added when the classifier is promoted (R01): S1's background-review marker, and any pre-compaction-flush or session-end marker, map to it instead of `aux` |
 | `title` | the fixed title `Session` |
@@ -125,12 +125,13 @@ Everything in `card.json` is written by `canon.canon`, with no floats.
 
 **The stable projection** of a ledger record keeps its role, served kind, cursor position and the sha256 of its canonical request and response bodies. Before that hash is taken, these values are masked:
 - Hermes session ids;
+- random ids anywhere in body text: every lower-case hyphenated UUID becomes `{UUID}`. Hosts and systems mint these, so they differ on every run. Examples are a Hermes session id that the compressor writes into a summary or that `session_search` returns, and a memory store's record ids in a recall result;
 - tool-call ids that the harness generated;
 - response ids that the harness generated;
 - every wall-clock timestamp field;
 - the run's sandbox root and the director's port, wherever they occur in body text. Each is replaced by a fixed placeholder (`{SANDBOX_ROOT}`, `{DIRECTOR_PORT}`), so a path or port embedded in a tool result does not reach the digest.
 
-Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, or a literal substitution for body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
+Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, a literal substitution for body text, or a pattern for random ids in body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
 
 **Canonical order:** (life, branch, session, cursor turn, role, served kind), then the sha256 of the masked canonical record bytes as the tie-break. The arrival sequence is never used, since concurrent auxiliary calls reorder it.
 

@@ -9,6 +9,11 @@ from bicentennial.score.exposure import context_text
 from .argtemplate import recall_call
 from .scripted_reader import _copy, _inputs, read
 
+# The text that ends an action probe's turn once its plan is done. It equals the compiler's replay
+# text (director.compiler.hermes.ASSISTANT), and it is never empty: Hermes answers an empty reply
+# with retries that wait on the simulated clock.
+CLOSING = "Noted."
+
 
 class RecallToolMissing(ValueError):
     """The request did not offer the declared recall tool."""
@@ -123,6 +128,8 @@ class ProbeResponder:
                 step["name"] for step in compiled[:len(emitted)]]:
             raise ValueError("out-of-order plan calls")
         remaining = compiled[len(emitted):len(emitted) + 1]
+        if not remaining:  # the plan is done, or a refrain plan has no step
+            return self._reply(call, text=CLOSING)
         return self._reply(call, calls=remaining)
 
     @staticmethod

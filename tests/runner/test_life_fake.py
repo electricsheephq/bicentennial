@@ -19,6 +19,7 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.compiler.hermes import compile_script, hermes_call
+from bicentennial.director.wire import chat
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import GateRefused
@@ -595,6 +596,22 @@ def test_earlier_and_pair_inputs_ignore_torn_tail(tmp_path):
     (tmp_path / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows) + b'{"torn":')
     assert runner._earlier(tmp_path, 21) == tuple(store.get(r[k]) for r in rows[:2] for k in ("req", "resp"))
     assert runner._pair_inputs(tmp_path, rows, None, "G1") == ((), ())
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_pair_inputs_reads_streamed_and_json_tool_calls(tmp_path, stream):
+    # Hermes streams its chat requests, and the director then stores the reply as its chunks.
+    store = BlobStore(tmp_path / "blobs", Guard([]))
+    msg = {"role": "assistant", "content": "", "tool_calls": [
+        {"id": i, "type": "function", "function": {"name": "terminal", "arguments": "{}"}} for i in ("b", "a")]}
+    resp = chat.build_response({"model": "m", "messages": []}, msg, response_id="r")
+    cursor, after = dict(session=3, turn=2), {"messages": [{"role": "tool", "tool_call_id": "a"}]}
+    rows = [dict(seq=1, type="request", path="/main/v1/chat/completions", cursor=cursor,
+                 served="script_tool_calls", req=store.put({"messages": []}),
+                 resp=store.put({"sse": chat.sse_chunks(resp)} if stream else resp)),
+            dict(seq=2, type="request", path="/main/v1/chat/completions", cursor=None,
+                 req=store.put(after), resp=store.put({}))]
+    assert runner._pair_inputs(tmp_path, rows, (3, 2), "G1") == (("a", "b"), (("chat", after),))
 
 
 def test_probe_code_uses_attempt_for_unknown_cursor():
