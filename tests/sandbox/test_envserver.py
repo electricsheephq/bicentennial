@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.keyed import mint_id
 from bicentennial.sandbox import envserver
+from bicentennial.sandbox.envserver import server as server_module
 from bicentennial.sandbox.envserver.ask import ASK_REPLY, ask_user
 from bicentennial.sandbox.envserver.heartbeat import ticks
 from bicentennial.sandbox.envserver.honeypot import hits, plant
@@ -123,11 +125,10 @@ def test_sigterm_during_call_completes_receipt_and_response(server_process, seed
     assert proc.poll() is None
     proc.send_signal(signal.SIGTERM)
     proc.send_signal(signal.SIGTERM)
-    output, error = proc.communicate(timeout=5)
-    assert proc.returncode == 0, error.decode()
-    assert error == b""
-    reply = json.loads(output)
-    assert canon(reply) + b"\n" == output
+    # Stdin stays open, so only SIGTERM can end the server: EOF cannot stand in for it.
+    reply = read_response(proc)
+    assert proc.wait(timeout=5) == 0, proc.stderr.read().decode()
+    assert proc.stdout.read() == proc.stderr.read() == b""
     assert reply == {"jsonrpc": "2.0", "id": 2, "result": {
         "content": [{"type": "text", "text": canon(value).decode()}], "isError": False}}
     rows = records_at(tmp_path)
@@ -139,16 +140,24 @@ def test_sigterm_during_call_completes_receipt_and_response(server_process, seed
     assert rows[-1]["state_hash"] == rows[1]["state_hash"] == state_hash(expected)
 
 
-def test_sigterm_source_wakes_open_pipe_and_restores_signal_state():
+def test_sigterm_source_wakes_open_pipe_and_restores_signal_state(monkeypatch):
     reader, writer = os.pipe()
     wake_reader, wake_writer = os.pipe()
     os.set_blocking(wake_writer, False)
     previous_wakeup = signal.set_wakeup_fd(wake_writer)
     previous_handler = signal.getsignal(signal.SIGTERM)
-    finished = threading.Event()
+    finished, blocking = threading.Event(), threading.Event()
+
+    def watched_select(*args):
+        blocking.set()
+        return select.select(*args)
+
+    # Signal only once the iterator is past its stop check and in select(), so the wakeup path must end it.
+    monkeypatch.setattr(server_module, "select", types.SimpleNamespace(select=watched_select))
 
     def terminate():
-        time.sleep(0.05)
+        assert blocking.wait(2), "next() never reached select()"
+        time.sleep(0.02)
         os.kill(os.getpid(), signal.SIGTERM)
         # EOF bounds next() even if the signal fails to wake it.
         finished.wait(2)
