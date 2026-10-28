@@ -41,7 +41,7 @@ PLUGIN_DIRS = {}  # System -> install directory when it differs from the slot id
 ENABLED = frozenset()  # Systems using Hermes's general plug-in manager.
 WORKER_ENV = {}  # System -> reviewed extra worker environment recipe.
 # Benchmark-owned hash locks, covered by benchmark_commit.
-DEPENDENCIES = {"mem0-oss": "systems/locks/mem0-oss.txt"}
+DEPENDENCIES = {"holographic": "systems/locks/holographic.txt", "mem0-oss": "systems/locks/mem0-oss.txt"}
 MARKER = ".bicentennial-sandbox"
 MEM0_THREADS = ("mem0-prefetch", "mem0-sync")
 

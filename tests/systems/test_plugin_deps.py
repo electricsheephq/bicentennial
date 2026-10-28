@@ -109,7 +109,8 @@ def prepared(tier, tmp_path, monkeypatch, system="mem0-oss", worker_argv=None):
 
 def test_placed_lock():
     data = (REPO / "systems/locks/mem0-oss.txt").read_bytes()
-    assert hp.DEPENDENCIES == {"mem0-oss": "systems/locks/mem0-oss.txt"}
+    assert hp.DEPENDENCIES == {"holographic": "systems/locks/holographic.txt",
+                               "mem0-oss": "systems/locks/mem0-oss.txt"}
     hp.validate_dependencies(REPO)
     rows = hp.parse_dependencies(data)
     assert len(rows) == 33
@@ -117,6 +118,13 @@ def test_placed_lock():
     assert len({(n, m) for n, _, m in rows}) == 33
     # The parser requires a hash on every row, including the universal Windows row.
     assert data.count(b"--hash=sha256:") >= 33
+
+
+def test_placed_holographic_lock():
+    # Holographic turns off its vector recall without numpy (#210); both pins match pinned Hermes's lockfile.
+    data = (REPO / "systems/locks/holographic.txt").read_bytes()
+    assert hp.parse_dependencies(data) == [["numpy", "2.4.3", None], ["snowballstemmer", "3.1.1", None]]
+    assert data.count(b"--hash=sha256:") >= 2
 
 
 def test_parser_continuations_comments_and_hashes():

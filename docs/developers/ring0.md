@@ -159,11 +159,11 @@ bicentennial t1 --system hermes-native --packs runs/ring0-t1-packs --pack-hash "
 bicentennial t1 --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HERMES_CHECKOUT" --baseline runs/ring0-t1-first/system/card.json --out runs/ring0-t1-next
 ```
 
-Use a fresh output and that plug-in's own accepted card for its next run:
+Use a fresh output and that plug-in's own accepted card for its next run. Holographic has a dependency lock, so `HOLOGRAPHIC_HERMES` is its own copy of the pinned checkout, prepared as above with `systems/locks/holographic.txt`:
 
 ```sh
-bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HERMES_CHECKOUT" --plugin-source "$PLUGIN_CHECKOUT" --out runs/ring0-t1-holographic-first
-bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HERMES_CHECKOUT" --plugin-source "$PLUGIN_CHECKOUT" --baseline runs/ring0-t1-holographic-first/system/card.json --out runs/ring0-t1-holographic-next
+bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HOLOGRAPHIC_HERMES" --plugin-source "$PLUGIN_CHECKOUT" --out runs/ring0-t1-holographic-first
+bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HOLOGRAPHIC_HERMES" --plugin-source "$PLUGIN_CHECKOUT" --baseline runs/ring0-t1-holographic-first/system/card.json --out runs/ring0-t1-holographic-next
 ```
 
 T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--cache`. Plug-ins require `--plugin-source`; cache defaults to `<out>/cache`.
