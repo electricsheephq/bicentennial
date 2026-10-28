@@ -186,7 +186,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `schedule_mismatch` | Packed schedule differs from reconstructed schedule. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
 | `missing_input` | Required Hermes or plug-in source omitted. |
-| `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`; install the extra. |
+| `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `c7_missing` | Template has no C-7 entry. |
 | `c7_changed` | Template C-7 hash changed. |
