@@ -145,7 +145,7 @@ def test_mcp_extra_refused_before_guard(installed, tmp_path, monkeypatch, interp
     python = tmp_path / ".venv/bin/python"
     if interpreter != "missing":
         python.parent.mkdir(parents=True)
-        python.write_text('#!/bin/sh\n[ "$1" = "-c" ] && [ "$2" = "import mcp" ] && exit 1\nexit 9\n')
+        python.write_text('#!/bin/sh\n[ "$1" = "-I" ] && [ "$2" = "-c" ] && [ "$3" = "import mcp" ] && exit 1\nexit 9\n')
         python.chmod(0o755)
     if interpreter == "timeout":
         def timeout(*args, **kwargs):
@@ -160,7 +160,7 @@ def test_mcp_extra_refused_before_guard(installed, tmp_path, monkeypatch, interp
 def test_mcp_extra_success_and_injected_worker_skip(installed, tmp_path, monkeypatch):
     python = tmp_path / ".venv/bin/python"
     python.parent.mkdir(parents=True)
-    python.write_text('#!/bin/sh\n[ "$1" = "-c" ] && [ "$2" = "import mcp" ] && exit 0\nexit 9\n')
+    python.write_text('#!/bin/sh\n[ "$1" = "-I" ] && [ "$2" = "-c" ] && [ "$3" = "import mcp" ] && exit 0\nexit 9\n')
     python.chmod(0o755)
     real, calls = t1.subprocess.run, []
 
@@ -176,8 +176,8 @@ def test_mcp_extra_success_and_injected_worker_skip(installed, tmp_path, monkeyp
     with pytest.raises(t1.T1Refused) as caught:
         prepare(installed, hermes=tmp_path, worker_argv=None)
     assert caught.value.code == "test_guard"
-    assert calls == [([str(python.resolve()), "-c", "import mcp"],
-        dict(timeout=60, stdout=t1.subprocess.DEVNULL, stderr=t1.subprocess.DEVNULL))]
+    assert calls == [([str(python.resolve()), "-I", "-c", "import mcp"],
+        dict(env={}, timeout=60, stdout=t1.subprocess.DEVNULL, stderr=t1.subprocess.DEVNULL))]
     calls.clear()
     with pytest.raises(t1.T1Refused, match="test_guard"):
         prepare(installed, hermes=tmp_path)

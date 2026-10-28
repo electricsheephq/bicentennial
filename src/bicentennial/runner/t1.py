@@ -228,7 +228,9 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if hermes is not None and worker_argv is None:
         python = Path(hermes).resolve() / ".venv" / "bin" / "python"
         try:
-            checked = subprocess.run([str(python), "-c", "import mcp"], timeout=60,
+            # Isolated mode and an empty environment: ambient PYTHONPATH cannot make it pass, and no runner
+            # variable reaches checkout code.
+            checked = subprocess.run([str(python), "-I", "-c", "import mcp"], env={}, timeout=60,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             raise T1Refused("harness_extra_missing:mcp") from None
