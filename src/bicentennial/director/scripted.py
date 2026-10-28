@@ -7,6 +7,7 @@ from math import isqrt
 
 from bicentennial.canon import canon
 from bicentennial.director.responder import Call, Reply
+from bicentennial.director.roles import HERMES_MEMORY_FENCE
 from bicentennial.director.wire import chat, responses
 
 # Argument names from the recorded provider schemas (tests/fixtures/systems/tool-schemas.json).
@@ -24,6 +25,15 @@ def _text(content):
     return "".join(p["text"] for p in content or [] if isinstance(p, dict)
                    and p.get("type") in ("text", "input_text", "output_text")
                    and isinstance(p.get("text"), str))
+
+
+def _own_text(content):
+    """A user message's own words: Hermes's appended memory block, after its fence or as its own part, is not stored."""
+    fence = HERMES_MEMORY_FENCE.lstrip("\n")
+    if not isinstance(content, str):
+        content = [p for p in content or [] if not (isinstance(p, dict) and isinstance(p.get("text"), str)
+                                                    and p["text"].startswith(fence))]
+    return _text(content).split(HERMES_MEMORY_FENCE, 1)[0]
 
 
 def _messages(call):
@@ -209,7 +219,7 @@ class ScriptedResponder:
                 return ()
         user = messages[users[-1]]
         name, fixed, content_key = self.write_args
-        content = _text(user.get("content"))
+        content = _own_text(user.get("content"))
         limit = tool.get("parameters", {}).get("properties", {}).get(content_key, {}).get("maxLength")
         if limit is not None:
             if type(limit) is not int or limit < 0:

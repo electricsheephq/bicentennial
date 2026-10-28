@@ -187,6 +187,18 @@ def test_write_body_latest_verbatim_and_schema_limit(wire, role):
 
 
 @pytest.mark.parametrize("wire", ["chat", "responses"])
+@pytest.mark.parametrize("role", ["write_turn", "memory_write"])
+def test_write_stores_the_users_words_without_the_hermes_memory_block(wire, role):
+    # Pinned Hermes appends a turn's prefetched memory to the user text, or adds it as its own part (#197)
+    block = "<memory-context>\n[System note: recalled]\n\nan earlier fact\n</memory-context>"
+    for content in ("latest é\nverbatim\n\n" + block,
+                    [{"type": "text", "text": "latest é\nverbatim"}, {"type": "text", "text": block}]):
+        messages = [{"role": "user", "content": "old"}, {"role": "user", "content": content}]
+        reply = responder().respond(call(role, wire, body(wire, messages=messages)))
+        assert json.loads(reply.tool_calls[0]["arguments"])["content"] == "latest é\nverbatim"
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
 def test_no_offered_write_tool_or_no_user_is_empty(wire):
     for request in (body(wire, names=()), body(wire, names=("session_search",)),
                     body(wire, messages=[{"role": "assistant", "content": "no user"}])):
