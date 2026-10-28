@@ -57,6 +57,8 @@ class Director:
                 raise ValueError("probe tool calls are the reader's")
             if turn["kind"] == "replay" and turn["assistant"] is None:
                 raise ValueError("a replay turn needs assistant text")
+            if roles.HERMES_MEMORY_FENCE.lstrip("\n") in turn["user"]:  # RING0 §2: it would read as Hermes's own block
+                raise ValueError("a scripted turn holds Hermes's memory wrapper")
         self.turns = tuple({"session": s["index"], "turn": t["n"], "kind": t["kind"], "user": t["user"],
                             "assistant": t["assistant"], "tool_calls": t["tool_calls"]}
                            for s in script["sessions"] for t in s["turns"])
@@ -293,7 +295,10 @@ class Director:
         for item in items if isinstance(items, list) else []:
             content = item.get("content") if isinstance(item, dict) else None
             blocks = roles._blocks(content) if isinstance(content, (str, list)) else []
-            hashes.update(roles.h16(text.strip()) for text in [*blocks, "\n".join(blocks)] if text.strip())
+            # each text and the text before Hermes's memory block: no scripted turn holds the wrapper, so the
+            # second can only name the turn Hermes appended its block to, and the latest quoted turn wins
+            hashes.update(roles.h16(text.strip()) for block in [*blocks, "\n".join(blocks)]
+                          for text in {block, roles.own_text(block)} if text.strip())
         return next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
                      and (roles.h16(t["user"].strip()) in hashes
                           or roles.h16(t["user"].strip()[:HERMES_TITLE_INPUT_CHARS].strip()) in hashes)), None)

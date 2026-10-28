@@ -1035,7 +1035,7 @@ Certification comes only from the sealed board: season boards and delta boards, 
 - **Shrinking:** delta debugging over the world DB's event schedule, not over the text, down to a failing life that is "1-minimal under the deletions tested", never claimed globally minimal. The shrink oracle checks for the same failure. A flaky failure is reported with its reproduction frequency.
 - **Repro classes.** Each repro bundle declares its class: snapshot-probe, replay-from-schedule, or live.
 - **What survives:** each result is a public life with a repro bundle, which joins the regression corpus run in T1.
-- **The public regression corpus** is stocked from controls, reference stubs and equal runs over every board system, never from one system's failures. A community contribution's reproducer may illustrate its template, but never qualifies it (§10).
+- **The public regression corpus** is stocked from controls, reference stubs and equal runs over every board system, never from one system's failures. In v0.1, a catalogue row qualifies only when both the reference store and a stocking-only reference that removes a fixed, content-blind English stop list select every gold option. A community contribution's reproducer may illustrate its template, but never qualifies it (§10).
 - **The firewall:** the benchmark session never runs the finder on LCM-X. Vendors run it on their own systems.
 
 **Fault injection lite.** A small schedule syntax (restart, compaction, kill or model swap at a chosen point in a short life), deterministic with one rerun. An optional "race hunt" mode jitters timing.
