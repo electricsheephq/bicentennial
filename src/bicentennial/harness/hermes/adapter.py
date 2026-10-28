@@ -6,7 +6,6 @@ import json
 import os
 import selectors
 import signal
-import sqlite3
 import subprocess
 import sys
 import time
@@ -189,7 +188,8 @@ class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
-                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None):
+                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
+                 context_engine=None, plugins_enabled=(), extra_env=None):
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -202,7 +202,9 @@ class HermesAdapter:
             raise ValueError("a restart, kill or compaction needs a turn")
         self.toolsets, self.env_server = T1_TOOLSETS if toolsets is None else toolsets, env_server
         hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory,
-                      toolsets=self.toolsets, window=window)
+                      toolsets=self.toolsets, window=window, context_engine=context_engine, plugins_enabled=plugins_enabled)
+        self.context_engine, self.plugins_enabled, self.extra_env = context_engine, plugins_enabled, extra_env
+        self.active_context_engine = None
         self.memory, self.window = memory, window
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
@@ -295,13 +297,9 @@ class HermesAdapter:
             raise
         finally:
             self._held = None
-        db = self.paths["hermes_home"] / "state.db"
-        if db.exists():  # hermes-native.toml line 10: checkpoint the WAL before measuring the tree
-            con = sqlite3.connect(db)
-            try:
-                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                con.close()
+        from bicentennial.systems.hermes_plugin import checkpoint_sqlite
+        roots = {"HERMES_HOME": self.paths["hermes_home"], "SANDBOX_HOME": self.paths["home"]}
+        checkpoint_sqlite(roots[s["root"]] / s["relative"] for s in self.entry["surfaces"])
         summarised = sum(r.get("role") == "summariser" and r.get("attempt_id") == attempt_id for r in self.records())
         return SessionResult(index, session["kind"], sid, self.entrypoint, turns_ok, matched, tuple(restarts),
                              compaction, summarised, surface_hash(self.paths["hermes_home"], self.volatile),
@@ -329,9 +327,11 @@ class HermesAdapter:
         toolsets = self.toolsets + ((ENV_SERVER,) if servers and ENV_SERVER not in self.toolsets else ())
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
                                                             plugin_config=self.plugin_config, memory=self.memory,
-                                                            toolsets=toolsets, mcp_servers=servers, window=self.window))
+                                                            toolsets=toolsets, mcp_servers=servers, window=self.window,
+                                                            context_engine=self.context_engine,
+                                                            plugins_enabled=self.plugins_enabled))
         t0 = time.monotonic()
-        env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
+        env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress)
         assert_niced(self._worker.proc.pid)
@@ -344,6 +344,9 @@ class HermesAdapter:
         self.active_memory_providers = list(out.get("active_memory_providers") or [])
         if self.plugin is not None and self.plugin not in self.active_memory_providers:
             raise HarnessFailed("plugin_inactive")
+        self.active_context_engine = out.get("active_context_engine")
+        if self.context_engine is not None and self.active_context_engine != self.context_engine:
+            raise HarnessFailed("engine_inactive")
         t["open"].append(_ms(t0))
         return out["session_id"], out["history"], wiped
 
@@ -395,7 +398,8 @@ class HermesAdapter:
         return {"name": pin.get("name"), "version": pin.get("version"), "sha256": pin.get("sha256"),
                 "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS),
                 "plugin_config": deepcopy(self.plugin_config), "memory": self.memory,
-                "active_memory_providers": list(self.active_memory_providers)}
+                "active_memory_providers": list(self.active_memory_providers),
+                **({"active_context_engine": self.active_context_engine} if self.active_context_engine is not None else {})}
 
     def close(self) -> dict:
         if self._worker is not None:

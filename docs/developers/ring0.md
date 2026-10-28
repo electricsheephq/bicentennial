@@ -126,7 +126,7 @@ The artifact digest is sha256 of `git archive --format=tar HEAD` from the clean 
 
 The fresh-install hash is a canonical tree listing of relative path, mode, size and content hash, excluding only declared volatile paths. E1 places the v0.1 snapshot before configuration for native memory and after install-time files for plug-ins. E4 masks the director port in root `config.yaml` and `mem0.json` for the reported pin. v0.1 has no public measurement command; measure and review the pin in the registry change ([RING0 §13](../../specs/ring0/RING0.md#13-v01-errata)).
 
-Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, the forget mapping, and plug-in `PROVIDERS`/`TREES`. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
+Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, `FORGET`, and plug-in `PROVIDERS`/`TREES`. Optional `ENGINES` selects the `context.engine` id. Optional `PLUGIN_DIRS` overrides the installed directory. Optional `ENABLED` lists systems whose directory goes in `plugins.enabled`. Optional `WORKER_ENV` supplies reviewed worker environment values. Systems needing a staged model cache require `--model-cache DIR`; its file-tree digest is disclosed and checked again after the run. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
 
 ## 7. Run T1 as a merge gate
 
@@ -185,7 +185,12 @@ Exit-3 codes and causes, including registry reasons above:
 | `tier_composition` | T1 does not contain exactly G1 and G2. |
 | `schedule_mismatch` | Packed schedule differs from reconstructed schedule. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
-| `missing_input` | Required Hermes or plug-in source omitted. |
+| `missing_input` | Required Hermes, plug-in source or model cache omitted, or an unused model cache supplied. |
+| `engine_inactive` | HarnessFailed: the configured context engine is not active, so Hermes fell back. |
+| `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
+| `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
+| `model_cache_changed` | Model-cache digest changed during the run. |
+| `settle_unmapped` | Hook settle has no `SETTLE_THREADS` mapping. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `c7_missing` | Template has no C-7 entry. |
@@ -224,9 +229,9 @@ T0 writes `<out>/<pack relpath>/{card.json, receipt.json, junit.xml, invariants.
 
 Everything in `card.json` is stable. `receipt.json` holds volatile wall times, latency, load, busy readings, tokens, spend, store growth, process ids, ports and temporary paths. `junit.xml` holds no volatile value. `loop_time = wall_end_ms − wall_start_ms`. Positive spend refuses with `SpendRefused`. At T1, `tokens_by_role`, `store_growth_bytes` and `process_ids` are not measured (`t1.receipt`); empty/zero placeholders are not measurements ([RING0 §4](../../specs/ring0/RING0.md#4-stable-and-volatile-result-fields)).
 
-Disclosures ride as JUnit properties until a card field exists. T0 names are `t0.entrypoint`, `t0.event_mapping`, `t0.crash`, `honeypot.hits`, `invariants.forget_inconclusive`, `t0.pair`, and conditionally `t0.injection`, `t0.baseline`. API-mode INV-PAIR covers call and result survival; linkage requires Hermes mode.
+Disclosures ride as JUnit properties until a card field exists. T0 names are `t0.entrypoint`, `t0.event_mapping`, `t0.crash`, `honeypot.hits`, `invariants.forget_inconclusive`, `t0.pair`, and conditionally `t0.injection`, `t0.baseline`, `t0.engine`, `t0.model_cache`. API-mode INV-PAIR covers call and result survival; linkage requires Hermes mode.
 
-T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
+T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Engine/cache disclosures add `t1.engine`, `t1.engine_window`, `t1.corpus_engine`, and `t1.model_cache` when applicable. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
 
 Compare stable cards after a second run:
 

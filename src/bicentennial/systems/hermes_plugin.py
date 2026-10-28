@@ -1,6 +1,7 @@
 """Pinned plug-in trees, isolated surfaces and observed Hermes drain (R13b)."""
 
 import os
+import re
 import sqlite3
 import stat
 import subprocess
@@ -13,8 +14,12 @@ from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_listing
 from bicentennial.harness.hermes.adapter import PinMismatch
 from bicentennial.harness.hermes.config import (
+    _PASSED,
+    _PLUGIN,
+    _PROXIES,
     PLACEHOLDER_KEY,
     hermes_config,
+    worker_env,
     write_config,
 )
 from bicentennial.sandbox.spansearch import span_search
@@ -29,13 +34,78 @@ from bicentennial.systems.settle import settle
 
 PROVIDERS = {"holographic": "holographic", "mem0-oss": "mem0"}
 TREES = {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0")}
+ENGINES = {}  # System -> context.engine id.
+PLUGIN_DIRS = {}  # System -> install directory when it differs from the slot id.
+ENABLED = frozenset()  # Systems using Hermes's general plug-in manager.
+WORKER_ENV = {}  # System -> reviewed extra worker environment recipe.
 MARKER = ".bicentennial-sandbox"
 MEM0_THREADS = ("mem0-prefetch", "mem0-sync")
 
 
+def is_plugin(name):
+    return name in PROVIDERS or name in ENGINES
+
+
+def plugin_dir(name):
+    return PLUGIN_DIRS.get(name, PROVIDERS.get(name, ENGINES.get(name)))
+
+
+def validate_maps():
+    for value in (*PROVIDERS.values(), *ENGINES.values(), *PLUGIN_DIRS.values()):
+        if not isinstance(value, str) or not _PLUGIN.fullmatch(value):
+            raise ValueError("invalid plug-in id or directory")
+    if "compressor" in ENGINES.values() or (PROVIDERS.keys() | ENGINES.keys()) - TREES.keys():
+        raise ValueError("invalid engine or missing tree recipe")
+    for name in WORKER_ENV:
+        resolve_worker_env(name)
+
+
+def resolve_worker_env(name, model_cache=None):
+    extra = WORKER_ENV.get(name, {})
+    reserved = set(worker_env(dict.fromkeys(("hermes_home", "home", "tmp"), Path(".")), 1, ".", None))
+    for key, value in extra.items():
+        if (not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in reserved | set(_PASSED) | set(_PROXIES)
+                or key.startswith(("BICENTENNIAL_", "HERMES_", "PYTHON"))):
+            raise ValueError("reserved worker environment name")
+        if not isinstance(value, str):
+            raise ValueError("worker environment value must be a string")
+        if value == "{model_cache}" or value.startswith("{model_cache}/"):
+            suffix = value[len("{model_cache}"):].lstrip("/")
+            if (".." in suffix.split("/") or "\\" in suffix or "{" in suffix
+                    or value.startswith("{model_cache}//")):
+                raise ValueError("invalid model cache path")
+        elif any(c in value for c in "/\\{"):
+            raise ValueError("invalid worker environment value")
+    return {k: v.replace("{model_cache}", str(model_cache)) if model_cache is not None else v
+            for k, v in extra.items()}
+
+
+def cache_digest(directory, refuse):
+    try:
+        rows = tree_listing(directory, [])
+        if any(r["kind"] == "symlink" for r in rows):
+            raise ValueError("symlink in model cache")
+        return sha256(b"".join(f"{r['path']}\0{r['size']}\0{r['sha256']}\n".encode()
+                              for r in rows if r["kind"] == "file")).hexdigest()
+    except (OSError, ValueError):
+        raise refuse("model_cache_invalid") from None
+
+
+def prepare_cache(name, directory, refuse):
+    extra = resolve_worker_env(name)
+    needed = any("{model_cache}" in v for v in extra.values())
+    if needed != (directory is not None):
+        raise refuse("missing_input")
+    if directory is None:
+        return None, None
+    digest = cache_digest(directory, refuse)
+    return Path(directory).resolve(), digest
+
+
 class PluginCell:
     def __init__(self, entry, adapter):
-        if entry["name"] not in PROVIDERS or entry["harness"] != "hermes":
+        validate_maps()
+        if not is_plugin(entry["name"]) or entry["harness"] != "hermes":
             raise ValueError("unsupported Hermes plug-in")
         self.entry, self.adapter, self.surfaces = entry, adapter, []
         paths, user = adapter.paths, Path.home().resolve()
@@ -53,7 +123,7 @@ class PluginCell:
             self.surfaces.append((surface, directory))
         self.audit_roots = [paths[k] for k in ("home", "hermes_home", "workspace", "tmp")]
 
-    def install(self, source, *, alias) -> str:
+    def install(self, source, *, alias, context=True) -> str:
         git = ["git", "-C", str(source)]
         recipe = TREES[self.entry["name"]]
         digest = sha256()
@@ -69,7 +139,7 @@ class PluginCell:
             if status.returncode or status.stdout.strip():
                 raise PinMismatch("plug-in checkout has tracked changes")
             home = self.adapter.paths["hermes_home"]
-            target = home / "plugins" / PROVIDERS[self.entry["name"]]
+            target = home / "plugins" / plugin_dir(self.entry["name"])
             if target.exists():
                 raise ValueError("plug-in directory exists")
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +149,10 @@ class PluginCell:
                     tree.extractall(unpacked, filter="data")
                 (Path(unpacked) / (recipe[1] if len(recipe) > 1 else ".")).rename(target)
         port = int(self.adapter.director.run_values["director_port"])
-        write_config(home, hermes_config(port, alias, plugin=PROVIDERS[self.entry["name"]]))
+        name = self.entry["name"]
+        write_config(home, hermes_config(port, alias, plugin=PROVIDERS.get(name),
+            context_engine=ENGINES.get(name) if context else None,
+            plugins_enabled=(plugin_dir(name),) if name in ENABLED else ()))
         if self.entry["name"] == "mem0-oss":
             base = f"http://127.0.0.1:{port}/mem0/v1"
             llm = {"model": "bicentennial-extraction", "api_key": PLACEHOLDER_KEY, "openai_base_url": base,
@@ -116,18 +189,7 @@ class PluginCell:
 
     def checkpoint(self):
         self._idle()
-        for _, directory in self.surfaces:
-            for path in directory.rglob("*"):
-                if not stat.S_ISREG(path.lstat().st_mode) or not path.with_name(path.name + "-wal").exists():
-                    continue
-                with path.open("rb") as stream:
-                    sqlite = stream.read(16) == b"SQLite format 3\x00"
-                if sqlite:
-                    con = sqlite3.connect(path)
-                    try:
-                        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    finally:
-                        con.close()
+        checkpoint_sqlite(d for _, d in self.surfaces)
 
     def surface_hash(self) -> str:
         self.checkpoint()
@@ -157,8 +219,25 @@ class PluginCell:
 
     def settle(self):
         self._idle()
+        from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
         def observed():
             threads = getattr(self.adapter, "end_threads", None)
-            return (isinstance(threads, tuple) and not any(t in MEM0_THREADS for t in threads)
+            return (isinstance(threads, tuple) and not any(t in SETTLE_THREADS[self.entry["name"]] for t in threads)
                     and self.adapter.director.control()["inflight"] == 0)
         return settle(self.entry, observed if self.entry["settle"]["kind"] == "hook" else None)
+
+
+def checkpoint_sqlite(directories):
+    """Truncate SQLite WALs before hashing closed surfaces."""
+    for directory in directories:
+        for path in directory.rglob("*"):
+            if not stat.S_ISREG(path.lstat().st_mode) or not path.with_name(path.name + "-wal").exists():
+                continue
+            with path.open("rb") as stream:
+                sqlite = stream.read(16) == b"SQLite format 3\x00"
+            if sqlite:
+                con = sqlite3.connect(path)
+                try:
+                    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    con.close()

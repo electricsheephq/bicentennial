@@ -1697,3 +1697,52 @@ def test_close_error_preserves_system_cause(installed, tmp_path):
     results, outcomes, _ = t0.drive_branch(packs(installed)[0], "B0", Broken, bound_s=5,
                                           snapshot=snapshotter(tmp_path))
     assert not results and all(o["failure_class"] == "SYSTEM_FAILURE" for o in outcomes.values())
+
+
+def test_model_cache_prepare(installed, tmp_path, monkeypatch):
+    from bicentennial.systems import hermes_plugin as hp
+
+    cache = tmp_path / "models"
+    cache.mkdir()
+    (cache / "weights").write_bytes(b"fixture")
+    monkeypatch.setitem(hp.WORKER_ENV, "holographic", {"MODEL_HOME": "{model_cache}"})
+    kw = dict(system="holographic", hermes=tmp_path, plugin_source=tmp_path)
+    with pytest.raises(t0.T0Refused, match="^missing_input$"):
+        preflight(installed, **kw)
+    prepared = preflight(installed, model_cache=cache, **kw)
+    assert prepared[6]["extra_env"] == {"MODEL_HOME": str(cache)}
+    assert prepared[6]["model_cache_sha256"] == hp.cache_digest(cache, t0.T0Refused)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_model_cache_end_digest_and_property(installed, tmp_path, monkeypatch, changed):
+    from bicentennial.systems import hermes_plugin as hp
+
+    cache = tmp_path / "models"
+    cache.mkdir()
+    model = cache / "weights"
+    model.write_bytes(b"fixture")
+    digest = hp.cache_digest(cache, t0.T0Refused)
+    # Reference hosts keep this finalization test independent of worker scheduling.
+    prepared = list(preflight(installed, selected=[packs(installed)[0].rel]))
+    prepared[6] = dict(model_cache=cache, model_cache_sha256=digest)
+    monkeypatch.setattr(t0, "_preflight", lambda **kw: tuple(prepared))
+    if changed:
+        real = t0._report_pack
+
+        def mutate(*args, **kw):
+            report = real(*args, **kw)
+            model.write_bytes(b"changed")
+            return report
+
+        monkeypatch.setattr(t0, "_report_pack", mutate)
+    out = tmp_path / "out"
+    code = run(installed, out)
+    if changed:
+        assert code == 3
+        assert json.loads((out / "refusal.json").read_bytes())["code"] == "model_cache_changed"
+        assert_no_results(out)
+    else:
+        assert code in (0, 1, 2)
+        xml = next(out.rglob("junit.xml")).read_text()
+        assert 'name="t0.model_cache" value="sha256:' + digest + '"' in xml

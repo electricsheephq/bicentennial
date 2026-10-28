@@ -46,10 +46,12 @@ from bicentennial.sandbox.surfaces import (
     wipe_to_fresh,
 )
 from bicentennial.systems.hermes_plugin import (
+    ENABLED,
     MARKER,
     MEM0_THREADS,
     PROVIDERS,
     PluginCell,
+    plugin_dir,
 )
 from bicentennial.systems.registry import SystemRefused, check
 from bicentennial.systems.settle import settle
@@ -96,12 +98,14 @@ def _schedule(script, index):
 class HermesMemoryHost(Adapter):
     def __init__(self, entry, *, route_table, responder, clock, root, scratch, life, branch, run,
                  lock_hash, checkout=None, harness_pin=None, worker_argv=None, plugin_source=None,
-                 sim_epoch_s=1_600_000_000):
+                 sim_epoch_s=1_600_000_000, extra_env=None):
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
             reasons.append("benchmark_operator_forbidden")
         if reasons:
             raise SystemRefused(reasons)
+        self.extra_env = extra_env
+        self.active_context_engine = None
         self.name = entry["name"]
         if self.name not in WRITE_ARGS or self.name not in FORGET:
             raise ValueError("no T0 mapping")
@@ -131,7 +135,7 @@ class HermesMemoryHost(Adapter):
             if self.name in PROVIDERS:
                 if plugin_source is None:
                     raise ValueError("plugin_source required")
-                PluginCell(entry, self).install(plugin_source, alias=self.director.route["alias"])
+                PluginCell(entry, self).install(plugin_source, alias=self.director.route["alias"], context=False)
             else:
                 if plugin_source is not None:
                     raise ValueError("unexpected plugin_source")
@@ -162,7 +166,8 @@ class HermesMemoryHost(Adapter):
 
     def _config(self):
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self.director.route["alias"],
-                                                           plugin=PROVIDERS.get(self.name)))
+                                                           plugin=PROVIDERS.get(self.name),
+            plugins_enabled=(plugin_dir(self.name),) if self.name in ENABLED else ()))
 
     def _start(self):
         if self._worker is not None:
@@ -173,7 +178,7 @@ class HermesMemoryHost(Adapter):
             raise GateRefused("machine guard refused")
         validate_paths(self.paths)
         self._config()
-        self._worker = _Worker(self.argv, worker_env(self.paths, self.server.port, self.clock.path, self.checkout),
+        self._worker = _Worker(self.argv, worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env),
                                str(self.paths["workspace"]), self.paths["logs"] / f"host-{len(self.pids) + 1}.stderr",
                                self.egress)
         self.pids.append(self._worker.proc.pid)
