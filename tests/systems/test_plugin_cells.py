@@ -605,11 +605,12 @@ def test_checkpoint_refuses_a_held_wal(tmp_path, monkeypatch):
         with pytest.raises(HarnessFailed, match="checkpoint_busy"):
             hp.checkpoint_sqlite([db.parent])
         assert wal.stat().st_size > 0
+        reader.close()
+        hp.checkpoint_sqlite([db.parent])  # the open writer keeps the WAL file, so its truncation is visible
+        assert wal.stat().st_size == 0
     finally:
         reader.close()
         writer.close()
-    hp.checkpoint_sqlite([db.parent])
-    assert wal.stat().st_size == 0
 
 
 def test_import_boundaries():
