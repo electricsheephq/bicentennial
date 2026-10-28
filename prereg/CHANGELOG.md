@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-28: plug-in Python dependencies (#190)
+- **RING0 §13 E9:** plug-in dependencies come from a benchmark-owned hash lock installed into a per-system copy of pinned Hermes; prepare refuses absent or unequal applicable versions. JUnit run properties disclose the lock and every real worker's distribution set. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-28: native session-start snapshot (#185)
 - **RING0 §7 and §13 E7:** the Hermes native memory-layer host gives the reader the frozen session-start memory and user-profile snapshot rendered by pinned Hermes at session open, before recall and prefetch context, without adding recall citations. T0 discloses that other harness prompt injection is not exercised; T1's regression corpus uses the same host. No PREREG version changes; PREREG-v0.4 remains frozen.
 

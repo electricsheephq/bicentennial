@@ -130,9 +130,13 @@ The fresh-install hash is a canonical tree listing of relative path, mode, size 
 
 Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, the forget mapping, and plug-in `PROVIDERS`/`TREES`. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
 
+`DEPENDENCIES` maps a plug-in system to an existing repository-relative POSIX path under `systems/locks/` (no `..` or backslashes); locks allow comments and continuations, require exact `name==version` pins with SHA-256 hashes and optional environment markers, and reject extras, URLs, editables, includes, duplicate normalised names with identical marker text, and empty locks.
+
 ## 7. Run T1 as a merge gate
 
 Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
+
+A system with a dependency lock gets its own clone of the pinned Hermes checkout at the same commit, prepared with that checkout's own `uv sync --frozen --extra mcp`; install its dependencies with `uv pip install --python <copy>/.venv/bin/python --require-hashes -r systems/locks/<system>.txt`, then pass that copy as `--hermes` for that system only. The shared checkout stays as Hermes's lockfile plus the `mcp` extra make it. Prepare verifies applicable locked versions in the worker and records the lock digest and applicable count as `<tier>.plugin_deps`; every real-worker run records the canonical distribution list as `<tier>.worker_dists` and its digest and count as `<tier>.worker_dists_sha256` in JUnit.
 
 The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
 
@@ -199,6 +203,9 @@ Exit-3 codes and causes, including registry reasons above:
 | `harness_not_hermes` | Registry harness is not Hermes. |
 | `missing_input` | Required Hermes or plug-in source omitted. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
+| `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
+| `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |
+| `plugin_deps_check_failed` | Worker inspection cannot start, times out, lacks marker support, or returns invalid output. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `c7_missing` | Template has no C-7 entry. |
 | `c7_changed` | Template C-7 hash changed. |
@@ -236,9 +243,9 @@ T0 writes `<out>/<pack relpath>/{card.json, receipt.json, junit.xml, invariants.
 
 Everything in `card.json` is stable. `receipt.json` holds volatile wall times, latency, load, busy readings, tokens, spend, store growth, process ids, ports and temporary paths. `junit.xml` holds no volatile value. `loop_time = wall_end_ms − wall_start_ms`. Positive spend refuses with `SpendRefused`. At T1, `tokens_by_role`, `store_growth_bytes` and `process_ids` are not measured (`t1.receipt`); empty/zero placeholders are not measurements ([RING0 §4](../../specs/ring0/RING0.md#4-stable-and-volatile-result-fields)).
 
-Disclosures ride as JUnit properties until a card field exists. T0 names are `t0.entrypoint`, `t0.event_mapping`, `t0.crash`, `honeypot.hits`, `invariants.forget_inconclusive`, `t0.pair`, and conditionally `t0.injection`, `t0.baseline`. API-mode INV-PAIR covers call and result survival; linkage requires Hermes mode.
+Disclosures ride as JUnit properties until a card field exists. T0 names are `t0.entrypoint`, `t0.event_mapping`, `t0.crash`, `honeypot.hits`, `invariants.forget_inconclusive`, `t0.pair`, and conditionally `t0.injection`, `t0.baseline`, and, on a real-worker run, `t0.worker_dists`, `t0.worker_dists_sha256` and, for a system with a lock, `t0.plugin_deps`. API-mode INV-PAIR covers call and result survival; linkage requires Hermes mode.
 
-T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tool_search`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
+T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tool_search`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. A real-worker run adds `t1.worker_dists` and `t1.worker_dists_sha256`, and a system with a lock adds `t1.plugin_deps`. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
 
 Compare stable cards after a second run:
 

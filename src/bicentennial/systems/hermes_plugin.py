@@ -1,13 +1,16 @@
 """Pinned plug-in trees, isolated surfaces and observed Hermes drain (R13b)."""
 
+import json
 import os
+import re
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_listing
@@ -29,8 +32,123 @@ from bicentennial.systems.settle import settle
 
 PROVIDERS = {"holographic": "holographic", "mem0-oss": "mem0"}
 TREES = {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0")}
+# Benchmark-owned hash locks, covered by benchmark_commit.
+DEPENDENCIES = {"mem0-oss": "systems/locks/mem0-oss.txt"}
 MARKER = ".bicentennial-sandbox"
 MEM0_THREADS = ("mem0-prefetch", "mem0-sync")
+
+
+def normalise(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def validate_dependencies(repo):
+    for name, value in DEPENDENCIES.items():
+        path = PurePosixPath(value)
+        if (name not in PROVIDERS or path.is_absolute() or ".." in path.parts or "\\" in value
+                or path.parts[:2] != ("systems", "locks") or not (repo / path).is_file()):
+            raise ValueError("plugin_deps_lock_invalid")
+
+
+def parse_dependencies(data):
+    """Read the restricted, hash-required subset of a universal requirements lock."""
+    requirements, seen, pending = [], set(), ""
+    for raw in data.decode("utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = re.split(r"\s+#", line, maxsplit=1)[0].rstrip()
+        pending += line[:-1] + " " if line.endswith("\\") else line
+        if line.endswith("\\"):
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9][A-Za-z0-9.!+_-]*)"
+            r"(?:\s*;\s*(.+?))?\s+((?:--hash=sha256:[0-9a-fA-F]{64}\s*)+)", pending)
+        if not match or "[" in pending:
+            raise ValueError("plugin_deps_lock_invalid")
+        name, version, marker, _ = match.groups()
+        key = normalise(name), marker
+        if key in seen:
+            raise ValueError("plugin_deps_lock_invalid")
+        seen.add(key)
+        requirements.append([key[0], version, marker])
+        pending = ""
+    if pending or not requirements:
+        raise ValueError("plugin_deps_lock_invalid")
+    return requirements
+
+
+WORKER_DISTS = r"""
+import importlib.metadata as metadata
+import json, re, sys
+normalise = lambda name: re.sub(r"[-_.]+", "-", name).lower()
+requirements = json.load(sys.stdin)
+applicable, invalid = {}, False
+if requirements:
+    from packaging.markers import InvalidMarker, Marker, UndefinedComparison, UndefinedEnvironmentName
+for name, version, marker in requirements:
+    try:
+        applies = marker is None or Marker(marker).evaluate()
+    except (InvalidMarker, UndefinedComparison, UndefinedEnvironmentName):
+        invalid = True
+        continue
+    if applies:
+        if name in applicable and applicable[name] != version:
+            invalid = True
+        applicable[name] = version
+installed = {}
+for name in applicable:
+    try:
+        installed[name] = metadata.version(name)
+    except metadata.PackageNotFoundError:
+        installed[name] = None
+dists = sorted({(normalise(d.metadata['Name']), d.version) for d in metadata.distributions()})
+print(json.dumps(dict(applicable=applicable, installed=installed, dists=dists, invalid=invalid)))
+"""
+
+
+def worker_properties(system, checkout, repo, tier, refused, worker_argv=None):
+    """Inspect only the isolated worker; injected workers have no disclosures."""
+    if worker_argv is not None:
+        return ()
+    data, requirements = None, []
+    if system in DEPENDENCIES:
+        try:
+            validate_dependencies(repo)
+            data = (repo / DEPENDENCIES[system]).read_bytes()
+            requirements = parse_dependencies(data)
+        except (OSError, ValueError):
+            raise refused("plugin_deps_lock_invalid") from None
+    try:
+        checked = subprocess.run([str(Path(checkout).resolve() / ".venv/bin/python"), "-I", "-c",
+            WORKER_DISTS], input=json.dumps(requirements), capture_output=True, text=True, env={}, timeout=60)
+        if checked.returncode:
+            raise ValueError()
+        result = json.loads(checked.stdout)
+        if result.get("invalid") is True:
+            raise refused("plugin_deps_lock_invalid")
+        applicable, installed, dists = (result[k] for k in ("applicable", "installed", "dists"))
+        if (not isinstance(applicable, dict) or not isinstance(installed, dict)
+                or set(applicable) != set(installed) or not isinstance(dists, list)
+                or any([name, version] not in [[n, v] for n, v, _ in requirements]
+                       for name, version in applicable.items())
+                or any(v is not None and not isinstance(v, str) for v in installed.values())
+                or any(not isinstance(row, list) or len(row) != 2 or
+                       any(not isinstance(v, str) or not v for v in row) for row in dists)):
+            raise ValueError()
+        dists = sorted({(normalise(n), v) for n, v in dists})
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError, AttributeError):
+        raise refused("plugin_deps_check_failed") from None
+    mismatches = sorted(n for n, v in applicable.items() if installed[n] != v)
+    if mismatches:
+        for name in mismatches:
+            print(f"{name} locked={applicable[name]} installed={installed[name] or 'none'}", file=sys.stderr)
+        raise refused("plugin_deps_missing:" + mismatches[0])
+    encoded = canon(dists)
+    props = [(tier + ".worker_dists", encoded.decode()),
+             (tier + ".worker_dists_sha256", f"sha256:{sha256(encoded).hexdigest()} n={len(dists)}")]
+    if data is not None:
+        props.append((tier + ".plugin_deps", f"sha256:{sha256(data).hexdigest()} n={len(applicable)}"))
+    return tuple(props)
 
 
 class PluginCell:

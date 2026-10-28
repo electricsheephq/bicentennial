@@ -28,7 +28,11 @@ from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock, lock
 from bicentennial.score.bundle import make_bundle
 from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
-from bicentennial.systems.hermes_plugin import PROVIDERS
+from bicentennial.systems.hermes_plugin import (
+    DEPENDENCIES,
+    PROVIDERS,
+    worker_properties,
+)
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
@@ -89,6 +93,7 @@ class T1Context:
     plugin_source: object
     worker_argv: object
     table: dict
+    worker_properties: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -236,10 +241,15 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
             raise T1Refused("harness_extra_missing:mcp") from None
         if checked.returncode != 0:
             raise T1Refused("harness_extra_missing:mcp")
+    properties = ()
+    if system in DEPENDENCIES:
+        properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     marker = read_marker()
     admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=2)
     if not admission.admitted:
         raise T1Refused(admission.reason)
+    if system not in DEPENDENCIES:
+        properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     index = verify(packs, pack_hash=pack_hash)
     if index["tier"] != "T1":
         raise T1Refused("tier")
@@ -272,7 +282,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         system_hash=sha256_canon(lock["system_artifacts"]), **_boundaries(packed))
     return T1Context(entry, harness_pin, index, pack_hash, packed, lock, dict(sorted(pins.items())),
         SessionGate(lock), current_lock, mint_id(canon(["t1", lock_hash(lock), system]).decode(), 0),
-        2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table)
+        2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table, properties)
 
 
 def _worker(ctx, life, branch, arm):
