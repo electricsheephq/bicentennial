@@ -29,21 +29,21 @@ def measured():
     return entry
 
 
-@pytest.mark.parametrize("name", ["hermes-native", "lcm-x", "no-memory"])
+@pytest.mark.parametrize("name", ["hermes-native", "holographic", "lcm-x", "mem0-oss", "no-memory"])
 def test_shipped_entries_validate(name):
     entry = load(REGISTRY / f"{name}.toml")
     validate("system", entry)
     assert check(entry) == []
-    assert entry["embedding_dim"] is None
+    assert entry["embedding_dim"] == (1536 if name == "mem0-oss" else None)
 
 
 def test_shipped_cli(capsys):
     assert main(["check"]) == 0
     assert capsys.readouterr().out.splitlines() == [
-        "hermes-native: UNMEASURED fresh_install_hash",
-        "holographic: UNMEASURED artifact.sha256 fresh_install_hash",
+        "hermes-native: ok",
+        "holographic: ok",
         "lcm-x: UNMEASURED artifact.sha256 fresh_install_hash",
-        "mem0-oss: UNMEASURED artifact.sha256 fresh_install_hash",
+        "mem0-oss: ok",
         "no-memory: ok",
     ]
 
@@ -174,8 +174,11 @@ def test_hermes_manifest_and_wal_preservation():
 
 
 def test_admission_unmeasured_and_measured_hermes():
+    assert admit_system(hermes(), operator="benchmark") is None
+    entry = hermes()
+    entry["fresh_install_hash"] = ZERO_HASH
     with pytest.raises(SystemRefused) as error:
-        admit_system(hermes(), operator="benchmark")
+        admit_system(entry, operator="benchmark")
     assert error.value.reasons == ("unmeasured:fresh_install_hash",)
     entry = measured()
     before = copy.deepcopy(entry)
