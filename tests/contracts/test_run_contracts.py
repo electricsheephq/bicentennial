@@ -298,7 +298,7 @@ def test_masks_cover_required_categories_and_exclude_director_tool_ids():
     names = {m["name"] for m in masks}
     assert {"hermes-session", "harness-tool-call", "harness-function-call",
             "harness-response", "harness-root-response", "harness-stream-response",
-            "wall-clock-t", "wall-clock-created", "sandbox-root", "director-port"} <= names
+            "wall-clock-t", "wall-clock-created", "random-uuid", "sandbox-root", "director-port"} <= names
     for entry in masks:
         if entry["placeholder"] in {"{HERMES_SESSION_ID}", "{HARNESS_TOOL_CALL_ID}",
                                     "{HARNESS_RESPONSE_ID}"}:
@@ -348,6 +348,13 @@ def test_names_come_from_schema_files_and_checks_can_be_registered(monkeypatch):
     run.register_check("fault-lite", seen.append)
     validate("fault-lite", fixture("fault-lite"))
     assert seen == [fixture("fault-lite")]
+
+
+@pytest.mark.parametrize("target", ["(x)", "(?P<p0>x)", "[", "x*"])
+def test_pattern_masks_refuse_groups_bad_syntax_and_empty_matches(target):
+    masks = [{"name": "m", "kind": "pattern", "target": target, "placeholder": "{X}"}]
+    with pytest.raises(ValueError, match="pattern"):
+        validate("masks", masks)
 
 
 def test_run_value_masks_name_known_values_only():

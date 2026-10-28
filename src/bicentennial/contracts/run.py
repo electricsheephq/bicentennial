@@ -149,5 +149,13 @@ def validate(name, obj) -> None:
                 raise ValueError(f"mask {entry['name']}: only $, .name, ..name and [*] segments")
             if entry["kind"] == "run_value" and entry["target"] not in RUN_VALUES:
                 raise ValueError(f"mask {entry['name']}: unknown run value")
+            if entry["kind"] == "pattern":
+                try:
+                    compiled = re.compile(entry["target"])
+                except re.error:
+                    raise ValueError(f"mask {entry['name']}: invalid pattern") from None
+                # The applier joins every target into one alternation keyed by its own group names.
+                if compiled.groups or compiled.match(""):
+                    raise ValueError(f"mask {entry['name']}: a pattern has no groups and never matches empty text")
     for check in _CHECKS.get(name, ()):
         check(obj)

@@ -464,6 +464,28 @@ def test_a_failed_fsync_retires_the_writer(tmp_path):
     assert verify(tmp_path)["chain_breaks"] == 0
 
 
+def test_random_uuids_in_body_text_are_masked():
+    # Shapes seen at the Hermes pin: the compressor's recovery footer, and a recall result
+    # (session_search, mem0_search) serialised into a tool message's text.
+    def body(session, memory):
+        return {"messages": [
+            {"role": "user", "content": f"recover it with: session_search(query='x', session_id='{session}')"},
+            {"role": "tool", "content": json.dumps({"results": [{"id": memory, "memory": "fact"}],
+                                                    "session_id": session})}]}
+    a = apply_masks(body("b466f50d-3add-467d-b497-d47aa3c58973", "0d5023e6-9e4f-4ea5-9a2a-0832bd7a739d"), RUN_VALUES)
+    b = apply_masks(body("ba4a28a4-b4e4-4c61-95ca-e583993134e1", "13732fb5-545c-4d39-b245-89181dfd14cc"), RUN_VALUES)
+    assert a == b and "{UUID}" in a["messages"][0]["content"]
+    assert apply_masks(body("b466f50d-3add-467d-b497-d47aa3c58973", "x"), RUN_VALUES) != a
+    # Leftmost match: a port inside a random id, and a random id inside the sandbox root.
+    assert apply_masks({"text": "c1481234-5678-4abc-8def-0123456789ab"}, RUN_VALUES) == {"text": "{UUID}"}
+    root = "/sandbox/6d25ab7b-f888-4954-8b8c-9b8fff0a53e8/run"
+    assert apply_masks({"text": f"{root}/x"}, dict(RUN_VALUES, sandbox_root=root)) == {"text": "{SANDBOX_ROOT}/x"}
+    # Not a UUID: longer hex runs, a sha256, an upper-case id and a director-issued id stay.
+    kept = {"text": "ab0d5023e6-9e4f-4ea5-9a2a-0832bd7a739d " + "a" * 64
+            + " 0D5023E6-9E4F-4EA5-9A2A-0832BD7A739D bcw-70c22c5884931088"}
+    assert apply_masks(kept, RUN_VALUES) == kept
+
+
 def test_run_values_are_masked_in_object_keys():
     a = apply_masks({"files": {"/sandbox/run-a/data": "same"}}, RUN_VALUES)
     b = apply_masks({"files": {"/sandbox/run-b/data": "same"}},
