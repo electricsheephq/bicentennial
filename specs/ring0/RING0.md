@@ -53,7 +53,7 @@ At T1 every request the harness or the system sends is answered by a determinist
 |---|---|
 | `replay_main` | the scripted turn at the cursor, through the tool-call compiler, as in S6a |
 | `write_turn` | the content-blind write rule (below) |
-| `probe_main` | the scripted reader's recall call (§1), then the envelope or the first step of the action plan |
+| `probe_main` | the scripted reader's recall call (§1), then the envelope, or the action plan one step per request and then the text `Noted.` (a refrain plan has no step). A probe reply is never empty: Hermes answers an empty main reply with retries that wait on the simulated clock |
 | `compaction`, `summariser`, `extraction` | the extractive stub (below) |
 | `memory_write` | the content-blind write rule. This role is added when the classifier is promoted (R01): S1's background-review marker, and any pre-compaction-flush or session-end marker, map to it instead of `aux` |
 | `title` | the fixed title `Session` |

@@ -27,6 +27,7 @@ from bicentennial.keyed import choice, uniform_int
 from bicentennial.ledger import Guard
 from bicentennial.probe.argtemplate import fill, recall_call
 from bicentennial.probe.probe_responder import (
+    CLOSING,
     PlanToolMissing,
     ProbeResponder,
     RecallToolMissing,
@@ -337,7 +338,7 @@ def wire_row(wire, item, key, text):
             append_exchange(request, wire, second.tool_calls[0], "MIDDLE-3301", cid=f"step-{n}")
             second = probe.respond(call_for(wire, request, "tool_results"))
             assert probe.results()[item["item_id"]] == result
-        assert second.text == "" and second.tool_calls == ()
+        assert second.text == CLOSING and second.tool_calls == ()
     return result
 
 
@@ -351,6 +352,12 @@ def test_both_wires(wire):
             assert comparable(hermes) == comparable(api)
             assert hermes.recall is None
             assert scored(item, tables, hermes)["score_milli"] == HAND[iid][index][1]
+
+
+def test_closing_text_is_the_compiler_replay_text():
+    # A plan probe ends like check_compile's replay of the same plan, and never with an empty reply.
+    from bicentennial.director.compiler.hermes import ASSISTANT
+    assert CLOSING == ASSISTANT and CLOSING.strip()
 
 
 @pytest.mark.parametrize("wire", ["chat", "responses"])
@@ -368,7 +375,8 @@ def test_no_recall_and_compiler(wire):
     assert first.tool_calls == (compile_step(book("WINDOW-7401")),)
     assert first == probe.respond(call_for(wire, request, "retry"))
     append_exchange(request, wire, first.tool_calls[0], "MIDDLE-3301")
-    assert probe.respond(call_for(wire, request, "tool_results")).tool_calls == ()
+    done = probe.respond(call_for(wire, request, "tool_results"))
+    assert done.tool_calls == () and done.text == CLOSING
     assert probe.results()["af0"].selected_option == "af0-g"
     assert recall_call(system, "query") is None
     assert comparable(probe.results()["af0"]) == comparable(read(
