@@ -3,6 +3,7 @@
 import hashlib
 import json
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -224,6 +225,15 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     harness_pin = dict(sorted(load(REGISTRY / "hermes-native.toml")["artifact"].items()))
     if (hermes is None and worker_argv is None) or (system in PROVIDERS and plugin_source is None):
         raise T1Refused("missing_input")
+    if hermes is not None and worker_argv is None:
+        python = Path(hermes).resolve() / ".venv" / "bin" / "python"
+        try:
+            checked = subprocess.run([str(python), "-c", "import mcp"], timeout=60,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            raise T1Refused("harness_extra_missing:mcp") from None
+        if checked.returncode != 0:
+            raise T1Refused("harness_extra_missing:mcp")
     marker = read_marker()
     admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=2)
     if not admission.admitted:
@@ -387,6 +397,14 @@ def run_arms(ctx, *, scratch) -> T1Run:
                 checkout=ctx.hermes, scratch=scratch / "check" / pack.life, step_s=STEP_S,
                 worker_argv=_worker(ctx, pack.life, "B0", "check_compile"))
             if not checked["ok"]:
+                for branch, result in sorted(checked["branches"].items()):
+                    kinds = {}
+                    for mismatch in result["mismatches"]:
+                        kind = mismatch["kind"]
+                        kinds[kind] = kinds.get(kind, 0) + 1
+                    counts = ",".join(f"{kind}:{count}" for kind, count in sorted(kinds.items())) or "-"
+                    print(f"check_compile {pack.life} {branch} calls={result['calls']} "
+                        f"mismatches={len(result['mismatches'])} kinds={counts}", file=sys.stderr)
                 raise T1Refused("check_compile", fields=[b for b in sorted(checked["branches"])
                     if checked["branches"][b]["mismatches"] or not checked["branches"][b]["calls"]])
         units, scores, labels = ({a: [] for a in UNIT_ORDER}, {a: {} for a in UNIT_ORDER},

@@ -139,6 +139,51 @@ def test_unmeasured_and_missing_input(installed, monkeypatch):
         prepare(installed, system="holographic", entry=measured("holographic"))
 
 
+@pytest.mark.parametrize("interpreter", ["failure", "missing", "timeout"])
+def test_mcp_extra_refused_before_guard(installed, tmp_path, monkeypatch, interpreter):
+    monkeypatch.setattr(t1, "read_marker", lambda: pytest.fail("machine guard reached"))
+    python = tmp_path / ".venv/bin/python"
+    if interpreter != "missing":
+        python.parent.mkdir(parents=True)
+        python.write_text('#!/bin/sh\n[ "$1" = "-c" ] && [ "$2" = "import mcp" ] && exit 1\nexit 9\n')
+        python.chmod(0o755)
+    if interpreter == "timeout":
+        def timeout(*args, **kwargs):
+            raise t1.subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+        monkeypatch.setattr(t1.subprocess, "run", timeout)
+    with pytest.raises(t1.T1Refused) as caught:
+        prepare(installed, hermes=tmp_path, worker_argv=None)
+    assert caught.value.code == "harness_extra_missing:mcp"
+
+
+def test_mcp_extra_success_and_injected_worker_skip(installed, tmp_path, monkeypatch):
+    python = tmp_path / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\n[ "$1" = "-c" ] && [ "$2" = "import mcp" ] && exit 0\nexit 9\n')
+    python.chmod(0o755)
+    real, calls = t1.subprocess.run, []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return real(argv, **kwargs)
+
+    def guard():
+        raise t1.T1Refused("test_guard")
+
+    monkeypatch.setattr(t1.subprocess, "run", run)
+    monkeypatch.setattr(t1, "read_marker", guard)
+    with pytest.raises(t1.T1Refused) as caught:
+        prepare(installed, hermes=tmp_path, worker_argv=None)
+    assert caught.value.code == "test_guard"
+    assert calls == [([str(python.resolve()), "-c", "import mcp"],
+        dict(timeout=60, stdout=t1.subprocess.DEVNULL, stderr=t1.subprocess.DEVNULL))]
+    calls.clear()
+    with pytest.raises(t1.T1Refused, match="test_guard"):
+        prepare(installed, hermes=tmp_path)
+    assert not calls
+
+
 @pytest.mark.parametrize("code", ["tier", "harness_artifact_mismatch", "tier_composition", "c7_missing", "c7_changed"])
 def test_pack_preflight(installed, monkeypatch, code):
     monkeypatch.setattr(adapter.HermesAdapter, "__init__", lambda *a, **kw: pytest.fail("adapter constructed"))
@@ -244,7 +289,7 @@ def test_scratch_and_compile_refusals(installed, tmp_path, monkeypatch):
     with pytest.raises(t1.T1Refused, match="scratch_exists"):
         t1.run_arms(ctx, scratch=tmp_path)
     monkeypatch.setattr(t1, "check_compile", lambda *a, **kw: dict(ok=False, branches={
-        "B1": dict(calls=1, mismatches=[{}]), "B0": dict(calls=1, mismatches=[])}))
+        "B1": dict(calls=1, mismatches=[{"kind": "result"}]), "B0": dict(calls=1, mismatches=[])}))
     scratch = tmp_path / "failed"
     with pytest.raises(t1.T1Refused) as caught:
         t1.run_arms(ctx, scratch=scratch)
@@ -252,9 +297,26 @@ def test_scratch_and_compile_refusals(installed, tmp_path, monkeypatch):
     assert not scratch.exists()
 
 
+def test_compile_refusal_summary(installed, tmp_path, monkeypatch, capsys):
+    ctx = prepare(installed)
+    report = dict(life=ctx.packs[0].life, genre=ctx.packs[0].genre, ok=False, branches={
+        "B1": dict(sessions=0, calls=0, mismatches=[]),
+        "B0": dict(sessions=1, calls=2, mismatches=[
+            dict(kind=kind, expected_sha256="secret-hash", got_sha256="other-hash", args="secret-argument")
+            for kind in ("result", "env_state")])})
+    monkeypatch.setattr(t1, "check_compile", lambda *a, **kw: report)
+    capsys.readouterr()
+    with pytest.raises(t1.T1Refused) as caught:
+        t1.run_arms(ctx, scratch=tmp_path / "failed")
+    assert caught.value.code == "check_compile" and caught.value.fields == ("B0", "B1")
+    assert capsys.readouterr().err == (
+        f"check_compile {report['life']} B0 calls=2 mismatches=2 kinds=env_state:1,result:1\n"
+        f"check_compile {report['life']} B1 calls=0 mismatches=0 kinds=-\n")
+
+
 def test_firewall():
     source = Path(t1.__file__).read_text()
-    allowed = {"json", "subprocess", "hashlib", "dataclasses", "pathlib", "concurrent"}
+    allowed = {"json", "subprocess", "hashlib", "dataclasses", "pathlib", "concurrent", "sys"}
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             names = [n.name for n in node.names] if isinstance(node, ast.Import) else [node.module]
