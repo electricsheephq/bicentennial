@@ -7,7 +7,7 @@ from math import isqrt
 
 from bicentennial.canon import canon
 from bicentennial.director.responder import Call, Reply
-from bicentennial.director.roles import HERMES_MEMORY_FENCE
+from bicentennial.director.roles import HERMES_MEMORY_FENCE, own_text
 from bicentennial.director.wire import chat, responses
 
 # Argument names from the recorded provider schemas (tests/fixtures/systems/tool-schemas.json).
@@ -33,7 +33,7 @@ def _own_text(content):
     if not isinstance(content, str):
         content = [p for p in content or [] if not (isinstance(p, dict) and isinstance(p.get("text"), str)
                                                     and p["text"].startswith(fence))]
-    return _text(content).split(HERMES_MEMORY_FENCE, 1)[0]
+    return own_text(_text(content))
 
 
 def _messages(call):

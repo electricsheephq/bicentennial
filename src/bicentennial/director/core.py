@@ -293,7 +293,8 @@ class Director:
         for item in items if isinstance(items, list) else []:
             content = item.get("content") if isinstance(item, dict) else None
             blocks = roles._blocks(content) if isinstance(content, (str, list)) else []
-            hashes.update(roles.h16(text) for block in [*blocks, "\n".join(blocks)] for text in roles.turn_texts(block))
+            hashes.update(roles.h16(text.strip()) for block in [*blocks, "\n".join(blocks)]
+                          for text in {block, roles.own_text(block)} if text.strip())
         return next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
                      and (roles.h16(t["user"].strip()) in hashes
                           or roles.h16(t["user"].strip()[:HERMES_TITLE_INPUT_CHARS].strip()) in hashes)), None)

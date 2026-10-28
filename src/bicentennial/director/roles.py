@@ -53,14 +53,15 @@ def h16(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-# Pinned Hermes appends a turn's prefetched memory to the user text as "\n\n" plus a fenced block
-# (agent/turn_context.py compose_user_api_content; agent/memory_manager.py build_memory_context_block).
-HERMES_MEMORY_FENCE = "\n\n<memory-context>\n"
+# Pinned Hermes appends a turn's prefetched memory to the user text as "\n\n" plus a fenced block that opens
+# with its system note (agent/turn_context.py compose_user_api_content; agent/memory_manager.py
+# build_memory_context_block). It sanitises recalled text of that wrapper, so the last one is its own block.
+HERMES_MEMORY_FENCE = "\n\n<memory-context>\n[System note: The following is recalled memory context, "
 
 
-def turn_texts(text: str) -> set[str]:
-    """A user text block, stripped, and the same text before Hermes's memory fence: the cursor's candidates."""
-    return {t.strip() for t in (text, text.split(HERMES_MEMORY_FENCE, 1)[0]) if t.strip()}
+def own_text(text: str) -> str:
+    """The text before Hermes's appended memory block, or the whole text when there is none."""
+    return text.rsplit(HERMES_MEMORY_FENCE, 1)[0]
 
 
 # Markers on the pinned versions (REPORT.md: source and derivation of each). The director's write suffix is
@@ -250,7 +251,9 @@ def shape(req: dict, signatures=SIGNATURES) -> dict:
     return {"wire": wire, "method": method, "path": path, "keys": sorted(body), "model": body.get("model"),
             "seq": toks, "n_tools": len(body.get("tools") or []), "tail_ids": tail[0], "tail_calls": tail[1],
             "last_is": {"u": "user_text", "t": "tool_result"}.get(final, "other"),
-            "user_hashes": sorted({h16(t) for b in [whole, *last] for t in turn_texts(b)}) if whole else [],
+            "user_hashes": sorted({h16(whole)} | {h16(b.strip()) for b in last if b.strip()}) if whole else [],
+            "own_hashes": sorted({h16(own_text(b).strip()) for b in [whole, *last]
+                                  if HERMES_MEMORY_FENCE in b and own_text(b).strip()}),
             "len": {"system": sum(map(len, system)), "last_user": len(whole)},
             "markers": markers(fields, signatures)}
 
@@ -311,10 +314,12 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
                 return "unknown", "unknown", {**ev, "reason": "tool result for an unissued call id or mixed roles"}
             return done(got.pop(), "cursor", call_id=next(c for c in s["tail_ids"] if c in ctx.issued))
         if s["last_is"] == "user_text" and s["n_tools"] > 0:
-            if ctx.cursor < len(ctx.expected) and ctx.expected[ctx.cursor]["hash"] in s["user_hashes"]:
-                return done(_turn_role(ctx.expected[ctx.cursor]), "cursor", turn=ctx.cursor)
-            if ctx.current and ctx.current["hash"] in s["user_hashes"]:
-                return done(_turn_role(ctx.current), "cursor", turn="retry")
+            # the exact text first, then the text before Hermes's memory block: an exact retry stays a retry
+            for hashes in (s["user_hashes"], s.get("own_hashes", ())):
+                if ctx.cursor < len(ctx.expected) and ctx.expected[ctx.cursor]["hash"] in hashes:
+                    return done(_turn_role(ctx.expected[ctx.cursor]), "cursor", turn=ctx.cursor)
+                if ctx.current and ctx.current["hash"] in hashes:
+                    return done(_turn_role(ctx.current), "cursor", turn="retry")
             if ctx.current and CONTINUATION in mroles:
                 return done(_turn_role(ctx.current), "cursor", turn=CONTINUATION)
     mroles.discard(CONTINUATION)  # outside a scripted turn a continuation marker decides nothing
