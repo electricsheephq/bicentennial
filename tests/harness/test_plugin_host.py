@@ -15,7 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from hermes_stub import write_tree
+from hermes_stub import MODULES, write_tree
 
 from bicentennial.api import conformance
 from bicentennial.api.contract import answer
@@ -84,7 +84,7 @@ def plugin_repo(dest, name):
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, request):
-    if request.node.originalname == "test_live":
+    if request.node.originalname in ("test_live", "test_native_session_start_snapshot_live"):
         return
     for name in ("BICENTENNIAL_BUSY_CMD", "BICENTENNIAL_OPERATOR"):
         monkeypatch.delenv(name, raising=False)
@@ -223,6 +223,44 @@ def test_native_hook_order(factory):
     assert host.settle(5)
     host.begin_session(2)
     assert calls(host)[-2:] == [logged("end_session", sid, "user_exit"), logged("close")]
+
+
+@pytest.mark.parametrize("memory_enabled,user_enabled,blocks,expected", [
+    (True, True, {"memory": "memory block", "user": "user block"}, "memory block\n\nuser block"),
+    (False, True, {"memory": "hidden", "user": "user block"}, "user block"),
+    (True, False, {"memory": "memory block", "user": "hidden"}, "memory block"),
+    (False, False, {"memory": "hidden", "user": "hidden"}, ""),
+    (True, True, {"memory": None, "user": ""}, ""),
+])
+def test_worker_snapshot_gating_and_order(factory, monkeypatch, memory_enabled, user_enabled, blocks, expected):
+    source = MODULES["tools/memory_tool.py"]
+    source += f'''
+MemoryStore.memory_enabled = {memory_enabled!r}
+MemoryStore.user_profile_enabled = {user_enabled!r}
+
+
+def format_snapshot(self, target):
+    assert {{"memory": self.memory_enabled, "user": self.user_profile_enabled}}[target]
+    return {blocks!r}[target]
+
+
+MemoryStore.format_for_system_prompt = format_snapshot
+'''
+    monkeypatch.setitem(MODULES, "tools/memory_tool.py", source)
+    host = factory()
+    host.ingest(event())
+    assert host.settle(5)
+    reply = host._call("query", text="quartz", recall=dict(name="session_search", arguments=dict(query="quartz")))
+    assert reply["snapshot"] == expected
+
+
+@pytest.mark.parametrize("name", ("holographic", "mem0-oss"))
+def test_plugin_worker_snapshot_empty(factory, name):
+    host = factory(name)
+    host.ingest(event())
+    assert host.settle(5)
+    reply = host._call("query", text="quartz", recall=dict(name="unused", arguments={}))
+    assert reply["snapshot"] == ""
 
 
 @pytest.mark.parametrize("name,search,delete,args", [
@@ -549,6 +587,25 @@ def test_decoded_quotes_corpus_order_and_time(factory, monkeypatch):
     assert host.query(task(), 100) == answer([]) and host.context_blocks() == ()
 
 
+@pytest.mark.parametrize("snapshot", [None, "", "snapshot quartz"])
+@pytest.mark.parametrize("with_recall", [False, True])
+def test_snapshot_context_first_without_citations(tmp_path, monkeypatch, snapshot, with_recall):
+    host = HermesMemoryHost.__new__(HermesMemoryHost)
+    host.entry = load(REGISTRY / "hermes-native.toml")
+    host.settled, host._cache, host._blocks = True, None, ()
+    host.clock, host.sim_epoch_s = SimClock(tmp_path / "clock.json", BASE, 60), BASE
+    host.events = {f"e{i}": dict(event=event(i, text), session=1)
+                   for i, text in enumerate(("quartz", "topaz"), 1)}
+    reply = dict(recall=json.dumps(dict(results=["topaz"] if with_recall else [])),
+                 prefetch="prefetched quartz" if with_recall else "")
+    if snapshot is not None:
+        reply["snapshot"] = snapshot
+    monkeypatch.setattr(host, "_call", lambda *args, **kwargs: reply)
+    assert host.query(task(), 100) == answer([event(2, "topaz")] if with_recall else [])
+    expected = ((snapshot,) if snapshot else ()) + (("topaz", "prefetched quartz") if with_recall else ())
+    assert host.context_blocks() == expected
+
+
 def test_seeded_json_escape_property():
     rng = random.Random(16)
     for _ in range(50):
@@ -764,6 +821,36 @@ def test_live(factory, name, capsys):
         report(capsys, dict(system=name, live_pack=run, elapsed_ms=elapsed_ms, answers=results[-1][0]))
         assert elapsed_ms <= 60_000
     assert canon(results[0][0]) == canon(results[1][0])
+
+
+def test_native_session_start_snapshot_live(factory):
+    checkout = os.environ.get("BICENTENNIAL_HERMES")
+    if not checkout:
+        pytest.skip("BICENTENNIAL_HERMES unset")
+    checkout = Path(checkout)
+    if not (checkout / ".venv/bin/python").exists():
+        pytest.skip("pinned Hermes interpreter absent")
+    verify_pin(checkout, load(REGISTRY / "hermes-native.toml")["artifact"])
+    try:
+        host = factory(live=checkout)
+        host._start()
+    except GateRefused:
+        pytest.skip("machine gate refused")
+    fact, prompt = "Amber flute token ZEPHYR9284", "meteor harbor sequence"
+    host.ingest(event(text=fact))
+    assert host.settle(5)
+    assert host.query(task(prompt), 100) == answer([])
+    assert all(fact not in block for block in host.context_blocks())
+    assert host.settle(5)
+    host.begin_session(2)
+    assert host.query(task(prompt), 200) == answer([])
+    snapshot = host.context_blocks()[0]
+    assert fact in snapshot
+    # Later writes cannot alter the already opened session's snapshot.
+    host.ingest(event(201, "Cobalt violin code LANTERN4632"))
+    assert host.settle(5)
+    assert host.query(task(prompt), 300) == answer([])
+    assert host.context_blocks()[0] == snapshot
 
 
 @pytest.mark.parametrize("name", tuple(plugin_host.PROVIDERS))

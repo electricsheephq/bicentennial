@@ -48,13 +48,27 @@ def apply_masks(obj, run_values: dict[str, str]):
             obj = _visit(obj, tokens, entry)
     replacements = {run_values[e["target"]]: e["placeholder"]
                     for e in _MASKS if e["kind"] == "run_value"}
-    # RING0 §4: director-issued ids stay stable, even when their hex contains the port.
+    patterns = [e for e in _MASKS if e["kind"] == "pattern"]
+    # RING0 §4: director-issued ids stay stable, even when their hex contains the port. One
+    # leftmost match masks a port inside a random id with the id, and a random id inside the
+    # sandbox root with the root. Patterns come before run values, so a random id that begins
+    # with the port's digits is masked whole. Pattern targets have no groups of their own.
     pattern = re.compile(r"(?P<director_id>bcw-[0-9a-f]{16})|" + "|".join(
-        re.escape(v) for v in sorted(replacements, key=lambda v: (-len(v), v))))
+        [f"(?P<p{i}>{e['target']})" for i, e in enumerate(patterns)]
+        + [re.escape(v) for v in sorted(replacements, key=lambda v: (-len(v), v))]))
+
+    def substitute(m):
+        if m.lastgroup == "director_id":
+            return m[0]
+        if m.lastgroup:
+            if not m[0]:
+                raise ValueError("a mask pattern matched empty text")
+            return patterns[int(m.lastgroup[1:])]["placeholder"]
+        return replacements[m[0]]
 
     def replace(value):
         if isinstance(value, str):
-            return pattern.sub(lambda m: m[0] if m["director_id"] else replacements[m[0]], value)
+            return pattern.sub(substitute, value)
         if isinstance(value, dict):
             masked = {replace(k): replace(v) for k, v in value.items()}
             if len(masked) != len(value):

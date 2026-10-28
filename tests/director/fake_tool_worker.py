@@ -16,7 +16,10 @@ def emit(obj):
 def main():
     cfg = json.loads((Path(os.environ["HERMES_HOME"]) / "config.yaml").read_bytes())
     model, servers, history = cfg["model"], {}, []
-    tools = [{"type": "function", "function": {"name": n}} for n in ("memory", "terminal", "tool_call")]
+    # The pin's tool search hides MCP tools behind tool_call unless the config turns it off (#191)
+    eager = cfg.get("tools", {}).get("tool_search", {}).get("enabled") == "off"
+    tools = [{"type": "function", "function": {"name": n}}
+             for n in ("memory", "terminal", *(() if eager else ("tool_call",)))]
     emit({"ready": True})
 
     def rpc(proc, method, params):
@@ -29,8 +32,8 @@ def main():
         if name == "terminal":
             out = subprocess.run(args["command"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=30)
             return json.dumps(dict(output=out.stdout, exit_code=out.returncode, error=None))
-        if name == "tool_call":
-            inner = args["calls"][0]
+        if name == "tool_call" or name.startswith("mcp__"):
+            inner = args["calls"][0] if name == "tool_call" else dict(name=name, arguments=args)
             _, server, tool = inner["name"].split("__", 2)
             result = rpc(servers[server], "tools/call", dict(name=tool, arguments=inner["arguments"]))
             return json.dumps({"error" if result["isError"] else "result": "\n".join(
@@ -58,6 +61,9 @@ def main():
                     proc = servers[name] = subprocess.Popen([config["command"], *config["args"]],
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=dict(os.environ, **config["env"]))
                     rpc(proc, "initialize", {})
+                    if eager:
+                        tools.extend({"type": "function", "function": {"name": f"mcp__{name}__{t['name']}"}}
+                                     for t in rpc(proc, "tools/list", {})["tools"])
                 emit(dict(ok=True, session_id="fake-tool-session", history=0))
             elif op["op"] == "turn":
                 history.append(dict(role="user", content=op["text"]))

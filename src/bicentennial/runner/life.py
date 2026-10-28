@@ -11,6 +11,7 @@ from bicentennial.audit.readback import (
     audit,
     failures,
     life_ids,
+    output,
     route_models,
     run_status,
     turns_from_script,
@@ -39,7 +40,7 @@ from bicentennial.harness.hermes.adapter import (
     PinMismatch,
 )
 from bicentennial.harness.hermes.config import HERMES_TOOLSETS
-from bicentennial.harness.hermes.envwire import EnvWiring
+from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
@@ -185,15 +186,15 @@ def _pair_inputs(root, rows, kill, genre):
     ids, requests = [], []
     last = max((r["seq"] for r in rows if r.get("cursor") == cursor), default=0)
     for row in sorted(rows, key=lambda r: r["seq"]):
+        path = row.get("path", "")
+        wire = "chat" if path.endswith("/chat/completions") else (
+            "responses" if path.endswith("/responses") else None)
         if genre == "G1" and row.get("cursor") == cursor and row.get("served") == "script_tool_calls":
-            body = json.loads(store.get(row["resp"]))
-            ids.extend(c["id"] for c in body["choices"][0]["message"]["tool_calls"])
-        if last and row["seq"] > last and row.get("type") == "request":
-            path = row.get("path", "")
-            wire = "chat" if path.endswith("/chat/completions") else (
-                "responses" if path.endswith("/responses") else None)
-            if wire is not None:
-                requests.append((wire, json.loads(store.get(row["req"]))))
+            # A streamed reply is stored as its chunks; output() reads both stored forms.
+            calls, _ = output(json.loads(store.get(row["resp"])), wire or "chat")
+            ids.extend(c["id"] for c in calls)
+        if last and row["seq"] > last and row.get("type") == "request" and wire is not None:
+            requests.append((wire, json.loads(store.get(row["req"]))))
     return tuple(sorted(ids)), tuple(requests)
 
 
@@ -358,10 +359,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             if genre == "G1" and workspace_hash(paths["workspace"]) != before:
                                 raise HarnessFailed("workspace_changed")
                             if genre == "G2":
-                                ends = [r for r in wiring.records(index) if r.get("type") == "boundary" and r.get("kind") == "session_end"]
+                                ends = [r for r in wiring.wait_end(index, END_WAIT_S) if r.get("type") == "boundary" and r.get("kind") == "session_end"]
                                 if not ends or ends[-1]["state_hash"] != expected[index]["env_state_hash"]:
                                     raise HarnessFailed("env_state")
                         elif by_id[probe.item_ids[0]]["stage"] == "act":
+                            if genre == "G2":  # the probe's server may still be writing its session_end
+                                wiring.wait_end(index, END_WAIT_S)
                             for iid in probe.item_ids:
                                 evidence.act[iid] = read_state(paths["workspace"]) if genre == "G1" else {
                                     "records": wiring.records(index)}

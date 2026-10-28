@@ -71,6 +71,6 @@ def test_live_no_memory_cell(tmp_path):
             assert not offered & {"memory", "session_search"}
         assert a.harness_record()["memory"] is False
         assert (a.paths["hermes_home"] / "config.yaml").read_bytes() == canon(
-            hermes_config(a.server.port, "bicentennial-main", memory=False)) + b"\n"
+            hermes_config(a.server.port, "bicentennial-main", memory=False, scripted=True)) + b"\n"
     finally:
         a.close()

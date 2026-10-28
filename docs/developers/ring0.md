@@ -83,6 +83,8 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 
 The Hermes-replay fallback ships in v0.2 ([RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata)). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
 
+For Hermes native, the memory-layer host calls `memory` and `session_search` and also reads the session-start memory snapshot rendered by pinned Hermes's own code at session open. Enabled, non-empty memory and user-profile blocks appear in that order, before recall and prefetch context. The snapshot stays frozen through mid-session writes and adds no recall citations. T1's regression corpus uses the same host. The `t0.injection` JUnit property says: "The session-start memory snapshot is read; other harness prompt injection is not exercised." ([RING0 §13 E7](../../specs/ring0/RING0.md#13-v01-errata)).
+
 Read per-pack loop times again, for reporting only:
 
 ```sh
@@ -133,6 +135,16 @@ Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs 
 Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
 
 The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
+
+The T1 adapter writes three scripted-tier settings:
+- `tools.tool_search.enabled: "off"`. By default the pin hides `session_search` and every plug-in and MCP tool behind its `tool_call` bridge, which would leave the scripted write and recall turns without their tools. With the bridge off, every offered tool is eager.
+- `agent.api_max_retries: 1` and `agent.auto_recovery_cycles: 0`. The simulated clock is frozen inside a turn, and the pin's retry and auto-recovery waits loop on `time.time()`, so a failed main call would otherwise stall until the turn timeout.
+
+The harness record lists all three under `config_deviations`, and cards disclose them as `t1.tool_search`. Install-time configuration is unchanged, so fresh-install hashes are too. Live tiers keep the pin's defaults.
+
+The pin's empty-reply retries wait on the same clock, and no setting turns them off. So a scripted main reply is never empty: an action probe ends its turn with `Noted.` after the plan's last step, and at once for a refrain plan ([RING0 §2](../../specs/ring0/RING0.md#2-the-scripted-model-t1)).
+
+A plug-in that prefetches memory changes the user text the director sees. The pin appends the prefetched block to the turn's user text, after a blank line, inside a `<memory-context>` fence that opens with its system note. If the exact text matches no turn, the director matches the text before that block. A script whose user text holds the wrapper is refused. A scripted write stores only the text before it. The block stays in the request the reader reads ([RING0 §2](../../specs/ring0/RING0.md#2-the-scripted-model-t1)).
 
 Build and install the T1 tier, then run native memory twice:
 
@@ -231,7 +243,7 @@ Everything in `card.json` is stable. `receipt.json` holds volatile wall times, l
 
 Disclosures ride as JUnit properties until a card field exists. T0 names are `t0.entrypoint`, `t0.event_mapping`, `t0.crash`, `honeypot.hits`, `invariants.forget_inconclusive`, `t0.pair`, and conditionally `t0.injection`, `t0.baseline`, `t0.engine`, `t0.model_cache`. API-mode INV-PAIR covers call and result survival; linkage requires Hermes mode.
 
-T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Engine/cache disclosures add `t1.engine`, `t1.engine_window`, `t1.corpus_engine`, and `t1.model_cache` when applicable. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
+T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tool_search`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Engine/cache disclosures add `t1.engine`, `t1.engine_window`, `t1.corpus_engine`, and `t1.model_cache` when applicable. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
 
 Compare stable cards after a second run:
 

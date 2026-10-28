@@ -53,17 +53,19 @@ At T1 every request the harness or the system sends is answered by a determinist
 |---|---|
 | `replay_main` | the scripted turn at the cursor, through the tool-call compiler, as in S6a |
 | `write_turn` | the content-blind write rule (below) |
-| `probe_main` | the scripted reader's recall call (§1), then the envelope or the first step of the action plan |
+| `probe_main` | the scripted reader's recall call (§1), then the envelope, or the action plan one step per request and then the text `Noted.` (a refrain plan has no step). A probe reply is never empty: Hermes answers an empty main reply with retries that wait on the simulated clock |
 | `compaction`, `summariser`, `extraction` | the extractive stub (below) |
 | `memory_write` | the content-blind write rule. This role is added when the classifier is promoted (R01): S1's background-review marker, and any pre-compaction-flush or session-end marker, map to it instead of `aux` |
 | `title` | the fixed title `Session` |
 | `aux` | an empty assistant message with no tool call |
 | `unknown` | refused, as the director does on every tier |
 
+A request reaches `replay_main` or `probe_main` by the cursor rule: its last user text equals the scripted turn's. Pinned Hermes appends a turn's prefetched memory to that text: a blank line, then a `<memory-context>` fence that opens with Hermes's system note. A script whose user text holds the wrapper is refused, so the first such wrapper is Hermes's own block. If the exact text matches no turn, the rule compares the text before it. So an exact retry is never read as the next turn. The block, and anything after it, stays in the request, so it is part of the Hermes-mode context (§1). Text appended without that wrapper still fails closed.
+
 Embedding requests (an embeddings endpoint on a declared alias) go to the hashed-vector stub.
 
 **The content-blind write rule.** It applies to every write turn, and to every harness- or system-originated memory-write request (DESIGN §6.2's `memory_write`: background review, the pre-compaction flush, session-end hooks).
-- **When the request offers at least one of the system's declared write tools,** the responder makes exactly one call, to the first declared write tool on the system's list (C-6). The call carries the latest user message in that request verbatim, as the tool's content argument. That message is the last user-role message in the harness's own request, and never a director-added suffix.
+- **When the request offers at least one of the system's declared write tools,** the responder makes exactly one call, to the first declared write tool on the system's list (C-6). The call carries the latest user message in that request verbatim, as the tool's content argument. That message is the last user-role message in the harness's own request, and never a director-added suffix. The content is that message's own text. When pinned Hermes has appended a prefetched memory block (below), after the text or as its own text part, the block is not part of the content.
 - **A `memory_write` request is recognised by its last user message,** which is the harness's own memory-write prompt (Hermes's background review sends its review prompt as that message). So for `memory_write` the content is the latest user message *before* that prompt, and a request with none gets an empty reply. The harness's prompt is never stored.
 - **One write per user message.** When a tool result follows the request's last user message, the write was already issued, so the reply is empty whatever the tool answered.
 - **When the tool documents a per-call length limit,** the content is cut at that limit, by character.
@@ -125,12 +127,13 @@ Everything in `card.json` is written by `canon.canon`, with no floats.
 
 **The stable projection** of a ledger record keeps its role, served kind, cursor position and the sha256 of its canonical request and response bodies. Before that hash is taken, these values are masked:
 - Hermes session ids;
+- random ids anywhere in body text: every lower-case hyphenated UUID becomes `{UUID}`. Hosts and systems mint these, so they differ on every run. Examples are a Hermes session id that the compressor writes into a summary or that `session_search` returns, and a memory store's record ids in a recall result;
 - tool-call ids that the harness generated;
 - response ids that the harness generated;
 - every wall-clock timestamp field;
 - the run's sandbox root and the director's port, wherever they occur in body text. Each is replaced by a fixed placeholder (`{SANDBOX_ROOT}`, `{DIRECTOR_PORT}`), so a path or port embedded in a tool result does not reach the digest.
 
-Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, or a literal substitution for body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
+Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, a literal substitution for body text, or a pattern for random ids in body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
 
 **Canonical order:** (life, branch, session, cursor turn, role, served kind), then the sha256 of the masked canonical record bytes as the tie-break. The arrival sequence is never used, since concurrent auxiliary calls reorder it.
 
@@ -229,7 +232,7 @@ A first run has no baseline card. If every other condition holds, it is a labell
 - **Default mode, memory-layer:**
   - **API systems** go through the adapter contract (§11), settle included.
   - **Hermes plug-in systems** go through an in-process memory host. It calls the provider's documented lifecycle hooks, in their documented order, to ingest each scripted turn. The content-blind write rule (§2) fills its write tools, and the reader's recall call uses its read tools.
-  - **Hermes native memory** is driven through its documented agent tools, `memory` and `session_search`, called in process with the arguments an agent would send. That is the surface the agent uses. It exercises storage and retrieval, not the harness's prompt injection, which T1 covers, and the card says so.
+  - **Hermes native memory** is driven through its documented agent tools, `memory` and `session_search`, called in process with the arguments an agent would send. The host also gives the reader the session-start memory snapshot that pinned Hermes injects into the system prompt, rendered by Hermes's own code at session open. Other harness prompt injection is not exercised, and the run discloses this in its JUnit properties (§13 E7).
 - **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed. It ships in v0.2 (§13 E5).
 - **Forgetting:** at each forget-request event, the runner calls `forget(selector)` with the target's locked tokens as the selector.
   - Each adapter maps the call onto the system's documented deletion surface: Hermes native's `memory` `remove`, Mem0's delete after its own search, Holographic's forget or remove action (C-6).
@@ -308,6 +311,8 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 - **E4. The fresh-install hash masks the director port** (§5). Hermes' `config.yaml` and Mem0's `mem0.json` are benchmark-written and carry the run's director port, which differs on every run. In the reported fresh-install hash (the registry pin), every `127.0.0.1:<director port>` that is not followed by another digit, in a `config.yaml` or `mem0.json` at a surface's root, is replaced by `127.0.0.1:{DIRECTOR_PORT}`, and that file's size and content hash are taken from the masked bytes. Nothing else is masked. Verified empty compares each surface with the unmasked tree hash taken earlier in the same run. Card disclosure: "fresh-install hash: director port masked in config.yaml and mem0.json".
 - **E5. The T0 Hermes-replay fallback ships in v0.2** (§7). Every v0.1 system runs T0 in the default memory-layer mode: the API references through the adapter contract, and Hermes native, Holographic and Mem0 through the in-process memory host, which also drives each one's deletion surface. The fallback would inherit T1's forgetting limit (§6: the scripted model only adds), so it would certify less than the default mode, and it misses the 60 s target by design. In v0.1, `bicentennial t0 --mode hermes` refuses with exit 3 and code `mode_unavailable:hermes`. When the fallback ships, INV-FORGET, KEEP-FORGET and KEEP-NEIGH are "not exercised" in it, as at T1, and a timeout is charged to the system unless the ledger shows a benchmark-owned fault (PREREG §7).
 - **E6. A runner failure exits 70** (§8). An unexpected exception inside `bicentennial t0` or `bicentennial t1` exits 70, not Python's 1, so it cannot read as a gate FAIL. Results are written to `staging/` and moved into place only when every file is written (T1 moves the system arm last), so a failed run leaves no result file.
+- **E7. Hermes native reads its session-start memory snapshot** (§7, #185). The memory-layer host renders enabled, non-empty memory and user-profile blocks with pinned Hermes's own code at session open, in that order, joined by a blank line. It gives the frozen snapshot to the reader before recall and prefetch context; mid-session writes do not change it, and it adds no recall citations. This also applies when T1 reuses the host for its regression corpus. Disclosure, the JUnit run property `t0.injection`: "The session-start memory snapshot is read; other harness prompt injection is not exercised."
+- **E8. Corpus stocking requires content-word evidence** (§6). A catalogue row is stocked only when both the reference store and a stocking-only reference that removes a fixed, content-blind English stop list select every gold option; replay and stored expectations are unchanged. It changes which cases the public corpus file holds, not how a case is run, so no card field changes.
 
 ## References
 

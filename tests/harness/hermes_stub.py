@@ -187,10 +187,18 @@ import _stub as s
 MEMORY_SCHEMA = s.schema("memory")
 
 
+class MemoryStore:
+    memory_enabled = True
+    user_profile_enabled = True
+
+    def format_for_system_prompt(self, target):
+        return None
+
+
 def load_on_disk_store():
     s.log("load_on_disk_store")
     s.opened()
-    return object()
+    return MemoryStore()
 
 
 def memory_tool(action=None, target="memory", content=None, old_text=None, new_text=None, operations=None, store=None):

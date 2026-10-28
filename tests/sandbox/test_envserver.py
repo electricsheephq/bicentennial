@@ -4,9 +4,14 @@ import ast
 import copy
 import io
 import json
+import os
 import select
+import signal
 import subprocess
 import sys
+import threading
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -15,10 +20,11 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.keyed import mint_id
 from bicentennial.sandbox import envserver
+from bicentennial.sandbox.envserver import server as server_module
 from bicentennial.sandbox.envserver.ask import ASK_REPLY, ask_user
 from bicentennial.sandbox.envserver.heartbeat import ticks
 from bicentennial.sandbox.envserver.honeypot import hits, plant
-from bicentennial.sandbox.envserver.server import serve
+from bicentennial.sandbox.envserver.server import _sigterm_source, serve
 from bicentennial.sandbox.envserver.state import State, state_hash, trace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +50,165 @@ def records_at(log_dir):
 
 def request(mid, method, **params):
     return {"jsonrpc": "2.0", "id": mid, "method": method, "params": params}
+
+
+@pytest.fixture
+def server_process(seed, tmp_path):
+    seed_path, clock = tmp_path / "seed.json", tmp_path / "clock.json"
+    seed_path.write_bytes(canon(seed))
+    clock_at(clock, 100)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "bicentennial.sandbox.envserver", "--seed", str(seed_path),
+         "--log-dir", str(tmp_path), "--clock", str(clock)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        proc.stdin.write(canon(request(1, "initialize")) + b"\n")
+        proc.stdin.flush()
+        assert read_response(proc)["id"] == 1
+        yield proc
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            stream.close()
+
+
+def read_response(proc):
+    assert select.select([proc.stdout], [], [], 5)[0], "stdio response timed out"
+    raw = proc.stdout.readline()
+    reply = json.loads(raw)
+    assert canon(reply) + b"\n" == raw
+    return reply
+
+
+@pytest.mark.parametrize("shutdown", ["eof", "sigterm", "twice", "partial_line"])
+def test_stdio_shutdown(server_process, seed, tmp_path, shutdown):
+    proc = server_process
+    proc.stdin.write(canon(request(2, "tools/call", name="book_seat",
+                                  arguments={"passenger": "p", "seat": "window"})) + b"\n")
+    proc.stdin.flush()
+    assert read_response(proc)["result"]["isError"] is False
+    if shutdown == "eof":
+        proc.stdin.close()
+    else:
+        if shutdown == "partial_line":
+            proc.stdin.write(b'{"jsonrpc":')
+            proc.stdin.flush()
+        proc.send_signal(signal.SIGTERM)
+        if shutdown == "twice":
+            proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=5) == 0, proc.stderr.read().decode()
+    assert proc.stdout.read() == proc.stderr.read() == b""
+    rows = records_at(tmp_path)
+    expected = copy.deepcopy(seed["state"])
+    expected["seats"]["p"] = "window"
+    assert [r.get("kind", r["type"]) for r in rows] == ["session_start", "action", "session_end"]
+    assert rows[-1]["state_hash"] == rows[1]["state_hash"] == state_hash(expected)
+
+
+def test_sigterm_during_call_completes_receipt_and_response(server_process, seed, tmp_path):
+    proc = server_process
+    # A response larger than the stdio pipe keeps the call in flight until we read it.
+    value = "w" * (1024 * 1024)
+    proc.stdin.write(canon(request(2, "tools/call", name="book_seat",
+                                  arguments={"passenger": "p", "seat": value})) + b"\n")
+    proc.stdin.flush()
+    deadline = time.monotonic() + 5
+    while True:
+        raw = (tmp_path / "env_actions.jsonl").read_bytes()
+        if raw.endswith(b"\n") and len(raw.splitlines()) == 2:
+            break
+        assert time.monotonic() < deadline, "action receipt timed out"
+        time.sleep(0.01)
+    assert proc.poll() is None
+    proc.send_signal(signal.SIGTERM)
+    proc.send_signal(signal.SIGTERM)
+    # Stdin stays open, so only SIGTERM can end the server: EOF cannot stand in for it.
+    reply = read_response(proc)
+    assert proc.wait(timeout=5) == 0, proc.stderr.read().decode()
+    assert proc.stdout.read() == proc.stderr.read() == b""
+    assert reply == {"jsonrpc": "2.0", "id": 2, "result": {
+        "content": [{"type": "text", "text": canon(value).decode()}], "isError": False}}
+    rows = records_at(tmp_path)
+    expected = copy.deepcopy(seed["state"])
+    expected["seats"]["p"] = value
+    assert [r.get("kind", r["type"]) for r in rows] == ["session_start", "action", "session_end"]
+    assert rows[1]["args"] == {"passenger": "p", "seat": value}
+    assert rows[1]["ok"] and rows[1]["state_changed"]
+    assert rows[-1]["state_hash"] == rows[1]["state_hash"] == state_hash(expected)
+
+
+def test_sigterm_source_wakes_open_pipe_and_restores_signal_state(monkeypatch):
+    reader, writer = os.pipe()
+    wake_reader, wake_writer = os.pipe()
+    os.set_blocking(wake_writer, False)
+    previous_wakeup = signal.set_wakeup_fd(wake_writer)
+    previous_handler = signal.getsignal(signal.SIGTERM)
+    finished, blocking = threading.Event(), threading.Event()
+
+    def watched_select(*args):
+        blocking.set()
+        return select.select(*args)
+
+    # Signal only once the iterator is past its stop check and in select(), so the wakeup path must end it.
+    monkeypatch.setattr(server_module, "select", types.SimpleNamespace(select=watched_select))
+
+    def terminate():
+        assert blocking.wait(2), "next() never reached select()"
+        time.sleep(0.02)
+        os.kill(os.getpid(), signal.SIGTERM)
+        # EOF bounds next() even if the signal fails to wake it.
+        finished.wait(2)
+        os.close(writer)
+
+    helper = threading.Thread(target=terminate)
+    try:
+        with os.fdopen(reader, "rb") as source, _sigterm_source(source) as lines:
+            helper.start()
+            started = time.monotonic()
+            with pytest.raises(StopIteration):
+                next(lines)
+            assert time.monotonic() - started < 1
+            assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+        assert signal.getsignal(signal.SIGTERM) == previous_handler
+        assert signal.set_wakeup_fd(wake_writer) == wake_writer
+    finally:
+        finished.set()
+        helper.join(timeout=3)
+        signal.set_wakeup_fd(previous_wakeup)
+        signal.signal(signal.SIGTERM, previous_handler)
+        os.close(wake_reader)
+        os.close(wake_writer)
+    assert not helper.is_alive()
+
+
+def test_life_fake_end_uses_sigterm(seed, tmp_path):
+    from bicentennial.harness.hermes.envwire import EnvWiring
+
+    clock = tmp_path / "clock.json"
+    clock_at(clock, 100)
+    wiring = EnvWiring(tmp_path, {1: seed}, clock)
+    config = {"platform_toolsets": {"acp": []}, "memory": {"provider": None},
+              "mcp_servers": {"envserver": wiring(1, "open")}}
+    home = tmp_path / "worker-home"
+    home.mkdir()
+    (home / "config.yaml").write_bytes(canon(config))
+    timeline = tmp_path / "timeline.json"
+    timeline.write_bytes(b"{}")
+    ops = [{"op": "open", "session_id": None, "cwd": str(tmp_path)}, {"op": "end"}]
+    done = subprocess.run(
+        [sys.executable, str(ROOT / "tests/runner/fake_life_worker.py"), "--timeline", str(timeline)],
+        input=b"".join(canon(op) + b"\n" for op in ops), capture_output=True, timeout=5,
+        env=dict(os.environ, HERMES_HOME=str(home)))
+    assert done.returncode == 0, done.stderr.decode()
+    replies = [json.loads(line) for line in done.stdout.splitlines()]
+    assert replies[0] == {"ready": True}
+    assert replies[1]["ok"] and replies[2] == {"ok": True, "alive_threads": []}
+    rows = wiring.wait_end(1, 5)
+    assert [r["kind"] for r in rows] == ["session_start", "session_end"]
+    assert rows[-1]["state_hash"] == state_hash(seed["state"])
 
 
 def test_stdio_session(seed, tmp_path):

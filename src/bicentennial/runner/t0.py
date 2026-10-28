@@ -757,8 +757,8 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
     if audit.get("model_cache_sha256") is not None:
         extra.append(("t0.model_cache", "sha256:" + audit["model_cache_sha256"]))
     if entry["name"] == "hermes-native":
-        extra.append(("t0.injection", "It exercises storage and retrieval, not the harness's prompt injection, "
-                      "which T1 covers, and the card says so."))
+        extra.append(("t0.injection", "The session-start memory snapshot is read; other harness prompt injection "
+                      "is not exercised."))
     if getattr(pack.template, "fault", False):
         extra.append(("t0.baseline", "no fault-free twin at v0.1"))
     junit = junit_xml([item_suite(json.loads(card), "system", run_properties(reduce(items, bundles,

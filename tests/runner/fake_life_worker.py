@@ -51,9 +51,10 @@ def execute(call, memory, servers, cwd):
     if name == "terminal":
         out = subprocess.run(args["command"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=30)
         return json.dumps(dict(output=out.stdout, exit_code=out.returncode, error=None))
-    if name == "tool_call":
-        # R14b fake_tool_worker has these functions nested in main; restate its stdio bridge.
-        inner = args["calls"][0]
+    if name == "tool_call" or name.startswith("mcp__"):
+        # R14b fake_tool_worker has these functions nested in main; restate its stdio bridge. With tool search
+        # off (#191) the pin offers MCP tools directly by their mcp__<server>__<tool> name.
+        inner = args["calls"][0] if name == "tool_call" else dict(name=name, arguments=args)
         _, server, tool = inner["name"].split("__", 2)
         result = rpc(servers[server], "tools/call", dict(name=tool, arguments=inner["arguments"]))
         return json.dumps({"error" if result["isError"] else "result": "\n".join(
@@ -79,9 +80,12 @@ def main():
     provider = cfg["memory"]["provider"]
     if provider == "holographic":
         tools = [n for n in tools if n not in ("memory", "session_search")] + ["fact_store", "fact_feedback"]
-    if cfg.get("mcp_servers"):
+    # The pin's tool search hides MCP tools behind tool_call unless the config turns it off (#191)
+    eager = cfg.get("tools", {}).get("tool_search", {}).get("enabled") == "off"
+    if cfg.get("mcp_servers") and not eager:
         tools.append("tool_call")
     emit(dict(ready=True))
+    clean_end = False
     try:
         for line in sys.stdin:
             op = json.loads(line)
@@ -90,9 +94,15 @@ def main():
                 path = store / f"{sid}.json"
                 history = json.loads(path.read_bytes()) if path.exists() else []
                 for name, config in cfg.get("mcp_servers", {}).items():
+                    # Its own session, as the pinned MCP SDK's stdio client starts servers, so the adapter's
+                    # killpg of this worker's group does not reach it after a clean end.
                     proc = servers[name] = subprocess.Popen([config["command"], *config["args"]],
-                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=dict(os.environ, **config["env"]))
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=dict(os.environ, **config["env"]),
+                        start_new_session=True)
                     rpc(proc, "initialize", {})
+                    if eager:
+                        tools[:] = [n for n in tools if not n.startswith(f"mcp__{name}__")] + [
+                            f"mcp__{name}__{t['name']}" for t in rpc(proc, "tools/list", {})["tools"]]
                 emit(dict(ok=op["session_id"] is None or path.exists(), session_id=sid,
                           history=len(history), active_memory_providers=[provider] if provider else []))
                 if op["session_id"] and args.embeddings_after_restart:
@@ -123,16 +133,17 @@ def main():
                 path.write_text(json.dumps(history))
                 emit(dict(ok=True, final=msg.get("content") or "", history=len(history)))
             elif op["op"] == "end":
-                for proc in servers.values():
-                    proc.stdin.close()
-                    proc.wait(timeout=5)
                 emit(dict(ok=True, alive_threads=[]))
+                for proc in servers.values():
+                    proc.terminate()
+                clean_end = True
                 break
     finally:
-        for proc in servers.values():
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+        if not clean_end:
+            for proc in servers.values():
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
 
 
 if __name__ == "__main__":

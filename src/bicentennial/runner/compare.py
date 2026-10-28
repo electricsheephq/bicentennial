@@ -80,6 +80,9 @@ DISCLOSURES = (
      "call of any step tool; safe at T0/T1 scripted replay only"),
     ("t1.receipt", "receipt tokens_by_role, store_growth_bytes and process_ids are not measured at T1 v0.1"),
     ("t1.terminal", life.TERMINAL_DISCLOSURE),
+    ("t1.tool_search", "scripted-tier Hermes config: tool search off, so every offered tool is eager and scripted "
+     "turns call write, recall and environment tools directly; a single API attempt and no auto-recovery waits, "
+     "since the simulated clock is frozen inside a turn; live tiers keep the pin's defaults"),
     ("t1.tuesday", "Tuesday timing is not exercised at T1"),
     ("t1.unsettled", "unsettled checkpoints still run their probes; every item of such a checkpoint is "
      "SYSTEM_FAILURE (unsettled)"),

@@ -64,13 +64,16 @@ def test_live_check_compile(tmp_path, monkeypatch, genre):
     overhead = []
     for a in seen:
         assert not [r for r in a.records() if r.get("role") == "unknown"]
-        row = next(r for r in a.records() if r.get("path", "").startswith("/main/"))
+        # With tool search off the pin also reads the model catalog (/main/api/v1/models, served as metadata)
+        row = next(r for r in a.records() if r.get("path") == "/main/v1/chat/completions")
         store = BlobStore(a.paths["root"] / "ledger/blobs", Guard([]))
         req = json.loads(store.get(row["req"]))
         offered = {t["function"]["name"] for t in req["tools"]}
-        assert "terminal" in offered
+        # #191: with tool search off, the recall tool and the environment tools are offered directly
+        assert {"terminal", "memory", "session_search"} <= offered
+        assert not {"tool_search", "tool_describe", "tool_call"} & offered
         if genre == "G2":
-            assert "tool_call" in offered
+            assert any(name.startswith("mcp__envserver__") for name in offered)
         overhead.append(dict(system_prompt_chars=sum(len(m["content"]) for m in req["messages"]
                                                      if m.get("role") == "system"),
                              tool_schema_chars=len(canon(req["tools"]).decode())))

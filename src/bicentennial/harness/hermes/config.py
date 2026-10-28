@@ -22,6 +22,13 @@ _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy
 # Disclosed harness deviations from Hermes's defaults, beyond routing (recorded in the adapter's harness record)
 # Main window also overrides Hermes's default: the loopback custom provider has a 64,000-token floor.
 CONFIG_DEVIATIONS = ("model.context_length", "auxiliary.compression.context_length", "agent.environment_probe")
+# Scripted-tier deviations, written by the T1 adapter only. #191: the pin defers session_search and every plug-in and
+# MCP tool behind its tool_call bridge (hermes_cli/config_defaults.py tools.tool_search; tools/tool_search.py
+# is_deferrable_tool_name), so scripted write and recall turns would not find their tools. #192: the logical clock
+# freezes time.time() inside a turn, and the pin's retry and auto-recovery waits loop on it
+# (agent/turn_recovery.py interruptible_backoff_sleep), so a failed main call would stall until the turn timeout.
+SCRIPTED_DEVIATIONS = ("tools.tool_search.enabled", "agent.api_max_retries", "agent.auto_recovery_cycles")
+_SCRIPTED_AGENT = {"api_max_retries": 1, "auto_recovery_cycles": 0}
 # Hermes d923a5e: hermes_cli/fallback_config.py:get_fallback_chain, agent/auxiliary_client.py route readers,
 # and hermes_cli/config_providers.py:get_compatible_custom_providers (named providers and endpoint/key settings).
 # Same pin: agent/curator.py:_resolve_review_runtime reads legacy curator.auxiliary;
@@ -32,7 +39,8 @@ _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None,
                   memory: bool = True, toolsets=T1_TOOLSETS, mcp_servers=None, window=None,
-                  context_engine: str | None = None, plugins_enabled: tuple = ()) -> dict:
+                  context_engine: str | None = None, plugins_enabled: tuple = (),
+                  scripted: bool = False) -> dict:
     if window is not None and (type(window) is not int or window < THRESHOLD_TOKENS):
         raise ValueError("window must be an int of at least 16384")
     if type(port) is not int or not 0 < port < 65536 or not isinstance(alias, str) or not alias:
@@ -47,6 +55,8 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         raise ValueError("invalid enabled plug-in directories")
     if type(memory) is not bool:
         raise ValueError("memory is a bool")
+    if type(scripted) is not bool:
+        raise ValueError("scripted is a bool")
     if type(toolsets) is not tuple or any(type(t) is not str or not re.fullmatch(r"[a-z0-9_-]+", t) for t in toolsets):
         raise ValueError("toolsets must be a tuple of toolset names")
     if not memory and (plugin is not None or plugin_config or context_engine is not None or plugins_enabled):
@@ -74,11 +84,17 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         cfg["context"] = {"engine": context_engine}
     if plugins_enabled:
         cfg["plugins"] = {"enabled": list(plugins_enabled)}
+    if scripted:
+        cfg["tools"] = {"tool_search": {"enabled": "off"}}
+        cfg["agent"].update(_SCRIPTED_AGENT)
     if plugin_config is not None:
         if not isinstance(plugin_config, dict):
             raise ValueError("plugin_config must be a dict")
         if _OWNED_ROUTE_KEYS & plugin_config.keys():
             raise ValueError("plugin_config touches adapter-owned routes")
+        if ((isinstance(plugin_config.get("tools"), dict) and "tool_search" in plugin_config["tools"])
+                or (isinstance(plugin_config.get("agent"), dict) and _SCRIPTED_AGENT.keys() & plugin_config["agent"].keys())):
+            raise ValueError("plugin_config touches adapter-owned scripted settings")
         _merge_plugin(cfg, plugin_config)
     if not memory:
         cfg["memory"] = {"memory_enabled": False, "user_profile_enabled": False, "provider": ""}
