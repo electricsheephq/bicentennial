@@ -2,11 +2,27 @@
 
 import argparse
 import os
+import subprocess
 import sys
+from pathlib import Path
 
-from bicentennial.runner.compare import run_t1
-from bicentennial.runner.guard import reexec_niced
-from bicentennial.runner.t0 import run_t0
+# The runners load schema-backed contracts at import, so they load only after the source-checkout check.
+REPO = Path(__file__).resolve().parents[2]
+
+
+def reexec_niced(argv):
+    from bicentennial.runner.guard import reexec_niced as reexec
+    return reexec(argv)
+
+
+def run_t0(**kwargs):
+    from bicentennial.runner.t0 import run_t0 as run
+    return run(**kwargs)
+
+
+def run_t1(**kwargs):
+    from bicentennial.runner.compare import run_t1 as run
+    return run(**kwargs)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -25,8 +41,24 @@ def _workers(value):
     return result
 
 
+def _source_checkout(root) -> bool:
+    if not (root / "schemas").is_dir() or not (root / "pyproject.toml").is_file():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        return result.returncode != 0 or os.path.samefile(result.stdout.strip(), root)
+    except OSError:
+        return True
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if not _source_checkout(REPO):
+        print("source_checkout_required", file=sys.stderr)
+        return 3
     parser = _Parser(prog="bicentennial")
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("t0")
