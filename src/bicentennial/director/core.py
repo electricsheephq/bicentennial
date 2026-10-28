@@ -291,21 +291,17 @@ class Director:
         items = body.get("messages", body.get("input", []))
         if isinstance(items, str):
             items = [{"content": items}]
-        exact, own = set(), set()
+        hashes = set()
         for item in items if isinstance(items, list) else []:
             content = item.get("content") if isinstance(item, dict) else None
             blocks = roles._blocks(content) if isinstance(content, (str, list)) else []
-            for block in [*blocks, "\n".join(blocks)]:
-                exact.update(roles.h16(t) for t in [block.strip()] if t)
-                own.update(roles.h16(t) for t in [roles.own_text(block).strip()] if t)
-        # the exact text first, then the text before Hermes's memory block, as the cursor rule reads them
-        for hashes in (exact, own):
-            turn = next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
-                         and (roles.h16(t["user"].strip()) in hashes
-                              or roles.h16(t["user"].strip()[:HERMES_TITLE_INPUT_CHARS].strip()) in hashes)), None)
-            if turn is not None:
-                return turn
-        return None
+            # each text and the text before Hermes's memory block: no scripted turn holds the wrapper, so the
+            # second can only name the turn Hermes appended its block to, and the latest quoted turn wins
+            hashes.update(roles.h16(text.strip()) for block in [*blocks, "\n".join(blocks)]
+                          for text in {block, roles.own_text(block)} if text.strip())
+        return next((t for t in reversed(self.turns[:self.ctx.cursor + 1]) if t["session"] == self.session_index
+                     and (roles.h16(t["user"].strip()) in hashes
+                          or roles.h16(t["user"].strip()[:HERMES_TITLE_INPUT_CHARS].strip()) in hashes)), None)
 
     def _write_turn(self, wire, body, cursor, rec):
         """-> the write-tool calls to return (empty: serve the scripted turn), or None on an identity mismatch."""

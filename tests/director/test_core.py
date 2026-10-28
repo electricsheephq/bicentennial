@@ -715,6 +715,12 @@ def test_turn_stamp_reads_the_turn_before_hermes_memory_block(tmp_path):
     turn = d.turns[0]
     fenced = {"messages": [{"role": "user", "content": turn["user"] + "\n\n" + WRAPPER + "\n\nfact\n</memory-context>"}]}
     assert d._request_turn(fenced) is turn
+    # history: a plain earlier turn, then the current turn with Hermes's block; the current turn wins
+    d.ctx.cursor = 1
+    later = d.turns[1]
+    history = {"messages": [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": "ok"},
+                            {"role": "user", "content": later["user"] + "\n\n" + WRAPPER + "\n\nfact"}]}
+    assert later["session"] == turn["session"] and d._request_turn(history) is later
     assert d._request_turn({"messages": [{"role": "user", "content": turn["user"] + "\n\nother text"}]}) is None
 
 
