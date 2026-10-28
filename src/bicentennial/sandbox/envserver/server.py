@@ -3,7 +3,10 @@
 import argparse
 import json
 import os
+import select
+import signal
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from bicentennial.canon import canon
@@ -147,9 +150,57 @@ def serve(seed, log_dir, clock, source, sink):
     return state.state
 
 
+@contextmanager
+def _sigterm_source(source):
+    reader, writer = os.pipe()
+    stopped = False
+
+    def stop(signum, frame):
+        nonlocal stopped
+        if not stopped:
+            stopped = True
+
+    def lines():
+        pending = b""
+        while not stopped:
+            if b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                yield line + b"\n"
+                continue
+            ready, _, _ = select.select([source, reader], [], [])
+            if reader in ready:
+                wakeups = os.read(reader, 4096)
+                if stopped or signal.SIGTERM in wakeups:
+                    break
+            if stopped:
+                break
+            if source not in ready:
+                continue
+            chunk = os.read(source.fileno(), 65536)
+            if not chunk:
+                if pending:
+                    yield pending
+                break
+            pending += chunk
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    previous_handler = signal.signal(signal.SIGTERM, stop)
+    os.set_blocking(writer, False)
+    previous_wakeup = signal.set_wakeup_fd(writer)
+    try:
+        yield lines()
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.set_wakeup_fd(previous_wakeup)
+        signal.signal(signal.SIGTERM, previous_handler)
+        os.close(reader)
+        os.close(writer)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("seed", "log-dir", "clock"):
         parser.add_argument(f"--{name}", required=True, type=Path)
     args = parser.parse_args()
-    serve(_load(args.seed.read_bytes()), args.log_dir, args.clock, sys.stdin.buffer, sys.stdout.buffer)
+    with _sigterm_source(sys.stdin.buffer) as source:
+        serve(_load(args.seed.read_bytes()), args.log_dir, args.clock, source, sys.stdout.buffer)

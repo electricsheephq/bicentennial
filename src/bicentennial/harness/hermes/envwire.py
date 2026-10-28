@@ -2,17 +2,33 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from bicentennial.canon import canon
 from bicentennial.sandbox.envserver.state import State, state_hash
 
 ENV_SERVER = "envserver"
+# Longer than pinned Hermes's 3 s SIGTERM-to-SIGKILL grace for MCP servers, with margin for a loaded machine.
+END_WAIT_S = 10
 
 
 def _rows(life_dirs):
     return [json.loads(line) for directory in life_dirs
             if (path := directory / "env_actions.jsonl").exists() for line in path.read_bytes().splitlines()]
+
+
+def _ended(life_dirs):
+    # Only complete lines count: the server may be mid-write while wait_end polls.
+    for directory in life_dirs:
+        try:
+            raw = (directory / "env_actions.jsonl").read_bytes()
+        except FileNotFoundError:
+            continue
+        if any(row.get("type") == "boundary" and row.get("kind") == "session_end"
+               for row in map(json.loads, raw.split(b"\n")[:-1])):
+            return True
+    return False
 
 
 def derived_seed(seed, life_dirs):
@@ -38,6 +54,8 @@ class EnvWiring:
 
     def __call__(self, session, reason):
         lives = self._lives(session)
+        if lives:  # the previous life's server may still be writing its session_end
+            self.wait_end(session, END_WAIT_S)
         seed = derived_seed(self.seeds[session], lives)
         directory = self.root / "env" / str(session) / f"life-{len(lives) + 1}"
         directory.mkdir(parents=True)
@@ -51,3 +69,18 @@ class EnvWiring:
 
     def records(self, session):
         return _rows(self._lives(session))
+
+    def wait_end(self, session, timeout_s):
+        """Wait up to timeout_s for the newest server life's session_end, then return that life's rows only.
+
+        Pinned Hermes's worker exits without waiting for its MCP servers, so a server writes session_end after it.
+        An older life's session_end never stands in for the newest life's."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            if _ended(self._lives(session)[-1:]):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.02, remaining))
+        return _rows(self._lives(session)[-1:])
