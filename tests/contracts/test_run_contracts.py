@@ -350,7 +350,7 @@ def test_names_come_from_schema_files_and_checks_can_be_registered(monkeypatch):
     assert seen == [fixture("fault-lite")]
 
 
-@pytest.mark.parametrize("target", ["(x)", "(?P<p0>x)", "[", "x*"])
+@pytest.mark.parametrize("target", ["(x)", "(?P<p0>x)", "[", "x*", "(?i)abc"])
 def test_pattern_masks_refuse_groups_bad_syntax_and_empty_matches(target):
     masks = [{"name": "m", "kind": "pattern", "target": target, "placeholder": "{X}"}]
     with pytest.raises(ValueError, match="pattern"):

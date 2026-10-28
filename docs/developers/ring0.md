@@ -140,6 +140,8 @@ The T1 adapter writes three scripted-tier settings:
 
 The harness record lists all three under `config_deviations`, and cards disclose them as `t1.tool_search`. Install-time configuration is unchanged, so fresh-install hashes are too. Live tiers keep the pin's defaults.
 
+The pin's empty-reply retries wait on the same clock, and no setting turns them off. So a scripted main reply is never empty: an action probe ends its turn with `Noted.` after the plan's last step, and at once for a refrain plan ([RING0 §2](../../specs/ring0/RING0.md#2-the-scripted-model-t1)).
+
 Build and install the T1 tier, then run native memory twice:
 
 ```sh
