@@ -130,9 +130,13 @@ The fresh-install hash is a canonical tree listing of relative path, mode, size 
 
 Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, the forget mapping, and plug-in `PROVIDERS`/`TREES`. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
 
+`DEPENDENCIES` maps a plug-in system to an existing repository-relative POSIX path under `systems/locks/` (no `..` or backslashes); locks allow comments and continuations, require exact `name==version` pins with SHA-256 hashes and optional environment markers, and reject extras, URLs, editables, includes, duplicate normalised names with identical marker text, and empty locks.
+
 ## 7. Run T1 as a merge gate
 
 Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
+
+A system with a dependency lock gets its own clone of the pinned Hermes checkout at the same commit, prepared with that checkout's own `uv sync --frozen --extra mcp`; install its dependencies with `uv pip install --python <copy>/.venv/bin/python --require-hashes -r systems/locks/<system>.txt`, then pass that copy as `--hermes` for that system only. The shared checkout stays as Hermes's lockfile plus the `mcp` extra make it. Prepare verifies applicable locked versions in the worker and records the lock digest and applicable count as `<tier>.plugin_deps`; every real-worker run records the canonical distribution list as `<tier>.worker_dists` and its digest and count as `<tier>.worker_dists_sha256` in JUnit.
 
 The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
 
@@ -199,6 +203,9 @@ Exit-3 codes and causes, including registry reasons above:
 | `harness_not_hermes` | Registry harness is not Hermes. |
 | `missing_input` | Required Hermes or plug-in source omitted. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
+| `plugin_deps_lock_invalid` | Dependency map or lock is invalid, or applicable pins conflict. |
+| `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |
+| `plugin_deps_check_failed` | Worker inspection cannot start, times out, lacks marker support, or returns invalid output. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `c7_missing` | Template has no C-7 entry. |
 | `c7_changed` | Template C-7 hash changed. |

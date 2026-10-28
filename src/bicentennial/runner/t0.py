@@ -82,7 +82,7 @@ from bicentennial.score.invariants import (
     adapter_invariant,
     run_invariants,
 )
-from bicentennial.systems.hermes_plugin import PROVIDERS
+from bicentennial.systems.hermes_plugin import PROVIDERS, worker_properties
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.targeted import MicroSpec, micro_schedule
@@ -635,6 +635,8 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
             raise T0Refused("missing_input")
         if index["harness_artifacts"] != [harness_pin]:
             raise T0Refused("harness_artifact_mismatch")
+        options["run_properties"] = worker_properties(system, options["checkout"], REPO, "t0", T0Refused,
+                                                       options.get("worker_argv"))
     for rel in wanted:
         pack = all_packs[rel]
         needed = [pack]
@@ -708,7 +710,7 @@ def _audit(factories):
                 run_values=dict(hosts[0].director.run_values) if hosts else None)
 
 
-def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit, out, marker, start):
+def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit, out, marker, start, properties=()):
     items = [outcomes[i] for i in sorted(outcomes)]
     bundles = [make_bundle({**{k: b[k] for k in ("bundle_id", "cell_id", "twin_type")},
                            "life": pack.pack["lives"][0]}, *(outcomes[i] for i in b["items"]))
@@ -735,6 +737,7 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         ("invariants.forget_inconclusive", sum(len(v["inconclusive"]) for v in all_verdicts
                                               if v["invariant"] == "INV-FORGET")),
         ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode")]
+    extra.extend(properties)
     if entry["name"] == "hermes-native":
         extra.append(("t0.injection", "The session-start memory snapshot is read; other harness prompt injection "
                       "is not exercised."))
@@ -822,6 +825,8 @@ class _Publication:
 
 def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication):
     index, selected, by_row, entry, marker, admission, options, bound_s = prepared
+    options = dict(options)
+    properties = options.pop("run_properties", ())
     (pack_root,) = {Path(p.rel).parts[0] for p in selected}
     run_start = time.time_ns() // 1_000_000
     real, work = bool(options), out / "work"
@@ -875,7 +880,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                         audit["runtime"][role] = audit["runtime"].get(role, 0) + ms
                 controls = _controls(pack, index, cache)
                 reports[pack.rel] = _report_pack(pack, entry, locks[pack.rel], outcomes,
-                    verdicts, adapter, controls, audit, out, marker, start)
+                    verdicts, adapter, controls, audit, out, marker, start, properties=properties)
                 outcomes_by_row[pack.meta["row"]["id"]] = outcomes
             finally:
                 _remove_units(factories)

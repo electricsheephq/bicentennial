@@ -283,7 +283,7 @@ def _invariants(run, arm):
 
 def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=()):
     a, name = run.arms[arm], run.ctx.entry["name"]
-    extra = [*DISCLOSURES, *(PLUGIN_DISCLOSURES if name in PROVIDERS else ()),
+    extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if name in PROVIDERS else ()),
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
         ("t1.transforms", canon(list(a.transforms)).decode()),
         ("t1.reclassified", canon(sorted({i for u in a.units for i in u.reclassified})).decode()),
@@ -306,7 +306,7 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
     if arm == "system":
         floor = run.arms["no_memory"].outcomes
         suites.append(item_suite(dict(tier="T1", system=name, items=[floor[i] for i in sorted(floor)]),
-                                 "no_memory"))
+                                 "no_memory", run.ctx.worker_properties))
     return junit_xml(suites)
 
 
