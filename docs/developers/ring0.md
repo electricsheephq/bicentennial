@@ -164,6 +164,7 @@ Use the process exit as the gate ([RING0 §8, E3](../../specs/ring0/RING0.md#8-e
 | 1 | FAIL or INVALID; an invariant or corpus failure. |
 | 2 | BLOCKED after infrastructure reruns, with no known failure. |
 | 3 | Guard or precondition refused; no result. |
+| 70 | Tool failure: a runner's unexpected exception (stderr starts with `tool_failure`), or a library process started without `PYTHONHASHSEED=0`; no result file exists. |
 
 INVALID exits 1, BLOCKED exits 2, and a known failure wins over a blocked entry. T0 evaluates each pack: honeypot read → INVALID; any FAIL invariant or SYSTEM_FAILURE item → FAIL; otherwise a BLOCKED run → BLOCKED; otherwise PASS. Across packs, exit 1 wins, then 2, then 0. Item scores below 1000 fail JUnit cases but do not gate T0 in v0.1. Those item failures are diagnostics.
 
@@ -204,7 +205,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `baseline_mismatch` | T1 baseline identity, acceptance or bundle set differs. |
 | `refused` | Install CLI filesystem or value error. |
 
-Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; it is not a result. An already-existing output path is refused without overwriting it. Other exit codes mean tool failure and no result. Python can also exit 1 on an uncaught exception; confirm result files exist before interpreting it as a gate.
+Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; it is not a result. An already-existing output path is refused without overwriting it. An unexpected exception inside a runner exits 70, prints `tool_failure` first on stderr, and leaves no result file: results are staged and moved into place only when every file is written ([RING0 §8, E6](../../specs/ring0/RING0.md#8-exit-codes)). Any other code also means the tool failed and no result exists.
 
 ## 9. Failure classes and stages
 
