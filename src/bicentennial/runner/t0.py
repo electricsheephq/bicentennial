@@ -7,6 +7,7 @@ import stat
 import subprocess
 import sys
 import time
+import traceback
 import unicodedata
 from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
@@ -777,8 +778,51 @@ def _relations(index, selected, outcomes, name):
     return canon(report.to_obj()), junit_xml([(f"ring0.T0.{name}.relations", [], cases)])
 
 
-def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers):
+def _remove_output(path):
+    """Best-effort rollback: one failed removal must not skip the other entries."""
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+class _Publication:
+    def __init__(self, out):
+        self.out, self.staging, self.moved, self.created = out, out / "staging", [], False
+
+    def begin(self):
+        self.staging.mkdir()
+        # Only a staging directory this run created is ours to remove (a --cache may sit there).
+        self.created = True
+        return self.staging
+
+    def publish(self, entries):
+        for name in entries:
+            target = self.out / name
+            # Track before rename so an interrupt immediately after it is covered too.
+            self.moved.append(target)
+            os.replace(self.staging / name, target)
+        self.staging.rmdir()
+
+    def cleanup(self):
+        for path in reversed(self.moved):
+            try:
+                # A failed rename leaves its source in place; its destination may be a cache.
+                if (self.staging / path.name).exists():
+                    continue
+            except Exception:
+                continue
+            _remove_output(path)
+        if self.created:
+            _remove_output(self.staging)
+
+
+def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication):
     index, selected, by_row, entry, marker, admission, options, bound_s = prepared
+    (pack_root,) = {Path(p.rel).parts[0] for p in selected}
     run_start = time.time_ns() // 1_000_000
     real, work = bool(options), out / "work"
     count = min(workers, admission.max_roots, 2)
@@ -841,15 +885,17 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers):
                 raise SpendRefused(report["receipt"]["spend_micro_usd"])
         for pack in selected:
             verify(packs_dir, pack_hash=pack_hash, lock=locks[pack.rel], expected_lock=locks[pack.rel])
+        staging = publication.begin()
         for rel, report in sorted(reports.items()):
-            directory = out / rel
+            directory = staging / rel
             directory.mkdir(parents=True)
             for filename in ("invariants", "controls"):
                 (directory / f"{filename}.json").write_bytes(report[filename])
             write_run(directory, **{k: report[k] for k in ("card", "receipt", "junit")})
-        (out / "adapter_invariants.json").write_bytes(canon(adapter))
-        (out / "relations.json").write_bytes(relation_json)
-        (out / "relations.xml").write_bytes(relation_xml)
+        (staging / "adapter_invariants.json").write_bytes(canon(adapter))
+        (staging / "relations.json").write_bytes(relation_json)
+        (staging / "relations.xml").write_bytes(relation_xml)
+        publication.publish(("adapter_invariants.json", "relations.json", "relations.xml", pack_root))
         codes = {report["code"] for report in reports.values()}
         return 1 if 1 in codes else 2 if 2 in codes else 0
     finally:
@@ -863,27 +909,42 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers):
 
 def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
            hermes=None, plugin_source=None, cache=None, entry=None, host_overrides=None):
-    """Run verified offline packs, returning Ring 0's 0/1/2/3 exit code."""
-    out, created = Path(out), False
+    """Run verified offline packs, returning Ring 0's 0/1/2/3/70 exit code."""
+    created, published, publication = False, False, None
     try:
-        if os.environ.get("PYTHONHASHSEED") != "0":
-            raise T0Refused("hashseed")
-        if out.exists() or out.is_symlink():
-            raise T0Refused("out_exists")
-        prepared = _preflight(system=system, packs=packs_dir, selected=packs, pack_hash=pack_hash,
-            workers=workers, mode=mode, hermes=hermes, plugin_source=plugin_source,
-            entry=entry, host_overrides=host_overrides)
-        out.mkdir(parents=True)
-        created = True
-        return _execute(prepared, packs_dir=packs_dir, pack_hash=pack_hash, out=out,
-                        cache=Path(cache) if cache is not None else out / "cache", workers=workers)
-    except (*REFUSALS, T0Refused, SpendRefused) as error:
-        reasons = getattr(error, "reasons", ())
-        code = getattr(error, "code", None) or (",".join(sorted(reasons)) if reasons else
-            "SpendRefused" if isinstance(error, SpendRefused) else
-            "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch")
-        fields = tuple(sorted(getattr(error, "fields", ())))
-        print(code, file=sys.stderr)
+        out = Path(out)
+        try:
+            if os.environ.get("PYTHONHASHSEED") != "0":
+                raise T0Refused("hashseed")
+            if out.exists() or out.is_symlink():
+                raise T0Refused("out_exists")
+            prepared = _preflight(system=system, packs=packs_dir, selected=packs, pack_hash=pack_hash,
+                workers=workers, mode=mode, hermes=hermes, plugin_source=plugin_source,
+                entry=entry, host_overrides=host_overrides)
+            out.mkdir(parents=True)
+            created = True
+            publication = _Publication(out)
+            code = _execute(prepared, packs_dir=packs_dir, pack_hash=pack_hash, out=out,
+                            cache=Path(cache) if cache is not None else out / "cache", workers=workers,
+                            publication=publication)
+            published = True
+            return code
+        except (*REFUSALS, T0Refused, SpendRefused) as error:
+            reasons = getattr(error, "reasons", ())
+            code = getattr(error, "code", None) or (",".join(sorted(reasons)) if reasons else
+                "SpendRefused" if isinstance(error, SpendRefused) else
+                "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch")
+            fields = tuple(sorted(getattr(error, "fields", ())))
+            if created:
+                (out / "refusal.json").write_bytes(canon(dict(code=code, fields=list(fields))))
+            print(code, file=sys.stderr)
+            return 3
+    except Exception:
+        print("tool_failure", file=sys.stderr)
+        traceback.print_exc()
         if created:
-            (out / "refusal.json").write_bytes(canon(dict(code=code, fields=list(fields))))
-        return 3
+            _remove_output(out / "refusal.json")
+        return 70
+    finally:
+        if publication is not None and not published:
+            publication.cleanup()
