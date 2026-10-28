@@ -142,6 +142,8 @@ The harness record lists all three under `config_deviations`, and cards disclose
 
 The pin's empty-reply retries wait on the same clock, and no setting turns them off. So a scripted main reply is never empty: an action probe ends its turn with `Noted.` after the plan's last step, and at once for a refrain plan ([RING0 §2](../../specs/ring0/RING0.md#2-the-scripted-model-t1)).
 
+A plug-in that prefetches memory changes the user text the director sees. The pin appends the prefetched block to the turn's user text, after a blank line, inside a `<memory-context>` fence that opens with its system note. If the exact text matches no turn, the director matches the text before that block. A script whose user text holds the wrapper is refused. A scripted write stores only the text before it. The block stays in the request the reader reads ([RING0 §2](../../specs/ring0/RING0.md#2-the-scripted-model-t1)).
+
 Build and install the T1 tier, then run native memory twice:
 
 ```sh
