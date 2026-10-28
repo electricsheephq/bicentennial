@@ -53,6 +53,7 @@ def main():
             if op == "open":
                 sid = cmd["session_id"]
                 os.environ["HERMES_SESSION_ID"] = sid
+                snapshot = ""
                 if cmd["provider"]:
                     provider = load_memory_provider(cmd["provider"])
                     if provider is None or not provider.is_available():
@@ -64,6 +65,12 @@ def main():
                     schemas = mgr.get_all_tool_schemas()
                 else:
                     store = load_on_disk_store()
+                    parts = []
+                    for enabled, kind in ((store.memory_enabled, "memory"), (store.user_profile_enabled, "user")):
+                        block = store.format_for_system_prompt(kind) if enabled else None
+                        if block:
+                            parts.append(block)
+                    snapshot = "\n\n".join(parts)
                     db = SessionDB()
                     db.create_session(sid, source="cli")
                     schemas = [MEMORY_SCHEMA, SESSION_SEARCH_SCHEMA]
@@ -89,6 +96,7 @@ def main():
                         mgr.sync_all(text, "", session_id=sid)
                         mgr.queue_prefetch_all(text, session_id=sid)
                 elif call == "query":
+                    result["snapshot"] = snapshot
                     result["prefetch"] = mgr.prefetch_all(cmd["text"], session_id=sid) if mgr is not None else ""
                     result["recall"] = tool(cmd["recall"]["name"], cmd["recall"]["arguments"])
                 elif call == "tool":

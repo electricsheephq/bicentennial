@@ -1,7 +1,9 @@
-"""T0 storage/retrieval host; native prompt injection belongs to replay.
+"""Memory-layer host with Hermes native's frozen session-start memory snapshot.
 
 Token statistics are estimates. Each event is one user turn with an empty
-assistant side. Only decoded recall quotes become event citations.
+assistant side. The native snapshot is rendered by Hermes at session open;
+other prompt injection belongs to replay. Only decoded recall quotes become
+event citations.
 """
 
 import json
@@ -256,8 +258,9 @@ class HermesMemoryHost(Adapter):
                                                             "arguments": json.loads(call["arguments"])})
         self.settled = False
         entries, pre = _entries(out["recall"]), out["prefetch"]
+        snap = out.get("snapshot", "")
         corpus = "\n".join(entries)
-        self._blocks = tuple(t for t in (corpus, pre) if t)
+        self._blocks = tuple(t for t in (snap, corpus, pre) if t)
         cited = {}
         for entry in entries:
             matches = [r["event"] for r in self.events.values() if r["event"]["text"]
