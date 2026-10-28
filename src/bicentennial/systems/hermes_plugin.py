@@ -104,7 +104,8 @@ def prepare_cache(name, directory, refuse):
     if directory is None:
         return None, None
     resolved = Path(directory).resolve()
-    if any(c in str(resolved) for c in ":;"):  # a list separator would split the substituted path
+    # Any separator (":", ";", whitespace) would let a path-list variable read outside the cache.
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", str(resolved)):
         raise refuse("model_cache_invalid")
     digest = cache_digest(directory, refuse)
     return resolved, digest

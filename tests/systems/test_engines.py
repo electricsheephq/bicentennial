@@ -224,10 +224,11 @@ def test_cache_digest_and_env(tmp_path, monkeypatch, mapped):
         hp.cache_digest(cache, t1.T1Refused)
     with pytest.raises(t1.T1Refused, match="missing_input"):
         hp.prepare_cache("hermes-native", cache, t1.T1Refused)
-    listed = tmp_path / "cache:other"
-    listed.mkdir()
-    with pytest.raises(t1.T1Refused, match="model_cache_invalid"):
-        hp.prepare_cache(NAME, listed, t1.T1Refused)
+    for unsafe in ("cache:other", "cache;other", "cache other", "cache\tother"):
+        listed = tmp_path / unsafe
+        listed.mkdir()
+        with pytest.raises(t1.T1Refused, match="model_cache_invalid"):
+            hp.prepare_cache(NAME, listed, t1.T1Refused)
 
 
 def test_prepare_engine_missing_source(mapped):
