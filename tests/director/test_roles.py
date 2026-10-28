@@ -126,6 +126,19 @@ def test_cursor_retry_issued_ids_and_aliases_chat():
         "title", "model_alias")
 
 
+def test_cursor_reads_the_turn_before_the_hermes_memory_fence():
+    # Pinned Hermes appends a turn's prefetched memory to its user text (#197); the block stays in the request
+    fenced = "scripted turn one\n\n<memory-context>\n[System note: recalled]\n\nfact\n</memory-context>"
+    assert roles.classify(chat({"role": "user", "content": fenced}), ctx1())[:2] == ("replay_main", "cursor")
+    parts = chat({"role": "user", "content": [{"type": "text", "text": fenced}]})
+    assert roles.classify(parts, ctx1())[:2] == ("replay_main", "cursor")
+    assert roles.turn_texts("  plain\n") == {"plain"} and roles.turn_texts(fenced) == {fenced, "scripted turn one"}
+    # only Hermes's own fence: other appended text, or the fence without its blank line, still fails closed
+    for text in ("scripted turn one\n\nanother paragraph", "scripted turn one\n<memory-context>\nfact",
+                 "scripted turn one plus <memory-context>\nfact", "an unscripted turn\n\n<memory-context>\nfact"):
+        assert roles.classify(chat({"role": "user", "content": text}), ctx1())[:2] == ("unknown", "unknown")
+
+
 def test_responses_wire():
     comp = roles.Signature("c", "compaction", "last_user", 8, roles.h16("Compact!"))
     c = ctx1(signatures=(comp,))

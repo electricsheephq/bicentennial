@@ -60,6 +60,8 @@ At T1 every request the harness or the system sends is answered by a determinist
 | `aux` | an empty assistant message with no tool call |
 | `unknown` | refused, as the director does on every tier |
 
+A request reaches `replay_main` or `probe_main` by the cursor rule: its last user text equals the scripted turn's. Pinned Hermes appends a turn's prefetched memory to that text, as a blank line and then its `<memory-context>` fence. The rule therefore also compares the text before that fence. The fenced block stays in the request, so it is part of the Hermes-mode context (§1). Any other appended text still fails closed.
+
 Embedding requests (an embeddings endpoint on a declared alias) go to the hashed-vector stub.
 
 **The content-blind write rule.** It applies to every write turn, and to every harness- or system-originated memory-write request (DESIGN §6.2's `memory_write`: background review, the pre-compaction flush, session-end hooks).

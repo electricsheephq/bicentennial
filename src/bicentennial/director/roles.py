@@ -53,6 +53,16 @@ def h16(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+# Pinned Hermes appends a turn's prefetched memory to the user text as "\n\n" plus a fenced block
+# (agent/turn_context.py compose_user_api_content; agent/memory_manager.py build_memory_context_block).
+HERMES_MEMORY_FENCE = "\n\n<memory-context>\n"
+
+
+def turn_texts(text: str) -> set[str]:
+    """A user text block, stripped, and the same text before Hermes's memory fence: the cursor's candidates."""
+    return {t.strip() for t in (text, text.split(HERMES_MEMORY_FENCE, 1)[0]) if t.strip()}
+
+
 # Markers on the pinned versions (REPORT.md: source and derivation of each). The director's write suffix is
 # the director's own text, not a harness's: it marks a director-originated write-turn body.
 SIGNATURES = (
@@ -240,7 +250,7 @@ def shape(req: dict, signatures=SIGNATURES) -> dict:
     return {"wire": wire, "method": method, "path": path, "keys": sorted(body), "model": body.get("model"),
             "seq": toks, "n_tools": len(body.get("tools") or []), "tail_ids": tail[0], "tail_calls": tail[1],
             "last_is": {"u": "user_text", "t": "tool_result"}.get(final, "other"),
-            "user_hashes": sorted({h16(whole)} | {h16(b.strip()) for b in last if b.strip()}) if whole else [],
+            "user_hashes": sorted({h16(t) for b in [whole, *last] for t in turn_texts(b)}) if whole else [],
             "len": {"system": sum(map(len, system)), "last_user": len(whole)},
             "markers": markers(fields, signatures)}
 
