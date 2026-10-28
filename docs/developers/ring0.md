@@ -134,6 +134,12 @@ Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/
 
 The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
 
+The T1 adapter writes three scripted-tier settings:
+- `tools.tool_search.enabled: "off"`. By default the pin hides `session_search` and every plug-in and MCP tool behind its `tool_call` bridge, which would leave the scripted write and recall turns without their tools. With the bridge off, every offered tool is eager.
+- `agent.api_max_retries: 1` and `agent.auto_recovery_cycles: 0`. The simulated clock is frozen inside a turn, and the pin's retry and auto-recovery waits loop on `time.time()`, so a failed main call would otherwise stall until the turn timeout.
+
+The harness record lists all three under `config_deviations`, and cards disclose them as `t1.tool_search`. Install-time configuration is unchanged, so fresh-install hashes are too. Live tiers keep the pin's defaults.
+
 Build and install the T1 tier, then run native memory twice:
 
 ```sh
@@ -226,7 +232,7 @@ Everything in `card.json` is stable. `receipt.json` holds volatile wall times, l
 
 Disclosures ride as JUnit properties until a card field exists. T0 names are `t0.entrypoint`, `t0.event_mapping`, `t0.crash`, `honeypot.hits`, `invariants.forget_inconclusive`, `t0.pair`, and conditionally `t0.injection`, `t0.baseline`. API-mode INV-PAIR covers call and result survival; linkage requires Hermes mode.
 
-T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
+T1 names in `compare.DISCLOSURES` are `t1.assistant_turns`, `t1.baselines`, `t1.corpus`, `t1.corpus_crash`, `t1.estimator`, `t1.fresh_install`, `t1.isolation`, `t1.key_matching`, `t1.receipt`, `t1.terminal`, `t1.tool_search`, `t1.tuesday`, `t1.unsettled`, `t1.verdicts`, `t1.verified_empty`, `t1.window`. `PLUGIN_DISCLOSURES` adds `t1.a4`, `t1.plugin_snapshot`, `t1.reclassify`, `t1.fresh_install_mask`. Also inspect `isolation.unknown_requests`, `isolation.forwarded`, `no_memory.gold_in_context`, `controls.floor_mismatches`, `controls.wiped_store`, `gate`, `gate.final`, `gate.wiped_blocked` (system arm only: the wiped gate's blocked entries as canonical sorted JSON, `[]` when none), `wiped.label`, `t1.not_exercised`, `t1.transforms`, `t1.reclassified`, `honeypot.hits`, and conditional `t1.a4_gaps`. The corpus is memory-layer mode; probe isolation is per checkpoint, not per item; naive RAG is not run in v0.1. Read these disclosures before interpreting a card.
 
 Compare stable cards after a second run:
 

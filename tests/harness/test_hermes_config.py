@@ -52,6 +52,33 @@ def test_exact_values_at_port_4321():
     assert not {"temperature", "top_p", "top_k", "mcp_servers"} & set(keys(cfg))
 
 
+def test_scripted_switch():
+    # #191 and #192: only the scripted tier's adapter writes these settings; the default output is unchanged
+    default = hermes_config(4321, "bicentennial-main")
+    assert "tools" not in default and default["agent"] == {"environment_probe": False}
+    on = hermes_config(4321, "bicentennial-main", scripted=True)
+    assert on["tools"] == {"tool_search": {"enabled": "off"}}
+    assert on["agent"] == {"environment_probe": False, "api_max_retries": 1, "auto_recovery_cycles": 0}
+    assert {k: v for k, v in on.items() if k not in ("tools", "agent")} == {
+        k: v for k, v in default.items() if k != "agent"}
+    assert config.SCRIPTED_DEVIATIONS == (
+        "tools.tool_search.enabled", "agent.api_max_retries", "agent.auto_recovery_cycles")
+    merged = hermes_config(4321, "bicentennial-main", scripted=True, plugin="holographic",
+                           plugin_config={"tools": {"fixture": {"depth": 1}}, "agent": {"fixture": 2}})
+    assert merged["tools"] == {"tool_search": {"enabled": "off"}, "fixture": {"depth": 1}}
+    assert merged["agent"]["fixture"] == 2 and merged["agent"]["api_max_retries"] == 1
+    for flag in (False, True):
+        for owned in ({"tools": {"tool_search": {"enabled": "on"}}}, {"agent": {"api_max_retries": 3}},
+                      {"agent": {"auto_recovery_cycles": 5}}):
+            with pytest.raises(ValueError, match="scripted settings"):
+                hermes_config(4321, "bicentennial-main", scripted=flag, plugin="holographic", plugin_config=owned)
+    with pytest.raises(ValueError, match="adapter-owned key"):
+        hermes_config(4321, "bicentennial-main", scripted=True, plugin="holographic", plugin_config={"tools": "on"})
+    for bad in (0, 1, "on", None):
+        with pytest.raises(ValueError, match="^scripted is a bool$"):
+            hermes_config(4321, "bicentennial-main", scripted=bad)
+
+
 def test_plugin_by_name_only():
     assert hermes_config(4321, "bicentennial-main", plugin="holographic")["memory"]["provider"] == "holographic"
     for bad in ("Bad Name", "-x", "", "a\n", "a/b"):

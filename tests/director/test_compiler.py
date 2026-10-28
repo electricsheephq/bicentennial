@@ -343,8 +343,8 @@ def test_dialect_and_normalization_keyed_200():
             hermes_call(name, args)
     for name in compiler.ENV_TOOLS:
         got = step_call({"tool": {"name": name, "args": {"query": ""}}})
-        assert got["name"] == "tool_call"
-        assert json.loads(got["arguments"])["calls"][0]["name"] == f"mcp__envserver__{name}"
+        # #191: tool search is off at the scripted tier, so MCP tools are called directly, never through the bridge
+        assert got == {"name": f"mcp__envserver__{name}", "arguments": '{"query":""}'}
     text = "value'\n$(false)"
     step = {"tool": {"name": "write_file", "args": {"path": "config/settings.toml", "content": text}}}
     tokens = shlex.split(json.loads(step_call(step)["arguments"])["command"])
@@ -852,7 +852,7 @@ def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
     a = object.__new__(adapter.HermesAdapter)
     a.before_spawn, a._wiped, a._session_index, a._alias = None, False, 22, "bicentennial-main"
     a.paths, a.server, a.clock = paths, SimpleNamespace(port=4321), SimpleNamespace(path=root / "clock.json")
-    a.env_server, a.toolsets, a.memory, a.window = hook, config.HERMES_TOOLSETS, False, None
+    a.env_server, a.toolsets, a.memory, a.window, a.scripted = hook, config.HERMES_TOOLSETS, False, None, True
     a.plugin, a.plugin_config, a.checkout = None, {}, None
     a.argv, a.egress, a.pids = [], None, []
     timings = dict(spawn=[], open=[])
@@ -861,6 +861,7 @@ def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
         cfg = json.loads((paths["hermes_home"] / "config.yaml").read_bytes())
         assert cfg["platform_toolsets"]["acp"] == ["todo", "terminal", "envserver"]
         assert cfg["mcp_servers"]["envserver"]["args"][-1] == str(root / "clock.json")
+        assert cfg["tools"] == {"tool_search": {"enabled": "off"}}
     assert reasons == [(22, "session_start"), (22, "kill")]
     assert [p.name for p in sorted((root / "env/22").iterdir())] == ["life-1", "life-2"]
 

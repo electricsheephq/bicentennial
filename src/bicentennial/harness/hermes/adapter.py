@@ -21,6 +21,7 @@ from bicentennial.director.serve import serve, shutdown
 from bicentennial.harness.egress import Egress
 from bicentennial.harness.hermes.config import (
     CONFIG_DEVIATIONS,
+    SCRIPTED_DEVIATIONS,
     T1_TOOLSETS,
     hermes_config,
     layout,
@@ -189,7 +190,8 @@ class HermesAdapter:
     def __init__(self, entry, *, script, route_table, schedule, responder, clock, root, scratch, life, branch, run,
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
-                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None):
+                 memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
+                 scripted: bool = True):
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -201,9 +203,10 @@ class HermesAdapter:
         if any(f["kind"] in ("restart", "kill", "compaction") and f["turn"] is None for f in schedule.to_obj()):
             raise ValueError("a restart, kill or compaction needs a turn")
         self.toolsets, self.env_server = T1_TOOLSETS if toolsets is None else toolsets, env_server
+        # The scripted tier's config (#191, #192: config.SCRIPTED_DEVIATIONS); a live tier passes False for the pin's defaults.
         hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory,
-                      toolsets=self.toolsets, window=window)
-        self.memory, self.window = memory, window
+                      toolsets=self.toolsets, window=window, scripted=scripted)
+        self.memory, self.window, self.scripted = memory, window, scripted
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
         self.commit = None
@@ -329,7 +332,8 @@ class HermesAdapter:
         toolsets = self.toolsets + ((ENV_SERVER,) if servers and ENV_SERVER not in self.toolsets else ())
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
                                                             plugin_config=self.plugin_config, memory=self.memory,
-                                                            toolsets=toolsets, mcp_servers=servers, window=self.window))
+                                                            toolsets=toolsets, mcp_servers=servers, window=self.window,
+                                                            scripted=self.scripted))
         t0 = time.monotonic()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
@@ -393,7 +397,7 @@ class HermesAdapter:
     def harness_record(self) -> dict:
         pin = self.harness_pin  # the harness's own pin, never a plug-in system's artifact (A1)
         return {"name": pin.get("name"), "version": pin.get("version"), "sha256": pin.get("sha256"),
-                "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS),
+                "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS) + (list(SCRIPTED_DEVIATIONS) if self.scripted else []),
                 "plugin_config": deepcopy(self.plugin_config), "memory": self.memory,
                 "active_memory_providers": list(self.active_memory_providers)}
 
