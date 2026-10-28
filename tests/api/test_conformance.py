@@ -185,6 +185,27 @@ def test_reference_ranking_and_temporal_boundary():
         output="UNKNOWN", citations=[], confidence_milli=0)
 
 
+@pytest.mark.parametrize("mention", ["Maybe azure is NEW-2202.",
+    "It was said that azure must be NEW-2202.", "Quote from a note: azure is NEW-2202.",
+    "Azure might go with NEW-2202.", "Possibly azure is NEW-2202."])
+def test_reference_no_update_context(mention):
+    a = ReferenceStore()
+    for e in (event("old", "Azure is definitely OLD-1101.", 1),
+              event("mention", mention, 3),
+              event("other-actor", "Azure is OTHER-3303.", 2) | {"actor": "other"},
+              event("future", "Azure is FUTURE-4404.", 5)):
+        a.ingest(e)
+    fresh = ReferenceStore()
+    fresh.restore(a.checkpoint())
+    for store in (a, fresh):
+        result = store.query(task("azure"), 3)
+        assert result["citations"] == ["mention", "old"]
+        assert result["output"] == mention + "\nAzure is definitely OLD-1101."
+        assert store.query(task("azure"), 5)["citations"] == ["future"]
+        store.forget({"event_ids": ["old"]})
+        assert store.query(task("azure"), 3)["citations"] == ["mention"]
+
+
 def test_bm25_idf_frequency_length_and_query_deduplication():
     assert log_fixed(Fraction(2)) == 693147
     assert log_fixed(Fraction(16)) == 2772588

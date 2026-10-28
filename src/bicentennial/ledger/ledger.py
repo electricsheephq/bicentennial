@@ -49,7 +49,7 @@ class Ledger:
                 raise ChainBroken("broken ledger chain")
             self._seq = len(records)
         except BaseException:
-            self._file.close()
+            self._close()
             raise
         self._store = BlobStore(self.root / "blobs", guard)
 
@@ -74,7 +74,7 @@ class Ledger:
                 os.fsync(self._file.fileno())
             except BaseException:
                 # The bytes may be on disk; only a reopen rescans the chain and its tail.
-                self._file.close()
+                self._close()
                 raise
             self._seq, self._prev = rec["seq"], rec["hash"]
             return rec
@@ -84,4 +84,18 @@ class Ledger:
 
     def close(self):
         with self._lock:
-            self._file.close()
+            self._close()
+
+    def _close(self):
+        if not self._file.closed:
+            # Retain the description until buffered close finishes, even if flushing raises.
+            fd = os.dup(self._file.fileno())
+            try:
+                self._file.close()
+            finally:
+                try:
+                    # A pre-exec child can retain this open description after our close.
+                    # Release its flock explicitly before any reopen.
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
