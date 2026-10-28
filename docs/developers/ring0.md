@@ -130,7 +130,9 @@ Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs 
 
 ## 7. Run T1 as a merge gate
 
-Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, with its own `.venv`. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
+Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
+
+The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
 
 Build and install the T1 tier, then run native memory twice:
 
@@ -184,6 +186,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `schedule_mismatch` | Packed schedule differs from reconstructed schedule. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
 | `missing_input` | Required Hermes or plug-in source omitted. |
+| `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `c7_missing` | Template has no C-7 entry. |
 | `c7_changed` | Template C-7 hash changed. |
@@ -192,7 +195,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `visible_canary` | Canary found in agent-visible input. |
 | `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
 | `scratch_exists` | T1 arm scratch path already exists. |
-| `check_compile` | Script compilation check failed. |
+| `check_compile` | Script compilation check failed. The runner writes a per-branch summary to stderr. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `lock_mismatch` | Current run lock differs from expected lock. |
 | `gate_refused` | Host machine gate refused a spawn. |
