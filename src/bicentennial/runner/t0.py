@@ -31,7 +31,7 @@ from bicentennial.controls.cache import (
     read_entry,
 )
 from bicentennial.director.routes import RouteTable, route_table_hash
-from bicentennial.director.scripted import ScriptedResponder
+from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import (
     ENTRYPOINT,
@@ -736,7 +736,8 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         ("t0.crash", "API-mode crash equals restart"), ("honeypot.hits", hit_count),
         ("invariants.forget_inconclusive", sum(len(v["inconclusive"]) for v in all_verdicts
                                               if v["invariant"] == "INV-FORGET")),
-        ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode")]
+        ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode"),
+        *stub_disclosures(entry, "t0")]
     extra.extend(properties)
     if entry["name"] == "hermes-native":
         extra.append(("t0.injection", "The session-start memory snapshot is read; other harness prompt injection "

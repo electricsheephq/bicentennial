@@ -98,23 +98,38 @@ def _mem0(call, messages):
 FORMATS = {("mem0-oss", "extraction"): _mem0}
 
 
+def stub_disclosures(entry, tier):
+    properties = []
+    if any(route["role"] == "embeddings" for route in entry.get("own_model_routes", [])):
+        properties.append((f"{tier}.embeddings", "Hashed-vector stub (RING0 E10): cosine reported as (1 + c)/2 "
+            "over D-1 hashed token coordinates; similarity order preserved; hybrid weights and absolute "
+            "thresholds not validated."))
+    if "extraction" in entry.get("structured_formats", {}):
+        properties.append((f"{tier}.extraction", "Automatic extraction not exercised (RING0 E11, #208): "
+            "the stub's reply format is not the one the pinned release reads; results cover explicit-write "
+            "storage and recall."))
+    return properties
+
+
+def _rounded_coordinate(count, squared):
+    """Round count*S/sqrt(squared) to an integer, without floats."""
+    numerator = count * count * VECTOR_SCALE * VECTOR_SCALE
+    component = isqrt(numerator // squared)
+    if 4 * numerator > squared * (2 * component + 1) ** 2:
+        component += 1
+    return -component if count < 0 else component
+
+
 def _vector(text, dimension):
     counts = [0] * dimension
     for token in re.findall(r"\w+", text.lower()):
         digest = sha256(token.encode()).digest()
-        counts[int.from_bytes(digest[:8], "big") % dimension] += -1 if digest[8] & 1 else 1
+        counts[1 + int.from_bytes(digest[:8], "big") % (dimension - 1)] += -1 if digest[8] & 1 else 1
     squared = sum(n * n for n in counts)
     if not squared:
         return counts
-    # Round each normalised coordinate to 1e-9 using integer arithmetic only.
-    vector = []
-    for count in counts:
-        numerator = count * count * VECTOR_SCALE * VECTOR_SCALE
-        component = isqrt(numerator // squared)
-        if 4 * numerator > squared * (2 * component + 1) ** 2:
-            component += 1
-        vector.append(-component if count < 0 else component)
-    return vector
+    # g(u) = (1/sqrt(2), u/sqrt(2)); the shared coordinate maps cosine c to (1+c)/2.
+    return [_rounded_coordinate(1, 2), *(_rounded_coordinate(n, 2 * squared) for n in counts[1:])]
 
 
 def _usage(wire, estimate):
@@ -167,8 +182,8 @@ class ScriptedResponder:
             if call.wire != "embeddings":
                 raise ValueError("embeddings need the embeddings wire")
             dimension = self.embedding_dim
-            if type(dimension) is not int or dimension <= 0:
-                raise ValueError("scripted embeddings need a positive embedding_dim")
+            if type(dimension) is not int or dimension < 2:
+                raise ValueError("scripted embeddings need embedding_dim >= 2")
             if "dimensions" in call.body and call.body["dimensions"] != dimension:
                 raise ValueError("embedding dimensions differ from the system entry")
             inputs = call.body.get("input")

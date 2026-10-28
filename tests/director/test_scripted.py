@@ -249,17 +249,23 @@ def test_extractive_cuts(wire, role):
 
 
 def test_hand_computed_vector_zero_and_normalisation():
-    # sha256(alpha) starts 8ed3f6ad685b959e ad: coordinate 6, sign -.
-    # sha256(beta)  starts f44e64e75f3948e9 f7: coordinate 1, sign -.
-    reply = responder().respond(call("embeddings", "embeddings", {"input": ["Alpha beta", "", "alpha alpha 猫"]}))
-    assert reply.embedding[0] == [0, -707106781, 0, 0, 0, 0, -707106781, 0]
+    # D=8: token coordinates 1..7; shared coordinate 0 rounds S/sqrt(2) to 707106781.
+    # sha256(alpha) starts 8ed3f6ad685b959e ad: 1 + h%7 = 1, sign -.
+    # sha256(beta)  starts f44e64e75f3948e9 f7: 1 + h%7 = 4, sign -.
+    # Alpha beta: sum(count^2)=2, so each token coordinate is -S/sqrt(4) = -500000000.
+    reply = responder().respond(call("embeddings", "embeddings", {
+        "input": ["Alpha beta", "", "alpha alpha 猫", "one four"]}))
+    assert reply.embedding[0] == [707106781, -500000000, 0, 0, -500000000, 0, 0, 0]
     assert reply.embedding[1] == [0] * 8
+    # one (+1) and four (-1) both hash to coordinate 7: cancellation stays zero.
+    assert reply.embedding[3] == [0] * 8
     assert reply.scale == VECTOR_SCALE and reply.usage["estimated"] is True
     canon(asdict(reply))  # no float anywhere in the Reply
     for vector in embeddings.to_wire(reply.embedding, reply.scale):
         assert math.sqrt(sum(x * x for x in vector)) == pytest.approx(1 if any(vector) else 0, abs=2e-9)
     single = responder().respond(call("embeddings", "embeddings", {"input": "ALPHA alpha"}))
-    assert single.embedding == [[0, 0, 0, 0, 0, 0, -VECTOR_SCALE, 0]]
+    # count=-2, sum(count^2)=4: -2*S/sqrt(8) rounds to -707106781.
+    assert single.embedding == [[707106781, -707106781, 0, 0, 0, 0, 0, 0]]
 
 
 @pytest.mark.parametrize("role", ["replay_main", "probe_main", "unknown", "other"])

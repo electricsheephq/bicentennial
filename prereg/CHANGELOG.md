@@ -2,6 +2,12 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-28: the hashed-vector stub's scale and Mem0's extraction disclosure (#207, #208)
+- **RING0 §13 E10:** the hashed-vector stub maps token cosine c to (1 + c)/2 over D−1 hashed token coordinates, preserving similarity order for those token vectors while disclosing changed collisions and unvalidated hybrid weights and absolute thresholds.
+- **RING0 §13 E11:** pinned Mem0's automatic extraction stores no vector memories because it does not read the stub's reply format, so results cover explicit-write storage and recall wiring and disclose that extraction is not exercised.
+
+No PREREG version change.
+
 ## Ring 0 contract change, 2026-10-28: plug-in Python dependencies (#190)
 - **RING0 §13 E9:** plug-in dependencies come from a benchmark-owned hash lock installed into a per-system copy of pinned Hermes; prepare refuses absent or unequal applicable versions. JUnit run properties disclose the lock and every real worker's distribution set. No PREREG version change; PREREG-v0.4 remains frozen.
 
