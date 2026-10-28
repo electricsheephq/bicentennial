@@ -623,7 +623,8 @@ def test_plugin_wake_records_and_reason_validation(tmp_path):
     digest = surface_hash(directory, [])
     calls = []
     hook = PluginWake()
-    hook.cell = SimpleNamespace(surfaces=[(surface, directory)], snapshots=[(None, digest)],
+    hook.cell = SimpleNamespace(surfaces=[(surface, directory)], snapshots=[(directory, digest)],
+                                adapter=SimpleNamespace(director=SimpleNamespace(run_values={"director_port": "41001"})),
                                 wipe=lambda: calls.append("wipe"))
     with pytest.raises(ValueError):
         hook("kill")

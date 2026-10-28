@@ -46,7 +46,7 @@ from bicentennial.probe.probe_responder import ProbeResponder
 from bicentennial.runner.lock import LockMismatch
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
-from bicentennial.sandbox.surfaces import clone_tree, surface_hash, swap_in
+from bicentennial.sandbox.surfaces import clone_tree, install_hash, swap_in
 from bicentennial.score.qa import parse_envelope
 from bicentennial.systems.controls import (
     WAKE_REASONS,
@@ -126,9 +126,11 @@ class PluginWake:
             raise ValueError("plug-in cell is not installed")
         if wake:
             self.cell.wipe()
-        rows = [{"root": s["root"], "relative": s["relative"], "fresh_install_hash": fresh,
-                 "post_wipe_hash": surface_hash(directory, s["volatile_paths"]) if wake else None}
-                for (s, directory), (_, fresh) in zip(self.cell.surfaces, self.cell.snapshots, strict=True)]
+        port = int(self.cell.adapter.director.run_values["director_port"])
+        rows = [{"root": s["root"], "relative": s["relative"],
+                 "fresh_install_hash": install_hash(snapshot, s["volatile_paths"], port),
+                 "post_wipe_hash": install_hash(directory, s["volatile_paths"], port) if wake else None}
+                for (s, directory), (snapshot, _) in zip(self.cell.surfaces, self.cell.snapshots, strict=True)]
         self._records.append(dict(call=len(self._records) + 1, reason=reason, wake=wake, surfaces=rows))
         return wake
 
