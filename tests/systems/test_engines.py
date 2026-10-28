@@ -193,7 +193,10 @@ def test_active_guard(tmp_path, monkeypatch, mapped, active, configured):
 
 @pytest.mark.parametrize("key,value", [("HOME", "x"), ("HERMES_X", "x"), ("PYTHONPATH", "x"),
     ("HTTP_PROXY", "x"), ("PATH", "x"), ("BAD", "{model_cache}/../escape"),
-    ("BAD", "/absolute"), ("BAD", "{model_cache}//absolute"), ("BAD", "a\\b")])
+    ("BAD", "/absolute"), ("BAD", "{model_cache}//absolute"), ("BAD", "a\\b"),
+    ("LD_PRELOAD", "{model_cache}/shim.so"), ("DYLD_INSERT_LIBRARIES", "{model_cache}/shim.dylib"),
+    ("BAD", "{model_cache}/shim.so:/tmp/other.so"), ("BAD", "{model_cache}/a;b"), ("BAD", "{model_cache}/a b"),
+    ("BAD", "a:b"), ("BAD", "a;b")])
 def test_env_recipe_refusals(monkeypatch, key, value):
     monkeypatch.setitem(hp.WORKER_ENV, NAME, {key: value})
     with pytest.raises(ValueError):
@@ -221,6 +224,10 @@ def test_cache_digest_and_env(tmp_path, monkeypatch, mapped):
         hp.cache_digest(cache, t1.T1Refused)
     with pytest.raises(t1.T1Refused, match="missing_input"):
         hp.prepare_cache("hermes-native", cache, t1.T1Refused)
+    listed = tmp_path / "cache:other"
+    listed.mkdir()
+    with pytest.raises(t1.T1Refused, match="model_cache_invalid"):
+        hp.prepare_cache(NAME, listed, t1.T1Refused)
 
 
 def test_prepare_engine_missing_source(mapped):

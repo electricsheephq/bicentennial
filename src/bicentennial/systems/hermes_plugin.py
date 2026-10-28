@@ -69,16 +69,17 @@ def resolve_worker_env(name, model_cache=None):
     reserved = set(worker_env(dict.fromkeys(("hermes_home", "home", "tmp"), Path(".")), 1, ".", None))
     for key, value in extra.items():
         if (not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in reserved | set(_PASSED) | set(_PROXIES)
-                or key.startswith(("BICENTENNIAL_", "HERMES_", "PYTHON"))):
+                or key.startswith(("BICENTENNIAL_", "HERMES_", "PYTHON", "LD_", "DYLD_"))):
             raise ValueError("reserved worker environment name")
         if not isinstance(value, str):
             raise ValueError("worker environment value must be a string")
         if value == "{model_cache}" or value.startswith("{model_cache}/"):
-            suffix = value[len("{model_cache}"):].lstrip("/")
-            if (".." in suffix.split("/") or "\\" in suffix or "{" in suffix
-                    or value.startswith("{model_cache}//")):
+            # One relative path inside the cache: no list separators, so no second path can follow.
+            suffix = value[len("{model_cache}/"):]
+            if suffix and (not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", suffix)
+                           or ".." in suffix.split("/")):
                 raise ValueError("invalid model cache path")
-        elif any(c in value for c in "/\\{"):
+        elif any(c in value for c in "/\\{:;"):
             raise ValueError("invalid worker environment value")
     return {k: v.replace("{model_cache}", str(model_cache)) if model_cache is not None else v
             for k, v in extra.items()}
@@ -102,8 +103,11 @@ def prepare_cache(name, directory, refuse):
         raise refuse("missing_input")
     if directory is None:
         return None, None
+    resolved = Path(directory).resolve()
+    if any(c in str(resolved) for c in ":;"):  # a list separator would split the substituted path
+        raise refuse("model_cache_invalid")
     digest = cache_digest(directory, refuse)
-    return Path(directory).resolve(), digest
+    return resolved, digest
 
 
 def normalise(name):
