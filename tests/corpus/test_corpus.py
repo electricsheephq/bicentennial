@@ -322,6 +322,46 @@ def test_stocking_reproducibility(catalogue, corpus, tmp_path, monkeypatch):
         sha256=sha256(CORPUS_PATH.read_bytes()).hexdigest()), sort_keys=True))
 
 
+@pytest.mark.parametrize("content_overlap", [False, True], ids=["stopword-only", "content-word"])
+def test_stocking_requires_content_words(catalogue, obj, tmp_path, monkeypatch, content_overlap):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import bicentennial.corpus.run as run
+
+    row = next(r for r in catalogue.rows if r.gate is None)
+    life = SimpleNamespace(
+        manifest={k: obj[k] for k in (
+            "generator_version", "world_hash_b0", "world_hash_b1", "history_set_hash")},
+        schedule=SimpleNamespace(fault_lite=lambda: []))
+    items = [dict(item_id=ident(1), options=[dict(option_id=ident(2))])]
+    monkeypatch.setattr(run, "_Life", lambda *args: nullcontext((life, {}, {}, items)))
+    monkeypatch.setattr(run, "reader_view", lambda item: item)
+    monkeypatch.setattr(run, "_observations", lambda *args: deepcopy(obj["expected"]))
+    calls = []
+
+    def content_observation(life, worlds, keys, items, factory, *, oracle, forget):
+        assert factory is run._ContentWordReference
+        assert oracle is False and forget is True
+        events = [dict(text="the beacon")]
+        prompt = "THE BEACON" if content_overlap else "THE"
+        assert run.ReferenceStore().scores(prompt, events)[0] > 0
+        score = factory().scores(prompt, events)[0]
+        assert score == int(content_overlap)
+        calls.append(factory)
+        result = deepcopy(obj["expected"][PASS_ORACLE])
+        if not score:
+            result[0]["selected_option"] = None
+        return result
+
+    monkeypatch.setattr(run, "observe", content_observation)
+    stocked = run.stock(SimpleNamespace(rows=[row]), root=tmp_path)
+    assert len(calls) == 1
+    expected_ids = [f"{row.id}.wipe_on_restart"] if content_overlap else []
+    assert [c.case_id for c in stocked] == expected_ids
+    assert all(tuple(sorted(c.expected)) == ADAPTER_NAMES for c in stocked)
+
+
 def test_complete_replay(catalogue, corpus, tmp_path):
     from bicentennial.api.adapters.reference_store import ReferenceStore
     from bicentennial.corpus.run import (
