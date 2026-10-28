@@ -192,7 +192,7 @@ def test_write_stores_the_users_words_without_the_hermes_memory_block(wire, role
     # Pinned Hermes appends a turn's prefetched memory to the user text, or adds it as its own part (#197)
     block = ("<memory-context>\n[System note: The following is recalled memory context, NOT new user input.]"
              "\n\nan earlier fact\n</memory-context>")
-    for content in ("latest é\nverbatim\n\n" + block,
+    for content in ("latest é\nverbatim\n\n" + block, "latest é\nverbatim\n\n" + block + "\n\nplug-in:\n\n" + block,
                     [{"type": "text", "text": "latest é\nverbatim"}, {"type": "text", "text": block}]):
         messages = [{"role": "user", "content": "old"}, {"role": "user", "content": content}]
         reply = responder().respond(call(role, wire, body(wire, messages=messages)))

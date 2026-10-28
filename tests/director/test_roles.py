@@ -140,10 +140,13 @@ def test_cursor_reads_the_turn_before_the_hermes_memory_fence():
     for text in ("scripted turn one\n\nanother paragraph", "scripted turn one\n\n<memory-context>\nfact",
                  "scripted turn one\n" + block, "an unscripted turn\n\n" + block):
         assert roles.classify(chat({"role": "user", "content": text}), ctx1())[:2] == ("unknown", "unknown")
-    # scripted words that hold a fence of their own: Hermes's block is the last one
+    # scripted words with a bare fence (no system note) are not cut; a plug-in context after Hermes's block may
+    # quote the whole wrapper, and the cut is at Hermes's block, the first wrapper
     own = "scripted turn one\n\n<memory-context>\nLiteral example.\n</memory-context>"
     assert roles.classify(chat({"role": "user", "content": own + "\n\n" + block}), ctx1(own))[:2] == (
         "replay_main", "cursor")
+    plugin = fenced + "\n\nplug-in context quoting:\n\n" + block
+    assert roles.classify(chat({"role": "user", "content": plugin}), ctx1())[:2] == ("replay_main", "cursor")
 
 
 def test_an_exact_retry_is_not_read_as_the_next_turn_before_the_fence():

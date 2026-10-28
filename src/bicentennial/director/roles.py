@@ -54,14 +54,15 @@ def h16(text: str) -> str:
 
 
 # Pinned Hermes appends a turn's prefetched memory to the user text as "\n\n" plus a fenced block that opens
-# with its system note (agent/turn_context.py compose_user_api_content; agent/memory_manager.py
-# build_memory_context_block). It sanitises recalled text of that wrapper, so the last one is its own block.
+# with its system note, and any plug-in context after it (agent/turn_context.py compose_user_api_content;
+# agent/memory_manager.py build_memory_context_block). The director refuses a script whose user text holds
+# the wrapper, so the first one is Hermes's own block.
 HERMES_MEMORY_FENCE = "\n\n<memory-context>\n[System note: The following is recalled memory context, "
 
 
 def own_text(text: str) -> str:
     """The text before Hermes's appended memory block, or the whole text when there is none."""
-    return text.rsplit(HERMES_MEMORY_FENCE, 1)[0]
+    return text.split(HERMES_MEMORY_FENCE, 1)[0]
 
 
 # Markers on the pinned versions (REPORT.md: source and derivation of each). The director's write suffix is
