@@ -83,6 +83,8 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 
 The Hermes-replay fallback ships in v0.2 ([RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata)). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
 
+For Hermes native, the memory-layer host calls `memory` and `session_search` and also reads the session-start memory snapshot rendered by pinned Hermes's own code at session open. Enabled, non-empty memory and user-profile blocks appear in that order, before recall and prefetch context. The snapshot stays frozen through mid-session writes and adds no recall citations. T1's regression corpus uses the same host. The `t0.injection` disclosure says: "The session-start memory snapshot is read; other harness prompt injection is not exercised." ([RING0 §13 E7](../../specs/ring0/RING0.md#13-v01-errata)).
+
 Read per-pack loop times again, for reporting only:
 
 ```sh

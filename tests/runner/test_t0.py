@@ -744,6 +744,11 @@ def test_pack_invariant_session_wakes(fake_hosts, installed, tmp_path, monkeypat
         options = dict(system="hermes-native", hermes=tmp_path,
                        entry=load(REGISTRY / "hermes-native.toml") | dict(fresh_install_hash="1" * 64)) if real else {}
         assert run(installed, out, packs=[pack.rel], **options) == 0
+        xml = ET.parse(out / pack.rel / "junit.xml").getroot()
+        injection = xml.findall(".//property[@name='t0.injection']")
+        assert [p.attrib["value"] for p in injection] == ([
+            "The session-start memory snapshot is read; other harness prompt injection is not exercised."
+        ] if real else [])
         verdicts = {v["invariant"]: v for v in json.loads((out / pack.rel / "invariants.json").read_bytes())}
         assert observed[-1] == (members if real else set())
         assert verdicts["INV-NEW"]["members"] == (len(members) if real else 0)
