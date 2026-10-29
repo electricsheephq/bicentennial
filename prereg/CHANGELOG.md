@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-29: forgetting identical texts and recalling clipped writes (#135)
+- **RING0 §7:** a plug-in host's forget keeps one row for each unselected event with the same written text, and with a search backend it searches each text again after a pass that issued a delete, until a pass issues none. Recall matches a clipped write on its written text, so it is cited. v0.1's frozen kit keeps the old host. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-29: unbound sockets on macOS (#205)
 - **RING0 §13 E13:** from the next kit, the egress sampler ignores an lsof row on macOS only when its protocol is TCP or UDP and its name is exactly `*:*`, in both `non_loopback` and `non_loopback_seen`. Every other row counts as before, including ICMP `*:*`, wildcard binds with a port and connections with a non-loopback address on either side. Other platforms keep the existing rule. v0.1's frozen kit keeps its rule and reruns any run refused this way. No PREREG version change; PREREG-v0.4 remains frozen.
 
