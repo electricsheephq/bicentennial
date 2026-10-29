@@ -210,8 +210,10 @@ def test_fault_free_session_schedule(factory):
                                          ("stale_wins", "supersession_current")])
 def test_single_fault(factory, mode, failed, capsys):
     matrix = conformance.run(lambda: factory(mode=mode))
-    report(capsys, dict(system="hermes-native", mode=mode, conformance=matrix))
+    declared = conformance.declared(lambda: factory(mode=mode))
+    report(capsys, dict(system="hermes-native", mode=mode, conformance=matrix, declared=declared))
     assert matrix == {name: name != failed for name in conformance.CHECKS}
+    assert declared == {"actor_stored": "declared"}
 
 
 def calls(host):
