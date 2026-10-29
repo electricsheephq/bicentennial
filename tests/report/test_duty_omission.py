@@ -7,7 +7,7 @@ from bicentennial.packs import build
 from bicentennial.runner import t0
 from bicentennial.score.action import ActionResult
 from bicentennial.score.classes import outcome
-from tests.packs.test_build import A, catalogue, load
+from packs.test_build import A, catalogue, load
 
 
 def test_generated_duty_omission_reaches_card(tmp_path, monkeypatch):
