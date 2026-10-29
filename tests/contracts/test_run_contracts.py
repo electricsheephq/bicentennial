@@ -56,6 +56,16 @@ def test_contract_fixtures_validate(name):
     validate(name, fixture(name))
 
 
+def test_additional_properties_schema():
+    receipt = fixture("receipt")
+    receipt["egress_failed_samples"] = {"ValueError": 0, "OSError": 2}
+    validate("receipt", receipt)
+    for value in (-1, "1", True):
+        receipt["egress_failed_samples"]["ValueError"] = value
+        with pytest.raises(ValueError, match=r'\$\["egress_failed_samples"\]\["ValueError"\]'):
+            validate("receipt", receipt)
+
+
 def test_micro_life_converts_to_canonical_script(tmp_path):
     source = json.loads((ROOT / "spikes/s6a/micro_life.json").read_bytes())
     script = compile_micro_life(source)

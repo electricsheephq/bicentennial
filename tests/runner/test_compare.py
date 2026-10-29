@@ -596,21 +596,44 @@ def test_refusal_detail_is_sorted_tuple(refused):
     assert str(error) == "upstream_record"
 
 
-def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("site", ["corpus", "life", "t0"])
+@pytest.mark.parametrize("cause", ["endpoint", "dead", "unsampled"])
+def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, capsys, site, cause):
     detail = "egress name=*:* pid=40 comm=worker samples=2"
+    summary = dict(non_loopback=[], alive_at_stop=cause != "dead", failed_samples={"ValueError": 2},
+                   unsampled=["egress unsampled pid=40 comm=worker"] if cause == "unsampled" else [])
+    code = "upstream_record" if cause == "endpoint" else "egress_unobserved"
+    if cause == "endpoint":
+        summary.update(non_loopback=["*:*"], non_loopback_seen=[detail], alive_at_stop=False)
+    expected = [detail] if cause == "endpoint" else sorted([
+        f"egress sampler alive_at_stop={str(cause != 'dead').lower()}",
+        "egress failed_samples type=ValueError count=2", *summary["unsampled"]])
 
     def case(case, factory, **kwargs):
         factory.hosts.append(SimpleNamespace(records=lambda: [],
-            egress=SimpleNamespace(summary=lambda: dict(non_loopback=["*:*"], non_loopback_seen=[detail]))))
+            egress=SimpleNamespace(summary=lambda: summary)))
         return fake_case(case, factory, **kwargs)
 
     monkeypatch.setattr(compare, "run_case", case)
+    if site == "life":
+        units = list(synth.arms["system"].units)
+        units[0] = replace(units[0], runs=(replace(units[0].runs[-1], egress=summary),))
+        set_run(monkeypatch, change_arm(synth, "system", units=tuple(units)))
+    if site == "t0":
+        monkeypatch.setattr(t0, "_preflight", lambda **kw: None)
+
+        def execute(*args, **kwargs):
+            t0._audit([SimpleNamespace(hosts=[SimpleNamespace(records=list,
+                egress=SimpleNamespace(summary=lambda: summary))])])
+
+        monkeypatch.setattr(t0, "_execute", execute)
     out = tmp_path / "out"
-    assert invoke(installed, out) == 3
+    assert (t0.run_t0(system="reference_store", packs=[], packs_dir=tmp_path, pack_hash="a" * 64, out=out)
+            if site == "t0" else invoke(installed, out)) == 3
     no_results(out)
-    assert capsys.readouterr().err == "upstream_record\n"
+    assert capsys.readouterr().err == code + "\n"
     assert json.loads((out / "refusal.json").read_bytes()) == dict(
-        code="upstream_record", fields=[], detail=[detail])
+        code=code, fields=[], detail=expected)
 
 
 @pytest.mark.parametrize("during", [False, True])
@@ -724,7 +747,8 @@ def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch,
     arms = {}
     for n, (arm, value) in enumerate(synth.arms.items(), 1):
         units = [replace(u, runs=tuple(replace(f, tokens_by_role={"probe_main": (n, 2 * n)},
-            store_growth_bytes=n * 10, process_ids=(100 + n,)) for f in u.runs)) for u in value.units]
+            store_growth_bytes=n * 10, process_ids=(100 + n,), egress={"failed_samples": {"ValueError": n}})
+            for f in u.runs)) for u in value.units]
         arms[arm] = replace(value, units=tuple(units))
     run = replace(synth, arms=arms)
     set_run(monkeypatch, run)
@@ -736,7 +760,8 @@ def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch,
             self.paths = {"root": kw["root"]}
             self.server = SimpleNamespace(port=32109)
             self.director = SimpleNamespace(run_values={})
-            self.egress = SimpleNamespace(summary=lambda: {"non_loopback": []})
+            self.egress = SimpleNamespace(summary=lambda: {"non_loopback": [],
+                "failed_samples": {"ValueError": self.factor}})
             self.write_clipped, self.write_max_length = 0, None
             self.factor = 1 if current[0] == "system" else 2
             self.pids = [900 * self.factor + len(hosts[current[0]])]
@@ -785,6 +810,8 @@ def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch,
         count = 4 * len(cases)
         factor = 1 if arm == "system" else 2
         assert len(hosts[arm]) == count
+        assert receipt["egress_failed_samples"] == {
+            "ValueError": sum(f.egress["failed_samples"]["ValueError"] for f in pooled) + count * factor}
         assert loop_time(receipt)[1] is (arm == "system")
         assert receipt["store_growth_bytes"] == sum(f.store_growth_bytes for f in pooled) + count * 11 * factor
         assert receipt["process_ids"] == sorted({p for f in pooled for p in f.process_ids} |

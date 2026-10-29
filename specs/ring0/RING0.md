@@ -322,6 +322,8 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 
 - **E13. Unbound TCP and UDP sockets on macOS are not endpoints** (#205). From the next kit, the egress sampler ignores an lsof row only on macOS when its protocol is TCP or UDP and its name is exactly `*:*`, in both `non_loopback` and `non_loopback_seen`. ICMP and every other protocol still count under the existing rule, including `*:*`; wildcard binds with a port (`*:p`, including LISTEN) and connections with a non-loopback address on either side still count. Other platforms keep the existing rule. v0.1's frozen kit keeps its rule and reruns any run refused this way.
 
+- **E14. Egress observation must complete** (#264). From the next kit, a sampler that stopped before `stop()`, or a registered pid with no completed sample (including one already discarded), refuses with exit 3 and `egress_unobserved`. Seen endpoints and broken isolation records still refuse `upstream_record` first. Failed samples of any exception type are counted, not refused, and reported by exception type name in the receipt's `egress_failed_samples`; sampling continues. After joining the thread, `stop()` takes a final sample of every currently registered pid. v0.1's frozen kit keeps its rule.
+
 ## References
 
 - PREREG-v0.4:

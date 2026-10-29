@@ -42,7 +42,8 @@ def load_milli(values):
 
 def build_receipt(*, run_status, wall_start_ms, wall_end_ms, latency_ms, load_milli,
                   busy_marker_readings, tokens_by_role, runtime_by_role, spend_micro_usd,
-                  store_growth_bytes, process_ids, ports, temporary_paths, raw_body_digest) -> dict:
+                  store_growth_bytes, process_ids, ports, temporary_paths, raw_body_digest,
+                  egress_failed_samples=None) -> dict:
     """Validate a volatile receipt, including caller-summed runtime by role."""
     rows = [dict(role=r, input=v[0], output=v[1]) for r, v in sorted(tokens_by_role.items())]
     receipt = dict(canary=json.loads((SCHEMAS / "receipt.schema.json").read_bytes())[
@@ -53,6 +54,7 @@ def build_receipt(*, run_status, wall_start_ms, wall_end_ms, latency_ms, load_mi
         runtime_by_role=[dict(role=r, ms=ms) for r, ms in sorted(runtime_by_role.items())],
         tokens={k: sum(r[k] for r in rows) for k in ("input", "output")},
         spend_micro_usd=spend_micro_usd, store_growth_bytes=store_growth_bytes,
+        egress_failed_samples=dict(egress_failed_samples or {}),
         process_ids=sorted(set(process_ids)), ports=sorted(set(ports)),
         temporary_paths=sorted(set(temporary_paths)), raw_body_digest=raw_body_digest)
     validate("receipt", receipt)

@@ -227,6 +227,8 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
                     egress = h.egress.summary()
                     if not _isolated(rows, egress):
                         raise T1Refused("upstream_record", detail=t0._isolation_detail(rows, egress))
+                    if detail := t0._unobserved_detail(egress):
+                        raise T1Refused("egress_unobserved", detail=detail)
                     if audit is not None:
                         audit.extend(rows)
             if held:
@@ -296,10 +298,13 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corp
     # The arm's corpus hosts ran inside this run's wall time, so their requests and busy readings count.
     rows = [r for f in runs for r in f.records] + list(corpus_rows)
     runtime = {}
-    evidence = [dict(tokens=f.tokens_by_role, growth=f.store_growth_bytes, pids=f.process_ids)
+    evidence = [dict(tokens=f.tokens_by_role, growth=f.store_growth_bytes, pids=f.process_ids,
+                     failed_samples=f.egress.get("failed_samples", {}))
                 for f in runs] + list(corpus_measurements)
-    tokens = {}
+    tokens, failed_samples = {}, {}
     for measured in evidence:
+        for name, count in measured.get("failed_samples", {}).items():
+            failed_samples[name] = failed_samples.get(name, 0) + count
         for role, usage in measured["tokens"].items():
             before = tokens.get(role, (0, 0))
             tokens[role] = (before[0] + usage[0], before[1] + usage[1])
@@ -314,6 +319,7 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corp
         tokens_by_role=tokens, runtime_by_role=runtime, spend_micro_usd=0,
         store_growth_bytes=sum(m["growth"] for m in evidence),
         process_ids=[p for m in evidence for p in m["pids"]],
+        egress_failed_samples=failed_samples,
         ports=[int(r.run_values["director_port"]) for r in runs if r.run_values] + [
             p for m in corpus_measurements for p in m["ports"]],
         temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values] + [
@@ -369,6 +375,8 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     for f in _runs(run, tuple(sorted(run.arms))):
         if not _isolated(f.records, f.egress):
             raise T1Refused("upstream_record", detail=t0._isolation_detail(f.records, f.egress))
+        if detail := t0._unobserved_detail(f.egress):
+            raise T1Refused("egress_unobserved", detail=detail)
         rows.extend(f.records)
     cases = load_corpus(CORPUS_PATH)
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],

@@ -1576,7 +1576,7 @@ def test_invariant_refusal_is_exit_three(installed, tmp_path, monkeypatch, durin
     ([], ["remote:443"], True)])
 def test_audit_scripted_attempt_boundary(tmp_path, rows, egress, refused):
     host = SimpleNamespace(records=lambda: rows,
-        egress=SimpleNamespace(summary=lambda: dict(non_loopback=egress)),
+        egress=SimpleNamespace(summary=lambda: dict(non_loopback=egress, failed_samples={"ValueError": 1})),
         paths=dict(root=tmp_path), gate=[], pids=[], server=SimpleNamespace(port=1234), growth=0,
         director=SimpleNamespace(run_values=dict(sandbox_root=str(tmp_path), director_port="1234")))
     factories = [SimpleNamespace(hosts=[host])]
@@ -1585,6 +1585,7 @@ def test_audit_scripted_attempt_boundary(tmp_path, rows, egress, refused):
             t0._audit(factories)
     else:
         assert t0._audit(factories)["records"] == rows
+        assert t0._audit(factories * 2)["failed_samples"] == {"ValueError": 2}
 
 
 @pytest.mark.parametrize("egress", [True, False, "both"])
@@ -1594,6 +1595,7 @@ def test_audit_refusal_detail(installed, tmp_path, monkeypatch, capsys, egress):
         dict(served_by="live"), dict(served_by="scripted", diagnostics=["synthetic"]),
         dict(error="refused"), dict(served_by="scripted")])]
     summary = dict(non_loopback=["*:*"], non_loopback_seen=[endpoint]) if egress else dict(non_loopback=[])
+    summary["alive_at_stop"] = False
     host = SimpleNamespace(records=lambda: [] if egress is True else rows,
                            egress=SimpleNamespace(summary=lambda: summary))
 

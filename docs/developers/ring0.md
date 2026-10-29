@@ -231,13 +231,14 @@ Exit-3 codes and causes, including registry reasons above:
 | `pin_mismatch` | Checkout does not match its pin. |
 | `SpendRefused` | Receipt has positive spend. |
 | `upstream_record` | Isolation audit found a forbidden upstream record or egress. |
+| `egress_unobserved` | The egress sampler stopped early, or a worker was never sampled; isolation was not shown. |
 | `out_exists` | Output exists, including a symlink. |
 | `baseline_unreadable` | T1 baseline cannot be read. |
 | `baseline_invalid` | T1 baseline is malformed or noncanonical. |
 | `baseline_mismatch` | T1 baseline identity, acceptance or bundle set differs. |
 | `refused` | Install CLI filesystem or value error. |
 
-Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; for `upstream_record`, a non-empty `detail` list names each non-loopback endpoint, with the pid and command that showed it and its sample count, and each record that broke isolation; it is not a result. An already-existing output path is refused without overwriting it. An unexpected exception inside a runner exits 70, prints `tool_failure` first on stderr, and leaves no result file: results are staged and moved into place only when every file is written ([RING0 §8, E6](../../specs/ring0/RING0.md#8-exit-codes)). Any other code also means the tool failed and no result exists. Before a runner starts, for example when the CLI's niceness re-exec finds no `nice` or `taskpolicy`, Python can still exit 1 on an uncaught exception with no result; confirm result files exist before reading exit 1 as a gate.
+Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; for `upstream_record`, a non-empty `detail` list names each non-loopback endpoint, with the pid and command that showed it and its sample count, and each record that broke isolation; for `egress_unobserved`, `detail` lists whether the sampler was alive at `stop()`, failed-sample counts by exception type name, and registered pids with no completed sample and their command names when known; it is not a result. An already-existing output path is refused without overwriting it. An unexpected exception inside a runner exits 70, prints `tool_failure` first on stderr, and leaves no result file: results are staged and moved into place only when every file is written ([RING0 §8, E6](../../specs/ring0/RING0.md#8-exit-codes)). Any other code also means the tool failed and no result exists. Before a runner starts, for example when the CLI's niceness re-exec finds no `nice` or `taskpolicy`, Python can still exit 1 on an uncaught exception with no result; confirm result files exist before reading exit 1 as a gate.
 
 ## 9. Failure classes and stages
 

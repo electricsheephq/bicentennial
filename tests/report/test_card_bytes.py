@@ -339,6 +339,18 @@ def test_receipt_helpers_and_sorting():
     args = receipt_inputs()
     before = copy.deepcopy(args)
     receipt = build_receipt(**args)
+    assert receipt["egress_failed_samples"] == {}
+    old = example("receipt")
+    clean = build_receipt(**{k: v for k, v in old.items() if k not in
+        {"canary", "tokens", "latency_summary", "tokens_by_role", "runtime_by_role"}},
+        tokens_by_role={"replay_main": (10, 5)}, runtime_by_role={"replay_main": 100})
+    assert clean == dict(old, egress_failed_samples={})
+    for bad in (None, {"ValueError": -1}, {"ValueError": "1"}):
+        changed = dict(receipt, egress_failed_samples=bad)
+        if bad is None:
+            del changed["egress_failed_samples"]
+        with pytest.raises(ValueError):
+            validate("receipt", changed)
     assert receipt["tokens"] == dict(input=13, output=7)
     assert [r["role"] for r in receipt["tokens_by_role"]] == ["probe_main", "replay_main"]
     assert receipt["runtime_by_role"] == [dict(role="probe_main", ms=20),
