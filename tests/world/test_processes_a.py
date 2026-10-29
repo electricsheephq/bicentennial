@@ -4,6 +4,7 @@ import ast
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from collections import Counter
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import bicentennial.world.processes as processes
 from bicentennial.canon import canon
 from bicentennial.keyed import uniform_int
 from bicentennial.world import (
@@ -286,6 +288,72 @@ def test_token_refusals_and_retry(tmp_path):
         token_value(db, schedule, "corrections", "chain0", "value", 0, "AB1")
 
 
+@pytest.mark.parametrize("paired", [False, True], ids=["made", "cancellation"])
+@pytest.mark.parametrize("relation", ["contains", "contained-in"])
+def test_token_containment_retries_same_attempt_sequence(tmp_path, monkeypatch, paired, relation):
+    db, schedule = world(tmp_path / "w.db", "g03-containment")
+    first = 654321 if paired else 123456
+    # Seven digits hide the candidate's six-digit number from NUMBER, so only containment rejects it.
+    existing = str(first)[1:5] if relation == "contains" else f"XVALUE-{first}7"
+    insert_fact(db, id="f0", subject_id=PRINCIPAL, predicate="p", object=existing, polarity="affirm",
+                modality="stated", strength=HARD, speech_act="assert")
+    insert_locked_token(db, token_id="t0", fact_id="f0", kind="code", value=existing)
+    calls = []
+
+    def draw(seed, key, attempt, label, lo, hi):
+        calls.append((seed, key, attempt, label, lo, hi))
+        return 112233 if key == unit(LIFE, "corrections", "chain1") else (123456, 987654)[attempt]
+
+    monkeypatch.setattr(processes, "uniform_int", draw)
+    monkeypatch.setattr(processes, "pair", lambda schedule, d: {123456: 654321, 987654: 876543}[d])
+    assert token_value(db, schedule, "corrections", "chain0", "value", 0, "VALUE", paired=paired) == "VALUE-987654"
+    assert calls == [(schedule.seed, unit(LIFE, "corrections", "chain0"), attempt, "token:value:0", 100000, 999999)
+                     for attempt in (0, 1)]
+    # A different draw retains attempt zero, even after the retry above.
+    assert token_value(db, schedule, "corrections", "chain1", "value", 0, "OTHER") == "OTHER-112233"
+    assert calls[-1] == (schedule.seed, unit(LIFE, "corrections", "chain1"), 0, "token:value:0", 100000, 999999)
+    db.close()
+
+
+def test_token_without_containment_preserves_attempt_zero(tmp_path, monkeypatch):
+    db, schedule = world(tmp_path / "w.db", "g03-containment")
+    # Reuse the containment retry test's attempt sequence: 123456, then 987654.
+    draws = (123456, 987654)
+    first, later = (f"VALUE-{number}" for number in draws)
+    short = str(draws[0])[1:5]
+    insert_fact(db, id="f0", subject_id=PRINCIPAL, predicate="p", object=short, polarity="affirm",
+                modality="stated", strength=HARD, speech_act="assert")
+    insert_locked_token(db, token_id="t0", fact_id="f0", kind="code", value=short)
+    calls = []
+
+    def draw(seed, key, attempt, label, lo, hi):
+        calls.append((seed, key, attempt, label, lo, hi))
+        return draws[attempt]
+
+    monkeypatch.setattr(processes, "uniform_int", draw)
+    unchecked = token_value(db, schedule, "corrections", "chain0", "value", 0, "VALUE", containment=False)
+    assert unchecked == first and short in unchecked
+    expected = [(schedule.seed, unit(LIFE, "corrections", "chain0"), attempt, "token:value:0", 100000, 999999)
+                for attempt in (0, 1)]
+    assert calls == expected[:1]
+    calls.clear()
+    checked = token_value(db, schedule, "corrections", "chain0", "value", 0, "VALUE")
+    assert checked == later and short not in checked and checked != unchecked
+    assert calls == expected
+    db.close()
+
+
+@pytest.mark.parametrize("existing", ["VALUE", "VALUE-"])
+def test_token_prefix_collision_refuses(tmp_path, existing):
+    db, schedule = world(tmp_path / "w.db", "g03-prefix")
+    insert_fact(db, id="f0", subject_id=PRINCIPAL, predicate="p", object=existing, polarity="affirm",
+                modality="stated", strength=HARD, speech_act="assert")
+    insert_locked_token(db, token_id="t0", fact_id="f0", kind="code", value=existing)
+    with pytest.raises(ValueError, match="token stem contains a locked token"):
+        token_value(db, schedule, "corrections", "chain0", "value", 0, "VALUE")
+    db.close()
+
+
 HASH = ("import sys; sys.path.insert(0, sys.argv[1]); import test_processes_a as t; "
         "print(t.world_hash(t.build(sys.argv[2], sys.argv[3])[0]))")
 
@@ -396,6 +464,68 @@ def test_explicit_values_refused_before_insert(tmp_path, values):
         write_corrections(db, schedule, [Chain(**CHAIN | dict(mention=None, values=values))], principal=PRINCIPAL)
     assert {t: db.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in TABLES} == counts
     assert export_jsonl(db) == before
+
+
+def _snapshot(db):
+    return ({t: db.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in TABLES}, export_jsonl(db))
+
+
+def test_explicit_values_after_generated_chain_refuse_atomically(tmp_path):
+    db, schedule = world(tmp_path / "w.db", "g03-mixed-values")
+    before = _snapshot(db)
+    with pytest.raises(ValueError, match="locked token duplicates or is a substring of another"):
+        write_corrections(db, schedule, [chain(0, 1, surfaces=("notes",)),
+                                        chain(1, 1, values=("VALUE", "OTHER"))], principal=PRINCIPAL)
+    assert _snapshot(db) == before
+    assert db.in_transaction
+    # The refused batch's ids are available again in the caller's transaction.
+    write_corrections(db, schedule, [chain(0, 1)], principal=PRINCIPAL)
+    db.close()
+
+
+@pytest.mark.parametrize("writer", ["corrections", "commitments"])
+@pytest.mark.parametrize("open_transaction", [False, True])
+def test_writer_integrity_refusal_is_atomic(tmp_path, writer, open_transaction):
+    db, schedule = world(tmp_path / "w.db", "g03-integrity")
+    if writer == "corrections":
+        write_corrections(db, schedule, [chain(0, 1)], principal=PRINCIPAL)
+        specs = [chain(1, 1, surfaces=("notes",)), replace(chain(2, 1), subject=name(0))]
+        write, message = write_corrections, "overlapping validity"
+    else:
+        write_commitments(db, schedule, [commitment(1, "time", False, 0)], principal=PRINCIPAL)
+        specs = [commitment(0, "cue", True, 1, surfaces=("calendar",)), commitment(1, "time", False, 0)]
+        write, message = write_commitments, "UNIQUE constraint failed: event.id"
+    if not open_transaction:
+        db.commit()
+    before = _snapshot(db)
+    # The first spec succeeds; the second hits a real database constraint after writes.
+    with pytest.raises(sqlite3.IntegrityError, match=message):
+        write(db, schedule, specs, principal=PRINCIPAL)
+    assert _snapshot(db) == before
+    assert db.in_transaction
+    db.close()
+
+
+@pytest.mark.parametrize("writer", ["corrections", "commitments"])
+def test_writer_final_token_refusal_is_atomic(tmp_path, monkeypatch, writer):
+    db, schedule = world(tmp_path / "w.db", "g03-final-check")
+    before = _snapshot(db)
+
+    def refuse_after_writes(db):
+        counts, _ = _snapshot(db)
+        assert all(counts[t] > before[0][t] for t in ("event", "fact", "locked_token", "link", "fact_surface"))
+        raise ValueError("final token refusal")
+
+    monkeypatch.setattr(f"bicentennial.world.processes.{writer}.check_tokens", refuse_after_writes)
+    if writer == "corrections":
+        write, specs = write_corrections, [chain(0, 1, "hedge", 1, surfaces=("notes",))]
+    else:
+        write, specs = write_commitments, [commitment(0, "cue", True, 1, surfaces=("calendar",))]
+    with pytest.raises(ValueError, match="final token refusal"):
+        write(db, schedule, specs, principal=PRINCIPAL)
+    assert _snapshot(db) == before
+    assert db.in_transaction
+    db.close()
 
 
 def test_writer_level_refusals(tmp_path):
