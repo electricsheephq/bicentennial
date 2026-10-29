@@ -199,13 +199,11 @@ def tertiles(result: CopyResult, tracks: Mapping[str, str]) -> Mapping[str, int]
 def yields(
     result: CopyResult,
     records: Mapping[str, JsonObject],
-    *,
-    filters_run: Sequence[str],
 ) -> Mapping[tuple[str, int], Yield]:
     """Dropped/total bundles per template version; flag strictly above half.
 
-    filters_run is copied to a tuple in the supplied order, without inferring
-    that any other filters ran. Multiple item matches still count as one drop.
+    CopyResult counts only literal-copy drops, so filters_run is always
+    ("literal_copy",). Multiple item matches still count as one drop.
     """
     counts = {}
     for bundle in result.bundles:
@@ -220,6 +218,6 @@ def yields(
         key = next(iter(keys))
         dropped, total = counts.get(key, (0, 0))
         counts[key] = (dropped + int(bundle.dropped), total + 1)
-    names = tuple(filters_run)
-    return {key: Yield(dropped, total, Fraction(dropped, total), 2 * dropped > total, names)
+    return {key: Yield(dropped, total, Fraction(dropped, total), 2 * dropped > total,
+                       ("literal_copy",))
             for key, (dropped, total) in sorted(counts.items())}

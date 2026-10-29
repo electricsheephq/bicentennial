@@ -157,6 +157,27 @@ def test_only_prompt_and_own_evidence_count_and_events_do_not_join():
     assert not any(item.matches for item in result.items)
 
 
+@pytest.mark.parametrize("prompt_branch", [0, 1])
+def test_twins_do_not_share_copy_matches_or_overlap_evidence(prompt_branch):
+    streams, items, records = stream_fixture(), {}, {}
+    prompts = ["quiet question", "quiet question"]
+    spans = [("plant",), ("plant",)]
+    prompts[prompt_branch] = "amber orchid beacon common"
+    spans[prompt_branch] = ("common-1",)
+    add_bundle(items, records, "isolated", prompts=prompts, spans=spans)
+    assert ("amber", "orchid", "beacon") in rare(
+        idf_table(streams[("life", f"B{prompt_branch}")]))
+    result = literal_copy(streams, items, records)
+    bundle, = result.bundles
+    # The rare prompt triple is in the other twin's evidence only. Own
+    # evidence shares just "common"; pooling the twins would give full overlap.
+    assert not bundle.dropped and bundle.reason == ""
+    assert all(item.matches == () for item in bundle.items)
+    assert bundle.items[prompt_branch].overlap == Fraction(1, 4)
+    assert bundle.items[1 - prompt_branch].overlap == Fraction(0)
+    assert bundle.overlap == Fraction(1, 4)
+
+
 def test_tables_are_scoped_to_life_and_branch_and_include_nongold_events():
     streams, items, records = stream_fixture(), {}, {}
     common_plant = [event("plant", "amber orchid beacon"),
@@ -221,6 +242,25 @@ def test_exact_overlaps_and_rank_tertiles_for_seven_and_two_bundles():
         assert row["tertile"] == bins[row["bundle_id"]]
 
 
+def test_tertiles_rank_bundles_from_two_lives_together_within_a_track():
+    streams = {(life, branch): [event(token, token) for token in "abcd"]
+               for life in ("life", "other-life") for branch in ("B0", "B1")}
+    items, records = {}, {}
+    cases = [("a-low", "life", 0), ("b-low", "other-life", 1),
+             ("c-high", "life", 2), ("d-high", "other-life", 4)]
+    for bid, life, count in cases:
+        add_bundle(items, records, bid, life=life, prompts=("a b c d", "quiet question"),
+                   spans=(tuple("abcd"[:count]), ()))
+    result = literal_copy(streams, items, records)
+    assert {bundle.bundle_id: bundle.items[0].life for bundle in result.bundles} == {
+        bid: life for bid, life, _ in cases}
+    assert {bundle.bundle_id: bundle.overlap for bundle in result.bundles} == {
+        bid: Fraction(count, 4) for bid, _, count in cases}
+    # Four bundles share one ranking: two in tertile 1, then one in each.
+    assert tertiles(result, {bid: "Drift" for bid, _, _ in cases}) == {
+        "a-low": 1, "b-low": 1, "c-high": 2, "d-high": 3}
+
+
 def yield_fixture():
     streams, items, records = stream_fixture(), {}, {}
     for version, total, dropped in ((1, 5, 3), (2, 4, 2)):
@@ -235,19 +275,16 @@ def yield_fixture():
     return streams, items, records
 
 
-def test_yields_count_bundles_per_version_flag_strictly_above_half_and_name_filters():
+def test_yields_count_bundles_per_version_flag_strictly_above_half_and_derive_filters():
     streams, items, records = yield_fixture()
     result = literal_copy(streams, items, records)
-    report = yields(result, records, filters_run=["literal_copy"])
+    report = yields(result, records)
     assert set(report) == {("copy", 1), ("copy", 2)}
     assert (report[("copy", 1)].dropped, report[("copy", 1)].total,
             report[("copy", 1)].rate, report[("copy", 1)].flagged) == (3, 5, Fraction(3, 5), True)
     assert (report[("copy", 2)].dropped, report[("copy", 2)].total,
             report[("copy", 2)].rate, report[("copy", 2)].flagged) == (2, 4, Fraction(1, 2), False)
     assert all(value.filters_run == ("literal_copy",) for value in report.values())
-    names = ("oracle_evidence", "literal_copy")
-    assert all(value.filters_run == names
-               for value in yields(result, records, filters_run=names).values())
     log = droplog.rows(result, {bundle.bundle_id: "Drift" for bundle in result.bundles})
     assert len([row for row in log if row["reason"] == "literal_copy"]) == 10
     assert len([row for row in log if row["reason"] == "overlap"]) == 9
@@ -279,7 +316,9 @@ def test_singletons_are_validated_but_do_not_enter_bundle_yields():
     assert len(result.items) == 3 and len(result.bundles) == 1
     single = next(item for item in result.items if item.item_id == "single")
     assert single.overlap == Fraction(0) and single.matches == ()
-    assert set(yields(result, records, filters_run=())) == {("copy", 1)}
+    report = yields(result, records)
+    assert set(report) == {("copy", 1)}
+    assert report[("copy", 1)].filters_run == ("literal_copy",)
     items["single"]["gold_spans"] = ["absent"]
     with pytest.raises(ValueError, match="gold span absent"):
         literal_copy(streams, items, records)
@@ -316,13 +355,25 @@ def test_bundle_must_have_exactly_two_items(size):
         literal_copy(streams, items, records)
 
 
-def test_missing_stream_and_inconsistent_bundle_metadata_are_value_errors():
-    streams, items, records = stream_fixture(), {}, {}
+def test_missing_stream_is_a_value_error():
+    items, records = {}, {}
     add_bundle(items, records, "pair")
     with pytest.raises(ValueError, match="missing branch stream"):
         literal_copy({}, items, records)
-    records["pair-B1"]["template_version"] = 2
-    with pytest.raises(ValueError, match="inconsistent metadata"):
+
+
+@pytest.mark.parametrize("source,field,value", [
+    ("item", "track", "Keep"),
+    ("record", "life", "other-life"),
+    ("record", "template_id", "other-template"),
+    ("record", "template_version", 2),
+])
+def test_every_inconsistent_bundle_metadata_field_is_a_value_error(source, field, value):
+    streams, items, records = stream_fixture(), {}, {}
+    add_bundle(items, records, "pair")
+    metadata = items if source == "item" else records
+    metadata["pair-B1"][field] = value
+    with pytest.raises(ValueError, match="bundle pair has inconsistent metadata"):
         literal_copy(streams, items, records)
 
 
@@ -354,8 +405,8 @@ def test_determinism_immutable_results_no_input_mutation_and_no_floats():
     first_rows, second_rows = droplog.rows(first, tracks), droplog.rows(second, tracks)
     assert first_rows == second_rows
     assert json.dumps(first_rows).encode() == json.dumps(second_rows).encode()
-    first_yields = yields(first, records, filters_run=("literal_copy",))
-    assert first_yields == yields(second, records, filters_run=("literal_copy",))
+    first_yields = yields(first, records)
+    assert first_yields == yields(second, records)
     table = idf_table(streams[("life", "B0")])
     assert_no_float((first, table, rare(table), first_rows, first_yields, tertiles(first, tracks)))
     with pytest.raises(FrozenInstanceError):
@@ -372,7 +423,7 @@ def test_determinism_immutable_results_no_input_mutation_and_no_floats():
 def test_empty_build_has_empty_reports():
     result = literal_copy({}, {}, {})
     assert result.items == result.bundles == ()
-    assert tertiles(result, {}) == yields(result, {}, filters_run=()) == {}
+    assert tertiles(result, {}) == yields(result, {}) == {}
     assert droplog.rows(result, {}) == ()
 
 
