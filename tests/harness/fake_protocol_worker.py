@@ -8,7 +8,15 @@ import time
 from pathlib import Path
 
 mode, root = sys.argv[1], Path(sys.argv[2])
-(root / "pid").write_text(str(os.getpid()))
+
+
+def publish(name, text):
+    # Write, then rename into place, so a reader never sees the file empty (#262).
+    (root / f"{name}.tmp").write_text(text)
+    os.replace(root / f"{name}.tmp", root / name)
+
+
+publish("pid", str(os.getpid()))
 if mode == "tree":
     child = subprocess.Popen([sys.executable, "-c", """
 import sys, time
@@ -17,7 +25,7 @@ with open(sys.argv[1], 'ab', buffering=0) as out:
         out.write(b'.')
         time.sleep(0.01)
 """, str(root / "heartbeat")])
-    (root / "child").write_text(str(child.pid))
+    publish("child", str(child.pid))
 if mode == "stall-startup":
     time.sleep(2)
     sys.exit(0)
