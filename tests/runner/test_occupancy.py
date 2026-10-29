@@ -82,6 +82,36 @@ def test_shared_work_once_and_lanes_separate():
     assert all(bound.fits for bound in result.work_bounds.values())
 
 
+def test_study_occupies_board_run_with_separate_work_bounds():
+    lane = LaneCapacity("lane", concurrency=2, accounts=1)
+    terms = [
+        WorkTerm("lane", "A", "board", "replay", 4 * HOUR_MS, 0),
+        WorkTerm("lane", "A", "study", "replay", 6 * HOUR_MS, 0),
+        WorkTerm("lane", SHARED, "board", "ctrl", 2 * HOUR_MS, 0),
+    ]
+    result = project([lane], terms)
+    # Divide request-ms by (3,600,000 * 2): board 2 h, study 3 h,
+    # shared 1 h; board occupancy is (4 + 6 + 2) / 2 = 6 h.
+    assert result.occupancy == {
+        ("lane", "board"): LaneHours(Fraction(6), None, Fraction(6), "concurrency"),
+    }
+    assert result.work == {
+        ("A", "lane", "board"): LaneHours(Fraction(2), None, Fraction(2), "concurrency"),
+        ("A", "lane", "study"): LaneHours(Fraction(3), None, Fraction(3), "concurrency"),
+    }
+    # Each work bound applies its own 5/4 pause factor and 96 h limit.
+    assert result.work_bounds == {
+        ("A", "lane", "board"): WorkBound(Fraction(2), Fraction(5, 2), Fraction(96), True),
+        ("A", "lane", "study"): WorkBound(Fraction(3), Fraction(15, 4), Fraction(96), True),
+    }
+    image = WorkTerm("lane", "A", "image", "replay", 8 * HOUR_MS, 0)
+    # Image occupancy is 8 / 2 = 4 h on the same lane, in its own run.
+    assert project([lane], [*terms, image]).occupancy == {
+        ("lane", "board"): LaneHours(Fraction(6), None, Fraction(6), "concurrency"),
+        ("lane", "image"): LaneHours(Fraction(4), None, Fraction(4), "concurrency"),
+    }
+
+
 def test_terms_are_aggregated_before_capacity_maximum():
     lane = LaneCapacity("mixed", concurrency=1, accounts=1, rate_per_min=1)
     terms = [WorkTerm("mixed", "A", "board", "replay", 2 * HOUR_MS, 0),

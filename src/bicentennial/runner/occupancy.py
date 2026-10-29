@@ -10,6 +10,7 @@ from fractions import Fraction
 from bicentennial.runner.projection import LIFE_BOUND_MS, PAUSE_A, W_MAX_MS
 
 SHARED = "__shared__"
+_RUN_OF_RECORD = {"board": "board", "study": "board", "image": "image"}
 
 
 def _integer(name: str, value: int, *, minimum: int | None = None) -> None:
@@ -126,7 +127,9 @@ class WorkBound:
 class Projection:
     """Only used groups appear; work keys are (owner, lane, run).
 
-    Occupancy keys are (lane, run). SHARED is reserved and never a work key.
+    Occupancy keys are (lane, run of record), with study work counted in its
+    board's run (PREREG-v0.4 §11). Work bounds stay per board, study and Image.
+    SHARED is reserved and never a work key.
     The returned dictionaries are fresh for each call.
     """
 
@@ -138,6 +141,8 @@ class Projection:
 def project(lanes: Iterable[LaneCapacity], terms: Iterable[WorkTerm]) -> Projection:
     """Aggregate counts before applying lane capacity, counting each term once.
 
+    Occupancy keys are (lane, run of record), with study work counted in its
+    board's run (PREREG-v0.4 §11). Work bounds stay per board, study and Image.
     Duplicate lane names, unknown lanes and duplicate term identities are errors.
     Neither lanes nor runs are summed to enforce the work bound.
     """
@@ -157,7 +162,7 @@ def project(lanes: Iterable[LaneCapacity], terms: Iterable[WorkTerm]) -> Project
         if identity in seen:
             raise ValueError(f"duplicate work term: {identity}")
         seen.add(identity)
-        occupancy_key = (term.lane, term.run)
+        occupancy_key = (term.lane, _RUN_OF_RECORD[term.run])
         request_ms, n_req = occupancy_totals.get(occupancy_key, (0, 0))
         occupancy_totals[occupancy_key] = (request_ms + term.request_ms, n_req + term.n_req)
         if term.owner != SHARED:
