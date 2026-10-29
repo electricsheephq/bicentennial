@@ -120,8 +120,9 @@ ADAPTER_PROBES = {
 
 
 class T0Refused(RuntimeError):
-    def __init__(self, code, fields=()):
+    def __init__(self, code, fields=(), detail=()):
         self.code, self.fields = code, tuple(sorted(fields))
+        self.detail = tuple(sorted(detail))
         super().__init__(code)
 
 
@@ -695,17 +696,32 @@ def _controls(pack, index, cache):
     return entry
 
 
+def _isolation_detail(records, egress):
+    detail = list(egress.get("non_loopback_seen", []))
+    for index, record in enumerate(records):
+        ident = record.get("req", index)
+        if record.get("served_by") not in (None, "scripted"):
+            detail.append(f"record id={ident} served_by={record['served_by']}")
+        for attempt in record.get("upstream", ()):
+            if ((attempt.get("served_by") != "scripted" and "error" not in attempt)
+                    or attempt.get("diagnostics")):
+                suffix = " diagnostics" if attempt.get("diagnostics") else ""
+                detail.append(f"record id={ident} served_by={attempt.get('served_by')}{suffix}")
+    return tuple(sorted(detail))
+
+
 def _audit(factories):
     """Read closed hosts while their ledgers and response blobs still exist."""
     records, texts, tokens, runtime, markers, pids, ports, paths = [], [], {}, {}, [], [], [], []
     hosts = [h for f in factories for h in f.hosts]
     for host in hosts:
         rows = host.records()
-        if (host.egress.summary()["non_loopback"] or any(
+        egress = host.egress.summary()
+        if (egress["non_loopback"] or any(
                 r.get("served_by") not in (None, "scripted") or any(
                     (a.get("served_by") != "scripted" and "error" not in a) or a.get("diagnostics")
                     for a in r.get("upstream", ())) for r in rows)):
-            raise T0Refused("upstream_record")
+            raise T0Refused("upstream_record", detail=_isolation_detail(rows, egress))
         records.extend(rows)
         store = BlobStore(host.paths["root"] / "ledger/blobs", Guard([]))
         for row in rows:
@@ -978,7 +994,10 @@ def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch")
             fields = tuple(sorted(getattr(error, "fields", ())))
             if created:
-                (out / "refusal.json").write_bytes(canon(dict(code=code, fields=list(fields))))
+                refusal = dict(code=code, fields=list(fields))
+                if getattr(error, "detail", ()):
+                    refusal["detail"] = list(error.detail)
+                (out / "refusal.json").write_bytes(canon(refusal))
             print(code, file=sys.stderr)
             return 3
     except Exception:

@@ -21,6 +21,7 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.controls.cache import ControlsTampered
 from bicentennial.corpus.run import CaseResult
+from bicentennial.harness import egress
 from bicentennial.harness.hermes import adapter, plugin_host
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import GateRefused
@@ -43,6 +44,13 @@ measured = shared["measured"]
 SUBSET = ("g1-recall-value-dir-2.wipe_on_restart", "g2-drift-asof-dir-1.stale_wins")
 STABLE = ("card.json", "junit.xml", "invariants.json", "corpus.json", "controls.json")
 RESULTS = (*STABLE, "receipt.json")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def synthetic_egress():
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(egress, "_out", lambda argv: "8" if argv[:3] == ["ps", "-o", "rss="] else "")
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -538,23 +546,60 @@ def test_spend_preflight(synth, installed, monkeypatch, tmp_path, capsys):
     no_results(out)
 
 
-@pytest.mark.parametrize("where", ["final", "earlier", "floor", "forwarded", "scripted"])
+@pytest.mark.parametrize("where", ["final", "earlier", "floor", "forwarded", "scripted", "diagnostics", "egress"])
 def test_isolation_refusal(synth, installed, monkeypatch, tmp_path, where, capsys):
     arm = "no_memory" if where == "floor" else "system"
     units = list(synth.arms[arm].units)
     f = units[0].runs[-1]
     row = {"served_by": "live"} if where in ("final", "earlier", "floor") else {
-        "upstream": [{"served_by": "scripted" if where == "scripted" else "live"}]}
+        "upstream": [{"served_by": "scripted" if where in ("scripted", "diagnostics") else "live"}]}
+    if where == "diagnostics":
+        row["upstream"][0]["diagnostics"] = ["synthetic"]
+    if where in ("forwarded", "diagnostics"):
+        row["req"] = "request-7"
     # Isolation executes before report assembly; the passing row needs no digest fields.
     row["type"] = "diagnostic"
     bad = replace(f, records=(row,), run_values=dict(sandbox_root=str(tmp_path), director_port="32109"))
+    endpoint = "egress name=*:* pid=40 comm=worker samples=2"
+    if where == "egress":
+        bad = replace(bad, records=(), egress=dict(non_loopback=["*:*"], non_loopback_seen=[endpoint]))
     units[0] = replace(units[0], runs=(bad, f) if where == "earlier" else (bad,))
     set_run(monkeypatch, change_arm(synth, arm, units=tuple(units)))
     out = tmp_path / "out"
     assert invoke(installed, out) == (0 if where == "scripted" else 3)
     if where != "scripted":
         no_results(out)
-        assert "upstream_record" in capsys.readouterr().err
+        assert capsys.readouterr().err == "upstream_record\n"
+        detail = ("record id=request-7 served_by=scripted diagnostics" if where == "diagnostics" else
+                  f"record id={'request-7' if where == 'forwarded' else 0} served_by=live")
+        detail = endpoint if where == "egress" else detail
+        assert json.loads((out / "refusal.json").read_bytes()) == dict(
+            code="upstream_record", fields=[], detail=[detail])
+
+
+@pytest.mark.parametrize("refused", [t0.T0Refused, t1.T1Refused])
+def test_refusal_detail_is_sorted_tuple(refused):
+    assert refused("upstream_record").detail == ()
+    error = refused("upstream_record", detail=["record id=z served_by=live", "record id=a served_by=live"])
+    assert error.detail == ("record id=a served_by=live", "record id=z served_by=live")
+    assert str(error) == "upstream_record"
+
+
+def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, capsys):
+    detail = "egress name=*:* pid=40 comm=worker samples=2"
+
+    def case(case, factory, **kwargs):
+        factory.hosts.append(SimpleNamespace(records=lambda: [],
+            egress=SimpleNamespace(summary=lambda: dict(non_loopback=["*:*"], non_loopback_seen=[detail]))))
+        return fake_case(case, factory, **kwargs)
+
+    monkeypatch.setattr(compare, "run_case", case)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 3
+    no_results(out)
+    assert capsys.readouterr().err == "upstream_record\n"
+    assert json.loads((out / "refusal.json").read_bytes()) == dict(
+        code="upstream_record", fields=[], detail=[detail])
 
 
 @pytest.mark.parametrize("during", [False, True])
