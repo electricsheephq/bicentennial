@@ -46,8 +46,6 @@ def run_build(*, tier, out):
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
-        if self.prog == "bicentennial build":
-            return super().error(message)
         self.print_usage(sys.stderr)
         self.exit(3, f"usage: {message}\n")
 

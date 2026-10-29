@@ -67,12 +67,13 @@ def test_build_existing_tier_unchanged(ready, tmp_path, capsys, name):
 
 
 @pytest.mark.parametrize("args", [["--tier", "T2", "--out", "unused"],
-                                  ["--out", "unused"], ["--tier", "T0"]])
+                                  ["--out", "unused"], ["--tier", "T0"],
+                                  ["--tier", "T0", "--out", "unused", "extra"]])
 def test_build_usage(ready, capsys, args):
     with pytest.raises(SystemExit) as caught:
         cli.main(["build", *args])
-    assert caught.value.code == 2
-    assert "usage:" in capsys.readouterr().err
+    assert caught.value.code == 3
+    assert capsys.readouterr().err.splitlines()[-1].startswith("usage: ")
     assert ready == []
 
 
