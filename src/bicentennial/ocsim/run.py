@@ -333,11 +333,16 @@ def load_inputs(path: Path, *, ladder=LADDER, root=None) -> RunInputs:
     return parse_inputs(path.read_bytes(), ladder=ladder, root=root)
 
 
+# Every bicentennial module the simulation imports, directly or through another, and the tests of each that has
+# them: any of them can change the samples (tests/ocsim/test_run.py checks the import closure)
 _C8_FIXED = tuple(sorted(
-    [f"src/bicentennial/stats/{name}.py" for name in ("certify", "tcal", "variance_inputs")]
-    + [f"src/bicentennial/runner/{name}.py" for name in ("dispatch", "occupancy")]
-    + [f"tests/stats/test_{name}.py" for name in ("certify", "tcal", "variance_inputs")]
-    + [f"tests/runner/test_{name}.py" for name in ("dispatch", "occupancy")]))
+    [f"src/bicentennial/{name}.py" for name in ("__init__", "canon", "keyed")]
+    + [f"src/bicentennial/stats/{name}.py"
+       for name in ("__init__", "certify", "core", "seeds", "tcal", "variance_inputs")]
+    + [f"src/bicentennial/runner/{name}.py" for name in ("__init__", "dispatch", "occupancy", "projection")]
+    + [f"tests/test_{name}.py" for name in ("canon", "keyed")]
+    + [f"tests/stats/test_{name}.py" for name in ("certify", "core", "tcal", "variance_inputs")]
+    + [f"tests/runner/test_{name}.py" for name in ("dispatch", "occupancy", "projection")]))
 _C8_DIRS = ("src/bicentennial/ocsim", "tests/ocsim")
 
 
@@ -869,13 +874,14 @@ def _checkpoint_files(out):
     return sorted((out / "checkpoints").glob("*.json"))
 
 
-def _save_checkpoint(out, point, variant, phase, state, hashes):
+def _save_checkpoint(out, point, variant, phase, state, hashes, pauses):
     directory = out / "checkpoints"
     directory.mkdir(parents=True, exist_ok=True)
     name = f"{point[0]}-{point[1]}-{variant}-{phase}-{state['r_end']}.json"
     path = directory / name
     temporary = path.with_suffix(".tmp")
-    temporary.write_bytes(canon({"hashes": hashes, "state": _encode(state)}))
+    # The busy-marker history so far rides along, so a resumed run reports the whole run's pauses
+    temporary.write_bytes(canon({"hashes": hashes, "state": _encode(state), "pauses": pauses}))
     temporary.replace(path)
 
 
@@ -921,9 +927,9 @@ def _phase(pool, phase, start, stop, ids, bounds, out, hashes):
             state["r_end"] = ends[result.r0]
             if state["r_end"] % 1000 == 0:
                 state["wall_ms"] = prior_wall + round((time.perf_counter() - wall_start) * 1000)
-                _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes)
+                _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes, pool.pauses)
     state["wall_ms"] = prior_wall + round((time.perf_counter() - wall_start) * 1000)
-    _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes)
+    _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes, pool.pauses)
     pool.phases[f"{pool.point[0]}-{pool.point[1]}-{pool.variant}-{phase}"] = {
         "wall_s": state["wall_ms"] // 1000, "cpu_s": state["cpu_ms"] // 1000}
     _barrier_hook(pool.point, pool.variant, phase)
@@ -1126,16 +1132,20 @@ def run(inputs: RunInputs, config: RunConfig, out: Path) -> int:
               "config": sha256(canon(_config_data(config))).hexdigest()}
     if out.exists() and not config.resume:
         raise ValueError("output directory exists: refusing to overwrite")
+    pauses = []
     if config.resume:
         files = _checkpoint_files(out)
         if not files:
             raise ValueError("nothing to resume")
         for path in files:
-            if json.loads(path.read_bytes()).get("hashes") != hashes:
+            saved = json.loads(path.read_bytes())
+            if saved.get("hashes") != hashes:
                 raise ValueError("checkpoint does not match the inputs, C-8 hash or config")
+            # Each checkpoint holds the history up to its write, so the longest is the latest
+            pauses = max(pauses, saved.get("pauses", []), key=len)
     out.mkdir(parents=True, exist_ok=True)
     diagnostics = {"audits": {"replicates": 0, "certify_calls": 0, "fields_compared": 0,
-                              "mismatches": 0}, "solver": {}, "pauses": [], "phases": {}}
+                              "mismatches": 0}, "solver": {}, "pauses": pauses, "phases": {}}
     results = {"points": [], "first_passing": {a: None for a in config.alternatives},
                "freeze_gate": "OPEN: D12 (S-27)"}
     active = list(config.alternatives)

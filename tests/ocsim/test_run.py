@@ -1,5 +1,6 @@
 """C2, C8-C10 acceptance: tiny runs only, under the machine's test gate."""
 
+import ast
 import inspect
 import json
 import os
@@ -354,6 +355,65 @@ def test_c8_hash_copy_change_missing_and_dirty(tmp_path, monkeypatch):
     assert run.c8_dirty(ROOT)
     monkeypatch.setattr(run, "_git", lambda *args: "")
     assert not run.c8_dirty(ROOT)
+
+
+def _imported_files(path):
+    """The repository files a bicentennial import in `path` runs: each imported module and its packages."""
+    package = Path(path).with_suffix("").parts[1:-1]
+    names = []
+    for node in ast.walk(ast.parse((ROOT / path).read_text())):
+        if isinstance(node, ast.Import):
+            names += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = ".".join((*package[:len(package) - node.level + 1], node.module or "") if node.level
+                            else (node.module or "",)).strip(".")
+            names += [base, *(f"{base}.{alias.name}" for alias in node.names)]
+    files = []
+    for parts in (name.split(".") for name in names if name.split(".")[0] == "bicentennial"):
+        for i in range(1, len(parts) + 1):
+            for candidate in (Path("src", *parts[:i], "__init__.py"), Path("src", *parts[:i]).with_suffix(".py")):
+                if (ROOT / candidate).is_file():
+                    files.append(candidate.as_posix())
+    return files
+
+
+def test_c8_covers_every_imported_module():
+    # A module the simulation imports, directly or through another, can change its samples, so C-8 hashes it
+    paths = set(run.c8_paths(ROOT))
+    closure, todo = set(), [p for p in paths if p.startswith("src/")]
+    while todo:
+        path = todo.pop()
+        if path not in closure:
+            closure.add(path)
+            todo += _imported_files(path)
+    assert "src/bicentennial/keyed.py" in closure
+    assert closure <= paths, sorted(closure - paths)
+
+
+def test_resume_keeps_busy_marker_history(tiny_inputs, tmp_path, monkeypatch):
+    # Interrupted after a pause and resumed, a run reports the busy-marker history of an uninterrupted run
+    config = tiny_config(alternatives=("LITERAL",), constants={**TINY_CONSTANTS, "CHUNK": 1})
+    holding = [True]
+
+    def stop(point, variant, phase):
+        if phase == "phase1a":
+            raise InterruptedError("test barrier")
+
+    def poll():
+        holding[0] = False
+
+    monkeypatch.setattr(run, "_marker", lambda command: 11 if holding[0] else 0)
+    monkeypatch.setattr(run, "_pause_wait", poll)
+    assert run.run(tiny_inputs, config, tmp_path / "whole") == 0
+    holding[0] = True
+    monkeypatch.setattr(run, "_barrier_hook", stop)
+    with pytest.raises(InterruptedError, match="test barrier"):
+        run.run(tiny_inputs, config, tmp_path / "resumed")
+    monkeypatch.setattr(run, "_barrier_hook", lambda *args: None)
+    assert run.run(tiny_inputs, run.copy_config(config, resume=True), tmp_path / "resumed") == 0
+    whole, resumed = (json.loads((tmp_path / name / "RESULT-MANIFEST.json").read_bytes())["run"]["pauses"]
+                      for name in ("whole", "resumed"))
+    assert [p["event"] for p in whole] == ["pause", "width"] and resumed == whole
 
 
 def test_nonplanning_pins_and_output_validation(tiny_inputs, tmp_path, monkeypatch):
