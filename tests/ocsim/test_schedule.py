@@ -401,9 +401,12 @@ def test_projection_reuses_prepared_durations(f1, draws, monkeypatch):
 
 
 def test_sorted_output_keys(f1):
-    design = replace(f1, rows=(Row("Z", 3600), Row("A", 3600)), lives=tuple(reversed(f1.lives)))
+    # Nonzero pass-over rates, so the stops dict is not empty and its order is tested.
+    design = replace(f1, rows=(Row("Z", 3600), Row("A", 3600)), lives=tuple(reversed(f1.lives)),
+                     passover=PassOverRates(Fraction(1, 3), Fraction(1, 3)))
     prepared = prepare(design)
     dr = draw_all(prepared, "sim", 0)
+    assert len(dr.stops) >= 2
     shuffled = replace(dr, arm_order=dict(reversed(tuple(dr.arm_order.items()))),
                        stops=dict(reversed(tuple(dr.stops.items()))))
     assert list(prepared.layouts) == sorted(prepared.layouts)
