@@ -20,6 +20,7 @@ import pytest
 from bicentennial.api.adapters.reference_store import ReferenceStore
 from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
+from bicentennial.harness import egress
 from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.keyed import uniform_int
@@ -31,6 +32,13 @@ from bicentennial.score.invariants import SystemFault, Verdict, adapter_invarian
 from bicentennial.systems.registry import REGISTRY, ZERO_HASH, load
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def synthetic_egress():
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(egress, "_out", lambda argv: "8" if argv[:3] == ["ps", "-o", "rss="] else "")
+        yield
 
 
 def test_commit_ignores_git_location_variables(git_checkouts, monkeypatch):
@@ -1577,6 +1585,29 @@ def test_audit_scripted_attempt_boundary(tmp_path, rows, egress, refused):
             t0._audit(factories)
     else:
         assert t0._audit(factories)["records"] == rows
+
+
+@pytest.mark.parametrize("egress", [True, False, "both"])
+def test_audit_refusal_detail(installed, tmp_path, monkeypatch, capsys, egress):
+    endpoint = "egress name=*:* pid=40 comm=worker samples=2"
+    rows = [dict(served_by="live"), dict(req="request-7", upstream=[
+        dict(served_by="live"), dict(served_by="scripted", diagnostics=["synthetic"]),
+        dict(error="refused"), dict(served_by="scripted")])]
+    summary = dict(non_loopback=["*:*"], non_loopback_seen=[endpoint]) if egress else dict(non_loopback=[])
+    host = SimpleNamespace(records=lambda: [] if egress is True else rows,
+                           egress=SimpleNamespace(summary=lambda: summary))
+
+    def execute(*args, **kwargs):
+        t0._audit([SimpleNamespace(hosts=[host])])
+
+    monkeypatch.setattr(t0, "_execute", execute)
+    out = tmp_path / "out"
+    assert run(installed, out) == 3
+    assert_no_results(out)
+    assert capsys.readouterr().err == "upstream_record\n"
+    assert json.loads((out / "refusal.json").read_bytes()) == dict(code="upstream_record", fields=[],
+        detail=([endpoint] if egress else []) + ([] if egress is True else ["record id=0 served_by=live",
+            "record id=request-7 served_by=live", "record id=request-7 served_by=scripted diagnostics"]))
 
 
 def test_response_usage_streams(tmp_path):

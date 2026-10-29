@@ -221,6 +221,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `settle_unmapped` | Hook settle has no `SETTLE_THREADS` mapping. |
+| `surface_not_empty` | A sandbox-home memory surface already holds files before install. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
 | `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |
@@ -246,7 +247,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `baseline_mismatch` | T1 baseline identity, acceptance or bundle set differs. |
 | `refused` | Install CLI filesystem or value error. |
 
-Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; it is not a result. An already-existing output path is refused without overwriting it. An unexpected exception inside a runner exits 70, prints `tool_failure` first on stderr, and leaves no result file: results are staged and moved into place only when every file is written ([RING0 §8, E6](../../specs/ring0/RING0.md#8-exit-codes)). Any other code also means the tool failed and no result exists. Before a runner starts, for example when the CLI's niceness re-exec finds no `nice` or `taskpolicy`, Python can still exit 1 on an uncaught exception with no result; confirm result files exist before reading exit 1 as a gate.
+Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; for `upstream_record`, a non-empty `detail` list names each non-loopback endpoint, with the pid and command that showed it and its sample count, and each record that broke isolation; it is not a result. An already-existing output path is refused without overwriting it. An unexpected exception inside a runner exits 70, prints `tool_failure` first on stderr, and leaves no result file: results are staged and moved into place only when every file is written ([RING0 §8, E6](../../specs/ring0/RING0.md#8-exit-codes)). Any other code also means the tool failed and no result exists. Before a runner starts, for example when the CLI's niceness re-exec finds no `nice` or `taskpolicy`, Python can still exit 1 on an uncaught exception with no result; confirm result files exist before reading exit 1 as a gate.
 
 ## 9. Failure classes and stages
 
