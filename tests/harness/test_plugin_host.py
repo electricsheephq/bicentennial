@@ -649,25 +649,26 @@ def test_query_uses_written_maximal_text_and_order(regression_host, monkeypatch)
 
 
 @pytest.mark.parametrize("name", NAMES[1:])
-def test_forget_searches_again_past_a_full_page(regression_host, monkeypatch, name):
+@pytest.mark.parametrize("count,page", [(3, 2), (12, 1)])  # twelve one-row pages need thirteen searches
+def test_forget_searches_again_past_a_full_page(regression_host, monkeypatch, name, count, page):
     host = regression_host(name)
-    for i in range(1, 4):
+    for i in range(1, count + 1):
         host.ingest(event(i))
     searches, real, listing = [], host._call, plugin_host.FORGET[name][3]
 
-    def call(kind, **args):  # the backend returns at most two rows per search
+    def call(kind, **args):  # the backend returns at most `page` rows per search
         reply = real(kind, **args)
         if kind == "tool" and "query" in args["arguments"]:
             searches.append(args)
             result = json.loads(reply["result"])
-            reply = dict(reply, result=json.dumps({**result, listing: result[listing][:2]}))
+            reply = dict(reply, result=json.dumps({**result, listing: result[listing][:page]}))
         return reply
 
     monkeypatch.setattr(host, "_call", call)
-    host.forget(dict(event_ids=["e1", "e2", "e3"]))
+    host.forget(dict(event_ids=[f"e{i}" for i in range(1, count + 1)]))
     assert host.settle(5)
     assert stub_rows(host) == []
-    assert len(searches) == 3 and host.forget_ambiguous == 0
+    assert len(searches) == -(-count // page) + 1 and host.forget_ambiguous == 0
 
 
 @pytest.mark.parametrize("restore_first", [False, True])

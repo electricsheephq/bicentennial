@@ -63,7 +63,6 @@ ENTRYPOINT = "in-process memory host: MemoryManager or memory tool + SessionDB (
 WORKER = Path(__file__).resolve().with_name("plugin_host_worker.py")
 CHECKPOINT_FORMAT, SESSION_PREFIX = "bicentennial-t0-host-1", "bicentennial-t0-s"
 SETTLE_THREADS = {"mem0-oss": MEM0_THREADS}
-FORGET_PASSES = 10  # searches per distinct text in one forget call
 FORGET = {
     "hermes-native": (None, {}, "", "", "", "", "memory", {"action": "remove", "target": "memory"}, "old_text"),
     "holographic": ("fact_store", {"action": "search"}, "query", "results", "content", "fact_id",
@@ -428,8 +427,8 @@ class HermesMemoryHost(Adapter):
                 self.forget_ambiguous += 1
                 continue
             # A backend's result page can hide matching rows until deletes free room, so search again
-            # while the last pass deleted a row; rows already decided are skipped.
-            for _ in range(FORGET_PASSES):
+            # while the last pass deleted a row. Rows already decided are skipped, so this ends.
+            while True:
                 values = [text]
                 if search:
                     raw = self._call("tool", name=search, arguments={**args, query: text})["result"]

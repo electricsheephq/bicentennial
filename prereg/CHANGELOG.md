@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 contract change, 2026-10-29: forgetting identical texts and recalling clipped writes (#135)
-- **RING0 §7:** a plug-in host's forget keeps one row for each unselected event with the same written text, and with a search backend it searches each text again after a pass that issued a delete, at most 10 searches per text. Recall matches a clipped write on its written text, so it is cited. v0.1's frozen kit keeps the old host. No PREREG version change; PREREG-v0.4 remains frozen.
+- **RING0 §7:** a plug-in host's forget keeps one row for each unselected event with the same written text, and with a search backend it searches each text again after a pass that issued a delete, until a pass issues none. Recall matches a clipped write on its written text, so it is cited. v0.1's frozen kit keeps the old host. No PREREG version change; PREREG-v0.4 remains frozen.
 
 ## Ring 0 contract change, 2026-10-29: adapter ingest round trips (#213)
 - **RING0 §13 E12:** adds `text_full_length` and `actor_stored`, declared actor skips, single-fault mutants and test-fixed control expectations. T0 plug-in runs and T1 corpus hosts disclose write clipping counts, declared limits and delivered fields through existing JUnit properties; cards and schemas do not change. Of the hashed files only `api/adapters/mutants.py` changes, so only the mutant adapters' T0 lock hash moves; the controls hash, the reference adapters' lock hashes and naive RAG's embedder hash do not, and packs built before this change still verify.
