@@ -248,7 +248,9 @@ def test_pass_and_repeat(tree, tmp_path, capsys, monkeypatch):
                                            "Acceptance checks", "What this does not prove")]
     assert md.endswith(accept.LIMITS + "\n")
     assert accept.render(m, accept.contracts()) == md
-    # The new validation paths must not change evidence bytes on valid inputs.
+    # A redundant guard: on valid inputs the structure and pack-hash checks pass, so skipping them
+    # must give the same manifest bytes. The mode and manifest comparison below is the real check
+    # that verifying the installation leaves it untouched.
     unchecked = tmp_path / "unchecked"
     with monkeypatch.context() as patch:
         patch.setattr(accept, "verify_t0_packs", lambda *args: None)
