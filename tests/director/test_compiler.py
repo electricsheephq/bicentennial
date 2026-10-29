@@ -854,6 +854,7 @@ def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
     a.paths, a.server, a.clock = paths, SimpleNamespace(port=4321), SimpleNamespace(path=root / "clock.json")
     a.env_server, a.toolsets, a.memory, a.window, a.scripted = hook, config.HERMES_TOOLSETS, False, None, True
     a.plugin, a.plugin_config, a.checkout = None, {}, None
+    a.context_engine, a.plugins_enabled, a.extra_env, a.active_context_engine = None, (), None, None
     a.argv, a.egress, a.pids = [], None, []
     timings = dict(spawn=[], open=[])
     for reason, sid in (("session_start", None), ("kill", "session")):

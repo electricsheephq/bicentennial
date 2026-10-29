@@ -333,3 +333,15 @@ def test_unusable_marker_is_an_invalid_lock(marker):
     assert checked.returncode == 0, checked.stderr
     result = json.loads(checked.stdout)
     assert result["invalid"] is True and "demo" not in result["applicable"]
+
+
+def test_engine_only_dependency_map(tmp_path, monkeypatch):
+    path = tmp_path / "systems/locks/fixture.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("fixture==1" + HASH + "\n")
+    monkeypatch.setattr(hp, "ENGINES", {"fixture-engine": "fixture_engine"})
+    monkeypatch.setattr(hp, "DEPENDENCIES", {"fixture-engine": "systems/locks/fixture.txt"})
+    hp.validate_dependencies(tmp_path)
+    monkeypatch.setattr(hp, "DEPENDENCIES", {"hermes-native": "systems/locks/fixture.txt"})
+    with pytest.raises(ValueError, match="^plugin_deps_lock_invalid$"):
+        hp.validate_dependencies(tmp_path)

@@ -9,6 +9,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,13 @@ import pytest
 from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_hash, tree_listing
 from bicentennial.sandbox import surfaces
-from bicentennial.sandbox.bytes import allocated_bytes, apply_budget, store_bytes
+from bicentennial.sandbox.bytes import (
+    TIERS,
+    allocated_bytes,
+    apply_budget,
+    over_tier,
+    store_bytes,
+)
 from bicentennial.sandbox.spansearch import CHUNK_SIZE, span_search
 from bicentennial.sandbox.surfaces import (
     NotEmpty,
@@ -397,12 +404,38 @@ def test_unreadable_subtree_is_an_error_not_an_empty_result(tmp_path, monkeypatc
         operation(root)
 
 
-@pytest.mark.parametrize("label", ["K30", "K10", "K3", "unknown"])
-def test_budget_only_k100(label):
+@pytest.mark.parametrize("label", ["K30", "K10", "K3"])
+def test_budget_accepts_reduced_tiers(label):
     assert not apply_budget(100, 100, "K100")
     assert apply_budget(101, 100, "K100")
-    with pytest.raises(NotImplementedError, match="^v0.2$"):
-        apply_budget(0, 100, label)
+    assert not apply_budget(99, 100, label)
+    assert not apply_budget(100, 100, label)
+    assert apply_budget(101, 100, label)
+
+
+def test_budget_rejects_unknown_tier():
+    with pytest.raises(ValueError, match="unknown Keep tier"):
+        apply_budget(0, 100, "unknown")
+
+
+@pytest.mark.parametrize("tier,percent", [("K100", 100), ("K30", 30), ("K10", 10), ("K3", 3)])
+@pytest.mark.parametrize("raw_bytes", [100, 1001, 100 * 2**60 + 1])
+def test_over_tier_exact_boundaries(tier, percent, raw_bytes):
+    assert TIERS == {"K100": 100, "K30": 30, "K10": 10, "K3": 3}
+    cap = Fraction(percent * raw_bytes, 100)
+    # Fractions exercise equality even when the mathematical cap is not a whole byte.
+    assert not over_tier(cap - 1, raw_bytes, tier)
+    assert not over_tier(cap, raw_bytes, tier)
+    assert over_tier(cap + 1, raw_bytes, tier)
+    # Actual whole-byte stores straddle that cap without rounding it first.
+    whole_bytes = cap.numerator // cap.denominator
+    assert not over_tier(whole_bytes, raw_bytes, tier)
+    assert over_tier(whole_bytes + 1, raw_bytes, tier)
+
+
+def test_over_tier_rejects_unknown_tier():
+    with pytest.raises(ValueError, match="unknown Keep tier"):
+        over_tier(0, 100, "unknown")
 
 
 def test_install_hash_hermes_config_is_port_stable(tmp_path):
