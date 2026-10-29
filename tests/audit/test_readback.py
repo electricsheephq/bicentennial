@@ -340,6 +340,8 @@ def test_effect_encompassing_patch():
              call(2, {"target": "memory", "action": "add", "content": "beta note"}),
              call(3, {"target": "memory", "action": "patch", "old_text": "alpha note\nbeta note",
                       "new_text": "combined note"})]
+    # This synthetic encompassing edit supplies the new boundary, rather than inferring one from its span.
+    calls[-1]["result"] = json.dumps({"success": True, "patched_entry_after": "combined note"})
     reqs = [({"seq": 4, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "combined note"})]
     result = ef.effects(calls, reqs, {"memory": "combined note"}, "responses")
     assert result["gaps"] == []
@@ -368,7 +370,7 @@ def test_results_split_across_continuations():
     for wire in MODELS:
         data = fixture(wire)
         rows, blobs, _, stores = data
-        stores["memory"] = "saved note\nsecond note"
+        stores["memory"] = "saved note\n§\nsecond note"
         key = "messages" if wire == "chat" else "input"
         follow = blobs[rows[1]["req"]]
         if wire == "chat":
@@ -547,6 +549,7 @@ def test_effect_patch_leaves_its_old_span():
     def run(old, new, store):
         calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":true}', "arguments": json.dumps(
             {"target": "memory", "action": "patch", "old_text": old, "new_text": new})}]
+        calls[0]["result"] = json.dumps({"success": True, "patched_entry_after": new})
         reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": store})]
         return ef.effects(calls, reqs, {"memory": store}, "responses")
     out = run("old note", "new note", "old note\nnew note")
@@ -837,7 +840,8 @@ def test_kit_failed_write_turn_and_unnamed_non_write_call(kit):
     blobs["synthetic-reply"] = reply
     other["upstream"][0]["resp"] = "synthetic-reply"
     report, _ = kit_audit((rows, blobs, digest), "chat")
-    assert report["A3"]["failures"] == [{"record": failed["seq"], "kind": "write_turn_failed"}]
+    assert report["A3"]["failures"] == [{"record": failed["seq"], "kind": "write_turn_failed"},
+                                         {"record": failed["seq"], "kind": "missing_write_response"}]
     assert [(c["call"], c["blocked"]) for c in report["A3"]["non_write_calls"]] == [(f"{other['seq']}:1:1", True)]
     assert (report["A1"]["matches"], report["A5"]["write_texts_checked"]) == (60, 59)
 
@@ -943,17 +947,19 @@ def test_responses_snapshot_reads_input_system_and_developer_messages():
     calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":true}',
               "arguments": json.dumps({"target": "memory", "action": action, **fields})}
              for action, fields in (("add", {"content": "kept note"}), ("remove", {"old_text": "dropped note"}))]
+    prior = dict(calls[0], record=0, id="prior", arguments=json.dumps(
+        {"target": "memory", "action": "add", "content": "dropped note"}))
     for role, content in (("developer", "kept note"), ("system", [{"type": "input_text", "text": "kept note"}])):
         body = {"instructions": "other", "input": [{"type": "message", "role": role, "content": content},
                                                    {"type": "message", "role": "user", "content": "dropped note"}]}
         reqs = [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, body)]
         out = ef.effects(calls[:1], reqs, {"memory": "kept note"}, "responses")
         assert (out["gaps"], out["visible_next_session"]) == ([], 1)
-        assert ef.effects(calls[1:], reqs, {"memory": ""}, "responses")["gaps"] == []  # a user message is no snapshot
+        assert ef.effects([prior, *calls[1:]], reqs, {"memory": ""}, "responses")["gaps"] == []  # no user snapshot
         body["input"][0]["content"] = "dropped note"  # a removal still visible next session is a gap
-        out = ef.effects(calls[1:], reqs, {"memory": ""}, "responses")
-        assert out["gaps"] == ["bcw00001"]
-        assert out["calls"][0]["operations"][0]["reasons"] == ["remove_visible_next_session"]
+        out = ef.effects([prior, *calls[1:]], reqs, {"memory": ""}, "responses")
+        assert out["gaps"] == ["prior", "bcw00001"]
+        assert out["calls"][1]["operations"][0]["reasons"] == ["remove_visible_next_session"]
         assert "note" not in json.dumps(out)
 
 
@@ -1011,10 +1017,13 @@ def test_chat_snapshot_reads_developer_messages():
     assert (report["A4"]["gaps"], report["A4"]["visible_next_session"], rb.failures(report)) == ([], 1, [])
     calls = [{"record": 1, "session": 1, "id": "bcw00001", "result": '{"success":true}',
               "arguments": json.dumps({"target": "memory", "action": "remove", "old_text": "dropped note"})}]
+    prior = dict(calls[0], record=0, id="prior", arguments=json.dumps(
+        {"target": "memory", "action": "add", "content": "dropped note"}))
     body = {"messages": [{"role": "developer", "content": "dropped note"}, {"role": "user", "content": "later"}]}
-    out = ef.effects(calls, [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, body)],
+    out = ef.effects([prior, *calls], [({"seq": 2, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, body)],
                      {"memory": ""}, "chat")
-    assert out["calls"][0]["operations"][0]["reasons"] == ["remove_visible_next_session"]
+    assert out["gaps"] == ["prior", "bcw00001"]
+    assert out["calls"][1]["operations"][0]["reasons"] == ["remove_visible_next_session"]
 
 
 ENDPOINT = {"chat": "/main/v1/chat/completions", "responses": "/v1/responses"}
@@ -1054,7 +1063,7 @@ def test_effect_replace_rewrites_the_whole_entry():
 
 
 @pytest.mark.parametrize("wire", sorted(MODELS))
-def test_embeddings_input_is_never_conversation(wire):
+def test_embeddings_whole_draft_fails_and_substring_is_report_only(wire):
     data = fixture(wire)
     rows, blobs, _, _ = data
     for row in rows:
@@ -1063,8 +1072,14 @@ def test_embeddings_input_is_never_conversation(wire):
     rows.append({"seq": 4, "role": "embeddings", "path": "/v1/embeddings", "req": "emb"})
     assert rb.request_wire(rows[-1], wire) == "embeddings"  # the director dispatches it as its own wire
     report = run(data, wire)
-    assert (report["A5"]["whole_content_hits"], report["A5"]["text_hits"]) == ([], [])
-    assert report["A5"]["non_content_collisions"] == [{"record": 4, "write_record": 1}]
+    hit = {"record": 4, "write_record": 1}
+    assert (report["A5"]["whole_content_hits"], report["A5"]["text_hits"]) == ([hit], [hit])
+    assert report["A5"]["non_content_collisions"] == []
+    assert rb.failures(report) == ["A5.whole_content_hits"]
+    blobs["emb"]["input"] = ["prefix discarded draft suffix", [101, 202]]
+    report = run(data, wire)
+    assert report["A5"]["text_hits"] == [hit]
+    assert report["A5"]["whole_content_hits"] == report["A5"]["non_content_collisions"] == []
     assert rb.failures(report) == []
 
 
@@ -1119,6 +1134,8 @@ def test_whole_entry_edit_after_a_patch_finds_the_entry():
     reqs = [({"seq": 4, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, {"instructions": "delta note"})]
     cases = {"single": [add, call(2, dict(patch, target="memory")), call(3, dict(replace, target="memory"))],
              "batch": [add, call(2, {"target": "memory", "operations": [patch, replace]})],
+             "remove_batch": [add, call(2, {"target": "memory", "operations": [
+                 patch, {"action": "remove", "old_text": "beta"}]})],
              "recorded": [call(2, dict(patch, target="memory"), json.dumps(  # the entry predates the ledger
                  {"success": True, "patched_entry_before": "alpha beta note", "patched_entry_after": "gamma beta note"})),
                  call(3, dict(replace, target="memory"))],
@@ -1126,19 +1143,339 @@ def test_whole_entry_edit_after_a_patch_finds_the_entry():
                  {"success": True, "patched_entries_after": {"1": "gamma beta note"}})),
                  call(3, {"target": "memory", "action": "remove", "old_text": "beta"})]}  # a batch never empties
     for name, calls in cases.items():
-        store = "" if name == "recorded_batch" else "delta note"
+        store = "" if name in {"recorded_batch", "remove_batch"} else "delta note"
         reqs[0][1]["instructions"] = store or "empty"
         result = ef.effects(calls, reqs, {"memory": store}, "responses")
         assert result["gaps"] == [], name
         patched = next(o for r in result["calls"] for o in r["operations"] if o["action"] == "patch")
-        assert patched["superseded_by"] == [("bcw00002:2" if name == "batch" else "bcw00003:1")], name
-    for name in ("recorded", "recorded_batch"):  # without the recorded entry the span alone is tracked: a gap
+        assert patched["superseded_by"] == [("bcw00002:2" if name in {"batch", "remove_batch"}
+                                              else "bcw00003:1")], name
+    for name in ("recorded", "recorded_batch"):  # without the recorded entry its boundary is unidentifiable
         calls = copy.deepcopy(cases[name])
         calls[0]["result"] = '{"success":true}'
         store = "" if name == "recorded_batch" else "delta note"
         reqs[0][1]["instructions"] = store or "empty"
-        assert ef.effects(calls, reqs, {"memory": store}, "responses")["gaps"] == ["bcw00002"], name
+        report = ef.effects(calls, reqs, {"memory": store}, "responses")
+        assert report["gaps"] == (["bcw00002"] if name == "recorded" else ["bcw00002", "bcw00003"]), name
+        assert report["calls"][0]["operations"][0]["reasons"] == ["entry_unidentifiable"], name
+        if name == "recorded_batch":
+            assert report["calls"][1]["operations"][0]["reasons"] == ["entry_unidentifiable"], name
     reqs[0][1]["instructions"] = "alpha beta note"  # the patch never applied: its own span is still checked
     out = ef.effects(cases["single"][:2], reqs, {"memory": "alpha beta note"}, "responses")
     assert out["gaps"] == ["bcw00001", "bcw00002"]
     assert "absent_from_final_store" in out["calls"][1]["operations"][0]["reasons"]
+
+
+def effect_call(record, action=None, *, result=None, **args):
+    """Synthetic memory calls only; no recorded store or corpus text."""
+    if action is not None:
+        args["action"] = action
+    return {"record": record, "session": 1, "id": f"bcw{record:05d}",
+            "arguments": json.dumps({"target": "memory", **args}),
+            "result": json.dumps({"success": True} if result is None else result)}
+
+
+def effect_at_next(calls, store, snapshot=None, wire="responses", *, target="memory"):
+    body = ({"instructions": store if snapshot is None else snapshot} if wire == "responses" else
+            {"messages": [{"role": "system", "content": store if snapshot is None else snapshot}]})
+    requests = [({"seq": 10, "role": "replay_main", "cursor": {"session": 2, "turn": 1}}, body)]
+    return ef.effects(calls, requests, {target: store}, wire)
+
+
+def rendered_snapshot(memory, user=None, following=""):
+    sep = "═" * 46
+    parts = [f"{sep}\nMEMORY (your personal notes) [1%]\n{sep}\n{memory}"]
+    if user is not None:
+        parts.append(f"{sep}\nUSER PROFILE (who the user is) [1%]\n{sep}\n{user}")
+    if following:
+        parts.append(following)
+    return "\n\n".join(parts)
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_effect_requires_whole_entries_in_store_and_snapshot(wire):
+    """Base passes a patch applied twice because 'new note' is inside 'new new note'."""
+    calls = [effect_call(1, "add", content="note"),
+             effect_call(2, "patch", old_text="note", new_text="new note")]
+    for store, snap in (("new new note", "new note"), ("new note", "new new note")):
+        out = effect_at_next(calls, store, snap, wire)
+        assert out["gaps"] == ["bcw00001", "bcw00002"]
+        operation = out["calls"][1]["operations"][0]
+        assert operation["store_satisfied"] == (store == "new note")
+        assert operation["next_session_satisfied"] == (snap == "new note")
+    assert effect_at_next(calls, "new note", wire=wire)["gaps"] == []
+    # A newline inside a longer entry is not a boundary either; § is the store delimiter.
+    assert effect_at_next(calls, "new note\nextra paragraph", wire=wire)["gaps"] == ["bcw00001", "bcw00002"]
+    assert effect_at_next(calls, "unrelated\n§\nnew note\n§\nlast entry", wire=wire)["gaps"] == []
+
+
+@pytest.mark.parametrize("action", ["patch", "remove"])
+@pytest.mark.parametrize("wire", sorted(MODELS))
+@pytest.mark.parametrize("text", ["", "new fragment", "old fragment"])
+def test_effect_unidentifiable_entry_is_a_gap(action, wire, text):
+    """Base treats an isolated patch's span as its entry and an isolated removal as satisfied."""
+    call = effect_call(1, action, old_text="old fragment", **({"new_text": "new fragment"}
+                                                           if action == "patch" else {}))
+    out = effect_at_next([call], text, wire=wire)
+    assert out["gaps"] == ["bcw00001"]
+    op = out["calls"][0]["operations"][0]
+    assert op["reasons"] == ["entry_unidentifiable"]
+    assert (op["store_satisfied"], op["next_session_satisfied"]) == (False, False)
+
+
+def test_effect_ambiguous_entry_is_not_guessed():
+    """Base picks the first containing entry even when two distinct entries match the patch span."""
+    calls = [effect_call(1, "add", content="alpha first"), effect_call(2, "add", content="alpha second"),
+             effect_call(3, "patch", old_text="alpha", new_text="gamma")]
+    out = effect_at_next(calls, "gamma first\n§\nalpha second")
+    assert "bcw00003" in out["gaps"]
+    assert out["calls"][2]["operations"][0]["reasons"] == ["entry_unidentifiable"]
+    # A recorded result resolves the owning entry, and must not supersede the other add.
+    calls[2]["result"] = json.dumps({"success": True, "patched_entry_after": "gamma first"})
+    out = effect_at_next(calls, "gamma first\n§\nalpha second")
+    assert out["gaps"] == []
+    assert out["calls"][1]["operations"][0]["superseded_by"] == []
+    assert effect_at_next(calls, "gamma first")["gaps"] == ["bcw00002"]
+
+
+def test_effect_rewritten_then_missing_span_uses_missing_content_labels():
+    """Base labels the now-present side expectation as 'replaced_span_still_present'."""
+    calls = [effect_call(1, "add", content="old note"),
+             effect_call(2, "patch", old_text="old note", new_text="new note"),
+             effect_call(3, "add", content="old note")]
+    out = effect_at_next(calls, "new note")
+    patch = out["calls"][1]["operations"][0]
+    assert out["gaps"] == ["bcw00002", "bcw00003"]
+    assert patch["reasons"] == ["absent_from_final_store", "absent_from_next_session"]
+    assert patch["store_satisfied"] is patch["next_session_satisfied"] is False
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_effect_partial_overlap_tracks_surviving_span_and_replacement(batch):
+    """Base leaves 'gamma beta' stale when the next patch overlaps its right edge."""
+    for initial, first_old, first_new, second_old, final in (
+            ("alpha suffix", "alpha", "gamma beta", "beta suffix", "gamma delta"),
+            ("prefix alpha", "alpha", "beta gamma", "prefix beta", "delta gamma")):
+        edits = [{"action": "patch", "old_text": first_old, "new_text": first_new},
+                 {"action": "patch", "old_text": second_old, "new_text": "delta"}]
+        calls = [effect_call(1, "add", content=initial)]
+        calls += ([effect_call(2, operations=edits)] if batch else
+                  [effect_call(i, **edit) for i, edit in enumerate(edits, 2)])
+        out = effect_at_next(calls, final)
+        assert out["gaps"] == []
+        patch = out["calls"][1]["operations"][0]
+        assert patch["superseded_by"] == ["bcw00002:2" if batch else "bcw00003:1"]
+        assert patch["store_satisfied"] is patch["next_session_satisfied"] is True
+
+
+def test_effect_empty_and_null_operations_are_single_adds():
+    """Base silently audits zero operations for [], and raises unknown_memory_action for null."""
+    for operations in ([], None):
+        call = effect_call(1, "add", content="kept note", operations=operations)
+        out = effect_at_next([call], "")
+        assert out["applied_operations"] == 1
+        assert out["gaps"] == ["bcw00001"]
+        assert effect_at_next([call], "kept note")["gaps"] == []
+    call = effect_call(1, "remove", old_text="ignored", operations=[{"action": "add", "content": "kept note"}])
+    out = effect_at_next([call], "kept note")
+    assert (out["applied_operations"], out["gaps"]) == (1, [])
+    assert out["calls"][0]["operations"][0]["action"] == "add"
+
+
+def test_effect_produced_entry_uses_the_same_nonempty_batch_rule():
+    """Base skips [] and rejects null instead of reading the single patch's produced entry."""
+    patch = {"action": "patch", "old_text": "alpha", "new_text": "gamma"}
+    for operations in ([], None):
+        call = effect_call(1, **patch, operations=operations, result={"success": True,
+            "patched_entry_after": "gamma suffix", "patched_entries_after": {"1": "wrong boundary"}})
+        out = effect_at_next([call], "gamma suffix")
+        assert (out["applied_operations"], out["gaps"]) == (1, [])
+    call = effect_call(1, operations=[patch], result={"success": True,
+        "patched_entry_after": "wrong boundary", "patched_entries_after": {"1": "gamma suffix"}})
+    assert effect_at_next([call], "gamma suffix")["gaps"] == []
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_effect_rendered_snapshot_preserves_entry_boundaries(wire):
+    """Base accepts a whole known entry embedded inside a longer entry in the rendered prompt."""
+    sep = "═" * 46
+    def rendered(content):
+        return (f"synthetic system preamble\n\n{sep}\nMEMORY (your personal notes) [1%]\n{sep}\n{content}"
+                f"\n\n{sep}\nUSER PROFILE (who the user is) [1%]\n{sep}\nother profile"
+                "\n\nConversation started: synthetic date")
+    call = effect_call(1, "add", content="kept\n\nparagraph")
+    out = effect_at_next([call], "kept\n\nparagraph", rendered("prefix kept\n\nparagraph suffix"), wire)
+    assert out["gaps"] == ["bcw00001"]
+    out = effect_at_next([call], "kept\n\nparagraph", rendered("other entry\n§\nkept\n\nparagraph"), wire)
+    assert out["gaps"] == []
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+@pytest.mark.parametrize("action", ["add", "remove"])
+@pytest.mark.parametrize("following", [
+    "Active Hermes profile: default. Other profiles (if any) live under a synthetic root."
+    "\n\nConversation started: synthetic date",
+    "<!-- hermes-plugin-sections:start -->\n## Plugin Context: synthetic\n"
+    "<!-- hermes-plugin-section-chars:12 -->\n\nplugin notes\n<!-- hermes-plugin-sections:end -->",
+    "# Hermes runtime environment\n\nsynthetic environment",
+])
+def test_effect_final_user_entry_ends_at_known_following_part(wire, action, following):
+    entry = "saved user note"
+    snapshot = rendered_snapshot("saved memory note", entry, following)
+    body = {"instructions": snapshot} if wire == "responses" else {
+        "messages": [{"role": "system", "content": snapshot}]}
+    assert ef.snapshot_entries(body, wire, "user") == [entry]
+    calls = [effect_call(1, "add", content=entry, target="user")]
+    if action == "remove":
+        calls.append(effect_call(2, "remove", old_text=entry, target="user"))
+    out = effect_at_next(calls, entry if action == "add" else "", snapshot, wire, target="user")
+    assert out["gaps"] == ([] if action == "add" else ["bcw00001", "bcw00002"])
+    operation = out["calls"][-1]["operations"][0]
+    assert operation["store_satisfied"] is True
+    assert operation["next_session_satisfied"] == (action == "add")
+    assert operation["reasons"] == ([] if action == "add" else ["remove_visible_next_session"])
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_bounded_memory_block_keeps_label_paragraph(wire):
+    """Base cuts the memory block at a model-written date label and drops its later entries."""
+    snapshot = rendered_snapshot("Meeting notes\n\nCurrent date: 2026-10-29\n§\nsecond entry", "likes tea",
+                                 "Conversation started: x")
+    body = {"instructions": snapshot} if wire == "responses" else {
+        "messages": [{"role": "system", "content": snapshot}]}
+    assert ef.snapshot_entries(body, wire, "memory") == ["Meeting notes Current date: 2026-10-29", "second entry"]
+    assert ef.snapshot_entries(body, wire, "user") == ["likes tea"]  # the final block still ends at the label
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+@pytest.mark.parametrize("action", ["add", "remove"])
+@pytest.mark.parametrize("target", ["memory", "user"])
+def test_effect_final_entry_before_unknown_part_counts_for_present_and_absent(wire, action, target):
+    entry = "kept\n\nparagraph"
+    snapshot = rendered_snapshot(entry if target == "memory" else "other memory",
+                                 entry if target == "user" else None,
+                                 "Unknown provider context\n\nprovider notes")
+    calls = [effect_call(1, "add", content=entry, target=target)]
+    if action == "remove":
+        calls.append(effect_call(2, "remove", old_text=entry, target=target))
+    out = effect_at_next(calls, entry if action == "add" else "", snapshot, wire, target=target)
+    assert out["gaps"] == ([] if action == "add" else ["bcw00001", "bcw00002"])
+    operation = out["calls"][-1]["operations"][0]
+    assert operation["store_satisfied"] is True
+    assert operation["next_session_satisfied"] == (action == "add")
+    assert operation["reasons"] == ([] if action == "add" else ["remove_visible_next_session"])
+    if action == "add":
+        out = effect_at_next(calls, entry + "\n\nstore continuation", snapshot, wire, target=target)
+        assert out["gaps"] == ["bcw00001"]  # the final-entry allowance never applies to the store
+        assert out["calls"][0]["operations"][0]["reasons"] == ["absent_from_final_store"]
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_effect_internal_paragraphs_in_nonfinal_positions_stay_one_entry(wire):
+    entry = "kept\n\nparagraph"
+    snapshots = [rendered_snapshot(entry + "\n§\nlast memory", following="Unknown provider context"),
+                 rendered_snapshot(entry, "last user entry", "Unknown provider context")]
+    for snapshot in snapshots:  # a non-final entry, then the last entry of a non-final block
+        out = effect_at_next([effect_call(1, "add", content=entry)], entry, snapshot, wire)
+        assert out["gaps"] == []
+        assert out["calls"][0]["operations"][0]["reasons"] == []
+        calls = [effect_call(1, "add", content="kept")]
+        out = effect_at_next(calls, "kept", snapshot, wire)
+        assert out["gaps"] == ["bcw00001"]
+        assert out["calls"][0]["operations"][0]["reasons"] == ["absent_from_next_session"]
+        calls.append(effect_call(2, "remove", old_text="kept"))
+        out = effect_at_next(calls, "", snapshot, wire)
+        assert out["gaps"] == []
+        assert out["calls"][1]["operations"][0]["reasons"] == []
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+@pytest.mark.parametrize("missing", ["reference", "blob"])
+def test_final_write_attempt_without_response_is_an_a3_finding(wire, missing):
+    """Base has no finding for an absent reference and raises KeyError for an absent blob."""
+    data = fixture(wire)
+    rows, blobs, _, _ = data
+    attempt = rows[0]["upstream"][-1]
+    if missing == "reference":
+        del attempt["resp"]
+    else:
+        del blobs[attempt["resp"]]
+    rows[0]["write_turn_failed"] = True
+    report = run(data, wire)
+    assert {"record": 1, "kind": "missing_write_response"} in report["A3"]["failures"]
+    assert "A3.failures" in rb.failures(report)
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+def test_discard_scan_includes_upstream_reasoning_and_string_responses_input(wire):
+    """Base never scans upstream reasoning; the existing _items normalisation must keep working."""
+    data = fixture(wire)
+    rows, blobs, _, _ = data
+    up = blobs[rows[0]["upstream"][0]["resp"]]
+    if wire == "chat":
+        up["choices"][0]["message"]["reasoning_content"] = "synthetic private thought"
+        blobs[rows[-1]["req"]]["messages"].append({"role": "user", "content": "synthetic private thought"})
+    else:
+        up["sse"] += "".join("data: " + json.dumps({"type": "response.reasoning_text.delta",
+            "item_id": "r1", "output_index": 1, "delta": delta}) + "\n\n"
+                             for delta in ("synthetic private ", "thought"))
+        body = blobs[rows[-1]["req"]]
+        body["input"] = "synthetic private thought"
+        assert rb.channels(body, wire)[0] == ["saved note", "synthetic private thought"]
+        assert rb.calls_in(body, wire) == set() and rb.results(body, wire) == {}
+    report = run(data, wire)
+    assert report["A5"]["whole_content_hits"] == [{"record": 3, "write_record": 1}]
+    assert rb.failures(report) == ["A5.whole_content_hits"]
+
+
+def test_responses_reasoning_joins_each_item_and_deduplicates_its_completion():
+    """Base returns individual deltas, so no complete discarded thought is available for matching."""
+    events = [{"type": "response.reasoning_summary_text.delta", "item_id": item, "output_index": index,
+               "delta": delta} for item, index, delta in
+              (("r1", 0, "private "), ("r2", 1, "other "), ("r1", 0, "reasoning"), ("r2", 1, "item"))]
+    assert rb.reasoning({"sse": events}, "responses") == ["private reasoning", "other item"]
+    events.append({"type": "response.reasoning_text.delta", "item_id": "r1", "output_index": 0,
+                   "delta": "raw thought"})
+    assert rb.reasoning({"sse": events}, "responses") == ["private reasoning", "other item", "raw thought"]
+    events.append({"type": "response.output_item.done", "output_index": 0,
+                   "item": {"type": "reasoning", "id": "r1", "summary": [
+                       {"text": "private "}, {"text": "reasoning"}]}})
+    assert rb.reasoning({"sse": events}, "responses") == ["private reasoning", "other item", "raw thought"]
+
+
+def test_chat_reasoning_deltas_form_a_complete_discarded_thought():
+    """Base returns chat reasoning fragments individually and misses a whole thought in a later request."""
+    data = fixture("chat")
+    rows, blobs, _, _ = data
+    up = blobs[rows[0]["upstream"][0]["resp"]]
+    call_delta = up["choices"][0]["message"]
+    blobs[rows[0]["upstream"][0]["resp"]] = {"__sse__": [
+        {"choices": [{"delta": dict(call_delta, reasoning_content="private ")}]},
+        {"choices": [{"delta": {"reasoning_content": "thought"}}]}]}
+    blobs[rows[-1]["req"]]["messages"].append({"role": "user", "content": "private thought"})
+    assert run(data, "chat")["A5"]["whole_content_hits"] == [{"record": 3, "write_record": 1}]
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
+@pytest.mark.parametrize("role", ["replay_main", "probe_main"])
+@pytest.mark.parametrize("history_id", ["hist-0", "bcw00001_d1", "call_0123456789ab", "call_0123456789ab|fc_123"])
+def test_rewritten_later_history_ids_do_not_add_execution_findings(wire, role, history_id):
+    """The kit renumbers history; Hermes can deduplicate, mint or compose tool-call ids."""
+    data = fixture(wire)
+    rows, blobs, _, _ = data
+    history = copy.deepcopy(blobs[rows[1]["req"]])
+    if wire == "chat":
+        for message in history["messages"]:
+            for call in message.get("tool_calls", []):
+                call["id"] = history_id
+            if message.get("role") == "tool":
+                message["tool_call_id"] = history_id
+    else:
+        for item in history["input"]:
+            if item.get("type") in {"function_call", "function_call_output"}:
+                item["call_id"] = history_id
+    blobs["later-history"] = history
+    rows.append({"seq": 4, "role": role, "req": "later-history"})
+    report = run(data, wire)
+    assert report["A3"]["failures"] == []
+    assert rb.failures(report) == []

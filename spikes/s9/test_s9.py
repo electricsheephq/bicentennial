@@ -525,6 +525,106 @@ def test_resume24_no_compaction_is_blocked(arm):
     assert code == 2 and record["stop"] == "no_compaction" and arm.resume_record is None
 
 
+@pytest.mark.parametrize("failure_index", [2, 3], ids=["pending", "proven"])
+def test_harness_failure_preserves_resume_result(arm, failure_index):
+    arm.adapter.paths["root"] = arm.adapter.paths["home"].parent
+    original, options = arm.adapter.run_session, []
+    proven = []
+
+    def session(index, **kwargs):
+        options.append(kwargs.get("resume_session_id"))
+        if index == failure_index:
+            if index == 3:
+                proven.append(dict(arm.resume_record))
+            raise s9.HarnessFailed("synthetic failure")
+        result = original(index, **kwargs)
+        result.acp_session_id = "saved-session"
+        result.summariser_records = int(index == 1)
+        ledger_fixture(arm, role="summariser" if index == 1 else "probe_main",
+                       attempt=kwargs["attempt_id"], text="retained summary")
+        return result
+
+    arm.adapter.run_session = session
+    record, code = s9.run_life(arm, "resume24", "r", {}, script=s9.micro_script(sessions=[1, 2, 3, 4]),
+                               wait_s=86400, sleep=lambda _: None)
+    assert code == 1 and record["sessions_run"] == list(range(1, failure_index))
+    assert record["stop"] == ("resume_failed" if failure_index == 2 else "harness_failed")
+    assert options == ([None, "saved-session"] if failure_index == 2 else [None, "saved-session", None])
+    assert arm.resume_record["resumed_ok"] is (failure_index == 3)
+    if proven:
+        assert arm.resume_record == proven[0]
+    assert record["exit_holds"] == {}
+
+
+FAILURE_EXITS = [
+    ("proof_failed", 1), ("harness_alive", 2), ("compaction_not_retained", 1),
+    ("compaction_unobserved", 2), ("compaction_unsettled", 2), ("harness_failed", 1),
+]
+
+
+@pytest.fixture
+def failure_exit():
+    """Arrange real run_life exits using the existing adapter and ledger fakes."""
+    def configure(arm, stop):
+        arm.adapter.paths["root"] = arm.adapter.paths["home"].parent
+        original, attempts = arm.adapter.run_session, []
+        compaction = stop.startswith("compaction_")
+        last_index = 2 if stop == "compaction_not_retained" else 1
+
+        def session(index, **kwargs):
+            attempts.append(kwargs["attempt_id"])
+            result = original(index, **kwargs)
+            if stop == "harness_failed":
+                raise s9.HarnessFailed("synthetic failure")
+            if stop == "harness_alive":
+                arm.adapter._worker = SimpleNamespace(proc=SimpleNamespace(poll=lambda: None))
+            if stop == "proof_failed":
+                result.surface_hash = "00" * 32
+            if compaction:
+                result.acp_session_id = "saved-session"
+                result.summariser_records = int(index == 1)
+                if stop != "compaction_unobserved":
+                    ledger_fixture(arm, role="summariser" if index == 1 else "probe_main",
+                                   attempt=kwargs["attempt_id"],
+                                   text="retained summary" if index == 1 else "history missing")
+            return result
+
+        if stop == "compaction_unsettled":
+            arm.cell = SimpleNamespace(settle=lambda: SettleResult("hook", False, 21, "bound_reached", 5000))
+        arm.adapter.run_session = session
+        return "resume24" if compaction else "live", last_index, attempts
+    return configure
+
+
+@pytest.mark.parametrize(("stop", "status"), FAILURE_EXITS)
+@pytest.mark.parametrize("receipt", [
+    {"reasons": ["quota"], "held_ms": 5}, {"reasons": [], "held_ms": 0}, None,
+], ids=["quota", "empty", "no-holds"])
+def test_failure_exit_reads_last_session_hold(arm, failure_exit, stop, status, receipt):
+    part, last_index, attempts = failure_exit(arm, stop)
+    arm.execution = "hermes-native.micro"
+    reads = []
+
+    def at_boundary(attempt):
+        assert attempt == attempts[-1]
+        reads.append(attempt)
+        return receipt if attempt.endswith(f"-s{last_index}") else {"reasons": [], "held_ms": 0}
+
+    record, code = s9.run_life(arm, part, "r", {}, script=s9.micro_script(sessions=[1, 2, 3, 4]),
+        wait_s=0, sleep=lambda _: None,
+        holds=SimpleNamespace(at_boundary=at_boundary) if receipt is not None else None)
+    assert attempts == [f"hermes-native.micro-s{i}" for i in range(1, last_index + 1)]
+    assert reads == (attempts if receipt is not None else [])
+    assert record["exit_holds"] == (receipt if receipt is not None else {})
+    if receipt and "quota" in receipt["reasons"]:
+        expected_status = 1 if stop in {"compaction_not_retained", "proof_failed"} else 2
+        assert record["stop"] == "hold:quota" and code == expected_status
+        assert record["superseded_stop"] == stop
+    else:
+        assert record["stop"] == stop and code == status
+        assert "superseded_stop" not in record
+
+
 def test_summary_counts_and_hashes_only(tmp_path, monkeypatch):
     s9.write_result(tmp_path / "arms/hermes-native.micro.json", {"boundaries": [{"equal": True}],
                     "digest": "ab" * 32, "unknown_requests": 0, "private": str(tmp_path)})
@@ -753,6 +853,104 @@ def offline_execution(tmp_path, monkeypatch):
     return args, constructed, closed
 
 
+@pytest.mark.parametrize("stop", ["proof_failed", "harness_alive", "compaction_unobserved"])
+def test_last_session_quota_is_published_and_ends_part(offline_execution, monkeypatch, failure_exit, stop):
+    args, constructed, closed = offline_execution
+    if stop.startswith("compaction_"):
+        args.part = "resume24"
+    original, reads, receipts = s9.build_arm, [], {}
+    quota = {"reasons": ["quota"], "held_ms": 5}
+
+    def build(*a, **kw):
+        arm, routes = original(*a, **kw)
+        _, last_index, _ = failure_exit(arm, stop)
+        session = arm.adapter.run_session
+
+        def run(index, **kwargs):
+            if index == last_index:
+                receipts[kwargs["attempt_id"]] = quota
+            return session(index, **kwargs)
+        arm.adapter.run_session = run
+        return arm, routes
+
+    def at_boundary(attempt):
+        reads.append(attempt)
+        return receipts.pop(attempt, {"reasons": [], "held_ms": 0})
+
+    responder = SimpleNamespace(state=lambda: {"sends": 0}, served_identities=lambda: {})
+    monkeypatch.setattr(s9, "build_arm", build)
+    monkeypatch.setattr(s9, "live_responder", lambda *a: (responder, SimpleNamespace(at_boundary=at_boundary), None))
+    expected_status = 1 if stop == "proof_failed" else 2
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == expected_status
+    assert constructed == closed == ["hermes-native.micro"]
+    assert reads == ["hermes-native.micro-s1"] and receipts == {}
+    records = {p.stem: s9.json.loads(p.read_bytes()) for p in (args.out / "arms").glob("*.json")}
+    assert set(records) == {"hermes-native.micro"}
+    record = records["hermes-native.micro"]
+    assert record["stop"] == "hold:quota" and record["superseded_stop"] == stop
+    assert record["exit_holds"] == quota and record["sessions_run"] == [1]
+    assert s9.json.loads((args.out / "run.json").read_bytes())["exit"] == expected_status
+
+
+def test_failed_proof_with_quota_preserves_execute_and_published_failure(offline_execution, monkeypatch):
+    args, _, _ = offline_execution
+    original, workspaces = s9.build_arm, []
+    quota = {"reasons": ["quota"], "held_ms": 5}
+
+    def build(*a, **kw):
+        arm, routes = original(*a, **kw)
+        workspaces.append(arm.adapter.paths["workspace"])
+        return arm, routes
+
+    def tamper(_):
+        (workspaces[-1] / "tampered").write_text("changed during pause")
+
+    responder = SimpleNamespace(state=lambda: {"sends": 0}, served_identities=lambda: {})
+    monkeypatch.setattr(s9, "build_arm", build)
+    monkeypatch.setattr(s9, "live_responder", lambda *a: (
+        responder, SimpleNamespace(at_boundary=lambda _: quota), None))
+    code = s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=tamper)
+    record = s9.json.loads((args.out / "arms/hermes-native.micro.json").read_bytes())
+    published = s9.json.loads((args.out / "run.json").read_bytes())
+    assert (code, published["exit"], record["stop"], record["superseded_stop"]) == (
+        1, 1, "hold:quota", "proof_failed")
+
+
+@pytest.mark.parametrize("part", ["twin", "live", "resume24"])
+def test_relative_output_builds_absolute_arm_paths(offline_execution, monkeypatch, tmp_path, part):
+    args, constructed, closed = offline_execution
+    monkeypatch.chdir(tmp_path)
+    args.out, args.part = Path("relative-out"), part
+    resolved = (tmp_path / args.out).resolve()
+    original, roots, written = s9.build_arm, [], []
+    write_result = s9.write_result
+
+    def build(label, root, *a, **kw):
+        roots.append(root)
+        assert root.is_absolute() and root.is_relative_to(resolved)
+        return original(label, root, *a, **kw)
+
+    def write(path, *a, **kw):
+        written.append(path)
+        assert path.is_absolute() and path.is_relative_to(resolved)
+        return write_result(path, *a, **kw)
+
+    monkeypatch.setattr(s9, "build_arm", build)
+    monkeypatch.setattr(s9, "write_result", write)
+    code = s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None)
+    assert code == (0 if part == "twin" else 2)
+    if part == "twin":
+        expected = [f"{label}.micro-{suffix}" for label in args.arms for suffix in ("u", "p")]
+    elif part == "resume24":
+        expected = ["hermes-native.micro"]
+    else:
+        expected = ["hermes-native.micro", "hermes-native.canary", "no-memory.canary", "wiped.micro", "no-memory.micro"]
+    assert constructed == closed == expected
+    assert roots == [resolved / "cells" / name for name in expected]
+    assert resolved / "run.json" in written
+    assert all((resolved / "arms" / f"{name}.json") in written for name in expected)
+
+
 @pytest.mark.parametrize("reason", ["proof_failed", "harness_failed", "resume_failed",
     "compaction_not_retained", "compaction_unobserved", "compaction_unsettled", "no_compaction", "harness_alive"])
 def test_arm_stop_preserves_other_executions(offline_execution, monkeypatch, reason):
@@ -839,6 +1037,18 @@ ADMISSION_FAILURES = [
     ({"identity_drift": {"model": "changed"}}, "identity_drift"),
     ({}, "budget"),
 ]
+
+
+@pytest.mark.parametrize(("failure", "reason"), ADMISSION_FAILURES + [({"login_stop": "fixture"}, "login_stop")])
+def test_failed_proof_checks_current_responder_and_clock(arm, failure_exit, failure, reason):
+    _, _, attempts = failure_exit(arm, "proof_failed")
+    record, code = s9.run_life(arm, "live", "r", {}, script=s9.micro_script(sessions=[1, 2]),
+        wait_s=0, sleep=lambda _: None,
+        responder=SimpleNamespace(state=lambda: failure if attempts else {}),
+        active_seconds=lambda: s9.BUDGET_S["live"] + 1 if attempts and reason == "budget" else 0)
+    assert record["sessions_run"] == [1] and code == 1
+    assert record["stop"] == reason and record["superseded_stop"] == "proof_failed"
+    assert record["exit_holds"] == {}
 
 
 @pytest.mark.parametrize(("failure", "reason"), ADMISSION_FAILURES)

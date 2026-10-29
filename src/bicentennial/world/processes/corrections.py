@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from bicentennial.keyed import shuffle
 
+from ..lineage import atomic
 from ..scale import TURNS
 from . import HARD, SOFT, Unit, check_at, check_common, check_tokens, check_values, slot
 
@@ -56,33 +57,35 @@ def _check(db, schedule, chains, principal) -> None:
                                      or not all(type(v) is str and unicodedata.normalize("NFC", v) == v
                                                 and len(v) >= 4 and "\n" not in v for v in c.values)):
             raise ValueError("values need one NFC token of 4+ characters per fact")
-    # explicit values against one another and the life's tokens, before any insert (the world is append-only)
+    # Check explicit values before inserts; clashes with earlier draws in this call are checked
+    # by check_tokens inside the writer's savepoint, preserving the sequential draw order.
     if explicit := [v for c in chains if c.values is not None for v in c.values]:
         check_values([v for (v,) in db.execute("SELECT value FROM locked_token")] + explicit)
 
 
 def write_corrections(db, schedule, chains, *, principal) -> None:
-    _check(db, schedule, chains := tuple(chains), principal)
-    for c in chains:
-        w, m = Unit(db, schedule, "corrections", c), c.depth + 1 + (c.mention is not None)
-        times = [slot(schedule, *p) for p in c.at or [(k, w.draw(f"turn:{j}", 1, TURNS)) for j, k in enumerate(
-            sorted(shuffle(schedule.seed, w.u, 0, "sessions", range(1, len(schedule.sessions) + 1))[:m]))]]
-        values, facts = c.values or (None,) * (m + 1), []
-        for j, t in enumerate(times):
-            mention = c.mention if j > c.depth else None
-            e = w.event("event", j, t, kind="statement", channel=c.channel,
-                        actor=c.third_party if mention == "third_party" else principal)
-            act = mention if mention in ("hedge", "quote") else "assert"
-            f, v = w.fact("value", j, c.subject, c.key, c.stem, strength=SOFT if act == "hedge" else c.strength,
-                          act=act, value=values[j])
-            w.link(e, f, "assert", () if mention else c.surfaces)
-            if 1 <= j <= c.depth:
-                w.link(e, facts[j - 1], "retract")
-            if j <= c.depth:
-                w.attr(c.subject, c.key, v, t, e, times[j + 1] if j < c.depth else None)
-            if j == 0 and c.sibling is not None:
-                fs, vs = w.fact("sibling", 0, c.subject, c.sibling, c.stem, strength=c.strength, value=values[m])
-                w.link(e, fs, "assert", c.surfaces)
-                w.attr(c.subject, c.sibling, vs, t, e)
-            facts.append(f)
-    check_tokens(db)
+    with atomic(db):
+        _check(db, schedule, chains := tuple(chains), principal)
+        for c in chains:
+            w, m = Unit(db, schedule, "corrections", c), c.depth + 1 + (c.mention is not None)
+            times = [slot(schedule, *p) for p in c.at or [(k, w.draw(f"turn:{j}", 1, TURNS)) for j, k in enumerate(
+                sorted(shuffle(schedule.seed, w.u, 0, "sessions", range(1, len(schedule.sessions) + 1))[:m]))]]
+            values, facts = c.values or (None,) * (m + 1), []
+            for j, t in enumerate(times):
+                mention = c.mention if j > c.depth else None
+                e = w.event("event", j, t, kind="statement", channel=c.channel,
+                            actor=c.third_party if mention == "third_party" else principal)
+                act = mention if mention in ("hedge", "quote") else "assert"
+                f, v = w.fact("value", j, c.subject, c.key, c.stem, strength=SOFT if act == "hedge" else c.strength,
+                              act=act, value=values[j])
+                w.link(e, f, "assert", () if mention else c.surfaces)
+                if 1 <= j <= c.depth:
+                    w.link(e, facts[j - 1], "retract")
+                if j <= c.depth:
+                    w.attr(c.subject, c.key, v, t, e, times[j + 1] if j < c.depth else None)
+                if j == 0 and c.sibling is not None:
+                    fs, vs = w.fact("sibling", 0, c.subject, c.sibling, c.stem, strength=c.strength, value=values[m])
+                    w.link(e, fs, "assert", c.surfaces)
+                    w.attr(c.subject, c.sibling, vs, t, e)
+                facts.append(f)
+        check_tokens(db)

@@ -12,6 +12,7 @@ import time
 from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed, HermesAdapter
 from bicentennial.harness.hermes.config import CONFIG_DEVIATIONS, SCRIPTED_DEVIATIONS
 from bicentennial.ledger import BlobStore, Guard, verify
+from bicentennial.runner.guard import Marker
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.envserver.honeypot import plant
@@ -310,6 +312,113 @@ def test_gate_waits_before_any_spawn(tmp_path, monkeypatch, machine_class, first
         a.close()
     assert result.gate == ({"exit": first, "state": "fake"}, {"exit": 0, "state": "fake"})
     assert seen == ["2"] and len(a.pids) == 1  # no worker before the admitting reading
+
+
+@pytest.mark.parametrize("ticks,expected_sleeps", [
+    ([0, 0.5, 60.5, 61, 100.5], [60, 39]),
+    ([99, 101, 101], [0]),  # the clock can pass the deadline between the check and the sleep
+])
+def test_gate_deadline_passes_while_refused(tmp_path, monkeypatch, ticks, expected_sleeps):
+    a = make(tmp_path, "gate-deadline", faults=[], admission_deadline=100)
+    a.gate_poll_s = 60
+    readings, polls, sleeps, now = [], [], [], [0]
+    times = iter(ticks)
+
+    def monotonic():
+        now[0] = next(times)
+        return now[0]
+
+    def read():
+        polls.append(True)
+        assert len(polls) <= len(expected_sleeps) + 1, "gate polled after the deadline"
+        return Marker(11, False, "busy")
+
+    def sleep(seconds):
+        assert 0 <= seconds <= max(0, a.admission_deadline - now[0])
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(adapter, "read_marker", read)
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(monotonic=monotonic, sleep=sleep))
+    try:
+        with pytest.raises(HarnessFailed, match="^admission_deadline$"):
+            a._gate(readings)
+        assert readings == [{"exit": 11, "state": "busy"}] * len(polls)
+        assert len(polls) == len(expected_sleeps) + 1
+        assert sleeps == expected_sleeps
+        assert a.pids == [] and a._worker is None
+    finally:
+        a.close()
+
+
+@pytest.mark.parametrize("now", [100, 101])
+def test_gate_expired_deadline_precedes_admission(tmp_path, monkeypatch, now):
+    a = make(tmp_path, "gate-expired", faults=[], admission_deadline=100)
+    readings = []
+    monkeypatch.setattr(adapter, "read_marker", lambda: Marker(0, False, "idle"))
+    monkeypatch.setattr(adapter, "admit", lambda *args, **kw: pytest.fail("admitted after deadline"))
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(monotonic=lambda: now,
+        sleep=lambda seconds: pytest.fail("slept after deadline")))
+    try:
+        with pytest.raises(HarnessFailed, match="^admission_deadline$"):
+            a._gate(readings)
+        assert readings == [{"exit": 0, "state": "idle"}]
+        assert a.pids == [] and a._worker is None
+    finally:
+        a.close()
+
+
+def test_gate_admits_before_deadline(tmp_path, monkeypatch):
+    a = make(tmp_path, "gate-admitted", faults=[], admission_deadline=100)
+    readings = []
+    monkeypatch.setattr(adapter, "read_marker", lambda: Marker(0, False, "idle"))
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(monotonic=lambda: 99,
+        sleep=lambda seconds: pytest.fail("slept despite admission")))
+    try:
+        assert a._gate(readings) is None
+        assert readings == [{"exit": 0, "state": "idle"}]
+    finally:
+        a.close()
+
+
+def test_gate_without_deadline_preserves_readings_and_sleeps(tmp_path, monkeypatch):
+    a = make(tmp_path, "gate-unbounded", faults=[])
+    a.gate_poll_s = 60
+    readings, sleeps = [], []
+    markers = iter([Marker(11, False, "busy"), Marker(11, False, "busy"), Marker(0, False, "idle")])
+    monkeypatch.setattr(adapter, "read_marker", lambda: next(markers))
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(
+        monotonic=lambda: pytest.fail("unbounded gate read the clock"), sleep=sleeps.append))
+    try:
+        assert a._gate(readings) is None
+        assert readings == [{"exit": 11, "state": "busy"}, {"exit": 11, "state": "busy"},
+                            {"exit": 0, "state": "idle"}]
+        assert sleeps == [60, 60]
+    finally:
+        a.close()
+
+
+def test_session_admission_deadline_prevents_spawn(tmp_path, monkeypatch):
+    a = make(tmp_path, "session-deadline", faults=[], admission_deadline=100,
+             before_spawn=lambda reason: pytest.fail("spawn hook ran after deadline"))
+    polls = []
+
+    def read():
+        polls.append(True)
+        assert len(polls) == 1, "gate polled again after deadline"
+        return Marker(11, False, "busy")
+
+    monkeypatch.setattr(adapter, "read_marker", read)
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(monotonic=lambda: 101,
+        sleep=lambda seconds: pytest.fail("slept after deadline")))
+    monkeypatch.setattr(adapter, "_Worker", lambda *args, **kw: pytest.fail("worker spawned after deadline"))
+    try:
+        with pytest.raises(HarnessFailed, match="^admission_deadline$"):
+            session(a, 1)
+        assert polls == [True]
+        assert a.pids == [] and a._worker is None
+        assert a.records() == []  # admission fails before the director starts the session
+    finally:
+        a.close()
 
 
 def test_refusals(tmp_path, monkeypatch):

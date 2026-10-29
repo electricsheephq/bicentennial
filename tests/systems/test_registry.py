@@ -9,6 +9,7 @@ import pytest
 
 from bicentennial.contracts.run import validate
 from bicentennial.contracts.surfaces import tree_hash
+from bicentennial.director.roles import SUMMARISER_ALIAS
 from bicentennial.systems import SystemRefused, admit_system, check, load
 from bicentennial.systems.__main__ import main
 from bicentennial.systems.registry import PROVISIONAL_OSI_LICENCES, REGISTRY, ZERO_HASH
@@ -35,6 +36,13 @@ def test_shipped_entries_validate(name):
     validate("system", entry)
     assert check(entry) == []
     assert entry["embedding_dim"] == (1536 if name == "mem0-oss" else None)
+
+
+def test_shipped_hermes_compaction_uses_served_alias():
+    entry = hermes()
+    routes = {route["role"]: route["alias"] for route in entry["own_model_routes"]}
+    assert routes["compaction"] == routes["summariser"] == SUMMARISER_ALIAS
+    assert check(entry) == []
 
 
 def test_shipped_cli(capsys):
@@ -87,6 +95,22 @@ def test_every_own_route_is_a_director_alias(alias):
     entry = hermes()
     entry["own_model_routes"][-1]["alias"] = alias
     assert check(entry) == ["route_unroutable"]
+
+
+@pytest.mark.parametrize("alias", ["bicentennial-compaction", "bicentennial-extraction",
+                                   "bicentennial-summariser-other"])
+def test_compaction_route_requires_served_alias(alias):
+    entry = measured()
+    entry["name"] = "custom-system"
+    compaction = next(route for route in entry["own_model_routes"] if route["role"] == "compaction")
+    compaction["alias"] = alias
+    validate("system", entry)
+    reason = "compaction_alias_mismatch"
+    assert check(entry) == [reason]
+    with pytest.raises(SystemRefused) as error:
+        admit_system(entry, operator="other")
+    assert error.value.reasons == (reason,)
+    assert str(error.value) == reason
 
 
 @pytest.mark.parametrize("licence", sorted(PROVISIONAL_OSI_LICENCES))

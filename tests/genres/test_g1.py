@@ -188,6 +188,20 @@ def test_golden_rows(golden):
     assert world_hash(db) == GOLDEN_HASH
 
 
+def test_golden_containment_collision_seed_builds(tmp_path):
+    # On the base, ROTATION-565435 contains the explicit token 6543 and the build refuses.
+    db, schedule, mapping = golden_world(tmp_path, seed="review-436")
+    assert schedule.seed == "review-436"
+    assert set(mapping) == {f["id"] for f in MICRO["facts"]}
+    values = {v for (v,) in db.execute("SELECT value FROM locked_token")}
+    assert set(EXPLICIT) <= values
+    assert "ROTATION-565435" not in values
+    assert len(values) == 9
+    check_tokens(db)
+    export_world(db)
+    db.close()
+
+
 def test_golden_filler_counts(tmp_path, monkeypatch):
     seen = {}
 
