@@ -137,6 +137,7 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall,
     observed, digests, lock_hash = {}, [], None
     subroles = ("tool_results",) if recall else ("cursor", "retry")
     seen_attempts = {}
+    matched_attempts = {}
     for root in roots:
         counts = verify(root)
         if counts["records"] < 1 or any(counts[key] for key in (
@@ -154,8 +155,10 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall,
                 if attempts is not None:
                     if session not in attempts:
                         raise ValueError(f"missing attempt for session {session}")
+                    matched_attempts.setdefault(session, False)
                     if rec["attempt_id"] != attempts[session]:
                         continue
+                    matched_attempts[session] = True
                 elif seen_attempts.setdefault(session, rec["attempt_id"]) != rec["attempt_id"]:
                     raise ValueError(f"mixed attempts in session {session}")
             if any(rec[key] != value for key, value in (
@@ -184,6 +187,9 @@ def exposure(roots, *, life, branch, system, spans, items, probes, recall,
                                  if not all(needle in text for needle in needles[eid])})
                     for iid in at_probe[cursor]}
             del text
+    for session, matched in matched_attempts.items():
+        if not matched:
+            raise ValueError(f"stale attempt in session {session}")
     span_report = {}
     for eid, cursors in hits.items():
         span = spans[eid]
