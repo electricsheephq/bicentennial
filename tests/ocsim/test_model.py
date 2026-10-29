@@ -252,6 +252,29 @@ def test_identical_twins_equal_first_item(params, monkeypatch):
                       ("S", "p", "X", 20): (1000,)}
 
 
+def test_twin_branch_uses_the_residual_correlation(params, monkeypatch):
+    # rho_e = (0.6 - 0.2)/(1 - 0.2) = 0.5 puts item1 at sqrt(0.8)*0.5 = 0.447, below the
+    # cut at 0.5 (level 0); rho_t = 0.6 itself would put it at 0.537 (level 1000).
+    params = replace(params, rho_t=0.6, sigma_d2=0.2)
+    normals = iter((0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    monkeypatch.setattr(model, "_normal", lambda rng: next(normals))
+    result = sample_bundles(params, targets_for(0), {("X", 20): 1}, ("p",), "seed", 0,
+                            solver=lambda cell, target: 0.0)
+    assert result[("F", "p", "X", 20)] == (0,)
+
+
+@pytest.mark.parametrize("h,k,rho", [
+    (-0.006136, -0.006136, math.nextafter(-1.0, 0.0)),
+    (0.006, -0.006, math.nextafter(1.0, 0.0)),
+    (-2.0, 1.5, -0.9999),
+    (0.3, 0.31, 0.99995),
+])
+def test_phi2_stays_within_frechet_bounds(h, k, rho):
+    normal = NormalDist()
+    value = phi2(h, k, rho)
+    assert max(0.0, normal.cdf(h) + normal.cdf(k) - 1) <= value <= normal.cdf(min(h, k))
+
+
 def test_cuts_include_equality_in_lower_level(params, monkeypatch):
     params = replace(params, rho_t=1.0, sigma_d2=0.0)
     normals = iter((0.0, -0.5, 9.0, 0.5, 9.0, 0.0, 9.0))

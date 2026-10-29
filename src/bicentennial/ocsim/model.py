@@ -99,7 +99,9 @@ def phi2(h: float, k: float, rho: float) -> float:
     total = integrand(0.0) + integrand(math.asin(rho))
     for i in range(1, SIMPSON_INTERVALS):
         total += (4 if i % 2 else 2) * integrand(i * step)
-    return product + step * total / (6 * math.pi)
+    value = product + step * total / (6 * math.pi)
+    # The end panel can overshoot within about 1e-4 of |rho| = 1; the Frechet bounds are exact.
+    return min(_NORMAL.cdf(min(h, k)), max(0.0, _NORMAL.cdf(h) + _NORMAL.cdf(k) - 1, value))
 
 
 def expected_min(cell: CellModel, rho_t: float, theta: float) -> float:
