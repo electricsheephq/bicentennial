@@ -340,9 +340,9 @@ def test_provider_forget(factory, name, search, delete, args):
     host = factory(name)
     host.ingest(event())
     host.forget(dict(event_ids=["e1"]))
-    tail = calls(host)[-2:]
-    assert tail == [logged("handle_tool_call", search, dict(query="quartz", **({"action": "search"} if name == "holographic" else {}))),
-                    logged("handle_tool_call", delete, args)]
+    found = logged("handle_tool_call", search, dict(query="quartz", **({"action": "search"} if name == "holographic" else {})))
+    # The pass that deleted a row is followed by one more search, which finds nothing left to delete.
+    assert calls(host)[-3:] == [found, logged("handle_tool_call", delete, args), found]
 
 
 def pack(host, *, strict):
@@ -618,7 +618,8 @@ def test_forget_identical_rows_once_per_text(regression_host, monkeypatch, name,
     rows = stub_rows(host)
     assert [r["seq"] for r in rows] == ([3] if remaining == 1 else [2, 3])
     assert [r["text"] for r in rows] == ["quartz"] * remaining
-    assert len(searches) == 1 and len(deletes) == 3 - remaining
+    # The second search returns only rows the first pass already decided, so it deletes and counts nothing.
+    assert len(searches) == 2 and len(deletes) == 3 - remaining
     assert host.forget_ambiguous == remaining
     assert host.query(task("quartz"), 100) == answer(
         [event(i) for i in (3, 2, 1) if f"e{i}" not in selected])
@@ -638,12 +639,35 @@ def test_query_cites_written_prefix(regression_host, name):
 def test_query_uses_written_maximal_text_and_order(regression_host, monkeypatch):
     host = regression_host()
     texts = ["quartz", "new quartz", "topaz"]
-    host.events = {f"e{i}": dict(event=event(i, text + " suffix"), written=text, session=1)
+    # Distinct suffixes: filtering or sorting on the unwritten text would keep e1 or put e3 first.
+    host.events = {f"e{i}": dict(event=event(i, f"{text} suffix {i}"), written=text, session=1)
                    for i, text in enumerate(texts, 1)}
     monkeypatch.setattr(host, "_call", lambda *a, **kw: dict(
-        recall=json.dumps(dict(results=["topaz", "new quartz"])), prefetch=""))
-    assert host.query(task(), 100) == answer([event(3, "topaz"), event(2, "new quartz")])
-    assert all(r["event"]["text"].endswith(" suffix") for r in host.events.values())
+        recall=json.dumps(dict(results=["new quartz", "topaz"])), prefetch=""))
+    assert host.query(task(), 100) == answer([event(2, "new quartz"), event(3, "topaz")])
+    assert [r["event"]["text"] for r in host.events.values()] == [f"{text} suffix {i}" for i, text in enumerate(texts, 1)]
+
+
+@pytest.mark.parametrize("name", NAMES[1:])
+def test_forget_searches_again_past_a_full_page(regression_host, monkeypatch, name):
+    host = regression_host(name)
+    for i in range(1, 4):
+        host.ingest(event(i))
+    searches, real, listing = [], host._call, plugin_host.FORGET[name][3]
+
+    def call(kind, **args):  # the backend returns at most two rows per search
+        reply = real(kind, **args)
+        if kind == "tool" and "query" in args["arguments"]:
+            searches.append(args)
+            result = json.loads(reply["result"])
+            reply = dict(reply, result=json.dumps({**result, listing: result[listing][:2]}))
+        return reply
+
+    monkeypatch.setattr(host, "_call", call)
+    host.forget(dict(event_ids=["e1", "e2", "e3"]))
+    assert host.settle(5)
+    assert stub_rows(host) == []
+    assert len(searches) == 3 and host.forget_ambiguous == 0
 
 
 @pytest.mark.parametrize("restore_first", [False, True])

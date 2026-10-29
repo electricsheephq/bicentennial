@@ -63,6 +63,7 @@ ENTRYPOINT = "in-process memory host: MemoryManager or memory tool + SessionDB (
 WORKER = Path(__file__).resolve().with_name("plugin_host_worker.py")
 CHECKPOINT_FORMAT, SESSION_PREFIX = "bicentennial-t0-host-1", "bicentennial-t0-s"
 SETTLE_THREADS = {"mem0-oss": MEM0_THREADS}
+FORGET_PASSES = 10  # searches per distinct text in one forget call
 FORGET = {
     "hermes-native": (None, {}, "", "", "", "", "memory", {"action": "remove", "target": "memory"}, "old_text"),
     "holographic": ("fact_store", {"action": "search"}, "query", "results", "content", "fact_id",
@@ -402,11 +403,13 @@ class HermesMemoryHost(Adapter):
         kept, seen = {}, set()
 
         def owns(hit, row_id):
+            if row_id in seen:  # each row is decided once per call, however many searches return it
+                return False
+            seen.add(row_id)
             exact = {i for i, text in written.items() if text == hit}
             if exact:
-                if row_id in seen or not exact & selected:
+                if not exact & selected:
                     return False
-                seen.add(row_id)
                 if kept.get(hit, 0) < len(exact - selected):
                     kept[hit] = kept.get(hit, 0) + 1
                     self.forget_ambiguous += 1
@@ -424,17 +427,22 @@ class HermesMemoryHost(Adapter):
             if not search and any(value == text and i not in selected for i, value in written.items()):
                 self.forget_ambiguous += 1
                 continue
-            values = [text]
-            if search:
-                raw = self._call("tool", name=search, arguments={**args, query: text})["result"]
-                try:
-                    result = json.loads(raw)
-                    values = [] if result.get("error") else [r[id_key] for r in result.get(listing, []) if isinstance(r.get(text_key), str)
-                              and r[text_key] and owns(r[text_key], r[id_key])]
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    values = []
-            for value in values:
-                self._call("tool", name=delete, arguments={**fixed, key: value})
+            # A backend's result page can hide matching rows until deletes free room, so search again
+            # while the last pass deleted a row; rows already decided are skipped.
+            for _ in range(FORGET_PASSES):
+                values = [text]
+                if search:
+                    raw = self._call("tool", name=search, arguments={**args, query: text})["result"]
+                    try:
+                        result = json.loads(raw)
+                        values = [] if result.get("error") else [r[id_key] for r in result.get(listing, []) if isinstance(r.get(text_key), str)
+                                  and r[text_key] and owns(r[text_key], r[id_key])]
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        values = []
+                for value in values:
+                    self._call("tool", name=delete, arguments={**fixed, key: value})
+                if not search or not values:
+                    break
         for event in targets:
             del self.events[event["event_id"]]
         self.settled = False
