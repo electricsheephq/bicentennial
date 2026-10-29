@@ -11,9 +11,10 @@ from pathlib import Path
 from agent.memory_provider import MemoryProvider
 
 
-# OMEGA relates each write on an auto-relate thread. The adapter waits for it after each write
-# and again before each OMEGA call, and refuses a call that still finds one running before the
-# call reaches OMEGA, so no call overlaps a relate (omega.writes).
+# OMEGA relates each write on an auto-relate thread. The adapter runs one OMEGA call at a time,
+# waits for auto-relate after each write and again before each call, and refuses a call that
+# waits longer for the call before it or still finds a relate running before it reaches OMEGA,
+# so no call overlaps another or a relate (omega.writes).
 AUTO_RELATE_WAIT_S = 30
 
 
@@ -24,6 +25,7 @@ class OmegaProvider(MemoryProvider):
         self.store = self.embedding = None
         self.reset_memory = None
         self.reason = ""
+        self.lock = threading.Lock()
 
     def is_available(self):
         # The worker calls this before initialize: never import OMEGA here.
@@ -94,6 +96,15 @@ class OmegaProvider(MemoryProvider):
         return running
 
     def handle_tool_call(self, tool_name, args, **kwargs):
+        # A call Hermes abandoned at its tool limit keeps the lock until it ends.
+        if not self.lock.acquire(timeout=AUTO_RELATE_WAIT_S):
+            raise RuntimeError(f"another OMEGA call is still running after {AUTO_RELATE_WAIT_S} s; call refused")
+        try:
+            return self._handle(tool_name, args)
+        finally:
+            self.lock.release()
+
+    def _handle(self, tool_name, args):
         if self._relate_running():
             raise RuntimeError(f"OMEGA's auto-relate is still running after {AUTO_RELATE_WAIT_S} s; call refused")
         if tool_name == "omega_store":

@@ -46,7 +46,7 @@ def provider(tmp_path, monkeypatch):
             assert embedding.get_active_backend() == "onnx"
             self.stats_calls += 1
             assert Path(os.environ["OMEGA_HOME"]) == home / "plugin-data/omega"
-            self.db = sqlite3.connect(home / "plugin-data/omega/omega.db")
+            self.db = sqlite3.connect(home / "plugin-data/omega/omega.db", check_same_thread=False)
             self.db.execute("CREATE TABLE memories(id INTEGER PRIMARY KEY, node_id TEXT, content TEXT)")
             self.db.execute("CREATE TABLE forgetting_log(preview TEXT)")
             self.thread = NS(name="omega-deferred-init", alive=True)
@@ -199,6 +199,32 @@ def test_a_running_relate_refuses_calls_before_omega(provider):
     api.stuck = False  # once the relate finishes, calls reach OMEGA again
     assert manager("omega_store", {"content": "second"}) == {"id": 82, "outcome": "stored"}
     assert api.events[5:] == ["join 30", "store", "join 30"]
+
+
+def test_one_omega_call_at_a_time(provider, monkeypatch):
+    p, home, _, embedding = provider
+    api = embedding.api
+    p.initialize("s1", hermes_home=home)
+    monkeypatch.setitem(type(p).handle_tool_call.__globals__, "AUTO_RELATE_WAIT_S", 0.05)
+    entered, release, store = threading.Event(), threading.Event(), p.store
+
+    def abandoned_store(content, **kwargs):  # still inside OMEGA after Hermes gave up on the call
+        entered.set()
+        assert release.wait(5)
+        return store(content, **kwargs)
+    p.store = abandoned_store
+    first = threading.Thread(target=p.handle_tool_call, args=("omega_store", {"content": "first"}))
+    first.start()
+    assert entered.wait(5)
+    p.store = store
+    with pytest.raises(RuntimeError, match="^another OMEGA call is still running after 0.05 s; call refused$"):
+        p.handle_tool_call("omega_query", {"query": "first"})
+    assert api.queries == [] and api.events == []
+    release.set()
+    first.join(5)
+    assert api.events == ["store", "join 0.05"]
+    assert json.loads(p.handle_tool_call("omega_query", {"query": "first"})) == {"results": [
+        {"id": 41, "content": "first"}]}
 
 
 def test_availability_and_backend_refusal(provider, monkeypatch):
