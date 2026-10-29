@@ -12,7 +12,7 @@ surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-disco
 # Measured 2026-10-27: the T0 memory-layer host's fresh-install hash (RING0 §13 E4 port mask), equal on two director ports.
 fresh_install_hash = "90b51b1eea5b9cf18300baebafe78eaa5547fe00a3531a4a1875c7fdbf8b07a8"
 own_model_routes = [
-    {role = "compaction", alias = "bicentennial-compaction"},
+    {role = "compaction", alias = "bicentennial-summariser"},
     {role = "summariser", alias = "bicentennial-summariser"},
 ]
 structured_formats = {}

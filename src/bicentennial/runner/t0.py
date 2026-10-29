@@ -82,7 +82,16 @@ from bicentennial.score.invariants import (
     adapter_invariant,
     run_invariants,
 )
-from bicentennial.systems.hermes_plugin import PROVIDERS, worker_properties
+from bicentennial.systems.hermes_plugin import (
+    ENGINES,
+    PROVIDERS,
+    cache_digest,
+    is_plugin,
+    prepare_cache,
+    resolve_worker_env,
+    validate_maps,
+    worker_properties,
+)
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.targeted import MicroSpec, micro_schedule
@@ -591,7 +600,7 @@ def _baseline_context(pack, baseline, results):
 
 
 def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", hermes=None,
-               plugin_source=None, entry=None, host_overrides=None):
+               plugin_source=None, entry=None, host_overrides=None, model_cache=None):
     """Resolve all selected and baseline packs before constructing any adapter."""
     if mode != "api":
         raise T0Refused("mode_unavailable:" + mode)
@@ -610,6 +619,12 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
             raise T0Refused("harness_not_hermes")
     else:
         entry = dict(name=system, surfaces=[])
+    validate_maps()
+    if system in ENGINES and system not in PROVIDERS:
+        raise T0Refused("no_t0_surface:context_engine")
+    from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
+    if real and entry["settle"]["kind"] == "hook" and system not in SETTLE_THREADS:
+        raise T0Refused("settle_unmapped")
     marker = read_marker()
     admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=workers)
     if not admission.admitted:
@@ -627,12 +642,15 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
     all_packs = {rel: _Pack(Path(packs), rel) for rel in paths}
     by_row = {p.meta["row"]["id"]: p for p in all_packs.values()}
     options = {}
+    model_cache, model_cache_sha256 = prepare_cache(system, model_cache, T0Refused)
     if real:
         harness_pin = load(REGISTRY / "hermes-native.toml")["artifact"]
         options = dict(checkout=hermes, plugin_source=plugin_source, harness_pin=harness_pin)
         options.update(host_overrides or {})
-        if options["checkout"] is None or system in PROVIDERS and plugin_source is None:
+        if options["checkout"] is None or is_plugin(system) and plugin_source is None:
             raise T0Refused("missing_input")
+        options.update(extra_env=resolve_worker_env(system, model_cache),
+                       model_cache=model_cache, model_cache_sha256=model_cache_sha256)
         if index["harness_artifacts"] != [harness_pin]:
             raise T0Refused("harness_artifact_mismatch")
         options["run_properties"] = worker_properties(system, options["checkout"], REPO, "t0", T0Refused,
@@ -738,6 +756,10 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
                                               if v["invariant"] == "INV-FORGET")),
         ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode"),
         *stub_disclosures(entry, "t0")]
+    if entry["name"] in ENGINES:
+        extra.append(("t0.engine", "context engine not loaded at T0 (memory-layer host)"))
+    if audit.get("model_cache_sha256") is not None:
+        extra.append(("t0.model_cache", "sha256:" + audit["model_cache_sha256"]))
     extra.extend(properties)
     if entry["name"] == "hermes-native":
         extra.append(("t0.injection", "The session-start memory snapshot is read; other harness prompt injection "
@@ -827,6 +849,8 @@ class _Publication:
 def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication):
     index, selected, by_row, entry, marker, admission, options, bound_s = prepared
     options = dict(options)
+    model_cache = options.pop("model_cache", None)
+    model_cache_sha256 = options.pop("model_cache_sha256", None)
     properties = options.pop("run_properties", ())
     (pack_root,) = {Path(p.rel).parts[0] for p in selected}
     run_start = time.time_ns() // 1_000_000
@@ -879,6 +903,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                         audit["tokens"][role] = tuple(a + b for a, b in zip(before, values, strict=True))
                     for role, ms in sorted(extra["runtime"].items()):
                         audit["runtime"][role] = audit["runtime"].get(role, 0) + ms
+                audit["model_cache_sha256"] = model_cache_sha256
                 controls = _controls(pack, index, cache)
                 reports[pack.rel] = _report_pack(pack, entry, locks[pack.rel], outcomes,
                     verdicts, adapter, controls, audit, out, marker, start, properties=properties)
@@ -891,6 +916,8 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                 raise SpendRefused(report["receipt"]["spend_micro_usd"])
         for pack in selected:
             verify(packs_dir, pack_hash=pack_hash, lock=locks[pack.rel], expected_lock=locks[pack.rel])
+        if model_cache is not None and cache_digest(model_cache, T0Refused) != model_cache_sha256:
+            raise T0Refused("model_cache_changed")
         staging = publication.begin()
         for rel, report in sorted(reports.items()):
             directory = staging / rel
@@ -914,7 +941,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
 
 
 def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
-           hermes=None, plugin_source=None, cache=None, entry=None, host_overrides=None):
+           hermes=None, plugin_source=None, model_cache=None, cache=None, entry=None, host_overrides=None):
     """Run verified offline packs, returning Ring 0's 0/1/2/3/70 exit code."""
     created, published, publication = False, False, None
     try:
@@ -926,7 +953,7 @@ def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
                 raise T0Refused("out_exists")
             prepared = _preflight(system=system, packs=packs_dir, selected=packs, pack_hash=pack_hash,
                 workers=workers, mode=mode, hermes=hermes, plugin_source=plugin_source,
-                entry=entry, host_overrides=host_overrides)
+                entry=entry, host_overrides=host_overrides, model_cache=model_cache)
             out.mkdir(parents=True)
             created = True
             publication = _Publication(out)

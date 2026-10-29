@@ -11,8 +11,8 @@ recall = {tool = "session_search", argument_template = {query = "{prompt}"}}
 surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = []}]
 fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
 own_model_routes = [
-    {role = "compaction", alias = "https://api.example.com/v1"},
-    {role = "summariser", alias = "bicentennial-summariser"},
+    {role = "compaction", alias = "bicentennial-summariser"},
+    {role = "summariser", alias = "https://api.example.com/v1"},
 ]
 structured_formats = {}
 settle = {kind = "none", bound_s = 0}

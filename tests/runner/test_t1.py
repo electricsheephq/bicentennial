@@ -978,3 +978,28 @@ def test_scoring_refusals_are_not_act_state(policy, monkeypatch, kind):
             act=run.act[iid], case=pack.cases[iid], scoring_evidence=None, keys=pack.keys[iid],
             stored_roots=None, retained_roots=None, attempt=0)
     assert caught.value is error
+
+
+def test_engine_relabel_and_model_env(policy, monkeypatch, tmp_path):
+    from bicentennial.systems import hermes_plugin as hp
+
+    name = "fixture-engine"
+    monkeypatch.setitem(hp.ENGINES, name, "fixture_engine")
+    monkeypatch.setitem(hp.WORKER_ENV, name, {"MODEL_HOME": "{model_cache}/models"})
+    ctx = replace(policy.ctx, entry=dict(policy.ctx.entry, name=name), model_cache=tmp_path,
+                  plugin_source=tmp_path / "source", roots=1)
+    pack, seen = ctx.packs[0], []
+    floor = replace(policy.cache[pack.life, "no_memory", "B0"],
+                    stopped=("SYSTEM_FAILURE", "turn_timeout", 21))
+
+    def drive(**kw):
+        seen.append(kw)
+        return replace(policy.cache[pack.life, kw["arm"], "B0"],
+            stopped=("SYSTEM_FAILURE", "turn_timeout", 21), stored_roots={}, retained_roots={}, _root=None)
+
+    monkeypatch.setattr(t1, "run_life", drive)
+    for arm in ("system", "wiped", "no_memory"):
+        unit, _, _ = t1._unit(ctx, pack, arm, "B0", tmp_path, t1.Voids(), floor)
+        assert unit.stop_reclassified is (arm != "no_memory")
+        assert seen[-1]["extra_env"] == (None if arm == "no_memory" else {"MODEL_HOME": str(tmp_path / "models")})
+        assert seen[-1]["plugin_source"] == (None if arm == "no_memory" else ctx.plugin_source)
