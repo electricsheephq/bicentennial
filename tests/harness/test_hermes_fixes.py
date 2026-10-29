@@ -348,6 +348,15 @@ def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
     monkeypatch.setattr(egress, "PLATFORM", platform)
     monkeypatch.setattr(egress, "_out", output)
     assert not egress.loopback("*:*")
+    # Pid 40 holds only unbound TCP and UDP sockets, so on macOS it has no endpoint and no command lookup
+    alone = egress.Egress()
+    alone.add(40)
+    alone.sample()
+    unbound = [] if platform == "darwin" else ["*:*"]
+    assert alone.summary() == dict(samples=1, per_pid_samples={"40": 1}, rss_peak_kib=8, non_loopback=unbound,
+        non_loopback_seen=[f"egress name={name} pid=40 comm=worker40 samples=1" for name in unbound])
+    assert commands == ([] if platform == "darwin" else [40])
+    commands.clear()
     sampler.add(40)
     sampler.add(41)
     sampler.sample()
