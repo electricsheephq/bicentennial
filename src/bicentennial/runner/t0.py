@@ -32,6 +32,7 @@ from bicentennial.controls.cache import (
 )
 from bicentennial.director.routes import RouteTable, route_table_hash
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
+from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import (
     ENTRYPOINT,
@@ -130,7 +131,7 @@ def _json(path):
 def _commit():
     try:
         return subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], check=True,
-                              capture_output=True, text=True).stdout.strip()
+                              capture_output=True, text=True, env=git_env()).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         raise T0Refused("benchmark_commit") from None
 

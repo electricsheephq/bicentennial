@@ -16,9 +16,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--paths", nargs="+", default=[])
     args = parser.parse_args()
+    env = os.environ.copy()
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+        env.pop(name, None)
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "--", *args.paths],
-        check=True, stdout=subprocess.PIPE,
+        check=True, stdout=subprocess.PIPE, env=env,
     ).stdout
     paths = [os.fsdecode(path) for path in tracked.split(b"\0") if path]
     deny_file = os.environ.get("BICENTENNIAL_DENY_LIST")

@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 
 from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_listing
+from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.config import (
     _PASSED,
@@ -247,15 +248,17 @@ class PluginCell:
 
     def install(self, source, *, alias, context=True) -> str:
         git = ["git", "-C", str(source)]
+        env = git_env()
         recipe = TREES[self.entry["name"]]
         digest = sha256()
         with tempfile.TemporaryFile() as archive:
             with subprocess.Popen([*git, "archive", "--format=tar", *recipe],
-                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env) as proc:
                 for chunk in iter(lambda: proc.stdout.read(1 << 20), b""):
                     digest.update(chunk)
                     archive.write(chunk)
-            status = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"], capture_output=True)
+            status = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"],
+                                    capture_output=True, env=env)
             if proc.returncode or digest.hexdigest() != self.entry["artifact"]["sha256"]:
                 raise PinMismatch("plug-in archive differs from the pin")
             if status.returncode or status.stdout.strip():

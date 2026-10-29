@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bicentennial.gitenv import git_env
+
 # The runners load schema-backed contracts at import, so they load only after the source-checkout check.
 REPO = Path(__file__).resolve().parents[2]
 
@@ -47,7 +49,7 @@ def _source_checkout(root) -> bool:
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=git_env(),
         )
         return result.returncode != 0 or os.path.samefile(result.stdout.strip(), root)
     except OSError:

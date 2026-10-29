@@ -44,6 +44,16 @@ from bicentennial.world.schedule import build_schedule
 FAKE = Path(__file__).with_name("fake_life_worker.py")
 
 
+def test_commit_ignores_git_location_variables(git_checkouts, monkeypatch):
+    monkeypatch.setattr(t1, "REPO", git_checkouts.checkout)
+    clean = t1._commit()
+    assert clean == git_checkouts.head
+    assert clean != git_checkouts.other_head
+    for name, value in git_checkouts.conflict.items():
+        monkeypatch.setenv(name, value)
+    assert t1._commit() == clean
+
+
 def measured(name="hermes-native"):
     entry = load(REGISTRY / f"{name}.toml")
     for field in ("sha256",):

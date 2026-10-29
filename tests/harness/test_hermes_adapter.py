@@ -256,6 +256,17 @@ def test_probe_finals_are_returned(tmp_path):
     assert results[1].finals == ((1, "probe answer 1"), (2, "probe answer 2"))
 
 
+def test_verify_pin_ignores_git_location_variables(git_checkouts, monkeypatch):
+    pin = {"sha256": sha256(git_checkouts.archive).hexdigest()}
+    clean = adapter.verify_pin(git_checkouts.checkout, pin)
+    assert clean == git_checkouts.head
+    assert clean != git_checkouts.other_head
+    (git_checkouts.other / "README").write_text("Unrelated tracked changes.\n")
+    for name, value in git_checkouts.conflict.items():
+        monkeypatch.setenv(name, value)
+    assert adapter.verify_pin(git_checkouts.checkout, pin) == clean
+
+
 def test_a_plugin_entry_runs_on_the_harness_pin(tmp_path, monkeypatch):
     """A1: the pin checked is the harness's own (here a stand-in git checkout), not the plug-in's artifact."""
     repo = tmp_path / "harness"

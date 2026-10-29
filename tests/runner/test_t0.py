@@ -33,6 +33,16 @@ from bicentennial.systems.registry import REGISTRY, ZERO_HASH, load
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_commit_ignores_git_location_variables(git_checkouts, monkeypatch):
+    monkeypatch.setattr(t0, "REPO", git_checkouts.checkout)
+    clean = t0._commit()
+    assert clean == git_checkouts.head
+    assert clean != git_checkouts.other_head
+    for name, value in git_checkouts.conflict.items():
+        monkeypatch.setenv(name, value)
+    assert t0._commit() == clean
+
+
 @pytest.fixture(scope="module")
 def installed(tmp_path_factory):
     root = tmp_path_factory.mktemp("t0-installed")

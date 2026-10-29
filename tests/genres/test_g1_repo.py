@@ -265,7 +265,8 @@ def test_config_isolation(tmp_path, monkeypatch, boundaries):
     config.mkdir(parents=True)
     (config / "ignore").write_text("*.md\n")
     (config / "attributes").write_text("* text eol=crlf\n")
-    for key, value in {"HOME": str(home), "GIT_DIR": "unrelated", "GIT_TEMPLATE_DIR": "unrelated",
+    for key, value in {"HOME": str(home), "GIT_DIR": "unrelated", "GIT_WORK_TREE": "unrelated",
+                       "GIT_INDEX_FILE": "unrelated", "GIT_COMMON_DIR": "unrelated", "GIT_TEMPLATE_DIR": "unrelated",
                        "GIT_AUTHOR_NAME": "Unrelated", "XDG_CONFIG_HOME": str(home / ".config")}.items():
         monkeypatch.setenv(key, value)
     _, db, schedule, _, builds = boundaries[0]
