@@ -579,7 +579,7 @@ def test_adapter_failure_labels_are_named():
 @pytest.mark.parametrize("label,cls", [
     ("turn_timeout", "SYSTEM_FAILURE"), ("end_timeout", "SYSTEM_FAILURE"),
     ("startup_timeout", "INFRA_FAILURE"), ("open_timeout", "INFRA_FAILURE"),
-    ("worker_start", "INFRA_FAILURE"),
+    ("worker_start", "INFRA_FAILURE"), ("admission_deadline", "INFRA_FAILURE"),
 ])
 def test_worker_failure_mappings(label, cls):
     assert dict(CAUSES)[label] == cls
