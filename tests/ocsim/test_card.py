@@ -127,6 +127,9 @@ def test_percentage_exact(ppm, expected):
 def test_gaussian_disclosure_and_cells(payload):
     results, manifest = payload
     data = results["points"][0]["alternatives"]["LITERAL"]
+    results["points"].append({**results["points"][0], "n_L": 32, "b": 200,
+        "alternatives": {"LITERAL": {**data, "cases": {
+            c: dict(d) for c, d in data["cases"].items()}}}})
     data["gaussian_se_p95"] = "1234/1000"
     cases = data["cases"]
     for margin, flagged in (("m0", True), ("m10", False)):
@@ -139,7 +142,9 @@ def test_gaussian_disclosure_and_cells(payload):
     section = text.split("## Gaussian cross-check\n")[1].split("## Ladder status")[0]
     assert "report-only and never changes a verdict (#245, decision 1)" in section
     assert "ideal schedule, no drift, unclipped scores, and the delta-approximated bundle variance" in section
-    assert "1 of 2 drift-free base cases disjoint" in section
+    assert "no coverage or admission gate" in section
+    assert "1 of 2 bracketed drift-free base cases disjoint" in section
     assert "LITERAL|base|none|m0 at n_L=24, b=150" in section
     assert "LITERAL|base|none|m10" not in section
-    assert "Alternatives with no bracket: ALL_UNITS, PRE_SWAP, SWAP_GATE." in section
+    assert ("Pairs with no bracket: (ALL_UNITS, n_L=24, b=150), (LITERAL, n_L=32, b=200), "
+            "(PRE_SWAP, n_L=24, b=150), (SWAP_GATE, n_L=24, b=150).") in section

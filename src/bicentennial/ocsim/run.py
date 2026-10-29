@@ -1058,6 +1058,8 @@ def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
                     phases.append(p2)
                     _sum_counts(counts, p2["counts"])
         table = _case_table(counts, inputs.required, budgets)
+        prediction_cache = {}
+        swaps = tuple(life.swap for life in inputs.lives[:n])
         for a in alternatives:
             cases = {c: row for c, row in table.items() if c.startswith(a + "|")}
             passed = bounds[a] is not None and all(
@@ -1066,9 +1068,13 @@ def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
                 "se_bound": _half(bounds[a]), "se_bound_pooled": _half(pooled[a]),
                 "verdict": "SCREENED_OUT" if a in screened else "PASS" if passed else "FAIL",
                 "cases": cases}
-            predictions = {m.name: gaussian.predict(
-                inputs.params, point, inputs.alloc_by_b[b], dict(m.margins), a,
-                swaps=tuple(life.swap for life in inputs.lives[:n])) for m in grid.values()}
+            scope = ("PRE_SWAP", swaps) if a == "PRE_SWAP" else ("all",)
+            key = (scope, bounds[a])
+            if key not in prediction_cache:
+                prediction_cache[key] = {m.name: gaussian.predict(
+                    inputs.params, point, inputs.alloc_by_b[b], dict(m.margins), a,
+                    se_bound=bounds[a], swaps=swaps) for m in grid.values()}
+            predictions = prediction_cache[key]
             for case, row in cases.items():
                 _, kind, drift_name, margin = case.split("|")
                 prediction = predictions[margin]

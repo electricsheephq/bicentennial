@@ -9,6 +9,7 @@ run manifest records that platform. No float escapes predict().
 """
 
 import math
+from functools import cache
 from statistics import NormalDist
 
 from bicentennial.ocsim import model
@@ -66,32 +67,41 @@ def bracket(marginals):
 
 
 def bundle_variance(cell, params, margin):
+    return _cached_bundle_variance(cell, params.rho_t, params.sigma_d2, margin)
+
+
+@cache
+def _cached_bundle_variance(cell, rho_t, sigma_d2, margin):
+    return _bundle_variance(cell, rho_t, sigma_d2, margin)
+
+
+def _bundle_variance(cell, rho_t, sigma_d2, margin):
     lam = model.interpolation(cell, margin)
     targets = (cell.f0, cell.c0, cell.f0 + lam * (cell.c0 - cell.f0))
-    locations = [model.solve_location(cell, params.rho_t, t) for t in targets]
+    locations = [model.solve_location(cell, rho_t, t) for t in targets]
     weights = (-0.5, -0.5, 1.0)
     variances = []
     for theta, target in zip(locations, targets, strict=True):
         second = cell.levels[0] ** 2
         if not isinstance(theta, str):
             second += sum((hi * hi - lo * lo) * model.phi2(theta - c, theta - c,
-                          params.rho_t) for lo, hi, c in zip(
+                          rho_t) for lo, hi, c in zip(
                               cell.levels[:-1], cell.levels[1:], cell.cuts, strict=True))
         else:
             second = target * target
         variances.append(max(0, second - target * target))
     value = sum(w * w * v for w, v in zip(weights, variances, strict=True))
-    if params.sigma_d2:
-        scale = math.sqrt(1 - params.sigma_d2)
-        rho = max(-1, min(1, (params.rho_t - params.sigma_d2) / scale ** 2))
+    if sigma_d2:
+        scale = math.sqrt(1 - sigma_d2)
+        rho = max(-1, min(1, (rho_t - sigma_d2) / scale ** 2))
 
         def cross(g, i, j):
             means = []
             for a in (i, j):
                 theta = locations[a]
                 means.append(targets[a] if isinstance(theta, str) else cell.levels[0] + sum(
-                    (hi - lo) * model.phi2((theta + math.sqrt(params.sigma_d2) * g - c) / scale,
-                    (theta + math.sqrt(params.sigma_d2) * g - c) / scale, rho)
+                    (hi - lo) * model.phi2((theta + math.sqrt(sigma_d2) * g - c) / scale,
+                    (theta + math.sqrt(sigma_d2) * g - c) / scale, rho)
                     for lo, hi, c in zip(cell.levels[:-1], cell.levels[1:], cell.cuts, strict=True)))
             return (means[0] - targets[i]) * (means[1] - targets[j]) * NORMAL.pdf(g)
 
@@ -120,9 +130,9 @@ def moments(params, alloc, margins):
     return [float(margins[c.cell]) for c in cells], covariance
 
 
-def predict(params, point, alloc, margins, alternative, *, swaps=()):
+def predict(params, point, alloc, margins, alternative, *, se_bound=math.inf, swaps=()):
     n, _ = point
-    if n < 2:
+    if n < 2 or se_bound is None:
         return None
     if alternative == "PRE_SWAP":
         # Unequal per-pair allocations are heteroscedastic, outside this t model.
@@ -144,9 +154,13 @@ def predict(params, point, alloc, margins, alternative, *, swaps=()):
 
     # Wild-bootstrap SE uses divisor n, giving sqrt(n-1)/n times population SD.
     ses = [math.sqrt(v * (n - 1)) / n for v in variances]
+    def se_cdf(value, se):
+        return NORMAL.cdf(((value / se) ** (2 / 3) - 1 + 2 / (9 * (n - 1)))
+                          / math.sqrt(2 / (9 * (n - 1)))) if se else 1.0
+
+    gates = [se_cdf(float(se_bound), se) for se in ses]
     def pooled_cdf(value):
-        return sum(NORMAL.cdf(((value / se) ** (2 / 3) - 1 + 2 / (9 * (n - 1)))
-                   / math.sqrt(2 / (9 * (n - 1)))) if se else 1 for se in ses) / len(ses)
+        return sum(se_cdf(value, se) for se in ses) / len(ses)
     low, high = 0.0, max(ses) * 10
     for _ in range(48):
         mid = (low + high) / 2
@@ -154,8 +168,9 @@ def predict(params, point, alloc, margins, alternative, *, swaps=()):
             low = mid
         else:
             high = mid
-    return {"gaussian_ppm": bracket(probabilities(critical)),
-            "uncalibrated_ppm": bracket(probabilities(NORMAL.inv_cdf(0.95))),
+    return {"gaussian_ppm": bracket(probabilities(critical) + gates),
+            "uncalibrated_ppm": bracket(probabilities(NORMAL.inv_cdf(0.95)
+                                                       * math.sqrt((n - 1) / n)) + gates),
             "cell_se": {c.cell: f"{math.ceil(se * 1000)}/1000" for c, se in zip(
                 [c for c in params.cells if c.cell in margins], ses, strict=True)},
             "gaussian_se_p95": f"{math.ceil(high * 1000)}/1000"}

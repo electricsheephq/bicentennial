@@ -32,7 +32,8 @@ def test_variance_keyed_pairs():
     assert abs(observed / sigma[0][0] - 1) <= 0.05, (observed, sigma)
 
 
-def test_end_to_end_wilson_overlap(monkeypatch):
+@pytest.mark.parametrize("binding", [False, True])
+def test_end_to_end_wilson_overlap(monkeypatch, binding):
     raw = tiny_raw()
     raw["lives"] = [{**raw["lives"][1], "life": f"p{i}"} for i in range(24)]
     raw["probe_only"]["anchor_tokens"] = {life["life"]: 0 for life in raw["lives"]}
@@ -48,10 +49,17 @@ def test_end_to_end_wilson_overlap(monkeypatch):
     # At the central-t critical effect size, power is near one half.
     _, sigma = g.moments(inputs.params, inputs.alloc_by_b[50], {"X": 0})
     margin = Fraction(str(g.t95(23) * math.sqrt(sigma[0][0] / 24)))
-    prediction = g.predict(inputs.params, (24, 50), inputs.alloc_by_b[50], {"X": margin}, "LITERAL")
+    if binding:
+        margin = Fraction(15)
+    _, sigma = g.moments(inputs.params, inputs.alloc_by_b[50], {"X": margin})
+    bound = Fraction(str(math.sqrt(sigma[0][0] * 23) / 24 * (1 - 2 / 207) ** 1.5)) if binding else Fraction(1000)
+    prediction = g.predict(inputs.params, (24, 50), inputs.alloc_by_b[50], {"X": margin},
+                           "LITERAL", se_bound=bound)
     lo, hi = prediction["gaussian_ppm"]
     assert 300_000 < lo <= hi < 700_000 and hi - lo <= 20_000
-    ctx = run.PointContext(inputs, config, (24, 50), bounds={"LITERAL": Fraction(1000)})
+    if binding:
+        assert 499_999 <= hi <= 500_001
+    ctx = run.PointContext(inputs, config, (24, 50), bounds={"LITERAL": bound})
     monkeypatch.setattr(run, "audit_selected", lambda rep: False)
     ctx.phase = "cross-check"
     case = "LITERAL|base|none|interior"
@@ -79,7 +87,7 @@ def test_bracket_algebra(ps, expected):
     assert g.bracket(ps) == expected
 
 
-def test_integer_output_and_scopes():
+def test_integer_output_and_scopes(monkeypatch):
     params, alloc = design(), {("X", 2): 10, ("X", 3): 30}
     prediction = g.predict(params, (24, 40), alloc, {"X": 5}, "LITERAL")
     def check(value):
@@ -97,6 +105,22 @@ def test_integer_output_and_scopes():
     assert pre == g.predict(params, (24, 10), {("X", 2): 10}, {"X": 5}, "LITERAL")
     assert pre != prediction
     assert g.predict(params, (24, 40), alloc, {"X": 5}, "PRE_SWAP", swaps=(2, 3)) is None
+    # df=1: P(t > c) = 1/2 - atan(c)/pi; wild SE is s/sqrt(n)*sqrt((n-1)/n).
+    monkeypatch.setattr(g, "moments", lambda *args: ([0.0], [[1.0]]))
+    hand = g.predict(params, (2, 40), alloc, {"X": 0}, "LITERAL")["uncalibrated_ppm"]
+    ppm = 1e6 * (0.5 - math.atan(1.6448536269514722 / math.sqrt(2)) / math.pi)
+    assert hand == [math.floor(ppm), math.ceil(ppm)]
+
+
+def test_se_bound_median_and_nonbinding():
+    params, alloc, margins = design(), {("X", 2): 100}, {"X": 10}
+    _, sigma = g.moments(params, alloc, margins)
+    median = math.sqrt(sigma[0][0] * 23) / 24 * (1 - 2 / 207) ** 1.5
+    old = g.predict(params, (24, 100), alloc, margins, "LITERAL")
+    bound = g.predict(params, (24, 100), alloc, margins, "LITERAL", se_bound=median)
+    assert old["gaussian_ppm"][0] > 900_000
+    assert 499_999 <= bound["gaussian_ppm"][1] <= 500_001
+    assert old == g.predict(params, (24, 100), alloc, margins, "LITERAL", se_bound=1000)
 
 
 def test_cell_se_names_follow_the_cells():

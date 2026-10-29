@@ -94,17 +94,20 @@ def render(manifest: dict, results: dict) -> str:
                       "Worst cases per criterion:", "", *_table(_worst(data["cases"])),
                       "", "Full case table:", "", *_table(sorted(data["cases"].items()))]
     base = [(p, c, d) for p in results["points"] for a in p["alternatives"].values()
-            for c, d in a["cases"].items() if c.split("|")[1:3] == ["base", "none"]]
+            for c, d in a["cases"].items() if c.split("|")[1:3] == ["base", "none"]
+            and "gaussian_ppm" in d]
     flagged = [(p, c) for p, c, d in base if d.get("gaussian_disjoint", False)]
-    missing = sorted({a for p in results["points"] for a, data in p["alternatives"].items()
+    missing = sorted({(a, p["n_L"], p["b"]) for p in results["points"]
+                      for a, data in p["alternatives"].items()
                       if "gaussian_se_p95" not in data})
     lines += ["", "## Gaussian cross-check", "",
               "The bracket is report-only and never changes a verdict (#245, decision 1).",
               "Idealisations: ideal schedule, no drift, unclipped scores, and the "
-              "delta-approximated bundle variance.",
-              f"{len(flagged)} of {len(base)} drift-free base cases disjoint.",
+              "delta-approximated bundle variance; no coverage or admission gate.",
+              f"{len(flagged)} of {len(base)} bracketed drift-free base cases disjoint.",
               *(f"- {c} at n_L={p['n_L']}, b={p['b']}" for p, c in flagged),
-              *( ["Alternatives with no bracket: " + ", ".join(missing) + "."] if missing else [])]
+              *(["Pairs with no bracket: " + ", ".join(
+                  f"({a}, n_L={n}, b={b})" for a, n, b in missing) + "."] if missing else [])]
     lines += ["", "## Ladder status", "", "| n_L | b | Status | Pinned reserve | Swap reserve |",
               "|---:|---:|---|---:|---:|"]
     for point in results["points"]:
