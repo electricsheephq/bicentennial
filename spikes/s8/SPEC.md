@@ -42,7 +42,7 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 8. **Gist and detail as descriptive tags.** Any representation that keeps the information earns credit; the design principle is the unforeseen later question. For each question, record whether the text-mode description retained the asked value. This measures how often a description keeps a detail; it is not a pass rule.
 
 ## What it measures
-- Routing works in each mode and channel: yes or no, with the request ledger. A pair routes only when a session-2 image request has a known role, at least one matched image-bearing request succeeds after normalised retries, and the pair's next main or write-turn request is answered 200.
+- Routing works in each mode and channel: yes or no, with the request ledger. A pair routes only when a session-2 image request has a known role, a matched image-bearing request reaches a live model successfully after normalised retries, and the pair's next main or write-turn request is answered 200.
 - Direct-evidence accuracy per mode, which measures perception, and the N/A_READER count.
 - Delayed accuracy after 4 sessions per mode, against the no-memory floor, naive RAG, stylistically matched twins and shuffled history.
 - Detail retention in text-mode descriptions: the share of asked values present in the description.

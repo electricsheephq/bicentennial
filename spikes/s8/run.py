@@ -719,9 +719,14 @@ def summarise(scratch, fidelity=None):
                 answered = any(r["status"] == 200 and r["role"] in ("replay_main", "write_turn") and
                                (r.get("cursor") or {}) == {"session": 2, "turn": turn_n} and
                                r["seq"] >= min((m["seq"] for m in matched), default=10**12) for r in requests)
-                # The ledger status is final after provider retries. Float-normalised
-                # retries already enter matched through the image/hash logic above.
-                perceived = any(rec["status"] == 200 for rec in matched)
+                # Vision status is final after retries; scripted main replies can
+                # still be 200 when their live write turn failed.
+                perceived = any(
+                    ((rec["role"], rec["subrole"]) == ("aux", "vision") and rec["status"] == 200) or
+                    (rec["role"] in ("replay_main", "write_turn") and "write_turn_failed" not in rec and
+                     any(d.get("kind") == "try" and d.get("status") == 200
+                         for up in rec.get("upstream", []) for d in up.get("diagnostics", [])))
+                    for rec in matched)
                 pair["lives"].append(bool(matched) and answered and perceived)
                 pair["routed"] = all(pair["lives"])
     for mode, view in result["modes"].items():

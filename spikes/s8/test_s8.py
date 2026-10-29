@@ -858,6 +858,60 @@ def test_image_routes_after_normalised_retry_only_when_successful(tmp_path, rout
     assert pair["requests"] == {"aux/vision": 2 if retry == "refused_float" else 1}
 
 
+@pytest.fixture
+def native_routing_evidence(tmp_path, routing_evidence):
+    records, blobs = routing_evidence
+    root = tmp_path / "p08-text-s8-life-00-M"
+    native_root = tmp_path / "p08-native-s8-life-00-M"
+    root.rename(native_root)
+    receipt = json.loads((native_root / "receipt.json").read_bytes())
+    receipt["mode"] = "native"
+    (native_root / "receipt.json").write_bytes(canon(receipt))
+    # Native images travel on main requests whose outward reply is scripted 200.
+    records[:] = records[::2]
+    for turn_n, record in enumerate(records, 1):
+        status = 200 if turn_n == 1 else 503
+        record.update(seq=turn_n, role="replay_main", subrole="cursor", status=200, served="script",
+                      cursor={"session": 2, "turn": turn_n}, upstream=[{
+                          "role": "write_turn", "status": status, "served_by": "live", "diagnostics": [
+                              {"kind": "try", "try": 1, "status": status, "sent": True,
+                               "reserved": 0, "charged": 0}]}])
+        if status != 200:
+            record["write_turn_failed"] = "status_503"
+    return records, blobs
+
+
+@pytest.mark.parametrize("role", ("replay_main", "write_turn"))
+def test_native_image_routes_only_after_successful_live_attempt(tmp_path, native_routing_evidence, role):
+    records, _ = native_routing_evidence
+    image = records[1]
+    image["role"] = role
+
+    def channels():
+        return run.summarise(tmp_path)["modes"]["native"]["channels"]
+
+    failed = channels()
+    assert image["status"] == 200 and image["write_turn_failed"] == "status_503"
+    assert failed["attachment"]["routed"] is True
+    assert failed["workspace"]["lives"] == [False]
+    assert failed["workspace"]["routed"] is False
+    # Absence of a failure flag alone cannot establish successful perception.
+    del image["write_turn_failed"]
+    assert channels()["workspace"]["routed"] is False
+    upstream = image["upstream"][0]
+    upstream["status"] = 200
+    upstream["diagnostics"].append({"kind": "try", "try": 2, "status": 200, "sent": True,
+                                    "reserved": 0, "charged": 0})
+    successful = channels()["workspace"]
+    assert successful["lives"] == [True] and successful["routed"] is True
+    assert successful["requests"] == {f"{role}/cursor": 1}
+    image["write_turn_failed"] = "status_503"
+    assert channels()["workspace"]["routed"] is False
+    del image["write_turn_failed"]
+    upstream["diagnostics"] = []
+    assert channels()["workspace"]["routed"] is False
+
+
 def test_boundary_stop_rules(tmp_path):
     from types import SimpleNamespace
     state = {"identity_drift": None, "stopped": False, "spend_stopped": False, "stop_reason": None}
