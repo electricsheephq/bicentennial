@@ -445,8 +445,12 @@ def scan(login, paths, run=None) -> dict:
             raise Stop("account_changed")
     paths = list(map(Path, paths))
     for path in paths:
-        if not path.exists():
-            raise Stop("scan_path_missing")
+        try:
+            path.stat()
+        except (FileNotFoundError, NotADirectoryError):
+            raise Stop("scan_path_missing") from None
+        except OSError:
+            pass
     needles, files, hits, unreadable = login.learn_only(store), 0, {}, 0
     def walk_error(exc):
         nonlocal unreadable

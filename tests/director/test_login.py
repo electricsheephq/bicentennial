@@ -959,6 +959,29 @@ def test_scan_counts_each_unlistable_directory(home, tmp_path, monkeypatch, caps
             directory.chmod(mode)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can list mode-000 directories")
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_scan_counts_path_with_inaccessible_ancestor(home, tmp_path, monkeypatch, capsys, kind):
+    pin_entry(home)
+    blocked = tmp_path / "fake-blocked"
+    inner = blocked / "fake-inner"
+    inner.mkdir(parents=True)
+    target = inner / "fake-hidden.log"
+    target.write_text(ACCT)
+    if kind == "directory":
+        target = inner
+    mode = stat.S_IMODE(blocked.stat().st_mode)
+    try:
+        blocked.chmod(0)
+        code, result = scan_main(home, target, monkeypatch, capsys)
+        assert "refused" not in result
+        assert code == 1
+        assert result["unreadable"] == 1
+        assert result["files_scanned"] == 0 and result["hits"] == {}
+    finally:
+        blocked.chmod(mode)
+
+
 def test_scan_counts_files_once_per_label_and_escaped_needles(home, tmp_path):
     auth = login(home)
     needle = "fake-backslash\\user"
