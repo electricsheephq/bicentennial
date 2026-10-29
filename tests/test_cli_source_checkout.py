@@ -17,7 +17,7 @@ def _unexpected(*args, **kwargs):
 
 
 def _guard_runners(monkeypatch):
-    for name in ("reexec_niced", "run_t0", "run_t1"):
+    for name in ("reexec_niced", "run_t0", "run_t1", "run_build"):
         monkeypatch.setattr(cli, name, _unexpected)
 
 
@@ -68,7 +68,7 @@ def test_source_checkout_oserror_defers_to_runner(monkeypatch, operation):
     assert cli._source_checkout(t0.REPO)
 
 
-@pytest.mark.parametrize("sub", ["t0", "t1", "--bogus"])
+@pytest.mark.parametrize("sub", ["t0", "t1", "build", "--bogus"])
 def test_empty_source_checkout(tmp_path, monkeypatch, capsys, sub):
     root = tmp_path / "empty"
     root.mkdir()
