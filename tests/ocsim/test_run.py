@@ -358,24 +358,37 @@ def test_c8_hash_copy_change_missing_and_dirty(tmp_path, monkeypatch):
 
 
 def test_resume_keeps_a_pause_the_run_stopped_in(tiny_inputs, tmp_path, monkeypatch):
-    # The history is saved at each event, so a run stopped while paused, after its last checkpoint, keeps that pause
+    # Saved at each event, the history keeps the pause a run is stopped in after its last checkpoint, and the
+    # resume closes that pause as an uninterrupted run does
     config = tiny_config(alternatives=("LITERAL",), constants={**TINY_CONSTANTS, "CHUNK": 1})
-    holding, out = [False], tmp_path / "stopped"
+    holding, fired = [False], []
+
+    def pause_after_phase0(point, variant, phase):
+        if phase == "phase0" and not fired:
+            fired.append(point)
+            holding[0] = True
+
+    def release():
+        holding[0] = False
 
     def stopped():
         raise InterruptedError("stopped while paused")
 
     monkeypatch.setattr(run, "_marker", lambda command: 11 if holding[0] else 0)
+    monkeypatch.setattr(run, "_barrier_hook", pause_after_phase0)
+    monkeypatch.setattr(run, "_pause_wait", release)
+    assert run.run(tiny_inputs, config, tmp_path / "whole") == 0
+    fired.clear()
     monkeypatch.setattr(run, "_pause_wait", stopped)
-    monkeypatch.setattr(run, "_barrier_hook", lambda point, variant, phase: holding.__setitem__(0, True))
     with pytest.raises(InterruptedError, match="stopped while paused"):
-        run.run(tiny_inputs, config, out)
-    assert list((out / "checkpoints").glob("*phase0-*.json"))
+        run.run(tiny_inputs, config, tmp_path / "stopped")
+    assert list((tmp_path / "stopped" / "checkpoints").glob("*phase0-*.json"))
     holding[0] = False
     monkeypatch.setattr(run, "_barrier_hook", lambda *args: None)
-    assert run.run(tiny_inputs, run.copy_config(config, resume=True), out) == 0
-    pauses = json.loads((out / "RESULT-MANIFEST.json").read_bytes())["run"]["pauses"]
-    assert [p["event"] for p in pauses] == ["pause"]
+    assert run.run(tiny_inputs, run.copy_config(config, resume=True), tmp_path / "stopped") == 0
+    whole, resumed = (json.loads((tmp_path / name / "RESULT-MANIFEST.json").read_bytes())["run"]["pauses"]
+                      for name in ("whole", "stopped"))
+    assert [p["event"] for p in whole] == ["pause", "width"] and resumed == whole
 
 
 def _imported_files(path):

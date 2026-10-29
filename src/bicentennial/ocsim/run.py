@@ -812,7 +812,9 @@ class _Pool:
                                 "event": "pause", "exit": 11})
         else:
             width = min(2, self.config.workers) if code == 10 else self.config.workers
-            if self.mode is None:
+            # A fresh pool skips an unchanged width, unless the history ends in a pause (a run stopped while
+            # paused and resumed): then the width event closes it, as it would have in an uninterrupted run
+            if self.mode is None and not (self.pauses and self.pauses[-1]["event"] == "pause"):
                 current = next((p["workers"] for p in reversed(self.pauses)
                                 if p["event"] == "width"), self.config.workers)
                 if width == current:
