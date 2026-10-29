@@ -1,5 +1,6 @@
 """Small, synthetic B0 builds; no generation, models, or real-stream measurements."""
 
+import math
 import random
 from dataclasses import FrozenInstanceError
 from fractions import Fraction
@@ -29,6 +30,10 @@ def balanced():
     return streams
 
 
+def principals(streams):
+    return {life: "principal" for life in streams}
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_length_leak(reverse):
     streams = {f"life-{life}": [
@@ -36,7 +41,7 @@ def test_length_leak(reverse):
               session=f"session-{int(gold)}", seq=seq)
         for gold in (False, True) for seq in range(2)
     ] for life in range(5)}
-    report = gate.salience(streams)
+    report = gate.salience(streams, principals(streams))
     statistics = dict(report.feature_statistics)
     assert report.verdict == "FAIL"
     assert not report.passed
@@ -49,7 +54,8 @@ def test_length_leak(reverse):
 
 
 def test_balanced():
-    report = gate.salience(balanced())
+    streams = balanced()
+    report = gate.salience(streams, principals(streams))
     assert report.verdict == "PASS"
     assert report.passed
     assert all(value == Fraction(1, 2) for _, value in report.feature_statistics)
@@ -71,7 +77,7 @@ def test_exact_auc_with_tie():
     for direction in (1, -1):
         events = [event("x" * (6 + direction * score), label, session=f"s-{index}")
                   for index, (score, label) in enumerate(zip(scores, labels, strict=True))]
-        report = gate.salience({"life": events})
+        report = gate.salience({"life": events}, {"life": "principal"})
         assert dict(report.feature_statistics)["chars"] == Fraction(13, 24)
 
 
@@ -85,7 +91,8 @@ def test_auc_invalid_or_empty_inputs():
 
 @pytest.mark.parametrize("gold", [False, True])
 def test_empty_class(gold):
-    report = gate.salience({"life-a": [event("a", gold)], "life-b": [event("b", gold)]})
+    report = gate.salience({"life-a": [event("a", gold)], "life-b": [event("b", gold)]},
+                           {"life-a": "principal", "life-b": "principal"})
     assert report.verdict == "UNDEFINED"
     assert not report.passed
     assert report.reasons == ("empty_class",)
@@ -97,7 +104,7 @@ def test_empty_class(gold):
 
 @pytest.mark.parametrize("streams", [{}, {"life": []}])
 def test_empty_build(streams):
-    report = gate.salience(streams)
+    report = gate.salience(streams, principals(streams))
     assert report.verdict == "UNDEFINED"
     assert not report.passed
     assert report.reasons == ("empty_class", "too_few_lives")
@@ -106,7 +113,7 @@ def test_empty_build(streams):
 
 
 def test_single_life_still_reports_features():
-    report = gate.salience({"only": balanced()["life-0"]})
+    report = gate.salience({"only": balanced()["life-0"]}, {"only": "principal"})
     assert report.verdict == "UNDEFINED"
     assert not report.passed
     assert report.reasons == ("too_few_lives",)
@@ -115,7 +122,8 @@ def test_single_life_still_reports_features():
 
 
 def test_training_fold_one_class():
-    report = gate.salience({"a": [event("a", False)], "b": [event("bb", True)]})
+    report = gate.salience({"a": [event("a", False)], "b": [event("bb", True)]},
+                           {"a": "principal", "b": "principal"})
     assert report.verdict == "UNDEFINED"
     assert not report.passed
     assert report.reasons == ("fold_one_class",)
@@ -127,17 +135,52 @@ def test_training_fold_one_class():
 def test_exact_feature_list():
     assert gate.FEATURES == (
         "chars", "words", "digit_share", "uppercase_share", "punctuation", "position",
-        "kind", "actor", "channel",
+        "actor_is_principal", "kind", "channel",
     )
-    assert gate.salience(balanced()).feature_names == (
+    streams = balanced()
+    assert gate.salience(streams, principals(streams)).feature_names == (
         "chars", "words", "digit_share", "uppercase_share", "punctuation", "position",
-        "kind=note", "kind=tool", "actor=agent", "actor=principal", "channel=chat", "channel=mail",
+        "actor_is_principal", "kind=note", "kind=tool", "channel=chat", "channel=mail",
     )
+
+
+def test_speaker_role_leak_across_life_specific_ids():
+    principal_ids = {f"life-{index}": f"entity-{2 * index}" for index in range(10)}
+    streams = {life: [
+        event("x", gold, seq=seq, session=f"s-{int(gold)}",
+              actor=f"entity-{2 * index + 1}" if gold else principal_id)
+        for gold in (False, True) for seq in range(2)
+    ] for index, (life, principal_id) in enumerate(principal_ids.items())}
+    report = gate.salience(streams, principal_ids)
+    assert report.verdict == "FAIL"
+    assert report.reasons == ()
+    assert dict(report.feature_statistics)["actor_is_principal"] == Fraction(1)
+    assert report.classifier_statistic == Fraction(1)
+    assert (report.gold_critical_count, report.other_count) == (20, 20)
+    actor_ids = {item.actor for events in streams.values() for item in events}
+    assert all(actor_id not in name for actor_id in actor_ids for name in report.feature_names)
+    names, rows = gate._population(streams, principal_ids)
+    role_column = names.index("actor_is_principal")
+    assert all(values[role_column] == int(not gold) for _, values, gold in rows)
+    shuffled = {life: list(reversed(streams[life])) for life in reversed(streams)}
+    assert gate.salience(shuffled, dict(reversed(list(principal_ids.items())))) == report
+    # Arbitrary per-life id renaming preserves the role and every statistic.
+    for events in streams.values():
+        for item in events:
+            item.actor = f"renamed-{item.actor}"
+    renamed = {life: f"renamed-{actor_id}" for life, actor_id in principal_ids.items()}
+    assert gate.salience(streams, renamed) == report
+
+
+@pytest.mark.parametrize("events", [[], [event("x", False)]])
+def test_missing_principal_raises(events):
+    with pytest.raises(ValueError, match="missing principals for lives: missing"):
+        gate.salience({"known": [], "missing": events}, {"known": "principal"})
 
 
 def test_metadata_never_becomes_a_feature():
     streams = balanced()
-    original = gate.salience(streams)
+    original = gate.salience(streams, principals(streams))
     for events in streams.values():
         for item in events:
             marker = "GOLD" * 20 if item.gold_critical else "other"
@@ -159,7 +202,7 @@ def test_metadata_never_becomes_a_feature():
             item.payload = dict(secret=marker)
     # Mapping events and attribute events must have exactly the same interpretation.
     modified = gate.salience({life: [vars(item).copy() for item in events]
-                              for life, events in streams.items()})
+                              for life, events in streams.items()}, principals(streams))
     assert modified == original
     assert modified.verdict == "PASS"
 
@@ -168,8 +211,8 @@ def test_exact_surface_features_and_session_rank():
     streams = {"b": [event("ÉA ٢，_", True, seq=90), event("", False, seq=40),
                      event(None, False, session="other", seq=100)],
                "a": [event("x", True, seq=900)]}
-    names, rows = gate._population(streams)
-    assert names[:6] == gate.FEATURES[:6]
+    names, rows = gate._population(streams, principals(streams))
+    assert names[:7] == gate.FEATURES[:7]
     assert rows == [
         ("a", (1, 1, Fraction(0), Fraction(0), 0, 0, 1, 1, 1), True),
         ("b", (0, 0, Fraction(0), Fraction(0), 0, 0, 1, 1, 1), False),
@@ -185,11 +228,11 @@ def test_threshold_is_inclusive_and_classifier_gates(monkeypatch):
                           ("aaa", True), ("aaa", True), ("aa", False)])]
                for life in ("a", "b")}
     monkeypatch.setattr(gate, "_classifier", lambda *args: (Fraction(3, 5), ()))
-    report = gate.salience(streams)
+    report = gate.salience(streams, principals(streams))
     assert dict(report.feature_statistics)["chars"] == Fraction(3, 5)
     assert report.verdict == "PASS"
     monkeypatch.setattr(gate, "_classifier", lambda *args: (Fraction(61, 100), ()))
-    report = gate.salience(streams)
+    report = gate.salience(streams, principals(streams))
     assert report.verdict == "FAIL"
     assert report.worst_feature == "classifier"
     assert report.worst_statistic == Fraction(61, 100)
@@ -210,12 +253,24 @@ def test_classifier_constants_and_training_only_scaling():
     assert expanded[1] > 0 > expanded[2]
 
 
+@pytest.mark.parametrize("steps,tolerance", [(1, 1e-12), (2, 1e-9)])
+def test_fit_predict_golden(monkeypatch, steps, tolerance):
+    monkeypatch.setattr(gate, "GRADIENT_STEPS", steps)
+    # Training mean/SD are both 1: train becomes (-1, +1), held-out (0, 2).
+    # First gradient is -1/2; the next is -sigmoid(-0.05) + L2 * 0.05.
+    weight = 0.05
+    if steps == 2:
+        weight += 0.1 / (1 + math.exp(0.05)) - 0.1 * gate.L2 * 0.05
+    logits = gate._fit_predict([(0.0,), (2.0,)], [False, True], [(1.0,), (3.0,)])
+    assert logits == pytest.approx((0.0, 2 * weight), rel=0, abs=tolerance)
+
+
 def test_folds_by_sorted_life_and_sorted_features(monkeypatch):
     streams = {f"life-{index}": [event("x" * (index + 1), gold, session=f"s-{int(gold)}")
                                 for gold in (False, True)] for index in reversed(range(7))}
     calls = []
     char_column = sorted(("chars", "words", "digit_share", "uppercase_share", "punctuation",
-                          "position", "kind=note", "actor=principal", "channel=chat")).index("chars")
+                          "position", "actor_is_principal", "kind=note", "channel=chat")).index("chars")
 
     def predict(train, labels, held_out):
         calls.append((tuple(row[char_column] for row in train), tuple(labels),
@@ -223,7 +278,7 @@ def test_folds_by_sorted_life_and_sorted_features(monkeypatch):
         return tuple(row[char_column] for row in held_out)
 
     monkeypatch.setattr(gate, "_fit_predict", predict)
-    report = gate.salience(streams)
+    report = gate.salience(streams, principals(streams))
     assert report.classifier_statistic == Fraction(1, 2)
     assert len(calls) == 5
     for fold, (train, labels, held_out) in enumerate(calls):
@@ -232,7 +287,7 @@ def test_folds_by_sorted_life_and_sorted_features(monkeypatch):
         assert labels == (False, True) * (len(train) // 2)
     original_calls = calls.copy()
     shuffled = {life: list(reversed(streams[life])) for life in reversed(streams)}
-    assert gate.salience(shuffled) == report
+    assert gate.salience(shuffled, principals(shuffled)) == report
     assert calls[5:] == original_calls
 
 
@@ -240,27 +295,27 @@ def test_folds_by_sorted_life_and_sorted_features(monkeypatch):
 def test_out_of_fold_auc_reads_both_directions(monkeypatch, direction):
     streams = {life: [event("a", False, session="s-0"), event("aaa", True, session="s-1")]
                for life in ("a", "b")}
-    names, _ = gate._population(streams)
+    names, _ = gate._population(streams, principals(streams))
     char_column = sorted(names).index("chars")
 
     def predict(train, labels, held_out):
         return tuple(direction * row[char_column] for row in held_out)
 
     monkeypatch.setattr(gate, "_fit_predict", predict)
-    assert gate.salience(streams).classifier_statistic == Fraction(1)
+    assert gate.salience(streams, principals(streams)).classifier_statistic == Fraction(1)
 
 
 def test_determinism_and_frozen_result():
     streams = balanced()
-    first = gate.salience(streams)
-    assert gate.salience(streams) == first
+    first = gate.salience(streams, principals(streams))
+    assert gate.salience(streams, principals(streams)) == first
     generator = random.Random(241)
     lives = list(streams)
     generator.shuffle(lives)
     shuffled = {life: list(streams[life]) for life in lives}
     for events in shuffled.values():
         generator.shuffle(events)
-    assert gate.salience(shuffled) == first
+    assert gate.salience(shuffled, principals(shuffled)) == first
     with pytest.raises(FrozenInstanceError):
         first.verdict = "FAIL"
     assert isinstance(first.feature_statistics, tuple)

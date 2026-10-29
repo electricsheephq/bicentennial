@@ -1,7 +1,8 @@
 """Build-level B0 salience gate (PREREG-v0.4 §4; issue #241, choice 9).
 
-Call ``salience`` with exactly one B0 stream per life. Branch selection belongs
-to the caller. No stream, pack, or item record is changed by this module.
+Call ``salience`` with exactly one B0 stream and its principal's actor id per
+life. Branch selection belongs to the caller. No stream, pack, or item record
+is changed by this module.
 """
 
 import math
@@ -13,7 +14,7 @@ from fractions import Fraction
 from typing import Literal, Protocol
 
 FEATURES = ("chars", "words", "digit_share", "uppercase_share", "punctuation",
-            "position", "kind", "actor", "channel")
+            "position", "actor_is_principal", "kind", "channel")
 THRESHOLD = Fraction(3, 5)
 MAX_FOLDS = 5
 GRADIENT_STEPS = 500
@@ -67,14 +68,14 @@ def _field(event: Event, name: str):
     return event.get(name) if isinstance(event, Mapping) else getattr(event, name)
 
 
-def _population(streams: Mapping[str, Sequence[Event]]):
+def _population(streams: Mapping[str, Sequence[Event]], principals: Mapping[str, str]):
     categories = {name: sorted({_field(event, name) for events in streams.values()
-                                for event in events}) for name in FEATURES[6:]}
-    names = FEATURES[:6] + tuple(f"{name}={value}" for name in FEATURES[6:]
+                                for event in events}) for name in FEATURES[7:]}
+    names = FEATURES[:7] + tuple(f"{name}={value}" for name in FEATURES[7:]
                                  for value in categories[name])
     rows = []
     for life in sorted(streams):
-        # IDs only establish grouping/order, never enter a feature vector.
+        # IDs establish grouping/order and principal identity, never features.
         # Valid streams have unique seq within a session; event_id breaks ties.
         events = sorted(streams[life], key=lambda e: (
             _field(e, "session_id"), _field(e, "seq"), _field(e, "event_id")))
@@ -89,8 +90,9 @@ def _population(streams: Mapping[str, Sequence[Event]]):
             values = (size, len(re.findall(r"\w+", text)),
                       Fraction(sum(c.isdigit() for c in text), size) if size else Fraction(0),
                       Fraction(sum(c.isupper() for c in text), size) if size else Fraction(0),
-                      sum(unicodedata.category(c).startswith("P") for c in text), position)
-            values += tuple(int(_field(event, name) == value) for name in FEATURES[6:]
+                      sum(unicodedata.category(c).startswith("P") for c in text), position,
+                      int(_field(event, "actor") == principals[life]))
+            values += tuple(int(_field(event, name) == value) for name in FEATURES[7:]
                             for value in categories[name])
             rows.append((life, values, bool(_field(event, "gold_critical"))))
     return names, rows
@@ -152,16 +154,18 @@ def _fit_predict(train, labels, held_out) -> tuple[float, ...]:
                 for row in rows]
 
     training, testing = standardise(train), standardise(held_out)
+    # Cache columns in the same canonical row order for gradient products.
+    training_columns = tuple(zip(*training, strict=True))
     weights, bias = [0.0] * len(scaling), 0.0
     for _ in range(GRADIENT_STEPS):
-        errors = [_sigmoid(bias + sum(w * x for w, x in zip(weights, row, strict=True))) - label
+        errors = [_sigmoid(bias + math.sumprod(weights, row)) - label
                   for row, label in zip(training, labels, strict=True)]
-        gradients = [sum(error * row[column] for error, row in zip(errors, training, strict=True))
-                     / count + L2 * weight for column, weight in enumerate(weights)]
+        gradients = [math.sumprod(errors, column) / count + L2 * weight
+                     for weight, column in zip(weights, training_columns, strict=True)]
         bias -= LEARNING_RATE * sum(errors) / count
         weights = [weight - LEARNING_RATE * gradient
                    for weight, gradient in zip(weights, gradients, strict=True)]
-    return tuple(bias + sum(w * x for w, x in zip(weights, row, strict=True)) for row in testing)
+    return tuple(bias + math.sumprod(weights, row) for row in testing)
 
 
 def _classifier(names, rows, lives) -> tuple[Fraction | None, tuple[str, ...]]:
@@ -185,14 +189,20 @@ def _classifier(names, rows, lives) -> tuple[Fraction | None, tuple[str, ...]]:
     return _either_direction(rank_auc(scores, [row[2] for row in rows])), ()
 
 
-def salience(streams: Mapping[str, Sequence[Event]]) -> SalienceReport:
+def salience(streams: Mapping[str, Sequence[Event]],
+             principals: Mapping[str, str]) -> SalienceReport:
     r"""Measure one build's B0 streams, failing closed on undefined statistics.
 
     Text uses Unicode ``\w+`` words, ``isdigit``/``isupper`` character shares,
     and Unicode P-category punctuation. Empty/absent text has zero shares.
+    Actors become a principal-role indicator using each life's principal id;
+    a missing principal mapping raises ValueError, including for empty lives.
     Folds assign sorted lives by index modulo min(5, number of lives).
     """
-    names, rows = _population(streams)
+    missing = sorted(set(streams) - principals.keys())
+    if missing:
+        raise ValueError(f"missing principals for lives: {', '.join(missing)}")
+    names, rows = _population(streams, principals)
     labels = [row[2] for row in rows]
     positives = sum(labels)
     statistics = tuple((name, _either_direction(rank_auc(
