@@ -179,16 +179,30 @@ def refused(row, obj):
 def reasoning(obj, wire):
     """Textual reasoning a stored response carries: Responses reasoning items and deltas, chat reasoning fields."""
     if wire == "responses":
-        found = []
+        found, streamed, completed = [], {}, {}
         for e in _events(obj):
             if e.get("type") in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
-                found.append(str(e.get("delta", "")))
+                family = "summary" if e["type"] == "response.reasoning_summary_text.delta" else "content"
+                key = (family, e.get("item_id"), e.get("output_index"))
+                streamed[key] = streamed.get(key, "") + str(e.get("delta", ""))
             item = e.get("item") or {}
             if e.get("type") == "response.output_item.done" and item.get("type") == "reasoning":
-                found += [str(part.get("text", "")) for key in ("summary", "content") for part in item.get(key) or []
-                          if isinstance(part, dict)]
-        return [t for t in found if t]
-    return [str(m[k]) for m in _messages(obj)[1] for k in ("reasoning_content", "reasoning") if m.get(k)]
+                for family in ("summary", "content"):
+                    text = "".join(str(part.get("text", "")) for part in item.get(family) or []
+                                   if isinstance(part, dict))
+                    found.append(text)
+                    if item.get("id") is not None:
+                        completed[(family, "id", item["id"])] = text
+                    if e.get("output_index") is not None:
+                        completed[(family, "index", e["output_index"])] = text
+        return [t for t in found if t] + [t for (family, item_id, index), t in streamed.items() if t and not (
+            item_id is not None and completed.get((family, "id", item_id)) == t or
+            index is not None and completed.get((family, "index", index)) == t)]
+    chunks, messages = _messages(obj)
+    if chunks is not None:
+        return [text for k in ("reasoning_content", "reasoning")
+                if (text := "".join(str(m[k]) for m in messages if m.get(k)))]
+    return [str(m[k]) for m in messages for k in ("reasoning_content", "reasoning") if m.get(k)]
 
 
 def _reply(obj, wire, fmt):
@@ -219,7 +233,7 @@ def _minted_ids(rows, blobs):
 
 def _items(body, wire):
     """A request's history items. A string input is one user message; token ids and other non-object
-    items (an embeddings request's input) carry no history, and their strings stay in the other channel."""
+    items carry no history. Embeddings inputs carry content, but no conversation history."""
     items = [] if wire == "embeddings" else body.get("messages" if wire == "chat" else "input", [])
     items = [{"type": "message", "role": "user", "content": items}] if isinstance(items, str) else items
     return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
@@ -234,8 +248,12 @@ def conversation(body, wire):
 
 def channels(body, wire):
     """Every string of a request in three labelled channels: conversation text, tool-call arguments and
-    outputs outside it, and every other string (configuration, schemas). Each string falls in one channel."""
+    outputs outside it, and every other string (configuration, schemas). Embeddings inputs use the content
+    channel too: a whole discarded draft there fails A5; substring collisions remain report-only.
+    Each string falls in one channel."""
     conv, items = conversation(body, wire), _items(body, wire)
+    if wire == "embeddings":
+        conv = list(strings(body.get("input", [])))
     if wire == "chat":
         tool = [tc.get("function", {}).get("arguments", "") for m in items for tc in m.get("tool_calls") or []]
         tool += [m.get("content", "") for m in items if m.get("role") == "tool"]
@@ -298,17 +316,27 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     a2 = {"hits": [], "introduced": []}
     a3 = {"offered": 0, "executed": 0, "non_write_attempts": 0, "non_write_blocked": 0, "non_write_calls": [], "failures": []}
     a5 = {"scripted": 0, "matches": 0, "script_failures": [], "missing_scripts": [], "text_hits": [], "whole_content_hits": [], "tool_channel_hits": [], "non_content_collisions": [], "served_write_text": []}
-    calls, drafts, issued = [], [], 0
+    calls, drafts, discarded_reasoning, issued = [], [], [], 0
     issued_at = {}  # each call id served to the harness, by the record that served it
     for r in rows:
-        if r.get("served") in {"write_tool_calls", "script_tool_calls", "script_tool_calls_retry"} and not refused(r, blobs.get(r.get("resp"))):
-            for tc in output(blobs[r["resp"]], wire)[0]:
+        response, rw = blobs.get(r.get("resp")), request_wire(r, wire)
+        if (rw in {"chat", "responses"} and not refused(r, response) and
+                any(k in response for k in ("choices", "__sse__", "sse"))):
+            for tc in output(response, rw)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
     minted = _minted_ids(rows, blobs) if fmt == "kit" else {}
     last_k, served_ids = {}, set()  # each namespace's last served counter; ids served once in the ledger
+    seen_results = set()
+    first_request = requests[0][0]["seq"] if requests else None
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
         attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
+        current_results = results(body, request_wire(r, wire))
+        if seq != first_request and r.get("role") in {"replay_main", "probe_main"}:
+            for tid in current_results.keys() - seen_results:
+                if not issued_at.get(tid, float("inf")) < seq:
+                    a3["failures"].append({"record": seq, "kind": "unissued_later_execution", "call": tid})
+        seen_results.update(current_results)
         if bad and (attempts or r.get("served") in {"write_tool_calls", "script", "script_retry"}):
             a3["failures"].append({"record": seq, "kind": "served_refusal"})  # the turn served no completion
         if r.get("write_turn_failed"):
@@ -318,6 +346,8 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
         if "write_turn_readback" in r and not attempts:
             a1["flag_disagreements"].append(seq)
         if attempts:
+            if attempts[-1].get("resp") not in blobs:
+                a3["failures"].append({"record": seq, "kind": "missing_write_response"})
             a1["write_records"] += 1
             idx = turn_index(seq, cursor)
             want = expected(body, wire, model_for(cursor["session"]), suffix, write_tools)
@@ -364,9 +394,11 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                         a2["hits"].append(hit)
                         if not hit["inherited"]:
                             a2["introduced"].append(hit)
-                if "resp" in u:  # a kit responder error records no reply: no calls, no texts
+                if u.get("resp") in blobs:  # a responder error records no reply: no calls, no texts
                     attempted, texts = _reply(blobs[u["resp"]], wire, fmt)
                     drafts.extend((seq, text) for text in texts if text)
+                    if fmt == "s6":  # kit Reply has no reasoning field; S6 records the upstream wire response
+                        discarded_reasoning.extend((seq, text) for text in reasoning(blobs[u["resp"]], wire))
                     for j, tc in enumerate(attempted, 1):
                         if tc["name"] in write_tools:
                             continue
@@ -395,7 +427,8 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                     a3["failures"].append({"record": seq, "kind": "non_write_offered"})
             if r.get("write_turn_readback") != verdicts[-1]:
                 a1["flag_disagreements"].append(seq)
-            upstream = _reply(blobs[attempts[-1]["resp"]], wire, fmt)[0] if "resp" in attempts[-1] else []
+            upstream = (_reply(blobs[attempts[-1]["resp"]], wire, fmt)[0]
+                        if attempts[-1].get("resp") in blobs else [])
             filtered = [tc for tc in upstream if tc["name"] in write_tools]
             if not bad and len(filtered) != len(served):
                 a3["failures"].append({"record": seq, "kind": "call_count"})
@@ -426,7 +459,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
             a5["matches"] += ok
             if not ok:
                 a5["script_failures"].append(seq)
-    for origin, text in drafts:
+    for origin, text in drafts + discarded_reasoning:
         for r, body in requests:
             if r["seq"] > origin:
                 hit = {"record": r["seq"], "write_record": origin}
@@ -449,7 +482,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 r["cursor"]["session"], r["cursor"]["turn"]) not in attempted:
             a1["missing_write_turns"].append(r["seq"])
     a2.update(raw_hits=len(a2["hits"]), introduced_hits=len(a2["introduced"]))
-    a5["write_texts_checked"] = len(drafts)
+    a5["write_texts_checked"] = len(drafts)  # S7's response-text count; reasoning is scanned in addition
     return {"A1": a1, "A2": a2, "A3": a3, "A4": effects(calls, requests, wire) if effects else None, "A5": a5}
 
 

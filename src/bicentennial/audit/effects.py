@@ -1,10 +1,13 @@
-"""A4: the effect of every executed write call on the final store and the next session (spike S7 effects,
-unchanged), and the Hermes store hook. Reports hold record numbers, call ids and reason codes, never text."""
+"""A4: each executed write's whole-entry effect in the final store and the next session, and the Hermes
+store hook. Reports hold record numbers, call ids and reason codes, never text."""
 
 import json
+import re
 from pathlib import Path
 
 ACTIONS = {"add", "patch", "replace", "remove"}
+ENTRY_DELIMITER = "\n§\n"  # Hermes memory_tool_store, not an arbitrary line or paragraph boundary
+MEMORY_HEADER = re.compile(r"═{46}\n(MEMORY \(your personal notes\)|USER PROFILE \(who the user is\))[^\n]*\n═{46}\n")
 
 
 def strings(obj):
@@ -40,11 +43,11 @@ def request_wire(row, wire):
             "embeddings" if path.endswith("/embeddings") else wire)
 
 
-def snapshot(body, wire):
+def snapshot_parts(body, wire):
     """The memory snapshot a request carries: chat system and developer messages; Responses instructions and the
     system and developer messages in input, as the director extracts them (roles._items)."""
     if wire != "responses":
-        return " ".join(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") in (
+        return list(strings([m.get("content", "") for m in body.get("messages", []) if m.get("role") in (
             "system", "developer")]))
     items = body.get("input") if isinstance(body.get("input"), list) else []  # a string input is a user message
     found = [body["instructions"]] if isinstance(body.get("instructions"), str) else []
@@ -52,7 +55,35 @@ def snapshot(body, wire):
         if isinstance(it, dict) and str(it.get("type", "message")) == "message" and it.get("role") in (
                 "system", "developer"):
             found += blocks(it.get("content"))
-    return " ".join(found)
+    return found
+
+
+def snapshot(body, wire):
+    return " ".join(snapshot_parts(body, wire))
+
+
+def entry_texts(text):
+    """Split before normalising: newlines within an entry are content, not entry boundaries."""
+    return [norm(part) for part in text.split(ENTRY_DELIMITER) if part.strip()]
+
+
+def snapshot_entries(body, wire, target):
+    """Read Hermes' rendered memory blocks, or a bare store supplied as a system/developer text part.
+    The prompt's date trailer is outside the last memory block; preserve paragraphs inside entries."""
+    found = []
+    for part in snapshot_parts(body, wire):
+        headers = list(MEMORY_HEADER.finditer(part))
+        if not headers:
+            found.extend(entry_texts(part))
+            continue
+        for i, header in enumerate(headers):
+            if header.group(1).startswith("USER") != (target == "user"):
+                continue
+            end = headers[i + 1].start() if i + 1 < len(headers) else len(part)
+            content = part[header.end():end].rstrip()
+            content = re.split(r"\n\n(?:Conversation started:|Current date:|Today's date:)", content, maxsplit=1)[0]
+            found.extend(entry_texts(content))
+    return found
 
 
 def effects(calls, requests, stores, wire):
@@ -71,9 +102,10 @@ def effects(calls, requests, stores, wire):
         report = {"record": call["record"], "call": call["id"], "applied": applied, "staged": staged, "operations": []}
         reports.append(report)
         args = args if isinstance(args, dict) else {}
-        listed = args.get("operations", [args])
+        batch = isinstance(args.get("operations"), list) and bool(args["operations"])  # Hermes: if operations:
+        listed = args["operations"] if batch else [args]
         # the entry each patch produced, when the result records it (memory_tool_store: patch, _batch)
-        produced = (result.get("patched_entries_after") if "operations" in args else
+        produced = (result.get("patched_entries_after") if batch else
                     {"1": result.get("patched_entry_after")}) if isinstance(result, dict) else None
         produced = produced if isinstance(produced, dict) else {}
         for i, op in enumerate(listed if isinstance(listed, list) else [{}]):
@@ -93,17 +125,25 @@ def effects(calls, requests, stores, wire):
     held = {}  # each target's entries as tracked here: a patch splices its span into the entry it locates
     for op in ops:
         act, op["entry"] = op.get("action"), op["needle"]  # the text a later whole-entry operation locates
+        op["before_entry"] = None
         if not op["applied"] or not known(act) or not op["needle"] or not isinstance(op["target"], str):
             continue
         entries, old = held.setdefault(op["target"], []), "" if act == "add" else norm(op.get("old_text", ""))
         at = next((j for j, e in enumerate(entries) if e == old), None)  # a whole-entry match first, as Hermes
-        at = next((j for j, e in enumerate(entries) if old and old in e), None) if at is None else at
+        if at is None:
+            matches = [j for j, e in enumerate(entries) if old and old in e]
+            if act == "patch" and isinstance(op["produced"], str) and op["produced"].strip():
+                matches = [j for j in matches if entries[j].replace(old, op["needle"], 1) == norm(op["produced"])]
+            at = matches[0] if len({entries[j] for j in matches}) == 1 else None
+        op["before_entry"] = entries[at] if at is not None else None
         if act == "patch":
             recorded = op["produced"]
             op["entry"] = (norm(recorded) if isinstance(recorded, str) and recorded.strip() else
-                           entries[at].replace(old, op["needle"], 1) if at is not None else op["needle"])
+                           entries[at].replace(old, op["needle"], 1) if at is not None else None)
+        elif act == "remove":
+            op["entry"] = entries[at] if at is not None else None
         if at is None:
-            entries += [] if act == "remove" else [op["entry"]]
+            entries += [] if act == "remove" or op["entry"] is None else [op["entry"]]
         elif act == "remove":
             del entries[at]
         elif act != "add":
@@ -120,12 +160,13 @@ def effects(calls, requests, stores, wire):
         nxt = next(((r, b) for r, b in requests if r["seq"] > op["record"] and r.get("cursor") and
                     r["cursor"]["session"] != op["session"] and r["cursor"]["turn"] == 1 and
                     r.get("role") in {"replay_main", "probe_main"}), None)
-        def state(until, start, i=i, op=op):
-            """The expected effect at `until`, through later applied calls on the same target: ("present", text)
-            or ("absent", text). A removal is undone by a later call whose new text carries the removed text.
+        def state(until, start, i=i, op=op, *, side=False):
+            """The expected kind, tracked span and owning entry at `until`, through later applied calls.
+            A removal is undone by a later call whose new text carries the removed text.
             Hermes `replace` rewrites the whole matched entry; `patch` splices only its span (memory_tool_store).
             A later replace or remove also finds the owning entry through its text outside a patched span."""
-            (kind, value), changed, entry = start, [], op["entry"]
+            (kind, value), changed = start, []
+            entry = op["before_entry"] if side else op["entry"]
             for later in ops[i + 1:]:
                 act = later.get("action")
                 if (later["record"] >= until or not later["applied"] or later["target"] != op["target"]
@@ -133,38 +174,60 @@ def effects(calls, requests, stores, wire):
                     continue
                 old = norm(later.get("old_text", "")) if act in {"patch", "replace", "remove"} else ""
                 new = "" if act == "remove" else norm(later.get("content", later.get("new_text", "")))
-                if kind == "present" and old and (old in value or value in old or act != "patch" and old in entry):
+                if (kind == "present" and entry is not None and later["before_entry"] is not None
+                        and entry != later["before_entry"]):
+                    continue  # this edit belongs to a different recorded entry, even if the spans collide
+                if kind == "present" and act == "patch" and old and entry and old in entry and value in entry:
+                    # Splice by coordinates in the owning entry: either edge of the patch can overlap the
+                    # tracked span without either string containing the other (issue #87).
+                    left, patch_start = entry.index(value), entry.index(old)
+                    right, end = left + len(value), patch_start + len(old)
+                    if patch_start < right and left < end:
+                        changed.append(later["id"])
+                        value = entry[min(left, patch_start):patch_start] + new + entry[end:max(right, end)]
+                    entry = later["entry"] or entry.replace(old, new, 1)
+                elif kind == "present" and old and (old in value or value in old or
+                                                     act != "patch" and entry and old in entry):
                     # a patch span inside this content is replaced; a replace or remove of its entry, or a span
                     # that encompasses it, replaces all of it
                     changed.append(later["id"])
                     patched = ("" if act == "remove" else value.replace(old, new) if act == "patch" and old in value
                                else new)
-                    entry = entry.replace(old, new, 1) if act == "patch" and old in entry else patched
+                    entry = later["entry"] if act != "remove" else entry
                     kind, value = ("present", patched) if patched else ("absent", value)
-                elif kind == "present" and act == "patch" and old and old in entry:
+                elif kind == "present" and act == "patch" and old and entry and old in entry:
                     entry = entry.replace(old, new, 1)  # a span elsewhere in the owning entry
                 elif kind == "absent" and new and value in new:
                     kind, entry = "present", later["entry"]
                     changed.append(later["id"])
-            return (kind, value), changed
-        def holds(expect, text):
-            return (expect[1] in text) == (expect[0] == "present")
+            return (kind, value, entry), changed
+        def holds(expect, text, whole_entries, *, side=False):
+            kind, value, entry = expect
+            if kind == "present":
+                return entry is not None and entry in whole_entries
+            if entry is not None:
+                return entry not in whole_entries
+            return side and value not in text
         start = ("absent", needle) if action == "remove" else ("present", needle)
         replaced = norm(op.get("old_text", "")) if action in {"patch", "replace"} else ""
         replaced = replaced if replaced and replaced not in needle else ""  # a patch keeping its old span checks nothing
         final, changed = state(float("inf"), start)
-        store = norm(stores.get(op["target"], ""))
-        present = needle in store
-        store_ok = holds(final, store)
-        side_ok = holds(state(float("inf"), ("absent", replaced))[0], store) if replaced else True
+        raw_store = stores.get(op["target"], "")
+        store, store_entries = norm(raw_store), entry_texts(raw_store)
+        present = needle in store  # S7's raw span diagnostic; satisfaction below requires the whole entry
+        store_ok = holds(final, store, store_entries)
+        side = state(float("inf"), ("absent", replaced), side=True)[0] if replaced else None
+        side_ok = holds(side, store, store_entries, side=True) if side else True
         visible, next_ok, next_side_ok, next_changed, wanted = None, None, None, [], final
         if nxt:
             r, b = nxt
             snap = norm(snapshot(b, request_wire(r, wire)))
+            snap_entries = snapshot_entries(b, request_wire(r, wire), op["target"])
             wanted, next_changed = state(r["seq"], start)
             visible = needle in snap
-            next_ok = holds(wanted, snap)
-            next_side_ok = holds(state(r["seq"], ("absent", replaced))[0], snap) if replaced else True
+            next_ok = holds(wanted, snap, snap_entries)
+            next_side = state(r["seq"], ("absent", replaced), side=True)[0] if replaced else None
+            next_side_ok = holds(next_side, snap, snap_entries, side=True) if next_side else True
         reasons = []
         if op["report"]["staged"]:
             reasons.append("staged_not_applied")
@@ -172,6 +235,9 @@ def effects(calls, requests, stores, wire):
             reasons.append("hermes_refused")
         if op["applied"] is None:
             reasons.append("unclassified_result")
+        if op["applied"] and op["entry"] is None:
+            reasons.append("entry_unidentifiable")
+            store_ok, next_ok = False, False if nxt else None
         if changed:
             reasons.append("later_modified_or_removed")
         if nxt is None:
@@ -182,9 +248,9 @@ def effects(calls, requests, stores, wire):
         if op["applied"] and next_ok is False:
             reasons.append("absent_from_next_session" if wanted[0] == "present" else f"{gone}_visible_next_session")
         if op["applied"] and not side_ok:
-            reasons.append("replaced_span_still_present")
+            reasons.append("absent_from_final_store" if side[0] == "present" else "replaced_span_still_present")
         if op["applied"] and next_side_ok is False:
-            reasons.append("replaced_span_visible_next_session")
+            reasons.append("absent_from_next_session" if next_side[0] == "present" else "replaced_span_visible_next_session")
         store_ok, next_ok = store_ok and side_ok, next_ok and next_side_ok if nxt else next_ok
         op["report"]["operations"].append({"id": op["id"], "action": action, "in_store": present,
             "visible_next_session": visible, "store_satisfied": store_ok, "next_session_satisfied": next_ok,
