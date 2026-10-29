@@ -198,7 +198,7 @@ def _code_refusals():
     # These messages have no class-level code attribute.
     codes.update(("unmeasured:artifact.sha256", "unmeasured:fresh_install_hash", "hashseed",
                   "usage", "source_checkout_required", "gate_refused", "pin_mismatch",
-                  "SpendRefused", "baseline_mismatch", "refused"))
+                  "SpendRefused", "baseline_mismatch", "refused", "surface_not_empty"))
     return codes
 
 

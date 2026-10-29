@@ -211,6 +211,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `settle_unmapped` | Hook settle has no `SETTLE_THREADS` mapping. |
+| `surface_not_empty` | A sandbox-home memory surface already holds files before install. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
 | `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |

@@ -33,7 +33,7 @@ from bicentennial.sandbox.surfaces import (
     verify_empty,
     wipe_to_fresh,
 )
-from bicentennial.systems.settle import settle
+from bicentennial.systems.settle import SettleResult, settle
 
 PROVIDERS = {"holographic": "holographic", "mem0-oss": "mem0"}
 TREES = {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0")}
@@ -345,11 +345,16 @@ class PluginCell:
     def settle(self):
         self._idle()
         from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
+        kind = self.entry["settle"]["kind"]
+        threads = getattr(self.adapter, "end_threads", None)
+        if (kind == "hook" and isinstance(threads, tuple)
+                and any(t in SETTLE_THREADS[self.entry["name"]] for t in threads)):
+            return SettleResult(kind, False, 0, "cut_at_exit", 0)
         def observed():
             threads = getattr(self.adapter, "end_threads", None)
             return (isinstance(threads, tuple) and not any(t in SETTLE_THREADS[self.entry["name"]] for t in threads)
                     and self.adapter.director.control()["inflight"] == 0)
-        return settle(self.entry, observed if self.entry["settle"]["kind"] == "hook" else None)
+        return settle(self.entry, observed if kind == "hook" else None)
 
 
 def checkpoint_sqlite(directories):
