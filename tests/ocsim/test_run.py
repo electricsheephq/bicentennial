@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/fixtures/ocsim/planning.json"
 # RunConfig caps workers at cpu_count, and the width checks need more than two workers.
 NEEDS_4_CPUS = pytest.mark.skipif((os.cpu_count() or 1) < 4, reason="needs four workers")
+NEEDS_2_CPUS = pytest.mark.skipif((os.cpu_count() or 1) < 2, reason="needs two workers")
 TINY_CONSTANTS = run.test_constants(DRAWS=64, R_SCREEN=4, R_REPORT=4, R_SENS=4,
                                    R_MAIN=8, R_MAX=16, CHUNK=25, CHUNK_LARGE=5)
 
@@ -509,6 +510,7 @@ def test_busy_marker_poll_times_out(monkeypatch):
     assert run._marker([sys.executable, "-c", "raise SystemExit(10)"]) == 10
 
 
+@NEEDS_2_CPUS
 def test_busy_marker_same_width_mode_changes(tiny_inputs, monkeypatch):
     config = tiny_config(workers=2)
     code, pauses = [0], []
