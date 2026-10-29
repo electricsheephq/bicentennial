@@ -105,7 +105,7 @@ def test_compaction_route_requires_served_alias(alias):
     compaction = next(route for route in entry["own_model_routes"] if route["role"] == "compaction")
     compaction["alias"] = alias
     validate("system", entry)
-    reason = f"compaction_alias_mismatch:custom-system:expected:{SUMMARISER_ALIAS}"
+    reason = "compaction_alias_mismatch"
     assert check(entry) == [reason]
     with pytest.raises(SystemRefused) as error:
         admit_system(entry, operator="other")

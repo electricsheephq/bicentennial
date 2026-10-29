@@ -75,7 +75,7 @@ def check(entry) -> list[str]:
         isinstance(r, dict) and r.get("role") == "compaction"
         and r.get("alias") != SUMMARISER_ALIAS for r in routes
     ):
-        reasons.append(f"compaction_alias_mismatch:{entry.get('name', '<unnamed>')}:expected:{SUMMARISER_ALIAS}")
+        reasons.append("compaction_alias_mismatch")
     surfaces = entry.get("surfaces", [])
     bad_path = False
     if isinstance(surfaces, list):
