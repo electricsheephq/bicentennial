@@ -102,6 +102,23 @@ def serve(test, handler):
     return srv.server_address[1]
 
 
+def wait_for_hangup_records(tmp, fail_send):
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            recs = [json.loads(line) for line in (tmp / "ledger" / "ledger.jsonl").read_text().splitlines()]
+        except (FileNotFoundError, json.JSONDecodeError):  # the writer may not have finished a record yet
+            recs = []
+        reqs = [r for r in recs if r["type"] == "request"]
+        if reqs and (not fail_send or any(r["type"] == "send_error" and r["request_seq"] == reqs[0]["seq"]
+                                         for r in recs)):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return  # leave missing records to the existing reads and assertions
+        time.sleep(min(0.05, remaining))
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -1051,7 +1068,7 @@ class Serving(Base):
             s = socket.create_connection(("127.0.0.1", port))
             s.sendall(b"POST %s/responses HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s" % (sd.MOUNT.encode(), len(body), body))
             s.close()
-            time.sleep(1.0)
+            wait_for_hangup_records(self.tmp, fail_send)
             reqs, errs = self.records("request"), self.records("send_error")
             self.assertEqual((len(reqs), reqs[0]["client_disconnected"], len(Upstream.seen)), (1, True, 1))
             seqs = [e["request_seq"] for e in errs]  # a natural hang-up may also fail the real send

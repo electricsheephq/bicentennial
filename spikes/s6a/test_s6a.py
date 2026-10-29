@@ -44,6 +44,23 @@ def records(tmp, kind):
     return [r for r in map(json.loads, (tmp / "ledger" / "ledger.jsonl").read_text().splitlines()) if r["type"] == kind]
 
 
+def wait_for_hangup_records(tmp, fail_send):
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            recs = [json.loads(line) for line in (tmp / "ledger" / "ledger.jsonl").read_text().splitlines()]
+        except (FileNotFoundError, json.JSONDecodeError):  # the writer may not have finished a record yet
+            recs = []
+        reqs = [r for r in recs if r["type"] == "request"]
+        if reqs and (not fail_send or any(r["type"] == "send_error" and r["request_seq"] == reqs[0]["seq"]
+                                         for r in recs)):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return  # leave missing records to the existing reads and assertions
+        time.sleep(min(0.05, remaining))
+
+
 class Upstream(BaseHTTPRequestHandler):
     seen, reject, log_message = [], set(), lambda *a: None
 
@@ -81,7 +98,6 @@ class Director(unittest.TestCase):
         s = socket.create_connection(("127.0.0.1", port))
         s.sendall(b"POST /aux/title_generation/v1/chat/completions HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body))
         s.close()
-        time.sleep(1.0)
 
     def test_record_survives_hangup_and_send_error(self):  # finding 1
         for fail_send in (False, True):
@@ -94,6 +110,7 @@ class Director(unittest.TestCase):
                         raise BrokenPipeError(32, "Broken pipe")
                     return super()._send(code, obj)
             self.post_aux(d, H)
+            wait_for_hangup_records(self.tmp, fail_send)
             reqs, errs = records(self.tmp, "request"), records(self.tmp, "send_error")
             self.assertEqual(len(reqs), 1)
             self.assertTrue(reqs[0]["client_disconnected"])
