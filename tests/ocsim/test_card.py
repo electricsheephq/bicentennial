@@ -100,7 +100,7 @@ def test_markdown_contents_order_and_portability(payload):
     manifest["config"] = run.constants_manifest(config)
     assert "The deciding SE statistic is the pooled statistic;" in card.render(manifest, results)
     assert "synthetic test machine" in text
-    assert "/Users/" not in text and "/tmp/" not in text
+    assert "/" + "Users/" not in text and "/tmp/" not in text
     assert "\r" not in text and text.endswith("\n")
     worst = card._worst(results["points"][0]["alternatives"]["LITERAL"]["cases"])
     assert worst[0][0] == "LITERAL|stress_fast|trend-5|m0"
