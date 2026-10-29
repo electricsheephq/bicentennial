@@ -55,7 +55,15 @@ from bicentennial.systems.controls import (
     WipeOnWake,
     no_memory_cell,
 )
-from bicentennial.systems.hermes_plugin import MARKER, PROVIDERS, PluginCell
+from bicentennial.systems.hermes_plugin import (
+    ENABLED,
+    ENGINES,
+    MARKER,
+    PROVIDERS,
+    PluginCell,
+    is_plugin,
+    plugin_dir,
+)
 from bicentennial.systems.registry import REGISTRY, SystemRefused, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import TURN_S, named
@@ -67,11 +75,11 @@ STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
-    "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "end_failed", "exit_timeout",
+    "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "engine_inactive", "end_failed", "exit_timeout",
     "turn_timeout", "end_timeout")) + tuple(
     (label, "INFRA_FAILURE") for label in (
-        "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
-        "startup_timeout", "open_timeout", "worker_start"))
+        "director_stopped", "director_inflight", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
+        "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy", "admission_deadline"))
 TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only compiled workspace commands; "
                        "a live model could reach the Hermes home")
 
@@ -201,12 +209,18 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm):
         codes = failures(report)
         ignored = ("A4.no_effects_hook",) if plugin else ()
         if arm == "wiped":
-            ignored += ("A4.gaps",)
+            calls = (report["A4"] or {}).get("calls")
+            unclassified = sum(c["applied"] is None for c in calls) if isinstance(calls, list) else "unknown"
+            if unclassified == 0:
+                ignored += ("A4.gaps",)
         status = "OK" if not [c for c in codes if c not in ignored] else run_status(report, mode)
         result = dict(status=status, failures=codes, **(
             {"a4": "not audited for plug-in providers at v0.1"} if plugin else {}))
         if arm == "wiped" and "A4.gaps" in codes:
-            result["a4_gaps"] = "expected: the wiped arm restores the fresh install at every wake"
+            if unclassified == 0:
+                result["a4_gaps"] = "expected: the wiped arm restores the fresh install at every wake"
+            else:
+                result["a4_unclassified"] = unclassified
         return result
     except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
         raise
@@ -216,7 +230,7 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm):
 
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
-             worker_argv=None, visible=None, honeypot_token=None, schedule=None) -> LifeRun:
+             worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -252,7 +266,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         seeds = ({p.index: envseed(db, p.index).seed for p in schedule.sessions} | {
             p.index: probe_envseed(db, p.index, p.checkpoint).seed for p in compiled.probes}) if genre == "G2" else {}
         wiring = EnvWiring(root / "envwire", seeds, clock.path) if genre == "G2" else None
-        plugin = arm != "no_memory" and entry["name"] in PROVIDERS
+        plugin = arm != "no_memory" and is_plugin(entry["name"])
         hook = (PluginWake() if plugin else WipeOnWake(entry, {"HERMES_HOME": root / "run" / "hermes-home"},
                 root / "control")) if arm == "wiped" else None
         hooks = (hook,) if hook is not None else ()
@@ -262,7 +276,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             toolsets=HERMES_TOOLSETS, env_server=wiring)
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
-                plugin=PROVIDERS[entry["name"]] if plugin else None, before_spawn=hook, **common))
+                plugin=PROVIDERS.get(entry["name"]), context_engine=ENGINES.get(entry["name"]),
+                plugins_enabled=(plugin_dir(entry["name"]),) if entry["name"] in ENABLED else (),
+                extra_env=extra_env, before_spawn=hook, **common))
             paths = adapter.paths
             roots = {"HERMES_HOME": paths["hermes_home"], "SANDBOX_HOME": paths["home"]}
             surfaces = [(s, roots[s["root"]] / s["relative"]) for s in adapter.entry["surfaces"]]

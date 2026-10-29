@@ -117,8 +117,11 @@ def test_features_vectors_and_collisions(monkeypatch):
 
 
 def test_conformance():
-    assert conformance.run(rag.NaiveRag) == {
-        n: n != "supersession_current" for n in conformance.CHECKS}
+    results = conformance.run(rag.NaiveRag)
+    assert results == {
+        n: n not in {"supersession_current", "text_full_length"} for n in conformance.CHECKS}
+    assert {n for n, ok in results.items() if not ok} == {
+        "supersession_current", "text_full_length"}
 
 
 def test_log_fixed_keyed_property():

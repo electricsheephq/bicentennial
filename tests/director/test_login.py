@@ -827,6 +827,26 @@ def test_scan_refusals_before_learning(home, tmp_path, monkeypatch, capsys, kind
         scan_main(home, target, monkeypatch, capsys, expected=reason)
 
 
+@pytest.mark.parametrize("kind", ["missing", "dangling_symlink"])
+@pytest.mark.parametrize("run", [None, RUN])
+def test_scan_missing_path_refuses_before_learning(home, tmp_path, monkeypatch, capsys, kind, run):
+    target = tmp_path / "fake-missing"
+    if kind == "dangling_symlink":
+        target.symlink_to(tmp_path / "fake-absent-target")
+    argv = ["--scan", str(target)]
+    if run is not None:
+        pin_entry(home)
+        argv = ["--scan", "--run", run, str(target)]
+    monkeypatch.setenv(sd.ENV_STORE, str(home))
+    with mock.patch.object(sd.Login, "learn_only", side_effect=AssertionError("learned before refusal")) as learning:
+        code = sd.main(argv)
+    streams = capsys.readouterr()
+    assert code == sd.REFUSED_EXIT
+    same(streams.err, "")
+    same(json.loads(streams.out), {"refused": "scan_path_missing"})
+    learning.assert_not_called()
+
+
 @pytest.mark.parametrize("contents", ["{broken-json", "[]", "null", '"fake-file"', '{"fake-run":[]}',
                                      '{"fake-run":"fake-entry"}', '{"fake-run":null}', '{"fake-run":{}}',
                                      '{"fake-run":{"lease_id":null}}'])
@@ -914,6 +934,71 @@ def test_scan_cli_clean_corrupt_and_hits(home, tmp_path, monkeypatch, capsys):
     (tree / "fake.json.zst").write_bytes(b"fake corrupt zstd")
     code, result = scan_main(home, tree, monkeypatch, capsys)
     assert code == 1 and result["unreadable"] == 1 and not result["hits"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can list mode-000 directories")
+def test_scan_counts_each_unlistable_directory(home, tmp_path, monkeypatch, capsys):
+    pin_entry(home)
+    tree = tmp_path / "fake-artifacts"
+    tree.mkdir()
+    (tree / "fake.log").write_text("synthetic safe body")
+    blocked = [tree / "fake-blocked-one", tree / "fake-blocked-two"]
+    for directory in blocked:
+        directory.mkdir()
+        (directory / "fake-hidden.log").write_text(ACCT)
+    modes = [stat.S_IMODE(directory.stat().st_mode) for directory in blocked]
+    try:
+        for directory in blocked:
+            directory.chmod(0)
+        code, result = scan_main(home, tree, monkeypatch, capsys)
+        assert code == 1
+        assert result["unreadable"] == len(blocked)
+        assert result["files_scanned"] == 1 and result["hits"] == {}
+    finally:
+        for directory, mode in zip(blocked, modes, strict=True):
+            directory.chmod(mode)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can list mode-000 directories")
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_scan_counts_path_with_inaccessible_ancestor(home, tmp_path, monkeypatch, capsys, kind):
+    pin_entry(home)
+    blocked = tmp_path / "fake-blocked"
+    inner = blocked / "fake-inner"
+    inner.mkdir(parents=True)
+    target = inner / "fake-hidden.log"
+    target.write_text(ACCT)
+    if kind == "directory":
+        target = inner
+    mode = stat.S_IMODE(blocked.stat().st_mode)
+    try:
+        blocked.chmod(0)
+        code, result = scan_main(home, target, monkeypatch, capsys)
+        assert "refused" not in result
+        assert code == 1
+        assert result["unreadable"] == 1
+        assert result["files_scanned"] == 0 and result["hits"] == {}
+    finally:
+        blocked.chmod(mode)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can search mode-444 directories")
+def test_scan_counts_file_in_unsearchable_directory(home, tmp_path, monkeypatch, capsys):
+    pin_entry(home)
+    tree = tmp_path / "fake-artifacts"
+    blocked = tree / "fake-blocked"
+    blocked.mkdir(parents=True)
+    (blocked / "fake-hidden.log").write_text(ACCT)
+    mode = stat.S_IMODE(blocked.stat().st_mode)
+    try:
+        blocked.chmod(0o444)
+        code, result = scan_main(home, tree, monkeypatch, capsys)
+        assert "refused" not in result
+        assert code == 1
+        assert result["unreadable"] == 1
+        assert result["files_scanned"] == 0 and result["hits"] == {}
+    finally:
+        blocked.chmod(mode)
 
 
 def test_scan_counts_files_once_per_label_and_escaped_needles(home, tmp_path):

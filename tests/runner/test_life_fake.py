@@ -265,6 +265,8 @@ def completed_sessions(monkeypatch):
 def test_audit_effect_gaps_by_arm(lives, tmp_path, monkeypatch, completed_sessions, arm, other_failure):
     report = {section: dict.fromkeys(keys, []) for section, keys in FAILING.items()}
     report["A4"]["gaps"] = ["missing write"]
+    report["A4"]["calls"] = [dict(call="missing write", applied=True,
+        operations=[dict(store_satisfied=False, next_session_satisfied=False)])]
     if other_failure:
         report["A1"]["mismatches"] = ["different request"]
     monkeypatch.setattr(runner, "load_ledger", lambda *args: ([], {}, "unit-ledger"))
@@ -278,6 +280,38 @@ def test_audit_effect_gaps_by_arm(lives, tmp_path, monkeypatch, completed_sessio
             assert result.audit["a4_gaps"] == "expected: the wiped arm restores the fresh install at every wake"
         else:
             assert "a4_gaps" not in result.audit
+    finally:
+        result.cleanup()
+
+
+@pytest.mark.parametrize("arm,applied,status,unclassified", [
+    ("wiped", (True, None), "INFRA_FAILURE", 1),
+    ("wiped", (True,), "OK", None),
+    ("wiped", None, "INFRA_FAILURE", "unknown"),
+    ("system", (True, None), "INFRA_FAILURE", None),
+])
+def test_audit_unclassified_effect_gaps(lives, tmp_path, monkeypatch, completed_sessions,
+                                       arm, applied, status, unclassified):
+    report = {section: dict.fromkeys(keys, []) for section, keys in FAILING.items()}
+    report["A4"]["gaps"] = ["missing write"]
+    if applied is not None:
+        report["A4"]["calls"] = [dict(call=f"write-{n}", applied=value,
+            operations=[dict(store_satisfied=False, next_session_satisfied=False)])
+            for n, value in enumerate(applied)]
+        report["A4"]["gaps"] = [c["call"] for c in report["A4"]["calls"]]
+    monkeypatch.setattr(runner, "load_ledger", lambda *args: ([], {}, "unit-ledger"))
+    monkeypatch.setattr(runner, "audit", lambda *args, **kwargs: report)
+    result = drive(lives["t1-g1", "B0"], tmp_path, arm=arm)
+    try:
+        assert result.stopped is None
+        assert result.audit["status"] == status
+        assert result.audit["failures"] == ["A4.gaps"]
+        if unclassified is not None:
+            assert result.audit["a4_unclassified"] == unclassified
+            assert "a4_gaps" not in result.audit
+        else:
+            assert "a4_unclassified" not in result.audit
+            assert ("a4_gaps" in result.audit) == (arm == "wiped")
     finally:
         result.cleanup()
 
@@ -579,7 +613,8 @@ def test_adapter_failure_labels_are_named():
 @pytest.mark.parametrize("label,cls", [
     ("turn_timeout", "SYSTEM_FAILURE"), ("end_timeout", "SYSTEM_FAILURE"),
     ("startup_timeout", "INFRA_FAILURE"), ("open_timeout", "INFRA_FAILURE"),
-    ("worker_start", "INFRA_FAILURE"),
+    ("worker_start", "INFRA_FAILURE"), ("director_inflight", "INFRA_FAILURE"),
+    ("admission_deadline", "INFRA_FAILURE"),
 ])
 def test_worker_failure_mappings(label, cls):
     assert dict(CAUSES)[label] == cls
@@ -698,3 +733,53 @@ def test_raised_probe_restores_surfaces_and_keeps_unsettled(lives, tmp_path, mon
     assert not any(s.session > 10 for s in result.sessions)
     result.cleanup()
     assert not result._root.exists()
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
+def test_non_plugin_life_gets_worker_env(lives, tmp_path, monkeypatch, harness, arm):
+    extra = {"MODEL_HOME": str(tmp_path / "cache")}
+
+    def session(self, index, **kw):
+        raise HarnessFailed("turn_failed")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    result = drive(lives["t1-g1", "B0"], tmp_path / "run", arm=arm, extra_env=extra)
+    made = harness.made[0]
+    assert made.plugin is None and made.context_engine is None
+    assert made.extra_env == (None if arm == "no_memory" else extra)
+    result.cleanup()
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
+def test_engine_only_life_uses_plugin_wake_and_env(lives, tmp_path, monkeypatch, harness, arm):
+    from bicentennial.director.scripted import WRITE_ARGS
+    from bicentennial.systems import hermes_plugin as hp
+
+    name, engine = "fixture-engine", "fixture_engine"
+    source, pinned = plugin_source(tmp_path)
+    entry = dict(ENTRY, name=name, artifact=pinned["artifact"])
+    monkeypatch.setitem(hp.ENGINES, name, engine)
+    monkeypatch.setitem(hp.TREES, name, ("HEAD",))
+    monkeypatch.setitem(WRITE_ARGS, name, WRITE_ARGS["hermes-native"])
+    extra = {"MODEL_HOME": str(tmp_path / "cache")}
+
+    def session(self, index, **kw):
+        if self.before_spawn is not None:
+            self.before_spawn("session_start")
+            self.before_spawn("kill")
+        raise HarnessFailed("turn_failed")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    result = drive(lives["t1-g1", "B0"], tmp_path / "run", arm=arm,
+                   entry=entry, plugin_source=source, extra_env=extra)
+    made = harness.made[0]
+    assert made.context_engine == (None if arm == "no_memory" else engine)
+    assert made.extra_env == (None if arm == "no_memory" else extra)
+    target = made.paths["hermes_home"] / "plugins" / engine
+    assert target.exists() is (arm != "no_memory")
+    if arm == "wiped":
+        assert isinstance(result.hooks[0], PluginWake)
+        assert result.hooks[0].records()[-1]["wake"] is True
+    else:
+        assert not result.hooks
+    result.cleanup()

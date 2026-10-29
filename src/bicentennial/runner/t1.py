@@ -12,8 +12,9 @@ from bicentennial.canon import canon, sha256_canon
 from bicentennial.controls.cache import ControlsTampered, code_sha256
 from bicentennial.director.compiler.check import Voids, check_compile
 from bicentennial.director.routes import RouteTable, route_table_hash
+from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import PinMismatch
-from bicentennial.harness.hermes.plugin_host import GateRefused
+from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS, GateRefused
 from bicentennial.items import c7
 from bicentennial.items.protocol import CANARY
 from bicentennial.keyed import mint_id
@@ -30,7 +31,10 @@ from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
 from bicentennial.systems.hermes_plugin import (
     DEPENDENCIES,
-    PROVIDERS,
+    is_plugin,
+    prepare_cache,
+    resolve_worker_env,
+    validate_maps,
     worker_properties,
 )
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
@@ -93,6 +97,8 @@ class T1Context:
     plugin_source: object
     worker_argv: object
     table: dict
+    model_cache: object = None
+    model_cache_sha256: str | None = None
     worker_properties: tuple = ()
 
 
@@ -189,7 +195,7 @@ def _boundaries(packs):
 def _commit():
     try:
         value = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
-            check=True, capture_output=True, text=True).stdout.strip()
+            check=True, capture_output=True, text=True, env=git_env()).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         raise T1Refused("benchmark_commit") from None
     if len(value) != 40 or any(c not in "0123456789abcdef" for c in value):
@@ -214,7 +220,7 @@ def _lock(index, packs, entry, table, pack_hash):
 
 
 def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=None,
-            worker_argv=None) -> T1Context:
+            worker_argv=None, model_cache=None) -> T1Context:
     """Refuse invalid inputs and pin both lives before constructing any adapter."""
     if entry is None:
         try:
@@ -228,8 +234,12 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if entry["harness"] != "hermes":
         raise T1Refused("harness_not_hermes")
     harness_pin = dict(sorted(load(REGISTRY / "hermes-native.toml")["artifact"].items()))
-    if (hermes is None and worker_argv is None) or (system in PROVIDERS and plugin_source is None):
+    if (hermes is None and worker_argv is None) or (is_plugin(system) and plugin_source is None):
         raise T1Refused("missing_input")
+    validate_maps()
+    model_cache, model_cache_sha256 = prepare_cache(system, model_cache, T1Refused)
+    if entry["settle"]["kind"] == "hook" and system not in SETTLE_THREADS:
+        raise T1Refused("settle_unmapped")
     if hermes is not None and worker_argv is None:
         python = Path(hermes).resolve() / ".venv" / "bin" / "python"
         try:
@@ -282,7 +292,8 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         system_hash=sha256_canon(lock["system_artifacts"]), **_boundaries(packed))
     return T1Context(entry, harness_pin, index, pack_hash, packed, lock, dict(sorted(pins.items())),
         SessionGate(lock), current_lock, mint_id(canon(["t1", lock_hash(lock), system]).decode(), 0),
-        2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table, properties)
+        2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table, model_cache, model_cache_sha256,
+        properties)
 
 
 def _worker(ctx, life, branch, arm):
@@ -298,11 +309,12 @@ def _unit(ctx, pack, arm, b, scratch, voids, floor):
             current_lock=ctx.current_lock, voids=voids, harness_pin=ctx.harness_pin,
             hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
             worker_argv=_worker(ctx, pack.life, b, arm), visible=pack.visible,
-            honeypot_token=pack.meta["honeypot_token"])
+            honeypot_token=pack.meta["honeypot_token"],
+            extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
         runs.append(run)
         scores, labels = {}, {}
         try:
-            relabel = (ctx.entry["name"] in PROVIDERS and arm in GATED_ARMS and run.stopped
+            relabel = (is_plugin(ctx.entry["name"]) and arm in GATED_ARMS and run.stopped
                 and run.stopped[1] in RELABEL and floor.stopped
                 and floor.stopped[1:] == run.stopped[1:])
             for item in sorted(pack.items[b], key=lambda i: i["item_id"]):

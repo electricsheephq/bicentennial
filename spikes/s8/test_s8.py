@@ -287,6 +287,68 @@ def test_built_scripts_case_insensitive_value_scan(tmp_path):
                 assert run.scan_script(json.loads(canon(script).decode().casefold()), [], asked) == []
 
 
+def test_build_scripts_with_value_word_in_scratch_path(tmp_path):
+    for index in range(10):
+        life = f"s8-life-{index:02d}"
+        word = run.world(life)[1]["values"]["ITEM1"].lower()
+        scratch = tmp_path / word
+        for mode in ("text", "native"):
+            for branch in ("B0", "B1"):
+                paths = fixture_paths(scratch)
+                script = run.build_script(life, mode, branch=branch, paths=paths)
+                workspace_turn = script["sessions"][1]["turns"][1]
+                assert str(paths["workspace"]) in workspace_turn["user"]
+                assert str(paths["workspace"]) in workspace_turn["tool_calls"][0]["args"]["image_url"]
+                if mode == "native":
+                    assert str(paths["home"]) in script["sessions"][1]["turns"][0]["user"]
+
+
+@pytest.mark.parametrize("field", ("user text", "assistant text", "tool argument"))
+def test_build_script_leak_names_cause_without_value(tmp_path, monkeypatch, field):
+    life = "s8-life-00"
+    value = run.world(life)[0]["values"]["PORT"]
+    turn = run.turn
+
+    def injected(text, n, kind="probe", calls=()):
+        scripted = turn(text, n, kind, calls)
+        if kind == "replay" and n == 1:
+            if field == "tool argument":
+                scripted["tool_calls"] = [{"name": "vision_analyze", "args": {"question": value.lower()}}]
+            else:
+                scripted["user" if field == "user text" else "assistant"] = value.lower()
+        return scripted
+
+    monkeypatch.setattr(run, "turn", injected)
+    with pytest.raises(ValueError) as caught:
+        run.build_script(life, "text", branch="B0", paths=fixture_paths(tmp_path))
+    message = str(caught.value)
+    assert "script_value_leak" in message
+    assert "session=1 turn=1" in message
+    assert f"field={field}" in message
+    assert f"item_id={life}-settings:PORT:B0" in message
+    assert value not in message
+
+
+def test_build_script_ignores_canary_and_metadata(tmp_path, monkeypatch):
+    world, script_of = run.world, run.script_of
+
+    def with_canary_value(life, branch="B0"):
+        records = world(life, branch)
+        records[0]["values"]["SERVICE"] = run.CANARY[:8].upper()
+        return records
+
+    def with_metadata_value(life, sessions):
+        script = script_of(life, sessions)
+        script["genre"] = with_canary_value(life)[0]["values"]["PORT"]
+        return script
+
+    monkeypatch.setattr(run, "world", with_canary_value)
+    monkeypatch.setattr(run, "script_of", with_metadata_value)
+    script = run.build_script("s8-life-00", "native", branch="B0", paths=fixture_paths(tmp_path))
+    assert script["canary"] == run.CANARY
+    assert script["genre"] == world("s8-life-00")[0]["values"]["PORT"]
+
+
 @pytest.mark.parametrize("mode", ("text", "native"))
 @pytest.mark.parametrize("branch", ("B0", "B1"))
 def test_build_script_refuses_lowercase_gold(tmp_path, monkeypatch, mode, branch):
@@ -729,6 +791,174 @@ def test_summary_identity_attribution_cost_cache_and_controls(tmp_path, monkeypa
     assert result["modes"]["native"]["accuracy"]["R"] == {"not_applicable": True}
     assert b"PRIVATE_CAPTION" not in canon(result)
     assert b'"gold":' not in canon(result)
+
+
+@pytest.fixture
+def routing_evidence(tmp_path, monkeypatch):
+    import base64
+
+    life = "s8-life-00"
+    root = tmp_path / f"p08-text-{life}-M"
+    root.mkdir()
+    receipt = {"mode": "text", "life": life, "arm": "M", "answers": {}, "shuffled": {},
+               "inputs": {"script_hashes": {}, "hermes_pin": {}, "hermes_commit": "fixture", "models": {}},
+               "egress": {"non_loopback": []}, "states": [], "identities": [], "sessions": [],
+               "marker": [], "wall_ms": 1, "stop": None}
+    (root / "receipt.json").write_bytes(canon(receipt))
+    records, blobs, images = [], {"main": {}}, []
+    for turn_n, channel in enumerate(("attachment", "workspace"), 1):
+        record = next(r for r in run.world(life) if r["kind"] == run.channels(life)[channel])
+        png, _ = render.render(record, "F0", run.SEED)
+        images.append({"png": png, "record": record})
+        blobs[channel] = {"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {
+            "url": "data:image/png;base64," + base64.b64encode(png).decode()}}]}]}
+        records.append({"type": "request", "seq": len(records) + 1, "req": channel, "attempt_id": "s2",
+                        "role": "aux", "subrole": "vision", "cursor": None,
+                        "status": 200 if channel == "attachment" else 503,
+                        "served": "responder_live" if channel == "attachment" else "responder_live_unavailable",
+                        "upstream": []})
+        records.append({"type": "request", "seq": len(records) + 1, "req": "main", "attempt_id": "s2",
+                        "role": "replay_main", "subrole": "tool_results", "cursor": {"session": 2, "turn": turn_n},
+                        "status": 200, "served": "script", "upstream": []})
+    monkeypatch.setattr(run, "ledger", lambda root: (records, blobs))
+    monkeypatch.setattr(run, "images", lambda: iter(images))
+    return records, blobs
+
+
+def test_failed_workspace_vision_then_200_tool_result_does_not_route(tmp_path, routing_evidence):
+    records, _ = routing_evidence
+    assert (records[2]["status"], records[3]["status"]) == (503, 200)
+    channels = run.summarise(tmp_path)["modes"]["text"]["channels"]
+    assert channels["attachment"]["routed"] is True
+    assert channels["workspace"]["lives"] == [False]
+    assert channels["workspace"]["routed"] is False
+
+
+@pytest.mark.parametrize("retry", ("provider", "refused_float"))
+def test_image_routes_after_normalised_retry_only_when_successful(tmp_path, routing_evidence, retry):
+    records, blobs = routing_evidence
+    vision = records[2]
+    if retry == "refused_float":
+        blobs["float"] = {"body_sha256": "fixture", "float_keys": ["temperature"]}
+        records.insert(2, dict(vision, req="float", status=400, served="refused_float"))
+        for seq, record in enumerate(records, 1):
+            record["seq"] = seq
+    else:
+        vision["upstream"] = [{"diagnostics": [
+            {"kind": "try", "try": 1, "status": 503, "sent": True, "reserved": 0, "charged": 0},
+            {"kind": "try", "try": 2, "status": 503, "sent": True, "reserved": 0, "charged": 0}]}]
+    # The failed control prevents a fix that merely treats any retry as perception.
+    assert run.summarise(tmp_path)["modes"]["text"]["channels"]["workspace"]["routed"] is False
+    vision.update(status=200, served="responder_live")
+    if retry == "provider":
+        vision["upstream"][0]["diagnostics"][-1]["status"] = 200
+    pair = run.summarise(tmp_path)["modes"]["text"]["channels"]["workspace"]
+    assert pair["lives"] == [True]
+    assert pair["routed"] is True
+    assert pair["requests"] == {"aux/vision": 2 if retry == "refused_float" else 1}
+
+
+@pytest.fixture
+def native_routing_evidence(tmp_path, routing_evidence):
+    records, blobs = routing_evidence
+    root = tmp_path / "p08-text-s8-life-00-M"
+    native_root = tmp_path / "p08-native-s8-life-00-M"
+    root.rename(native_root)
+    receipt = json.loads((native_root / "receipt.json").read_bytes())
+    receipt["mode"] = "native"
+    (native_root / "receipt.json").write_bytes(canon(receipt))
+    # The attachment reaches a live write turn immediately. The workspace image
+    # first appears in scripted tool_results, then reaches the turn-3 write turn.
+    records[:] = records[::2]
+    for turn_n, record in enumerate(records, 1):
+        record.update(seq=turn_n, role="replay_main", subrole="cursor" if turn_n == 1 else "tool_results",
+                      status=200, served="script", cursor={"session": 2, "turn": turn_n}, upstream=[])
+    records[0]["upstream"] = [{"role": "write_turn", "status": 200, "served_by": "live", "diagnostics": [
+        {"kind": "try", "try": 1, "status": 200, "sent": True, "reserved": 0, "charged": 0}]}]
+    records.append(dict(records[1], seq=3, subrole="cursor", cursor={"session": 2, "turn": 3},
+                        write_turn_failed="status_503", upstream=[{
+                            "role": "write_turn", "status": 503, "served_by": "live", "diagnostics": [
+                                {"kind": "try", "try": 1, "status": 503, "sent": True,
+                                 "reserved": 0, "charged": 0}]}]))
+    return records, blobs
+
+
+def test_native_image_routes_only_after_successful_live_attempt(tmp_path, native_routing_evidence):
+    records, _ = native_routing_evidence
+
+    def channels():
+        return run.summarise(tmp_path)["modes"]["native"]["channels"]
+
+    image = records.pop()
+    assert records[1]["subrole"] == "tool_results" and records[1]["upstream"] == []
+    assert records[1]["status"] == 200
+    assert channels()["workspace"]["routed"] is False
+    records.append(image)
+    failed = channels()
+    assert image["status"] == 200 and image["write_turn_failed"] == "status_503"
+    assert failed["attachment"]["routed"] is True
+    assert failed["attachment"]["requests"] == {"replay_main/cursor": 1}
+    assert failed["workspace"]["lives"] == [False]
+    assert failed["workspace"]["routed"] is False
+    # Absence of a failure flag alone cannot establish successful perception.
+    del image["write_turn_failed"]
+    assert channels()["workspace"]["routed"] is False
+    upstream = image["upstream"][0]
+    upstream["status"] = 200
+    upstream["diagnostics"].append({"kind": "try", "try": 2, "status": 200, "sent": True,
+                                    "reserved": 0, "charged": 0})
+    successful = channels()["workspace"]
+    assert successful["lives"] == [True] and successful["routed"] is True
+    assert successful["requests"] == {"replay_main/tool_results": 1}
+    image["write_turn_failed"] = "status_503"
+    assert channels()["workspace"]["routed"] is False
+    del image["write_turn_failed"]
+    upstream["diagnostics"] = []
+    assert channels()["workspace"]["routed"] is False
+
+
+@pytest.mark.parametrize("invalid", ("missing_image", "other_image", "early_turn", "early_seq", "other_session"))
+def test_native_workspace_live_turn_requires_pair_image_and_order(tmp_path, native_routing_evidence, invalid):
+    records, _ = native_routing_evidence
+    image = records[2]
+    del image["write_turn_failed"]
+    image["upstream"][0]["status"] = 200
+    image["upstream"][0]["diagnostics"][0]["status"] = 200
+
+    def workspace():
+        return run.summarise(tmp_path)["modes"]["native"]["channels"]["workspace"]
+
+    assert workspace()["routed"] is True
+    if invalid == "missing_image":
+        image["req"] = "main"
+    elif invalid == "other_image":
+        image["req"] = "attachment"
+    elif invalid == "early_turn":
+        image["cursor"]["turn"] = 1
+    elif invalid == "early_seq":
+        image["seq"] = records[1]["seq"] - 1
+    else:
+        image["attempt_id"] = "s3"
+        image["cursor"]["session"] = 3
+    pair = workspace()
+    assert pair["lives"] == [False] and pair["routed"] is False
+    assert pair["requests"] == {"replay_main/tool_results": 1}
+
+
+def test_native_workspace_live_turn_rejects_identity_mismatch(tmp_path, native_routing_evidence):
+    records, _ = native_routing_evidence
+    image = records[2]
+    del image["write_turn_failed"]
+    image["upstream"][0]["status"] = 200
+    image["upstream"][0]["diagnostics"][0]["status"] = 200
+
+    def workspace():
+        return run.summarise(tmp_path)["modes"]["native"]["channels"]["workspace"]
+
+    assert workspace()["routed"] is True
+    image["served"] = "identity_mismatch"
+    pair = workspace()
+    assert pair["lives"] == [False] and pair["routed"] is False
 
 
 def test_boundary_stop_rules(tmp_path):

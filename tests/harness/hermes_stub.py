@@ -12,6 +12,7 @@ from pathlib import Path
 
 MODE = __MODE__
 SYNC_MS = __SYNC_MS__
+MAX_LENGTH = __MAX_LENGTH__
 PROVIDER = ""
 THREADS = []
 
@@ -44,7 +45,10 @@ def opened():
 
 
 def schema(name, key="content"):
-    return dict(name=name, parameters=dict(type="object", properties={key: dict(type="string", maxLength=4000)}))
+    field = dict(type="string")
+    if MAX_LENGTH is not None:
+        field["maxLength"] = MAX_LENGTH
+    return dict(name=name, parameters=dict(type="object", properties={key: field}))
 
 
 def search(query):
@@ -242,12 +246,13 @@ class SessionDB:
 }
 
 
-def write_tree(dest, *, log, mode="none", sync_ms=0):
+def write_tree(dest, *, log, mode="none", sync_ms=0, max_length=None):
     """Create exactly the Hermes import surfaces used by the file-launched worker."""
     if mode not in {"none", "wipe_on_open", "keep_on_remove", "stale_wins", "missing", "delayed_sync", "all_hits"}:
         raise ValueError("unknown stub mode")
     dest = Path(dest)
     source = COMMON.replace("__MODE__", repr(mode)).replace("__SYNC_MS__", str(sync_ms))
+    source = source.replace("__MAX_LENGTH__", repr(max_length))
     source = source.replace("__LOG__", repr(str(Path(log).resolve())))
     modules = dict(MODULES, **{"_stub.py": source})
     for name, source in modules.items():

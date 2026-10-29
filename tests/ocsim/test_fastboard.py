@@ -177,6 +177,27 @@ def test_reference_equivalence(params, solver, prepared):
             assert control == {k: sum(min(pair) for pair in items[k]) for k in fc}
 
 
+
+def test_board_pairs_in_block_order(params, solver, prepared):
+    # cell_sums keeps the caller's pair order; the board must still list pairs in block order.
+    sch = schedule.project(prepared, "base", fake_draws())
+    lat = model.bundle_latents(params, ALLOC, PAIRS, "fastboard-fakes", 0)
+    eff = model.life_effects(params, PAIRS, "fastboard-fakes", 0)
+    targets = targets_for(params, sch, model.expected_units(params, eff, {"T": 0, "X": 0}),
+                          drift.DRIFT_CASES[0], drift.LITERAL)
+    fc = {k: v for k, v in targets.items() if k[0] != "S"}
+    st = {k: v for k, v in targets.items() if k[0] == "S"}
+    control = fastboard.control_sums(params, lat, fc, solver, alloc=ALLOC)
+    system = fastboard.system_sums(params, lat, st, sch.system, solver, alloc=ALLOC)
+    cs = fastboard.cell_sums(control, system, sch.control_failed, {p: 3 for p in PAIRS},
+                             ALLOC, (Q, P), units="all")
+    assert cs.pairs == (Q, P)
+    result = fastboard.to_board_inputs(cs, {P: 0, Q: 1})
+    assert set(result.pairs.values()) == {(P, Q)}
+    items = model.sample_items(params, targets, ALLOC, PAIRS, "fastboard-fakes", 0, solver=solver)
+    assert result == board.assemble_schedule(sch, prepared, items, ALLOC, units="all")
+    assert set(fastboard.to_board_inputs(cs, {P: 1, Q: 0}).pairs.values()) == {(Q, P)}
+
 def test_crn_and_scope_splitting(params, solver, prepared):
     sch = schedule.project(prepared, "base", fake_draws())
     eff = model.life_effects(params, PAIRS, "crn", 0)

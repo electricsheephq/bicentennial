@@ -66,7 +66,7 @@ class Director:
                                            for t in self.turns])
         for task in AUX_TASKS:
             self.ctx.path_aliases[f"/aux/{task}/"] = self.ctx.aliases[f"bicentennial-aux-{task}"] = _alias(task)
-        self.ctx.aliases["bicentennial-summariser"] = roles.alias("compaction")
+        self.ctx.aliases[roles.SUMMARISER_ALIAS] = roles.alias("compaction")
         self.ctx.aliases["bicentennial-extraction"] = roles.alias("extraction")
         apply_masks({}, run_values)  # refuses incomplete run values before any request
         self.run_values = dict(run_values)
@@ -174,7 +174,7 @@ class Director:
         if method == "GET":
             aux = roles.classify({"method": "GET", "path": path, "body": None}, self.ctx)[0] == "aux"
             rec.update(role="aux" if aux else "unknown", subrole="metadata" if aux else "path")
-            models = [self.route["alias"], "bicentennial-summariser", *(f"bicentennial-aux-{t}" for t in AUX_TASKS)]
+            models = [self.route["alias"], roles.SUMMARISER_ALIAS, *(f"bicentennial-aux-{t}" for t in AUX_TASKS)]
             m = re.search(r"/models(?:/([^/]+))?$", p)
             if aux and m and m[1] in (None, *models):
                 obj = ({"object": "list", "data": [{"id": x, "object": "model"} for x in models]} if m[1] is None

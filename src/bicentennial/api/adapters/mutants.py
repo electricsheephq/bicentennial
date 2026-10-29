@@ -3,6 +3,20 @@
 from .reference_store import ReferenceStore, tokens
 
 
+class clip_text_silently(ReferenceStore):
+    """Store only the first 300 characters without declaring the loss."""
+
+    def ingest(self, event):
+        super().ingest(dict(event, text=event["text"][:300]))
+
+
+class drop_actor(ReferenceStore):
+    """Store every event with an empty actor."""
+
+    def ingest(self, event):
+        super().ingest(dict(event, actor=""))
+
+
 class wipe_on_restart(ReferenceStore):
     def restore(self, data):
         self.reset()
