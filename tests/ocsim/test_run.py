@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import re
+from concurrent.futures import Future
 from dataclasses import replace
 from fractions import Fraction
 from hashlib import sha256
@@ -113,6 +114,7 @@ def test_se_rounding_indices_and_missing():
     assert tcal.index(18, 950_000) == 17
     assert run.se_bound([Fraction(i) for i in range(20)]) == run.se_bound([Fraction(18)])
     assert run.se_bound([None, None]) is None
+    assert run.se_bound([Fraction(i) for i in range(18)] + [None, None]) == run.se_bound([Fraction(17)])
     assert run._half(Fraction(5)) == "10/2"
 
 
@@ -271,6 +273,20 @@ def test_parser_validation_and_fallback():
         raw["params"]["rho_x"] = value
         with rejects("inputs: bad float in params.rho_x"):
             run.parse_inputs(canon(raw), ladder=((2, 5),))
+    for value in (0.1, True, 1, "0.1", "1e-1", "1/0", "1/-2"):
+        for field in ("control_failure", "passover.failed", "rows.rate", "probe_only.rates.F"):
+            raw = tiny_raw()
+            owner, key = {"control_failure": (raw, "control_failure"),
+                          "passover.failed": (raw["passover"], "failed"),
+                          "rows.rate": (raw["rows"][0], "rate"),
+                          "probe_only.rates.F": (raw["probe_only"]["rates"], "F")}[field]
+            owner[key] = value
+            with rejects(f"inputs: bad fraction in {field}"):
+                run.parse_inputs(json.dumps(raw).encode(), ladder=((2, 5),))
+    raw = tiny_raw()
+    raw["alloc_by_b"]["5"].append(["X", 2, 4])
+    with rejects("allocation for b = 5 must cover every (cell, checkpoint)"):
+        run.parse_inputs(canon(raw), ladder=((2, 5),))
     raw = tiny_raw()
     key = ("F", "life-z", "B0", 2)
     raw["probe_only"]["tokens"] = [[*key, 1]]
@@ -282,6 +298,9 @@ def test_planning_fixture_real_parser_and_replicate():
     inputs = run.load_inputs(FIXTURE)
     assert inputs.planning and len(inputs.lives) == 48 and len(inputs.rows) == 6
     assert len(inputs.required) == 4
+    for b, alloc in inputs.alloc_by_b.items():
+        assert len(alloc) == 16 and sum(alloc.values()) == round(Fraction(3, 5) * b)
+        assert min(alloc.values()) >= 1 and max(alloc.values()) - min(alloc.values()) <= 1
     config = run.configure(run.RunConfig(("LITERAL",), 1), constants=TINY_CONSTANTS)
     ctx = run.PointContext(inputs, config, run.LADDER[0])
     decisions = run.evaluate(ctx, 0, ("LITERAL|base|none|m0",))
@@ -289,20 +308,34 @@ def test_planning_fixture_real_parser_and_replicate():
 
 
 def test_c8_hash_copy_change_missing_and_dirty(tmp_path, monkeypatch):
-    for name in run.C8_PATHS:
+    paths = run.c8_paths(ROOT)
+    for name in paths:
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / name).read_bytes())
     initial = run.c8_hash(tmp_path)
     assert run.c8_hash(tmp_path) == initial == run.c8_hash(ROOT)
     assert initial == sha256(canon([[p, sha256((tmp_path / p).read_bytes()).hexdigest()]
-                                   for p in run.C8_PATHS])).hexdigest()
-    target = tmp_path / run.C8_PATHS[0]
+                                   for p in paths])).hexdigest()
+    target = tmp_path / run._C8_FIXED[0]
     target.write_bytes(target.read_bytes() + b"\n")
     assert run.c8_hash(tmp_path) != initial
     target.unlink()
-    with rejects(f"C-8 file missing: {run.C8_PATHS[0]}"):
+    with rejects(f"C-8 file missing: {run._C8_FIXED[0]}"):
         run.c8_hash(tmp_path)
+    target.write_bytes((ROOT / run._C8_FIXED[0]).read_bytes())
+    assert run._git(tmp_path, "init") is not None
+    assert run._git(tmp_path, "add", ".") is not None
+    assert run._git(tmp_path, "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
+                    "-c", "commit.gpgsign=false", "commit", "-m", "synthetic fixture") is not None
+    assert not run.c8_dirty(tmp_path)
+    deleted = tmp_path / "tests/ocsim/test_reserve.py"
+    deleted.unlink()
+    assert run.c8_dirty(tmp_path)
+    deleted.write_bytes((ROOT / "tests/ocsim/test_reserve.py").read_bytes())
+    assert not run.c8_dirty(tmp_path)
+    (tmp_path / "src/bicentennial/ocsim/new.py").write_text("# synthetic\n")
+    assert run.c8_dirty(tmp_path) and run.c8_hash(tmp_path) != initial
     monkeypatch.setattr(run, "_git", lambda *args: None)
     assert run.c8_dirty(ROOT)
     monkeypatch.setattr(run, "_git", lambda *args: " M tracked.py")
@@ -329,9 +362,11 @@ def test_byte_identity_workers_and_chunks(tiny_inputs, tmp_path):
     payloads = []
     for i, (workers, chunk) in enumerate(((1, 1), (4, 1), (4, 25))):
         out = tmp_path / str(i)
-        config = tiny_config(workers=workers, constants={**TINY_CONSTANTS, "CHUNK": chunk})
+        config = tiny_config(workers=workers, variants=run.RunConfig(("LITERAL",), 1).variants,
+                             constants={**TINY_CONSTANTS, "CHUNK": chunk})
         assert run.run(tiny_inputs, config, out) == 0
         payloads.append((out / "results.json").read_bytes())
+        assert all(p["variants"] for p in json.loads(payloads[-1])["points"])
         manifest = json.loads((out / "RESULT-MANIFEST.json").read_bytes())
         assert canon(manifest) == (out / "RESULT-MANIFEST.json").read_bytes()
         assert manifest["audits"]["replicates"] > 0
@@ -399,6 +434,51 @@ def test_busy_marker_pause_byte_identity(tiny_inputs, tmp_path, monkeypatch):
     assert len([p for p in manifest["run"]["pauses"] if p["event"] == "pause"]) == 1
 
 
+@pytest.mark.parametrize("initial", (0, 10))
+def test_busy_marker_exit10_drain_and_pool_width(tiny_inputs, tables, tmp_path, monkeypatch, initial):
+    config = tiny_config(workers=4, variants=("main", "reserve0"),
+                         constants={**TINY_CONSTANTS, "CHUNK": 1})
+    code, submitted, reduced, controlled = [0], [], [], [False]
+    class Executor:
+        def __init__(self, *, max_workers, mp_context, initializer, initargs):
+            self.mode = 10 if initargs[-1] else 0
+            assert max_workers == (2 if self.mode == 10 else 4)
+            monkeypatch.setattr(run, "_WORKER", context(tiny_inputs, config, tables, variant=initargs[3]))
+        def submit(self, fn, *args):
+            assert code[0] == self.mode, "submission during drain"
+            future = Future()
+            future.set_result(fn(*args))
+            submitted.append(args)
+            if controlled[0] and initial == 0 and len(submitted) == 3:
+                code[0] = 10
+            elif initial == 0 and self.mode == 10 and len(submitted) == 6:
+                code[0] = 0
+            return future
+        def shutdown(self, **kwargs):
+            if initial == 10:
+                code[0] = 0
+    original = run._Pool.results
+    def results(pool, tasks, bounds, **kwargs):
+        for result in original(pool, tasks, bounds, **kwargs):
+            reduced.append((pool.variant, getattr(result, "r0", -1)))
+            yield result
+    monkeypatch.setattr(run, "ProcessPoolExecutor", Executor)
+    monkeypatch.setattr(run, "wait", lambda pending, **kwargs: ({next(iter(pending))}, set()))
+    monkeypatch.setattr(run._Pool, "results", results)
+    monkeypatch.setattr(run, "_marker", lambda command: code[0])
+    # Baseline keeps the marker at zero, even at the third and sixth submission.
+    assert run.run(tiny_inputs, config, tmp_path / "whole") == 0
+    expected = sorted(reduced)
+    controlled[0], code[0] = True, initial
+    submitted.clear()
+    reduced.clear()
+    assert run.run(tiny_inputs, config, tmp_path / "controlled") == 0
+    assert sorted(reduced) == expected and len(reduced) == len(submitted)
+    assert (tmp_path / "whole/results.json").read_bytes() == (tmp_path / "controlled/results.json").read_bytes()
+    pauses = json.loads((tmp_path / "controlled/RESULT-MANIFEST.json").read_bytes())["run"]["pauses"]
+    assert [(p["exit"], p["workers"]) for p in pauses] == [(10, 2), (0, 4)]
+
+
 def test_busy_marker_exit10_niceness_owner_run(tiny_inputs, monkeypatch):
     """Amendments 6/11: owner-run if sandbox refuses spawn/setpriority."""
     config = tiny_config(workers=4)
@@ -432,6 +512,7 @@ def test_ladder_and_sensitivities(tiny_inputs, tables, tmp_path, monkeypatch):
     seen = []
 
     def stub(ctx, rep, ids, *, margins=None):
+        ctx.audits["replicates"] += 1
         seen.extend((ctx.point, ctx.variant, case) for case in ids)
         result = {}
         for case in ids:
@@ -458,6 +539,14 @@ def test_ladder_and_sensitivities(tiny_inputs, tables, tmp_path, monkeypatch):
     for point in results["points"]:
         assert set(point["variants"]) == {"reserve0", "tau0", "no_system_passovers"}
         assert all(set(data) == {"LITERAL"} for data in point["variants"].values())
+    phases = []
+    monkeypatch.setattr(run, "_barrier_hook", lambda point, variant, phase: phases.append(phase))
+    diagnostics = {"pauses": [], "phases": {}, "audits": {"replicates": 0, "certify_calls": 0,
+                                                           "fields_compared": 0, "mismatches": 0}}
+    point = {**results["points"][1], "alternatives": {}, "variants": {}}
+    run._sensitivities(inputs, config, point, tmp_path / "bound", {}, diagnostics)
+    assert phases.count("sensitivity_bound") == 1 and phases.count("sensitivity") == 3
+    assert len(diagnostics["phases"]) == 4 and diagnostics["audits"]["replicates"] == 8 + 3 * 4
 
 
 def test_missing_bound_skip_and_capacity(tiny_inputs, tables, tmp_path, monkeypatch):
@@ -501,6 +590,14 @@ def test_bound_max_pooled_and_missing():
             for r in range(20)]
     phase = {"se2_max": {f"LITERAL|base|none|{m}": rows for m in ("m0", "m10")}}
     assert run._bounds(phase, ("LITERAL",)) == ({"LITERAL": Fraction(10)}, {"LITERAL": Fraction(0)})
+    config = tiny_config(constants={**TINY_CONSTANTS, "SE_STATISTIC": "pooled"})
+    assert run._bounds(phase, ("LITERAL",), config) == ({"LITERAL": Fraction(0)}, {"LITERAL": Fraction(0)})
+    with rejects("SE_STATISTIC must be max or pooled"):
+        tiny_config(constants={**TINY_CONSTANTS, "SE_STATISTIC": "bad"})
+    missing_rows = [(Fraction(i), (Fraction(i),)) for i in range(18)] + [(None, ())] * 2
+    partial = {"se2_max": {f"LITERAL|base|none|{m}": missing_rows for m in ("m0", "m10")}}
+    expected = {"LITERAL": run.se_bound([Fraction(17)])}
+    assert run._bounds(partial, ("LITERAL",)) == (expected, expected)
     phase["se2_max"]["LITERAL|base|none|m10"] = [(None, ())] * 20
     assert run._bounds(phase, ("LITERAL",)) == ({"LITERAL": None}, {"LITERAL": None})
 
@@ -543,8 +640,10 @@ def test_checkpoint_1000_order_and_partial_resume(tiny_inputs, tmp_path, monkeyp
     pool = run._Pool(tiny_inputs, config, (2, 5), "main", [])
     ids = ("LITERAL|base|none|m0",)
     hashes = {"inputs": "a", "c8": "b", "config": "c"}
+    submitted = []
 
     def reversed_results(pool, tasks, bounds, *, solver=False):
+        submitted.extend(tasks)
         for _, r0, r1, cases in reversed(list(tasks)):
             n = r1 - r0
             yield run.ChunkResult(r0, {c: (0, 0, 0, n, 0, 0, 0) for c in cases},
@@ -559,7 +658,9 @@ def test_checkpoint_1000_order_and_partial_resume(tiny_inputs, tmp_path, monkeyp
     assert {p.name for p in checkpoints} == {"2-5-main-phase0-1000.json", "2-5-main-phase0-1002.json"}
     (tmp_path / "checkpoints/2-5-main-phase0-1002.json").unlink()
     pool.config = run.copy_config(config, resume=True)
+    submitted.clear()
     resumed = run._phase(pool, "phase0", 0, 1002, ids, {}, tmp_path, hashes)
+    assert submitted == [("phase0", 1000, 1002, ids)]
     assert resumed["counts"] == full["counts"]
     assert resumed["se2_max"] == full["se2_max"]
 

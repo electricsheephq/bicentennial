@@ -38,6 +38,10 @@ def test_hand_load_relabel_and_reserves(load):
         assert {key[1] for key in relabelled.tokens} == set(pairs)
         assert set(relabelled.anchor_tokens) == set(pairs)
         assert all("life-" not in key[1] for key in relabelled.tokens)
+        if n == 2:
+            assert relabelled.tokens["F", "pair-000", "B0", 2] == 1000
+            assert relabelled.tokens["F", "pair-001", "B0", 2] == 2000
+            assert relabelled.anchor_tokens == {"pair-000": 5000, "pair-001": 0}
     assert "life-c" in source.anchor_tokens  # relabelling never mutates the source
     zero = replace(source, tokens={}, anchor_tokens={life.life: 0 for life in lives})
     assert reserve.reserves(zero, lives, (2, 3)) == (0, 0)
@@ -73,6 +77,10 @@ def test_bad_probe_key(load, key):
     lives, source = load
     with rejects(f"bad probe-only key: {key}"):
         reserve.lane_load(replace(source, tokens={key: 1}), lives, (2, 3))
+    key = ("F", "life-a", "B0", "2")
+    with rejects(f"bad probe-only key: {key}"):
+        reserve.lane_load(replace(source, tokens={key: 1, ("F", "life-a", "B0", 3): 1}),
+                          lives, (2, 3))
 
 
 @pytest.mark.parametrize("value", (-1, True, 1.0, "1"))

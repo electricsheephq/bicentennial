@@ -12,6 +12,7 @@ import math
 import multiprocessing
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -56,7 +57,7 @@ KINDS, DRIFT_CASES = schedule.KINDS, drift.DRIFT_CASES
 OUTCOMES = ("CERTIFIED", "DEFERRED", "NOT_CERTIFIED", "NO_CERTIFICATE")
 VARIANTS = ("main", "reserve0", "tau0", "no_system_passovers", "inputs_low", "inputs_high")
 _BUDGET_NAMES = ("DRAWS", "R_MAIN", "R_MAX", "R_REPORT", "R_SENS", "R_SCREEN",
-                 "CHUNK", "CHUNK_LARGE", "BUSY_POLL_S")
+                 "CHUNK", "CHUNK_LARGE", "BUSY_POLL_S", "SE_STATISTIC")
 
 
 @dataclass(frozen=True)
@@ -92,12 +93,14 @@ ALTERNATIVES = {
 
 
 def test_constants(**overrides):
-    """Documented budget/chunk seam; all overrides travel with the config."""
+    """Documented budget/chunk/statistic seam; overrides travel with the config."""
     if any(k not in _BUDGET_NAMES for k in overrides):
-        raise ValueError("only budgets, chunk sizes and polling may be overridden")
+        raise ValueError("only budgets, chunk sizes, polling and SE_STATISTIC may be overridden")
     result = {name: globals()[name] for name in _BUDGET_NAMES}
     result.update(overrides)
-    if any(type(v) is not int or v < 1 for v in result.values()):
+    if result["SE_STATISTIC"] not in ("max", "pooled"):
+        raise ValueError("SE_STATISTIC must be max or pooled")
+    if any(type(v) is not int or v < 1 for k, v in result.items() if k != "SE_STATISTIC"):
         raise ValueError("test constants must be positive ints")
     if not (result["R_REPORT"] == result["R_SCREEN"] <= result["R_MAIN"] < result["R_MAX"]):
         raise ValueError("need R_REPORT = R_SCREEN <= R_MAIN < R_MAX")
@@ -229,6 +232,13 @@ def _params(data, name):
                               _float(data["sigma_r2"], f"{name}.sigma_r2"))
 
 
+def _fraction(value, name):
+    if (not isinstance(value, str) or not re.fullmatch(r"-?[0-9]+/[0-9]+", value)
+            or int(value.split("/")[1]) == 0):
+        raise ValueError(f"inputs: bad fraction in {name}")
+    return Fraction(value)
+
+
 def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> RunInputs:
     """Read data only. Tuple-key maps use sorted JSON rows [key..., value].
 
@@ -250,8 +260,9 @@ def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> Ru
     alloc = {int(b): {(k, c): n for k, c, n in values}
              for b, values in sorted(raw["alloc_by_b"].items())}
     expected = {(k, c) for k in required for c in checkpoints}
-    for b in sorted({b for _, b in ladder}):
-        if b not in alloc or set(alloc[b]) != expected:
+    for b in sorted({b for _, b in ladder} | set(alloc)):
+        if (b not in alloc or set(alloc[b]) != expected
+                or len(raw["alloc_by_b"][str(b)]) != len(alloc[b])):
             raise ValueError(f"allocation for b = {b} must cover every (cell, checkpoint)")
         if any(type(n) is not int or n < 0 for n in alloc[b].values()):
             raise ValueError("allocations must be ints >= 0")
@@ -262,10 +273,11 @@ def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> Ru
     largest = max(n for n, _ in ladder)
     if len(lives) < largest:
         raise ValueError(f"need at least {largest} lives in the dry history set")
-    rows = tuple(schedule.Row(r["row"], Fraction(r["rate"])) for r in raw["rows"])
+    rows = tuple(schedule.Row(r["row"], _fraction(r["rate"], "rows.rate")) for r in raw["rows"])
     lanes = tuple(schedule.LaneCapacity(**r) for r in raw["lanes"])
     load = raw["probe_only"]
-    rates = {arm: Fraction(rate) for arm, rate in sorted(load["rates"].items())}
+    rates = {arm: _fraction(rate, f"probe_only.rates.{arm}")
+             for arm, rate in sorted(load["rates"].items())}
     slowest = max([r.rate for r in rows] + list(rates.values()))
     for arm in (*reserve.PROBE_ONLY_LOAD, "anchor"):
         rates.setdefault(arm, slowest)
@@ -275,9 +287,9 @@ def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> Ru
     reserve.lane_load(probe, lives, checkpoints)
     if tuple(lane.name for lane in lanes) != schedule.LANES:
         raise ValueError("lanes must be the pinned and swap lanes, in that order")
-    passes = schedule.PassOverRates(*(Fraction(raw["passover"][k])
+    passes = schedule.PassOverRates(*(_fraction(raw["passover"][k], f"passover.{k}")
                                       for k in ("failed", "blocked")))
-    failure = Fraction(raw["control_failure"])
+    failure = _fraction(raw["control_failure"], "control_failure")
     # Validate durations and rates independently of reserve feasibility.
     schedule.prepare(schedule.ScheduleDesign(lives, rows, checkpoints,
                                              schedule.Capacity(1, 1), passes, failure))
@@ -315,17 +327,19 @@ _C8_FIXED = tuple(sorted(
     + [f"src/bicentennial/runner/{name}.py" for name in ("dispatch", "occupancy")]
     + [f"tests/stats/test_{name}.py" for name in ("certify", "tcal", "variance_inputs")]
     + [f"tests/runner/test_{name}.py" for name in ("dispatch", "occupancy")]))
-_REPO = Path(__file__).resolve().parents[3]
-C8_PATHS = tuple(sorted((*_C8_FIXED, *(
-    p.relative_to(_REPO).as_posix()
-    for directory in ("src/bicentennial/ocsim", "tests/ocsim")
-    for p in (_REPO / directory).rglob("*")
-    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"))))
+_C8_DIRS = ("src/bicentennial/ocsim", "tests/ocsim")
+
+
+def c8_paths(root):
+    return tuple(sorted((*_C8_FIXED, *(
+        p.relative_to(root).as_posix() for directory in _C8_DIRS
+        for p in (root / directory).rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"))))
 
 
 def c8_hash(root: Path) -> str:
     entries = []
-    for path in C8_PATHS:
+    for path in c8_paths(root):
         try:
             digest = sha256((root / path).read_bytes()).hexdigest()
         except FileNotFoundError:
@@ -343,7 +357,7 @@ def _git(root, *args):
 
 
 def c8_dirty(root):
-    status = _git(root, "status", "--porcelain", "--", *C8_PATHS)
+    status = _git(root, "status", "--porcelain", "--", *_C8_DIRS, *_C8_FIXED)
     return status is None or bool(status)
 
 
@@ -762,11 +776,15 @@ class _Pool:
         if code == 11:
             self.pauses.append({"point": list(self.point), "variant": self.variant,
                                 "event": "pause", "exit": 11})
-        elif self.mode is not None:
+        else:
+            width = min(2, self.config.workers) if code == 10 else self.config.workers
+            current = next((p["workers"] for p in reversed(self.pauses)
+                            if p["event"] == "width"), self.config.workers)
+            if width == current:
+                return
             self.pauses.append({"point": list(self.point), "variant": self.variant,
                                 "event": "width", "exit": code,
-                                "workers": min(2, self.config.workers) if code == 10
-                                else self.config.workers})
+                                "workers": width})
 
     def results(self, tasks, bounds, *, solver=False):
         todo = list(tasks)
@@ -930,7 +948,7 @@ def _half(value):
     return None if value is None else f"{int(value * 2)}/2"
 
 
-def _bounds(phase, alternatives):
+def _bounds(phase, alternatives, config=None):
     bounds, pooled = {}, {}
     for alt in alternatives:
         by_margin, by_pooled = [], []
@@ -940,7 +958,8 @@ def _bounds(phase, alternatives):
             by_pooled.append(se_bound([v for _, vals in rows for v in vals]))
         bounds[alt] = None if None in by_margin else max(by_margin)
         pooled[alt] = None if None in by_pooled else max(by_pooled)
-    return bounds, pooled
+    statistic = (config.budgets() if config is not None else test_constants())["SE_STATISTIC"]
+    return (bounds if statistic == "max" else pooled), pooled
 
 
 def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
@@ -969,7 +988,7 @@ def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
         phase0_ids = tuple(f"{a}|base|none|{m}" for a in alternatives for m in ("m0", "m10"))
         p0 = _phase(pool, "phase0", 0, budgets["R_MAIN"], phase0_ids, {}, out, hashes)
         phases.append(p0)
-        bounds, pooled = _bounds(p0, alternatives)
+        bounds, pooled = _bounds(p0, alternatives, config)
         active = tuple(a for a in alternatives if bounds[a] is not None)
         counts = {}
         screened = set()
@@ -1018,29 +1037,35 @@ def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
 
 
 def _sensitivities(inputs, config, point_result, out, hashes, diagnostics):
+    if config.variants == ("main",):
+        return
     point = point_result["n_L"], point_result["b"]
     literal = point_result["alternatives"].get("LITERAL")
     # The main LITERAL bound is needed even when another alternative chose
     # this point. It was active here unless it passed earlier; in that case
     # run phase0 only to obtain its bound, without re-entering its ladder.
+    if literal is None:
+        main = _Pool(inputs, config, point, "main", diagnostics["pauses"], diagnostics["phases"])
+        try:
+            p0 = _phase(main, "sensitivity_bound", 0, config.budgets()["R_MAIN"],
+                        ("LITERAL|base|none|m0", "LITERAL|base|none|m10"), {}, out, hashes)
+            deciding, pooled = _bounds(p0, ("LITERAL",), config)
+            bound, pooled_bound = deciding["LITERAL"], pooled["LITERAL"]
+            for key, value in p0["audits"].items():
+                diagnostics["audits"][key] += value
+        finally:
+            main.close()
+    else:
+        bound = None if literal["se_bound"] is None else Fraction(literal["se_bound"])
+        pooled_bound = None if literal["se_bound_pooled"] is None else Fraction(literal["se_bound_pooled"])
+    if bound is None:
+        return
     for variant in config.variants:
         if variant == "main" or (variant.startswith("inputs_")
                                   and variant not in inputs.sensitivity_params):
             continue
         pool = _Pool(inputs, config, point, variant, diagnostics["pauses"], diagnostics["phases"])
         try:
-            if literal is None:
-                main = _Pool(inputs, config, point, "main", diagnostics["pauses"], diagnostics["phases"])
-                try:
-                    p0 = _phase(main, "sensitivity_bound", 0, config.budgets()["R_MAIN"],
-                                ("LITERAL|base|none|m0", "LITERAL|base|none|m10"), {}, out, hashes)
-                    bound = _bounds(p0, ("LITERAL",))[0]["LITERAL"]
-                finally:
-                    main.close()
-            else:
-                bound = None if literal["se_bound"] is None else Fraction(literal["se_bound"])
-            if bound is None:
-                continue
             try:
                 # Preflight reserve0 has its own preparation/capacity.
                 reserves = ((0, 0) if variant == "reserve0" else tuple(point_result["reserve"]))
@@ -1051,7 +1076,7 @@ def _sensitivities(inputs, config, point_result, out, hashes, diagnostics):
                            case_ids(("LITERAL",), inputs.required, reported=False),
                            {"LITERAL": bound}, out, hashes)
             point_result["variants"][variant] = {"LITERAL": {
-                "se_bound": _half(bound), "se_bound_pooled": None, "verdict": "REPORTED",
+                "se_bound": _half(bound), "se_bound_pooled": _half(pooled_bound), "verdict": "REPORTED",
                 "cases": _case_table(phase["counts"], inputs.required, config.budgets(), reported=True)}}
             for key, value in phase["audits"].items():
                 diagnostics["audits"][key] += value
@@ -1068,7 +1093,7 @@ def constants_manifest(config, required=()):
                                            "s": sorted(ALTERNATIVES[a].s.drifts),
                                            "units": ALTERNATIVES[a].units} for a in config.alternatives},
                     "Z2": Z2, "Z2_SCREEN": Z2_SCREEN, "SE_PERCENTILE_PPM": SE_PERCENTILE_PPM,
-                    "SE_STATISTIC": SE_STATISTIC, "AUDIT_PPM": AUDIT_PPM, "AUDIT_CASES": AUDIT_CASES,
+                    "AUDIT_PPM": AUDIT_PPM, "AUDIT_CASES": AUDIT_CASES,
                     "STEP_EXP": STEP_EXP, "MAX_STEP_EXP": MAX_STEP_EXP, "BOUND_MILLI": BOUND_MILLI,
                     "GRID_LOW": GRID_LOW, "GRID_HIGH": GRID_HIGH, "variants": config.variants,
                     "alternatives": config.alternatives, "workers": config.workers})

@@ -76,9 +76,29 @@ def test_markdown_contents_order_and_portability(payload):
     assert "Worst cases per criterion:" in text and "Full case table:" in text
     assert "tau0, n_L=24, b=150" in text
     assert "not modelled: under-count disclosed" in text
-    assert all(value in text for value in card.EXTRA_CHAINS)
-    assert "Naive RAG is not simulated" in text
-    assert all(value in text for value in card.NOT_PROVEN)
+    missing = ["K10 B0/B1 on n_keep = max(6, ceil(n_L/4)) lives",
+               "On the first 8 lives: study fault reruns, Keep-curve tiers, swap comparator, "
+               "replication-family branches, A/A′ reruns, Learn chains and erasure probes",
+               "The raw-archive marker"]
+    not_proven = ("Nothing here bounds real provider drift (P:43).",
+                  "M2's fit to bar-2 data is untested (SPEC-A). The gate's outcome depends on bar-2 inputs that do not exist yet.",
+                  "Exactness is proved for certify and tcal at #251's head only.",
+                  "The Image profile's powered size is not addressed (S-37).")
+    assert card.EXTRA_CHAINS == missing and card.NOT_PROVEN == not_proven
+    assert all(value in text for value in (*missing, *not_proven,
+        "The reserve is an average-load rule, not a timed model of probe-only work.",
+        "The stated buffer is not run; certify has no buffer input.",
+        "Text season board; calibrated index decides. The one-sided 5% index is reported only.",
+        "Naive RAG is not simulated: admissions use its never-CLEAR, full-support stand-in. Power can be overstated when real naive RAG clears the gate.",
+        "A larger board is covered only if its own ladder point passed.",
+        "Results are conditional on the frozen certification seed and recorded platform.",
+        "LITERAL only, using main's bound; reported without a gate verdict.",
+        "The deciding SE statistic is the per-replicate maximum; the pooled statistic is printed too."))
+    assert "No size or power figure was simulated, and no runtime was measured." not in text
+    config = run.configure(run.RunConfig(("LITERAL",), 1),
+                           constants=run.test_constants(SE_STATISTIC="pooled"))
+    manifest["config"] = run.constants_manifest(config)
+    assert "The deciding SE statistic is the pooled statistic;" in card.render(manifest, results)
     assert "synthetic test machine" in text
     assert "/Users/" not in text and "/tmp/" not in text
     assert "\r" not in text and text.endswith("\n")

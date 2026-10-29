@@ -7,7 +7,6 @@ from pathlib import Path
 from bicentennial.canon import canon
 
 NOT_PROVEN = (
-    "No size or power figure was simulated, and no runtime was measured.",
     "Nothing here bounds real provider drift (P:43).",
     "M2's fit to bar-2 data is untested (SPEC-A). The gate's outcome depends on bar-2 inputs that do not exist yet.",
     "Exactness is proved for certify and tcal at #251's head only.",
@@ -67,10 +66,12 @@ def _worst(cases):
 
 
 def render(manifest: dict, results: dict) -> str:
+    statistic = ("per-replicate maximum" if manifest["config"]["SE_STATISTIC"] == "max"
+                 else "pooled statistic")
     lines = ["# OC simulation result", "", manifest["claim_class"], "",
              "Freeze gate: OPEN: D12 (S-27)", "",
              "Text season board; calibrated index decides. The one-sided 5% index is reported only.",
-             "The deciding SE statistic is the per-replicate maximum; the pooled statistic is printed too.",
+             f"The deciding SE statistic is the {statistic}; the pooled statistic is printed too.",
              "Naive RAG is not simulated: admissions use its never-CLEAR, full-support stand-in. "
              "Power can be overstated when real naive RAG clears the gate.",
              "The stated buffer is not run; certify has no buffer input."]

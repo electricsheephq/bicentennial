@@ -21,7 +21,7 @@ def lane_load(load: ProbeOnlyLoad, lives: Sequence[schedule.LifeSpec],
               checkpoints: tuple[int, ...]) -> dict[str, tuple[int, int]]:
     """Ceil each probe set separately; absent probe keys contribute zero."""
     ids = {life.life for life in lives}
-    for key, tokens in sorted(load.tokens.items()):
+    for key, tokens in load.tokens.items():
         if (not isinstance(key, tuple) or len(key) != 4
                 or key[0] not in PROBE_ONLY_LOAD or key[1] not in ids
                 or key[2] not in schedule.BRANCHES or type(key[3]) is not int
