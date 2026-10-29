@@ -65,7 +65,9 @@ def locate(table: LocationTable, cell: model.CellModel, target: float) -> float 
     In different brackets, theta_hat(t1) <= thetas[q1] <= thetas[q2 - 1]
     <= theta_hat(t2). The ends follow low < finite theta < high, with the
     +/-10 clamps outside every bracket. Fixed latents therefore give monotone
-    item draws as the target increases.
+    item draws as the target increases. As in solve_location, a target the
+    table's end values miss by more than BRACKET_TOL_MILLI raises, and a
+    smaller miss clamps to the end node.
     """
     if table.cell != cell.cell:
         raise ValueError(f"location table is for cell {table.cell}")
@@ -75,6 +77,9 @@ def locate(table: LocationTable, cell: model.CellModel, target: float) -> float 
         return "high"
     if target <= cell.levels[0]:
         return "low"
+    if (table.values[0] - target > model.BRACKET_TOL_MILLI
+            or target - table.values[-1] > model.BRACKET_TOL_MILLI):
+        raise ValueError("location bracket [-10, 10] does not enclose the target")
     q = bisect_left(table.values, target)
     if q == 0:
         return table.thetas[0]
