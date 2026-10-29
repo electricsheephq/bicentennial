@@ -368,14 +368,15 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
     held = {}
     arm.resume_record, arm.finals = None, []
 
-    def exit_at_boundary(attempt, stop, status):
+    def exit_at_boundary(attempt, stop, status, *, finding=False):
         receipt = holds.at_boundary(attempt) if holds else {}
         record["exit_holds"] = receipt
         reason = admission_stop(responder.state() if responder else {}, receipt, active_seconds(), part)
         record["stop"] = reason or stop
         if reason:
             record["superseded_stop"] = stop
-        return record, 2 if reason else status
+        # Admission stops can explain upstream failures, but cannot erase state-read findings.
+        return record, (1 if finding else 2) if reason else status
 
     for position, session in enumerate(script["sessions"]):
         record["stop"] = admission_stop(responder.state() if responder else {}, held, active_seconds(), part)
@@ -408,7 +409,7 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
                                      post_resume=observations(adapter, attempt)["counts"])
             resume_sid = None
             if not retained:
-                return exit_at_boundary(attempt, "compaction_not_retained", 1)
+                return exit_at_boundary(attempt, "compaction_not_retained", 1, finding=True)
         has_next = position + 1 < len(script["sessions"])
         delay = wait_s
         if part == "resume24":
@@ -436,7 +437,7 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
             if "equal" not in proof:
                 return exit_at_boundary(attempt, "compaction_unsettled", 2)
         if proof.get("equal") is False or proof.get("declared_matches") is False:
-            return exit_at_boundary(attempt, "proof_failed", 1)
+            return exit_at_boundary(attempt, "proof_failed", 1, finding=True)
         state = responder.state() if responder else {}
         held = holds.at_boundary(attempt) if holds else {"reasons": [], "held_ms": 0}
         proof["holds"] = held

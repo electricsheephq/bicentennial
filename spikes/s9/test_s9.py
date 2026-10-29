@@ -617,7 +617,8 @@ def test_failure_exit_reads_last_session_hold(arm, failure_exit, stop, status, r
     assert reads == (attempts if receipt is not None else [])
     assert record["exit_holds"] == (receipt if receipt is not None else {})
     if receipt and "quota" in receipt["reasons"]:
-        assert record["stop"] == "hold:quota" and code == 2
+        expected_status = 1 if stop in {"compaction_not_retained", "proof_failed"} else 2
+        assert record["stop"] == "hold:quota" and code == expected_status
         assert record["superseded_stop"] == stop
     else:
         assert record["stop"] == stop and code == status
@@ -879,7 +880,8 @@ def test_last_session_quota_is_published_and_ends_part(offline_execution, monkey
     responder = SimpleNamespace(state=lambda: {"sends": 0}, served_identities=lambda: {})
     monkeypatch.setattr(s9, "build_arm", build)
     monkeypatch.setattr(s9, "live_responder", lambda *a: (responder, SimpleNamespace(at_boundary=at_boundary), None))
-    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == 2
+    expected_status = 1 if stop == "proof_failed" else 2
+    assert s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=lambda _: None) == expected_status
     assert constructed == closed == ["hermes-native.micro"]
     assert reads == ["hermes-native.micro-s1"] and receipts == {}
     records = {p.stem: s9.json.loads(p.read_bytes()) for p in (args.out / "arms").glob("*.json")}
@@ -887,7 +889,31 @@ def test_last_session_quota_is_published_and_ends_part(offline_execution, monkey
     record = records["hermes-native.micro"]
     assert record["stop"] == "hold:quota" and record["superseded_stop"] == stop
     assert record["exit_holds"] == quota and record["sessions_run"] == [1]
-    assert s9.json.loads((args.out / "run.json").read_bytes())["exit"] == 2
+    assert s9.json.loads((args.out / "run.json").read_bytes())["exit"] == expected_status
+
+
+def test_failed_proof_with_quota_preserves_execute_and_published_failure(offline_execution, monkeypatch):
+    args, _, _ = offline_execution
+    original, workspaces = s9.build_arm, []
+    quota = {"reasons": ["quota"], "held_ms": 5}
+
+    def build(*a, **kw):
+        arm, routes = original(*a, **kw)
+        workspaces.append(arm.adapter.paths["workspace"])
+        return arm, routes
+
+    def tamper(_):
+        (workspaces[-1] / "tampered").write_text("changed during pause")
+
+    responder = SimpleNamespace(state=lambda: {"sends": 0}, served_identities=lambda: {})
+    monkeypatch.setattr(s9, "build_arm", build)
+    monkeypatch.setattr(s9, "live_responder", lambda *a: (
+        responder, SimpleNamespace(at_boundary=lambda _: quota), None))
+    code = s9.execute(args, {"exit": 0, "state": "fixture"}, None, sleep=tamper)
+    record = s9.json.loads((args.out / "arms/hermes-native.micro.json").read_bytes())
+    published = s9.json.loads((args.out / "run.json").read_bytes())
+    assert (code, published["exit"], record["stop"], record["superseded_stop"]) == (
+        1, 1, "hold:quota", "proof_failed")
 
 
 @pytest.mark.parametrize("part", ["twin", "live", "resume24"])
@@ -1020,7 +1046,7 @@ def test_failed_proof_checks_current_responder_and_clock(arm, failure_exit, fail
         wait_s=0, sleep=lambda _: None,
         responder=SimpleNamespace(state=lambda: failure if attempts else {}),
         active_seconds=lambda: s9.BUDGET_S["live"] + 1 if attempts and reason == "budget" else 0)
-    assert record["sessions_run"] == [1] and code == 2
+    assert record["sessions_run"] == [1] and code == 1
     assert record["stop"] == reason and record["superseded_stop"] == "proof_failed"
     assert record["exit_holds"] == {}
 
