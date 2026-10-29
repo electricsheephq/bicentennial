@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from bicentennial import cli
+from bicentennial.harness.hermes import plugin_host
 from bicentennial.packs import install
 from bicentennial.runner import compare, t0, t1
 
@@ -234,6 +235,9 @@ def test_doc_junit_properties():
              and isinstance(node.elts[0], ast.Constant)
              and isinstance(node.elts[0].value, str)}
     names.update(name for name, _ in (*compare.DISCLOSURES, *compare.PLUGIN_DISCLOSURES))
+    delivery = plugin_host.WriteDelivery()
+    delivery.limits.add(1)  # write_max_length is emitted only when a write tool declares a limit
+    names.update(name for tier in ("t0", "t1") for name, _ in delivery.properties(tier))
     documented = set(re.findall(r"`([^`\n]+)`", GUIDE.read_text()))
     assert not sorted(names - documented)
 

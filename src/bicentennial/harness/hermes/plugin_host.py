@@ -97,7 +97,14 @@ def _schedule(script, index):
     return FaultLite.load([], dict(script, sessions=sessions))
 
 
+def _fields(limit):
+    return {"actor": "not_delivered", "text": "full" if limit is None else f"clipped:{limit}",
+            "time": "session_clock"}
+
+
 class HermesMemoryHost(Adapter):
+    UNSUPPORTED_FIELDS = frozenset({"actor"})
+
     def __init__(self, entry, *, route_table, responder, clock, root, scratch, life, branch, run,
                  lock_hash, checkout=None, harness_pin=None, worker_argv=None, plugin_source=None,
                  sim_epoch_s=1_600_000_000, extra_env=None):
@@ -124,6 +131,7 @@ class HermesMemoryHost(Adapter):
         self._worker, self.pids, self.gate, self.active_memory_providers = None, [], [], []
         self.events, self.session, self.turn, self.latency_ms = {}, 1, 0, 0
         self.forget_ambiguous = 0
+        self.write_clipped, self.write_max_length = 0, None
         self.settled, self._blocks, self._cache = True, (), None
         self.script = script = dict(canary=CANARY, life_id=life, genre="t0", harness="hermes", sessions=[])
         self.director = Director(script, route_table, self.name, life, branch, run,
@@ -194,6 +202,9 @@ class HermesMemoryHost(Adapter):
         if not out.get("ok"):
             raise HarnessFailed("open_failed")
         self.schemas = out["schemas"]
+        tool, _, key = WRITE_ARGS[self.name]
+        schema = next((s for s in self.schemas if s["name"] == tool), {})
+        self.write_max_length = schema.get("parameters", {}).get("properties", {}).get(key, {}).get("maxLength")
 
     def _call(self, call, **args):
         self._start()
@@ -239,12 +250,17 @@ class HermesMemoryHost(Adapter):
             tool, fixed, key = WRITE_ARGS[self.name]
             schema = next((s for s in self.schemas if s["name"] == tool), {})
             limit = schema.get("parameters", {}).get("properties", {}).get(key, {}).get("maxLength")
+            self.write_max_length = limit
             written = e["text"][:limit]
             self.turn += 1
             self._call("ingest", n=self.turn, text=e["text"], write={"name": tool, "arguments": {
                 **fixed, key: written}})
             self.settled = False
+        self.write_clipped += int(written != e["text"])
         self.events[e["event_id"]] = {"event": e, "session": self.session, "written": written}
+
+    def fields(self):
+        return _fields(self.write_max_length)
 
     def query(self, task, now):
         task_ids(task, now)
@@ -457,3 +473,29 @@ class HermesMemoryHost(Adapter):
             self.director.close()
             self.egress.stop()
         return self.egress.summary()
+
+
+class WriteDelivery:
+    """Accumulate counts and field metadata without retaining hosts or event text."""
+
+    def __init__(self):
+        self.clipped, self.limits, self.delivered = 0, set(), _fields(None)
+
+    def add(self, hosts):
+        for host in hosts:
+            self.clipped += host.write_clipped
+            limit = host.write_max_length
+            if limit is not None:
+                self.limits.add(limit)
+                self.delivered = host.fields()
+            elif not self.limits:
+                self.delivered = host.fields()
+
+    def properties(self, tier):
+        if len(self.limits) > 1:
+            raise ValueError("write tool maxLength changed within a run")
+        properties = [(f"{tier}.write_clipped", self.clipped),
+                      (f"{tier}.fields", canon(self.delivered).decode())]
+        if self.limits:
+            properties.append((f"{tier}.write_max_length", next(iter(self.limits))))
+        return properties

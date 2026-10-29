@@ -102,7 +102,7 @@ def factory(tmp_path, monkeypatch):
 
     monkeypatch.setattr(plugin_host, "assert_niced", niced)
 
-    def make(name="hermes-native", *, mode="none", sync_ms=0, live=None, **overrides):
+    def make(name="hermes-native", *, mode="none", sync_ms=0, live=None, max_length=None, **overrides):
         nonlocal counter
         counter += 1
         root = tmp_path / f"run-{counter}"
@@ -110,7 +110,8 @@ def factory(tmp_path, monkeypatch):
         entry = load(REGISTRY / f"{name}.toml")
         log = tmp_path / f"calls-{counter}" / "stub-calls.jsonl"
         if live is None:
-            checkout = write_tree(tmp_path / f"stub-{counter}", log=log, mode=mode, sync_ms=sync_ms)
+            checkout = write_tree(tmp_path / f"stub-{counter}", log=log, mode=mode, sync_ms=sync_ms,
+                                  max_length=max_length)
             kw = dict(checkout=checkout, worker_argv=[sys.executable, str(WORKER)])
         else:
             kw = dict(checkout=live, harness_pin=entry["artifact"])
@@ -149,8 +150,45 @@ def factory(tmp_path, monkeypatch):
 @pytest.mark.parametrize("name", NAMES)
 def test_conformance(factory, name, capsys):
     matrix = conformance.run(lambda: factory(name))
-    report(capsys, dict(system=name, mode="none", conformance=matrix))
+    declared = conformance.declared(lambda: factory(name))
+    # The declared skip is printed beside the matrix, so its True never reads as a storage pass (E12).
+    report(capsys, dict(system=name, mode="none", conformance=matrix, declared=declared))
     assert matrix == dict.fromkeys(conformance.CHECKS, True)
+    assert declared == {"actor_stored": "declared"}
+
+
+@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("limit,expected", [(None, 0), (3, 3), (0, 5)])
+def test_written_fields_and_clip_count(factory, name, limit, expected):
+    host = factory(name, max_length=limit)
+    events = [event(i, text) for i, text in enumerate(("", "ab", "abc", "abcd", "猫" * 9, "abcde"), 1)]
+    for e in events:
+        host.ingest(e)
+        host.ingest(e)  # Idempotent delivery must not count twice.
+    assert type(host.write_clipped) is int and host.write_clipped == expected
+    assert host.write_max_length == limit
+    fields = {"actor": "not_delivered", "text": "full" if limit is None else f"clipped:{limit}",
+              "time": "session_clock"}
+    assert host.fields() == fields
+    delivery = plugin_host.WriteDelivery()
+    delivery.add([host])
+    assert delivery.properties("t0") == [
+        ("t0.write_clipped", expected), ("t0.fields", canon(fields).decode())] + (
+        [] if limit is None else [("t0.write_max_length", limit)])
+    assert vars(delivery) == dict(clipped=expected, limits=set() if limit is None else {limit},
+                                 delivered=fields)
+    for e in events:
+        assert host.events[e["event_id"]] == {"event": e, "session": 1, "written": e["text"][:limit]}
+    assert host.settle(5)
+    data = host.checkpoint()
+    host.restore(data)
+    assert host.write_clipped == expected
+    assert host.checkpoint() == data  # Disclosure counters do not alter checkpoint bytes.
+    host.forget(dict(event_ids=["e4"]))
+    host.reset()
+    assert host.write_clipped == expected
+    host.ingest(event(7, "new delivery"))
+    assert host.write_clipped == expected + int(limit is not None)
 
 
 def test_fault_free_session_schedule(factory):
@@ -172,8 +210,10 @@ def test_fault_free_session_schedule(factory):
                                          ("stale_wins", "supersession_current")])
 def test_single_fault(factory, mode, failed, capsys):
     matrix = conformance.run(lambda: factory(mode=mode))
-    report(capsys, dict(system="hermes-native", mode=mode, conformance=matrix))
+    declared = conformance.declared(lambda: factory(mode=mode))
+    report(capsys, dict(system="hermes-native", mode=mode, conformance=matrix, declared=declared))
     assert matrix == {name: name != failed for name in conformance.CHECKS}
+    assert declared == {"actor_stored": "declared"}
 
 
 def calls(host):
@@ -427,7 +467,7 @@ def test_reader_injected_uses_one_recall(factory):
 
 
 def test_event_rules_and_character_cut(factory):
-    host = factory()
+    host = factory(max_length=4000)
     host.ingest(event(text=""))
     assert host._worker is None
     host.ingest(event(2))
@@ -458,20 +498,21 @@ def regression_host(request, factory, tmp_path, monkeypatch):
     """Run the same cases against stub tools directly and the file worker."""
     def make(name="hermes-native"):
         if request.param == "worker":
-            return factory(name, mode="all_hits")
+            return factory(name, mode="all_hits", max_length=4000)
         root = tmp_path / "unit-host"
         root.mkdir()
         surface, fresh = root / "surface", root / "fresh"
         surface.mkdir()
         (surface / plugin_host.MARKER).touch()
         shutil.copytree(surface, fresh)
-        checkout = write_tree(root / "stub", log=root / "calls.jsonl", mode="all_hits")
+        checkout = write_tree(root / "stub", log=root / "calls.jsonl", mode="all_hits", max_length=4000)
         stub = runpy.run_path(str(checkout / "_stub.py"))
         # The unit double writes only to the test's declared surface.
         stub["tool"].__globals__["path"] = lambda: surface / "stub_store.json"
         host = HermesMemoryHost.__new__(HermesMemoryHost)
         host.name, host.entry = name, load(REGISTRY / f"{name}.toml")
         host.events, host.session, host.turn, host.forget_ambiguous = {}, 1, 0, 0
+        host.write_clipped, host.write_max_length = 0, None
         host._worker, host.settled, host._blocks, host._cache = None, True, (), None
         host.paths = dict(hermes_home=surface)
         host._surfaces = [(surface, [])]
@@ -561,9 +602,17 @@ def test_ingest_retry_after_failed_write(regression_host, monkeypatch, failure):
     with pytest.raises(GateRefused if failure == "gate" else HarnessFailed):
         host.ingest(event())
     assert "e1" not in host.events
+    assert host.write_clipped == 0
     host.ingest(event())
+    assert host.write_clipped == 0
     assert host.settle(5)
     assert host.query(task(), 100) == answer([event()])
+    monkeypatch.setattr(host, method, fail_once)
+    with pytest.raises(GateRefused if failure == "gate" else HarnessFailed):
+        host.ingest(event(2, "q" * 4001))
+    assert "e2" not in host.events and host.write_clipped == 0
+    host.ingest(event(2, "q" * 4001))
+    assert host.write_clipped == 1
 
 
 def test_decoded_quotes_corpus_order_and_time(factory, monkeypatch):
@@ -809,7 +858,8 @@ def test_live(factory, name, capsys):
     except GateRefused:
         pytest.skip("machine gate refused")
     matrix = conformance.run(lambda: factory(live=checkout))
-    report(capsys, dict(system=name, live_conformance=matrix))
+    report(capsys, dict(system=name, live_conformance=matrix,
+                        declared=conformance.declared(lambda: factory(live=checkout))))
     for check in ("reset_empty", "citations_are_event_ids", "checkpoint_restore", "settle_returns"):
         assert matrix[check], check
     results = []
