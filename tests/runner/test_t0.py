@@ -385,6 +385,11 @@ def fake_hosts(installed, tmp_path, monkeypatch):
     created = []
 
     class FakeHost(ReferenceStore):
+        write_clipped, write_max_length = 0, None
+
+        def fields(self):
+            return {"actor": "not_delivered", "text": "full", "time": "session_clock"}
+
         def __init__(self, entry, **options):
             super().__init__()
             self.options = options
@@ -1652,8 +1657,9 @@ def stub_hosts(tmp_path, monkeypatch):
 
     monkeypatch.setattr(t0, "HermesMemoryHost", SpyHost)
 
-    def options(mode="none"):
-        checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode)
+    def options(mode="none", max_length=None):
+        checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode,
+                              max_length=max_length)
         return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
                     dict(fresh_install_hash="1" * 64), host_overrides=dict(
                     checkout=checkout, worker_argv=[sys.executable, str(WORKER)]))
@@ -1678,6 +1684,41 @@ def test_actual_stub_host_outputs_and_determinism(installed, tmp_path, stub_host
     assert created and all(h.close_calls == 1 for h in created)
     print("stub_card_sha256=" + json.dumps({p: sha256(data).hexdigest() for p, data in outputs[0].items()
                                           if p.endswith("card.json")}, sort_keys=True))
+
+
+@pytest.mark.parametrize("limit", [None, 3])
+def test_t0_delivery_properties_count_all_hosts_and_repeat(installed, tmp_path, stub_hosts, limit):
+    options, created, denied = stub_hosts
+    kwargs = options(max_length=limit)
+    repeated = []
+    for name in ("one", "two"):
+        first = len(created)
+        out = tmp_path / name
+        assert run(installed, out, **kwargs) in (0, 1)
+        assert not denied
+        hosts = created[first:]
+        expected = sum(h.write_clipped for h in hosts)
+        assert hosts and (expected > 0 if limit is not None else expected == 0)
+        rows = []
+        for rel in sorted(installed[1]["packs"]):
+            suite = ET.parse(out / rel / "junit.xml").getroot()[0]
+            props = {p.attrib["name"]: p.attrib["value"] for p in suite.findall("properties/property")}
+            assert props["t0.write_clipped"] == str(expected)
+            assert props["t0.fields"] == canon({"actor": "not_delivered", "text":
+                "full" if limit is None else f"clipped:{limit}", "time": "session_clock"}).decode()
+            if limit is None:
+                assert "t0.write_max_length" not in props
+            else:
+                assert props["t0.write_max_length"] == str(limit)
+            rows.append(ET.tostring(suite.find("properties")))
+        repeated.append(rows)
+    assert repeated[0] == repeated[1]
+    reference = tmp_path / "reference"
+    assert run(installed, reference) == 0
+    for rel in installed[1]["packs"]:
+        props = ET.parse(reference / rel / "junit.xml").getroot().findall(".//property")
+        assert not {p.attrib["name"] for p in props} & {
+            "t0.write_clipped", "t0.write_max_length", "t0.fields"}
 
 
 def test_actual_stub_keep_on_remove(installed, tmp_path, stub_hosts):

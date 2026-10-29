@@ -1,7 +1,7 @@
 """Isolated adapter checks; run returns a bool for every named check.
 
 Only exact NoMemory/OracleEvidence classes are exempt from maintain_lossless,
-tool_grouping and supersession_current: these require ordinary store retrieval.
+tool_grouping, supersession_current, text_full_length and actor_stored.
 Exempt checks return True (not a claim of retrieval); EXEMPTIONS exposes them.
 All other checks apply. Each check uses a fresh adapter and settles before
 every probe/checkpoint; exceptions fail that check and do not abort the suite.
@@ -13,9 +13,11 @@ from .contract import shape
 
 CHECKS = ("reset_empty", "duplicate_id_idempotent", "citations_are_event_ids",
           "checkpoint_restore", "maintain_lossless", "tool_grouping", "forget_removes",
-          "supersession_current", "settle_returns")
+          "supersession_current", "settle_returns", "text_full_length", "actor_stored")
+LONG_TEXT_CHARS = 65_536
+FIELD_CHECKS = {"actor": "actor_stored"}
 EXEMPTIONS = dict.fromkeys((NoMemory, OracleEvidence), frozenset(
-    ("maintain_lossless", "tool_grouping", "supersession_current")))
+    ("maintain_lossless", "tool_grouping", "supersession_current", "text_full_length", "actor_stored")))
 
 
 def _require(condition):
@@ -44,6 +46,18 @@ def _checkpoint(adapter):
 
 def _check(name, a, factory):
     a.reset()
+    if name == "text_full_length":
+        head, tail = "HEAD_TOKEN_2137 ", " TAIL_TOKEN_7741"
+        size = LONG_TEXT_CHARS - len(head) - len(tail)
+        text = head + ("payload " * (size // 8 + 1))[:size] + tail
+        a.ingest(_event(1, text))
+        result = _query(a, tail.strip())
+        _require(result["output"].encode() == text.encode() and result["citations"] == ["e1"])
+        return
+    if name == "actor_stored":
+        a.ingest(dict(_event(1, "quartz"), actor="ACTOR_SENTINEL_7741"))
+        _require(b"ACTOR_SENTINEL_7741" in _checkpoint(a))
+        return
     a.ingest(_event(1, "quartz"))
     if name == "reset_empty":
         _query(a, "quartz")  # A query cache that survives reset must not answer the next one.
@@ -107,12 +121,25 @@ def _check(name, a, factory):
         shape(a.stats(), dict(tokens=int, latency_ms=int))  # Bytes are measured externally only.
 
 
+def _declared(adapter):
+    fields = getattr(type(adapter), "UNSUPPORTED_FIELDS", frozenset())
+    if type(fields) is not frozenset or not fields <= FIELD_CHECKS.keys():
+        raise ValueError("UNSUPPORTED_FIELDS must be a frozenset containing only actor")
+    return {FIELD_CHECKS[field]: "declared" for field in sorted(fields)}
+
+
+def declared(adapter_factory) -> dict[str, str]:
+    """Report declared skips separately from run's boolean compatibility results."""
+    return _declared(adapter_factory())
+
+
 def run(adapter_factory) -> dict[str, bool]:
     results = {}
     for name in CHECKS:
         try:
             adapter = adapter_factory()
-            if name not in EXEMPTIONS.get(type(adapter), ()):
+            skipped = _declared(adapter)
+            if name not in skipped and name not in EXEMPTIONS.get(type(adapter), ()):
                 _check(name, adapter, adapter_factory)
             results[name] = True
         except Exception:

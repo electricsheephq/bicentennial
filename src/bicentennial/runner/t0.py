@@ -37,6 +37,7 @@ from bicentennial.harness.hermes.plugin_host import (
     ENTRYPOINT,
     GateRefused,
     HermesMemoryHost,
+    WriteDelivery,
 )
 from bicentennial.items import c7
 from bicentennial.keyed import mint_id
@@ -766,10 +767,11 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
                       "is not exercised."))
     if getattr(pack.template, "fault", False):
         extra.append(("t0.baseline", "no fault-free twin at v0.1"))
-    junit = junit_xml([item_suite(json.loads(card), "system", run_properties(reduce(items, bundles,
+    suites = [item_suite(json.loads(card), "system", run_properties(reduce(items, bundles,
         **kwargs), extra)), (f"ring0.T0.{entry['name']}.invariants.pack", [],
         junit_cases_from_invariants(verdicts)), (f"ring0.T0.{entry['name']}.invariants.adapter", [],
-        junit_cases_from_invariants(adapter))])
+        junit_cases_from_invariants(adapter))]
+    junit = junit_xml(suites)
     receipt_records = audit.get("receipt_records", audit["records"])
     receipt = build_receipt(run_status=status, wall_start_ms=start, wall_end_ms=time.time_ns() // 1_000_000,
         latency_ms=ledger_latencies(receipt_records), load_milli=load_milli(os.getloadavg()),
@@ -777,7 +779,7 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         runtime_by_role=audit["runtime"], spend_micro_usd=0, store_growth_bytes=audit["growth"],
         process_ids=audit["pids"], ports=audit["ports"], temporary_paths=audit["paths"],
         raw_body_digest=raw_body_digest(receipt_records))
-    return dict(card=card, receipt=receipt, junit=junit, invariants=canon(verdicts),
+    return dict(card=card, receipt=receipt, junit=junit, suites=suites, invariants=canon(verdicts),
                 controls=canon(controls), code=1 if gate in ("INVALID", "FAIL") else
                 2 if gate == "BLOCKED" else 0)
 
@@ -860,11 +862,12 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
     first = selected[0]
     invariant_factory = _Factory(first, "B0", work / "adapter", entry, locks[first.rel],
                                  real=real, host_options=options)
-    reports, outcomes_by_row = {}, {}
+    reports, outcomes_by_row, delivery = {}, {}, WriteDelivery()
     try:
         adapter_verdicts = invariant_factory.invariants(bound_s)
         adapter = [adapter_verdicts[i].to_obj() for i in INVARIANTS]
         invariant_audit = _audit([invariant_factory])
+        delivery.add(invariant_factory.hosts)
         for pack in selected:
             start = run_start if pack is first else time.time_ns() // 1_000_000
             factories = []
@@ -904,12 +907,17 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                     for role, ms in sorted(extra["runtime"].items()):
                         audit["runtime"][role] = audit["runtime"].get(role, 0) + ms
                 audit["model_cache_sha256"] = model_cache_sha256
+                delivery.add(h for f in factories for h in f.hosts)
                 controls = _controls(pack, index, cache)
                 reports[pack.rel] = _report_pack(pack, entry, locks[pack.rel], outcomes,
                     verdicts, adapter, controls, audit, out, marker, start, properties=properties)
                 outcomes_by_row[pack.meta["row"]["id"]] = outcomes
             finally:
                 _remove_units(factories)
+        if real:
+            for report in reports.values():
+                report["suites"][0][1].extend(delivery.properties("t0"))
+                report["junit"] = junit_xml(report["suites"])
         relation_json, relation_xml = _relations(index, selected, outcomes_by_row, entry["name"])
         for report in reports.values():
             if report["receipt"]["spend_micro_usd"] > 0:

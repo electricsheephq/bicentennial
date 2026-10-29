@@ -19,7 +19,7 @@ from bicentennial.corpus.run import corpus_suite, run_case
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed
-from bicentennial.harness.hermes.plugin_host import GateRefused, HermesMemoryHost
+from bicentennial.harness.hermes.plugin_host import GateRefused, HermesMemoryHost, WriteDelivery
 from bicentennial.ledger import LedgerBusy, apply_masks
 from bicentennial.packs.catalogue import load_catalogue
 from bicentennial.packs.install import verify
@@ -192,7 +192,7 @@ def _forwarded(records):
                for r in records for a in r.get("upstream", ()))
 
 
-def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None):
+def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None, delivery=None):
     """Retry corpus infrastructure faults, retaining isolation and receipt evidence before cleanup."""
     results = []
     for case in sorted(cases, key=lambda c: c.case_id):
@@ -214,6 +214,8 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
                         audit.extend(rows)
             if held:
                 raise held[0]
+            if delivery is not None:
+                delivery.add(hosts)
             shutil.rmtree(unit)
             if result.status != "INFRA_FAILURE":
                 break
@@ -292,10 +294,10 @@ def _invariants(run, arm):
     return [v.to_obj() for v in run.arms[arm].verdicts]
 
 
-def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=()):
+def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=(), delivery=()):
     a, name = run.arms[arm], run.ctx.entry["name"]
     extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
-        *stub_disclosures(run.ctx.entry, "t1"),
+        *stub_disclosures(run.ctx.entry, "t1"), *delivery,
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
         ("t1.transforms", canon(list(a.transforms)).decode()),
         ("t1.reclassified", canon(sorted({i for u in a.units for i in u.reclassified})).decode()),
@@ -341,9 +343,11 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],
                                tier_path=REPO / CATALOGUE[2])
     corpus_rows, corpus_gates = {arm: [] for arm in GATED}, {arm: [] for arm in GATED}
+    delivery = {arm: WriteDelivery() for arm in GATED}
     try:
         results = {arm: corpus(ctx, arm, cases, catalogue=catalogue, work=out / "corpus-work" / arm,
-            host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm]) for arm in GATED}
+            host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm],
+            delivery=delivery[arm]) for arm in GATED}
     finally:
         if (out / "corpus-work").exists():
             shutil.rmtree(out / "corpus-work")
@@ -379,7 +383,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
             for f in _finals(run.arms["no_memory"]) for r in f.results.values()))))
     junit = {arm: _junit(run, arm, cards[arm], s if arm == "system" else w,
         vs if arm == "system" else vw, cases, results[arm], fm, hits, witnesses,
-        wiped_blocked=w.blocked) for arm in GATED}
+        wiped_blocked=w.blocked, delivery=delivery[arm].properties("t1")) for arm in GATED}
     for arm in GATED:
         if receipts[arm]["spend_micro_usd"] > 0:
             raise SpendRefused(receipts[arm]["spend_micro_usd"])

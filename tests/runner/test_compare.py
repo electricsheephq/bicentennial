@@ -172,6 +172,10 @@ def test_full_run(completed, installed, cases):
         assert names == [prefix, prefix + ".invariants", prefix + ".corpus"] + (
             ["ring0.T1.hermes-native.no_memory"] if arm == "system" else [])
         props = properties(out, arm)
+        assert props["t1.write_clipped"] == "0"
+        assert "t1.write_max_length" not in props
+        assert props["t1.fields"] == canon({"actor": "not_delivered", "text": "full",
+                                            "time": "session_clock"}).decode()
         assert all(props[k] == v for k, v in compare.DISCLOSURES)
         assert not any(k in props for k, _ in compare.PLUGIN_DISCLOSURES)
         assert all(props[k] == "0" for k in ("isolation.unknown_requests", "isolation.forwarded",
@@ -215,6 +219,48 @@ def synth(replay, monkeypatch, cases):
 
 def set_run(monkeypatch, run):
     monkeypatch.setattr(compare, "run_arms", lambda ctx, **kwargs: run)
+
+
+def test_corpus_delivery_properties_include_retries_and_clones(synth, installed, tmp_path, monkeypatch):
+    seen, attempts = {arm: [] for arm in compare.GATED}, {}
+
+    class Host(ReferenceStore):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.write_clipped, self.write_max_length = 0, 3
+
+        def ingest(self, event):
+            self.write_clipped += int(len(event["text"]) > self.write_max_length)
+            super().ingest(event)
+
+        def fields(self):
+            return {"actor": "not_delivered", "text": "clipped:3", "time": "session_clock"}
+
+    def drive(case, factory, **kwargs):
+        key = (factory.arm, case.case_id)
+        attempts[key] = attempts.get(key, 0) + 1
+        for _ in range(2):
+            host = factory()
+            seen[factory.arm].append(host)
+            for i, text in enumerate(("abc", "long event")):
+                host.ingest(dict(event_id=str(i), t_sim=i, kind="message", actor="fixture", text=text))
+        return (CaseResult(case.case_id, "INFRA_FAILURE", "infra", None) if attempts[key] == 1 else
+                fake_case(case, factory, **kwargs))
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    monkeypatch.setattr(compare, "run_case", drive)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 0
+    assert set(attempts.values()) == {2}
+    for arm in compare.GATED:
+        props = properties(out, arm)
+        assert len(seen[arm]) == 4 * len(attempts) // len(compare.GATED)
+        assert props["t1.write_clipped"] == str(sum(h.write_clipped for h in seen[arm]))
+        assert props["t1.write_max_length"] == "3"
+        assert props["t1.fields"] == canon(seen[arm][0].fields()).decode()
+    floor = ET.parse(out / "system/junit.xml").getroot()[-1]
+    assert not {p.attrib["name"] for p in floor.findall("properties/property")} & {
+        "t1.write_clipped", "t1.write_max_length", "t1.fields"}
 
 
 @pytest.mark.parametrize("error", [OSError, KeyboardInterrupt, SystemExit])

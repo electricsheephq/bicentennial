@@ -234,6 +234,8 @@ def test_doc_junit_properties():
              and isinstance(node.elts[0], ast.Constant)
              and isinstance(node.elts[0].value, str)}
     names.update(name for name, _ in (*compare.DISCLOSURES, *compare.PLUGIN_DISCLOSURES))
+    names.update(f"{tier}.{field}" for tier in ("t0", "t1")
+                 for field in ("write_clipped", "write_max_length", "fields"))
     documented = set(re.findall(r"`([^`\n]+)`", GUIDE.read_text()))
     assert not sorted(names - documented)
 

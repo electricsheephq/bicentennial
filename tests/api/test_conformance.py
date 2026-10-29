@@ -9,6 +9,8 @@ import pytest
 from bicentennial.api import Adapter
 from bicentennial.api.adapters.bm25 import BM25, log_fixed
 from bicentennial.api.adapters.mutants import (
+    clip_text_silently,
+    drop_actor,
     forget_cached_output,
     forget_ignored,
     orphan_tool_result,
@@ -20,16 +22,18 @@ from bicentennial.api.adapters.mutants import (
 from bicentennial.api.adapters.nomemory import NoMemory
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.api.adapters.reference_store import ReferenceStore
-from bicentennial.api.conformance import CHECKS, EXEMPTIONS, run
+from bicentennial.api.conformance import CHECKS, EXEMPTIONS, LONG_TEXT_CHARS, declared, run
+from bicentennial.packs import build
 
 ADAPTERS = (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,
             truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
-            forget_cached_output, reset_cached_output)
+            forget_cached_output, reset_cached_output, clip_text_silently, drop_actor)
 FAILURES = {wipe_on_restart: "checkpoint_restore",
             truncate_after_compaction: "maintain_lossless",
             orphan_tool_result: "tool_grouping", forget_ignored: "forget_removes",
             stale_wins: "supersession_current", forget_cached_output: "forget_removes",
-            reset_cached_output: "reset_empty"}
+            reset_cached_output: "reset_empty", clip_text_silently: "text_full_length",
+            drop_actor: "actor_stored"}
 
 
 def event(i, text, t_sim=None, kind="message", **extra):
@@ -109,13 +113,13 @@ from bicentennial.api.adapters.nomemory import NoMemory
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.api.adapters.mutants import (
     wipe_on_restart, truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
-    forget_cached_output, reset_cached_output)
+    forget_cached_output, reset_cached_output, clip_text_silently, drop_actor)
 from bicentennial.api.conformance import run
 from bicentennial.canon import canon
 rows = {}
 for factory in (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,
                 truncate_after_compaction, orphan_tool_result, forget_ignored, stale_wins,
-                forget_cached_output, reset_cached_output):
+                forget_cached_output, reset_cached_output, clip_text_silently, drop_actor):
     a = factory()
     for i, text in enumerate(('quartz old', 'quartz new', 'topaz')):
         a.ingest(dict(event_id=str(i), t_sim=i, kind='message', actor='fixture', text=text))
@@ -145,7 +149,7 @@ from bicentennial.api.adapters.reference_store import ReferenceStore
 from bicentennial.api.conformance import run
 names = ("ReferenceStore", "wipe_on_restart", "truncate_after_compaction",
          "orphan_tool_result", "forget_ignored", "stale_wins", "forget_cached_output",
-         "reset_cached_output")
+         "reset_cached_output", "clip_text_silently", "drop_actor")
 factories = [ReferenceStore] + [getattr(mutants, name) for name in names[1:]]
 print(json.dumps({f.__name__: sorted(c for c, ok in run(f).items() if not ok) for f in factories}))
 """
@@ -294,3 +298,83 @@ def test_exemptions_cannot_be_inherited_by_store_adapters():
     assert not row["maintain_lossless"]
     assert not row["tool_grouping"]
     assert not row["supersession_current"]
+    assert not row["text_full_length"]
+    assert not row["actor_stored"]
+
+
+@pytest.mark.parametrize("factory,failures", [(ReferenceStore, set()), (BM25, set()),
+    (clip_text_silently, {"text_full_length"}), (drop_actor, {"actor_stored"})])
+def test_ingest_roundtrip_checks(factory, failures):
+    result = run(factory)
+    assert CHECKS[-2:] == ("text_full_length", "actor_stored")
+    assert {name for name, passed in result.items() if not passed} == failures
+    assert declared(factory) == {}
+
+
+def test_declared_actor_is_skipped_and_reported():
+    class TextOnly(drop_actor):
+        UNSUPPORTED_FIELDS = frozenset({"actor"})
+
+    assert declared(TextOnly) == {"actor_stored": "declared"}
+    assert run(TextOnly) == dict.fromkeys(CHECKS, True)
+    assert declared(NoMemory) == declared(OracleEvidence) == {}
+    for factory in (NoMemory, OracleEvidence):
+        assert {"text_full_length", "actor_stored"} <= EXEMPTIONS[factory]
+
+
+@pytest.mark.parametrize("fields", [frozenset({"text"}), frozenset({"actor", "time"}), {"actor"}])
+def test_unknown_or_malformed_field_declarations_fail(fields):
+    class Invalid(ReferenceStore):
+        UNSUPPORTED_FIELDS = fields
+
+    with pytest.raises(ValueError, match="UNSUPPORTED_FIELDS"):
+        declared(Invalid)
+    assert run(Invalid) == dict.fromkeys(CHECKS, False)
+
+
+def test_roundtrip_checks_are_isolated_and_settle_before_reading():
+    made = []
+
+    class Observed(ReferenceStore):
+        def __init__(self):
+            super().__init__()
+            self.settled = False
+            made.append(self)
+
+        def ingest(self, event):
+            self.settled = False
+            super().ingest(event)
+
+        def settle(self, bound_s):
+            self.settled = True
+            return super().settle(bound_s)
+
+        def query(self, task, now):
+            assert self.settled
+            return super().query(task, now)
+
+        def checkpoint(self):
+            assert self.settled
+            return super().checkpoint()
+
+    assert run(Observed) == dict.fromkeys(CHECKS, True)
+    text, actor = made[-2:]
+    assert text is not actor
+    assert len(text.events) == len(actor.events) == 1
+    assert len(text.events["e1"]["text"]) == LONG_TEXT_CHARS
+    assert actor.events["e1"]["actor"] == "ACTOR_SENTINEL_7741"
+
+
+def test_long_text_exceeds_public_t0_and_t1_events(tmp_path):
+    maxima = {}
+    for tier in ("T0", "T1"):
+        result = build.build_tier(tier, tmp_path, harness_artifacts=[
+            dict(name="hermes", version="test", sha256="a" * 64)])
+        texts = [event["text"] for rel in sorted(result["index"]["packs"])
+                 for path in sorted((tmp_path / tier / rel / "visible").glob("events.*.json"))
+                 for event in json.loads(path.read_bytes())["events"]]
+        assert texts, tier
+        maxima[tier] = max(map(len, texts))
+    print("public event text maxima:", maxima)
+    assert LONG_TEXT_CHARS >= 8192
+    assert LONG_TEXT_CHARS > max(maxima.values()), maxima

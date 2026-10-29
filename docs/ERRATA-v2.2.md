@@ -88,3 +88,10 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 - **The text:** the ROADMAP's v0.1 row ships "Ring 0 developer packs for the Remember, Survive and Act stages".
 - **The clarification:** at T0 and T1, Act is the scripted reader's evidence-conditioned action, executed and scored by the real action scorer. It carries the label "evidence-conditioned scripted action; not an Act judgement" (RING0 §3), because a scripted policy measures whether the evidence was available, not what a model does with it. The live tiers (v0.2) carry the Act stage proper.
 - **Where it is fixed:** the ROADMAP carries a note to this effect.
+
+**E13. API-mode adapter ingest checks (Phase 1, #213; addition to DESIGN §6.9).**
+- Before a system's first block, the API-mode runner runs `text_full_length` and `actor_stored` on the benchmark's adapter for that system, against a stand-in for the system's API that keeps everything it is given. It refuses the system if either check fails: loss in benchmark-written adapter code must not be charged to the system.
+- A field the system's API cannot carry is declared through `UNSUPPORTED_FIELDS` and disclosed. Only actor is declarable for now; the corresponding check is skipped, and the separate `declared()` result identifies the skip rather than a storage pass.
+- Every other conformance result of a real system is its measured behaviour: it is reported and never a refusal. These checks against the stand-in do not gate real-system retrieval, extraction, compaction or other measured behaviour.
+- The controls' expected results are fixed in their tests. In particular, naive RAG fails exactly `supersession_current` and `text_full_length`; its actor storage passes.
+- This adds the Phase 1 API-mode rule without changing PREREG-v0.4 or any frozen quantity. Ring 0's checks and host delivery disclosures are specified in RING0 §13 E12.

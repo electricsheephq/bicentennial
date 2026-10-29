@@ -12,6 +12,14 @@ Queries return output, citations (event ids, not quote spans), confidence_milli
 in [0, 1000]. JSON scalar leaves are strings or integers, never floats/bools;
 containers, None from void methods, bool from settle, and bytes from checkpoint
 are method-level shapes. now is a nonnegative simulated integer timestamp.
+
+An adapter class may declare UNSUPPORTED_FIELDS = frozenset({"actor"}) when
+the system's API cannot carry that field; only actor is supported here for now.
+Conformance skips actor_stored for that declaration and run() returns True for
+compatibility. declared(adapter_factory) separately reports {"actor_stored":
+"declared"}; callers must disclose it rather than count it as a storage pass.
+The actor check proves storage only when the checkpoint is the system's store,
+not when a host checkpoint also contains the benchmark's own event copies.
 """
 
 from abc import ABC, abstractmethod
