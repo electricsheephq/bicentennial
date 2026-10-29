@@ -226,7 +226,7 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
                 if gates is not None:
                     gates.extend(getattr(h, "gate", ()))
             if audit is not None:
-                for rows, egress in evidence.values():
+                for rows, _ in evidence.values():
                     audit.extend(rows)
             if held:
                 raise held[0]

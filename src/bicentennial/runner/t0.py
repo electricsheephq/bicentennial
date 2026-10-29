@@ -723,7 +723,7 @@ def _check_egress(evidence, T0Refused=T0Refused):
     for rows, egress in evidence:
         if egress.get("non_loopback", []) or _isolation_detail(rows, {}):
             raise T0Refused("upstream_record", detail=_isolation_detail(rows, egress))
-    for rows, egress in evidence:
+    for _, egress in evidence:
         if detail := _unobserved_detail(egress):
             raise T0Refused("egress_unobserved", detail=detail)
 
