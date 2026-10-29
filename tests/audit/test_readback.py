@@ -1315,7 +1315,8 @@ def test_effect_rendered_snapshot_preserves_entry_boundaries(wire):
 @pytest.mark.parametrize("following", [
     "Active Hermes profile: default. Other profiles (if any) live under a synthetic root."
     "\n\nConversation started: synthetic date",
-    "## Plugin Context: synthetic\n<!-- hermes-plugin-section-chars:12 -->\n\nplugin notes",
+    "<!-- hermes-plugin-sections:start -->\n## Plugin Context: synthetic\n"
+    "<!-- hermes-plugin-section-chars:12 -->\n\nplugin notes\n<!-- hermes-plugin-sections:end -->",
     "# Hermes runtime environment\n\nsynthetic environment",
 ])
 def test_effect_final_user_entry_ends_at_known_following_part(wire, action, following):

@@ -8,11 +8,11 @@ from pathlib import Path
 ACTIONS = {"add", "patch", "replace", "remove"}
 ENTRY_DELIMITER = "\n§\n"  # Hermes memory_tool_store, not an arbitrary line or paragraph boundary
 MEMORY_HEADER = re.compile(r"═{46}\n(MEMORY \(your personal notes\)|USER PROFILE \(who the user is\))[^\n]*\n═{46}\n")
-# Pinned Hermes agent/system_prompt.py:35,386,498,507,727,779-792 and
-# agent/prompt_builder.py:1153; retain the older date labels as well.
+# Pinned Hermes agent/system_prompt.py:386,498,507,727,779-792, agent/prompt_builder.py:1153
+# and hermes_cli/plugins_dispatch.py:77 (the plugin container); retain the older date labels.
 FOLLOWING_PART = re.compile(r"\n\n(?:Active Hermes profile:|Conversation started:|Current date:|Today's date:|"
-                            r"Today's date \(as of the last context rebuild\):|## Plugin Context: |"
-                            r"# Hermes runtime environment)")
+                            r"Today's date \(as of the last context rebuild\):|"
+                            r"<!-- hermes-plugin-sections:start -->|# Hermes runtime environment)")
 
 
 def strings(obj):
