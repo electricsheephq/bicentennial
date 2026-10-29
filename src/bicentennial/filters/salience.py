@@ -175,7 +175,7 @@ def _classifier(names, rows, lives) -> tuple[Fraction | None, tuple[str, ...]]:
     folds = {life: index % k for index, life in enumerate(lives)}
     columns = sorted(range(len(names)), key=lambda index: names[index])
     vectors = [tuple(float(values[index]) for index in columns) for _, values, _ in rows]
-    scores = [0.0] * len(rows)
+    wins = pairs = 0
     for fold in range(k):
         training = [index for index, row in enumerate(rows) if folds[row[0]] != fold]
         held_out = [index for index, row in enumerate(rows) if folds[row[0]] == fold]
@@ -184,9 +184,18 @@ def _classifier(names, rows, lives) -> tuple[Fraction | None, tuple[str, ...]]:
             return None, ("fold_one_class",)
         predictions = _fit_predict([vectors[index] for index in training], labels,
                                    [vectors[index] for index in held_out])
-        for index, score in zip(held_out, predictions, strict=True):
-            scores[index] = score
-    return _either_direction(rank_auc(scores, [row[2] for row in rows])), ()
+        # Pair events only within a fold: fold models trained on different
+        # prevalence have different biases, so pooled logits would rank folds.
+        held_out_labels = [rows[index][2] for index in held_out]
+        auc = rank_auc(predictions, held_out_labels)
+        if auc is not None:
+            positives = sum(held_out_labels)
+            fold_pairs = positives * (len(held_out_labels) - positives)
+            wins += auc * fold_pairs
+            pairs += fold_pairs
+    if not pairs:
+        return None, ("held_out_one_class",)
+    return _either_direction(Fraction(wins, pairs)), ()
 
 
 def salience(streams: Mapping[str, Sequence[Event]],
@@ -197,7 +206,8 @@ def salience(streams: Mapping[str, Sequence[Event]],
     and Unicode P-category punctuation. Empty/absent text has zero shares.
     Actors become a principal-role indicator using each life's principal id;
     a missing principal mapping raises ValueError, including for empty lives.
-    Folds assign sorted lives by index modulo min(5, number of lives).
+    Folds assign sorted lives by index modulo min(5, number of lives). The
+    classifier AUC pools Mann–Whitney pairs within each held-out fold only.
     """
     missing = sorted(set(streams) - principals.keys())
     if missing:

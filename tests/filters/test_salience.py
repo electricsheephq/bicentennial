@@ -132,6 +132,35 @@ def test_training_fold_one_class():
     assert (report.gold_critical_count, report.other_count) == (1, 1)
 
 
+def test_held_out_one_class():
+    # Four single-class lives, four folds: every training set has both classes,
+    # but every held-out life has one, so no fold contributes a pair.
+    streams = {"a": [event("bb", True)], "b": [event("bb", True)],
+               "c": [event("a", False)], "d": [event("a", False)]}
+    report = gate.salience(streams, principals(streams))
+    assert report.verdict == "UNDEFINED"
+    assert not report.passed
+    assert report.reasons == ("held_out_one_class",)
+    assert report.classifier_statistic is None
+    assert dict(report.feature_statistics)["chars"] == Fraction(1)
+    assert (report.gold_critical_count, report.other_count) == (2, 2)
+
+
+def test_classifier_ignores_prevalence_across_lives():
+    # Identical events; life "a" holds three gold-critical, life "b" one. Every
+    # column is constant, so each fold's logit is its bias and held-out events
+    # tie: 3*1 + 1*3 pairs at half credit give 1/2. Pooling the folds' biases
+    # would instead read 4/16 = 1/4, i.e. 3/4 in either direction, and FAIL.
+    streams = {life: [event("x", index < gold, session=f"s-{index}") for index in range(4)]
+               for life, gold in (("a", 3), ("b", 1))}
+    report = gate.salience(streams, principals(streams))
+    assert all(value == Fraction(1, 2) for _, value in report.feature_statistics)
+    assert report.classifier_statistic == Fraction(1, 2)
+    assert report.verdict == "PASS"
+    assert report.reasons == ()
+    assert (report.gold_critical_count, report.other_count) == (4, 4)
+
+
 def test_exact_feature_list():
     assert gate.FEATURES == (
         "chars", "words", "digit_share", "uppercase_share", "punctuation", "position",
