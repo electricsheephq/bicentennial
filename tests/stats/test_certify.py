@@ -139,11 +139,22 @@ def test_half_gates_by_distinct_blocks_including_odd(blocks, expected):
     assert cell.half_gates == expected
 
 
-def test_half_gates_use_only_valid_control_blocks():
+def test_half_gates_split_run_blocks_and_average_valid_controls():
     pairs, scores, controls = pooled_fixture()
+    # Run blocks 0..3 split {0, 1} | {2, 3}; pooled p3 (block 0) adds no gate.
     cell, = cell_statistics(pairs, scores, controls,
                             block_of={"p0": 1, "p1": 2, "p2": 3, "p3": 0}, **OPTIONS)
     assert cell.half_gates == (0, 15)
+
+
+def test_half_gates_fixed_by_run_blocks_when_whole_blocks_lose_controls():
+    pairs = {"c": tuple(f"p{i}" for i in range(8))}
+    controls = {("c", f"p{i}"): (0, 10 * i) for i in range(2, 8)}
+    # Blocks 0..7 split {0..3} | {4..7}; gates 5i give (10+15)/2 and (20+25+30+35)/4.
+    cell, = cell_statistics(pairs, {}, controls,
+                            block_of={f"p{i}": i for i in range(8)}, **OPTIONS)
+    assert cell.support == 6 and not cell.blocked
+    assert cell.half_gates == (Fraction(25, 2), Fraction(55, 2))
 
 
 def test_percentile_indices_population_variance_and_integer_sqrt():
@@ -373,6 +384,21 @@ def test_cell_admission_each_no_verdict_case(tight_draw, case):
         assert naive.verdict == "FAIL"
     assert cell_admission(cell, naive) is None
     assert cell_admission(*admission_fixture(support=3)) == "ADMITTED"
+
+
+def test_cell_admission_uses_surviving_control_pairs_only(tight_draw):
+    pairs = {"c0": PAIRS}
+    controls = {("c0", p): (-40, 40) for p in PAIRS[:3]}
+    scores = {("c0", p): 10 if p != "p3" else -100 for p in PAIRS}
+    cell, = cell_statistics(pairs, {}, controls, **OPTIONS)
+    pooled, = cell_statistics(pairs, scores, controls, **OPTIONS)
+    # Mean -35/2 +/- (3*55/2 + 165/2)/4 spans gate 0 with pooled p3 kept.
+    assert pooled.pooled_pairs == ("p3",) and pooled.verdict == "UNRESOLVED"
+    with pytest.raises(ValueError, match="surviving pairs only.*exclude_pooled=True"):
+        cell_admission(cell, pooled)
+    surviving, = cell_statistics(pairs, scores, controls, exclude_pooled=True, **OPTIONS)
+    assert surviving.arm.interval == (10, 10) and surviving.verdict == "CLEAR"
+    assert cell_admission(cell, surviving) == "NOT_ADMITTED"
 
 
 def test_joint_resampling_and_exact_key_contract(monkeypatch):
