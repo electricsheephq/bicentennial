@@ -5,6 +5,15 @@ tool_grouping, supersession_current, text_full_length and actor_stored.
 Exempt checks return True (not a claim of retrieval); EXEMPTIONS exposes them.
 All other checks apply. Each check uses a fresh adapter and settles before
 every probe/checkpoint; exceptions fail that check and do not abort the suite.
+
+An adapter class may declare UNSUPPORTED_FIELDS = frozenset({"actor"}) when
+the system's API cannot carry that field; only actor is supported here for now.
+Conformance skips actor_stored for that declaration and run() returns True for
+compatibility. declared(adapter_factory) separately reports {"actor_stored":
+"declared"}; callers must disclose it rather than count it as a storage pass.
+The actor check proves storage only when the checkpoint is the system's store,
+not when a host checkpoint also contains the benchmark's own event copies.
+(This note lives here, not in contract.py, which is a hashed control file.)
 """
 
 from .adapters.nomemory import NoMemory

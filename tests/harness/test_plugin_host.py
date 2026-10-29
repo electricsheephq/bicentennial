@@ -150,9 +150,11 @@ def factory(tmp_path, monkeypatch):
 @pytest.mark.parametrize("name", NAMES)
 def test_conformance(factory, name, capsys):
     matrix = conformance.run(lambda: factory(name))
-    report(capsys, dict(system=name, mode="none", conformance=matrix))
+    declared = conformance.declared(lambda: factory(name))
+    # The declared skip is printed beside the matrix, so its True never reads as a storage pass (E12).
+    report(capsys, dict(system=name, mode="none", conformance=matrix, declared=declared))
     assert matrix == dict.fromkeys(conformance.CHECKS, True)
-    assert conformance.declared(lambda: factory(name)) == {"actor_stored": "declared"}
+    assert declared == {"actor_stored": "declared"}
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -854,7 +856,8 @@ def test_live(factory, name, capsys):
     except GateRefused:
         pytest.skip("machine gate refused")
     matrix = conformance.run(lambda: factory(live=checkout))
-    report(capsys, dict(system=name, live_conformance=matrix))
+    report(capsys, dict(system=name, live_conformance=matrix,
+                        declared=conformance.declared(lambda: factory(live=checkout))))
     for check in ("reset_empty", "citations_are_event_ids", "checkpoint_restore", "settle_returns"):
         assert matrix[check], check
     results = []
