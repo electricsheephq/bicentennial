@@ -10,6 +10,13 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+ENTRY_DELIMITER = "\n§\n"
+
+
+def memory_entries(memory):
+    raw = memory.read_text() if memory.exists() else ""
+    return [entry for entry in (part.strip() for part in raw.split(ENTRY_DELIMITER)) if entry]
+
 
 def emit(obj):
     print(json.dumps(obj), flush=True)
@@ -45,8 +52,9 @@ def execute(call, memory, servers, cwd):
         if args.get("action") != "add" or not isinstance(args.get("content"), str):
             return json.dumps(dict(success=False, error="unsupported memory action"))
         memory.parent.mkdir(exist_ok=True)
-        with memory.open("a") as stream:
-            stream.write(args["content"] + "\n")
+        entries = memory_entries(memory)
+        entries.append(args["content"])
+        memory.write_text(ENTRY_DELIMITER.join(entries))
         return json.dumps(dict(success=True))
     if name == "terminal":
         out = subprocess.run(args["command"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=30)
@@ -118,7 +126,10 @@ def main():
                     continue
                 system = f"fake harness; cwd {cwd}; home {home}"
                 if cfg["memory"]["memory_enabled"]:
-                    system += "\nMEMORY:\n" + (memory.read_text() if memory.exists() else "")
+                    entries = memory_entries(memory)
+                    if entries:
+                        content, sep = ENTRY_DELIMITER.join(entries), "═" * 46
+                        system += f"\n\n{sep}\nMEMORY (your personal notes) [1%]\n{sep}\n{content}"
                 messages = [dict(role="system", content=system), *history, dict(role="user", content=op["text"])]
                 msg = request(cfg, messages, schemas)
                 while msg is not None and msg.get("tool_calls"):

@@ -74,7 +74,7 @@ def main():
                     db = SessionDB()
                     db.create_session(sid, source="cli")
                     schemas = [MEMORY_SCHEMA, SESSION_SEARCH_SCHEMA]
-                result.update(session_id=sid, active_memory_providers=[p.name for p in mgr.providers] if mgr else [],
+                result.update(session_id=sid, active_context_engine=None, active_memory_providers=[p.name for p in mgr.providers] if mgr else [],
                               schemas=[{k: s[k] for k in ("name", "parameters")} for s in schemas])
             elif op == "end":
                 if mgr is not None:

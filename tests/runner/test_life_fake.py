@@ -579,7 +579,7 @@ def test_adapter_failure_labels_are_named():
 @pytest.mark.parametrize("label,cls", [
     ("turn_timeout", "SYSTEM_FAILURE"), ("end_timeout", "SYSTEM_FAILURE"),
     ("startup_timeout", "INFRA_FAILURE"), ("open_timeout", "INFRA_FAILURE"),
-    ("worker_start", "INFRA_FAILURE"),
+    ("worker_start", "INFRA_FAILURE"), ("admission_deadline", "INFRA_FAILURE"),
 ])
 def test_worker_failure_mappings(label, cls):
     assert dict(CAUSES)[label] == cls
@@ -698,3 +698,53 @@ def test_raised_probe_restores_surfaces_and_keeps_unsettled(lives, tmp_path, mon
     assert not any(s.session > 10 for s in result.sessions)
     result.cleanup()
     assert not result._root.exists()
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
+def test_non_plugin_life_gets_worker_env(lives, tmp_path, monkeypatch, harness, arm):
+    extra = {"MODEL_HOME": str(tmp_path / "cache")}
+
+    def session(self, index, **kw):
+        raise HarnessFailed("turn_failed")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    result = drive(lives["t1-g1", "B0"], tmp_path / "run", arm=arm, extra_env=extra)
+    made = harness.made[0]
+    assert made.plugin is None and made.context_engine is None
+    assert made.extra_env == (None if arm == "no_memory" else extra)
+    result.cleanup()
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
+def test_engine_only_life_uses_plugin_wake_and_env(lives, tmp_path, monkeypatch, harness, arm):
+    from bicentennial.director.scripted import WRITE_ARGS
+    from bicentennial.systems import hermes_plugin as hp
+
+    name, engine = "fixture-engine", "fixture_engine"
+    source, pinned = plugin_source(tmp_path)
+    entry = dict(ENTRY, name=name, artifact=pinned["artifact"])
+    monkeypatch.setitem(hp.ENGINES, name, engine)
+    monkeypatch.setitem(hp.TREES, name, ("HEAD",))
+    monkeypatch.setitem(WRITE_ARGS, name, WRITE_ARGS["hermes-native"])
+    extra = {"MODEL_HOME": str(tmp_path / "cache")}
+
+    def session(self, index, **kw):
+        if self.before_spawn is not None:
+            self.before_spawn("session_start")
+            self.before_spawn("kill")
+        raise HarnessFailed("turn_failed")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    result = drive(lives["t1-g1", "B0"], tmp_path / "run", arm=arm,
+                   entry=entry, plugin_source=source, extra_env=extra)
+    made = harness.made[0]
+    assert made.context_engine == (None if arm == "no_memory" else engine)
+    assert made.extra_env == (None if arm == "no_memory" else extra)
+    target = made.paths["hermes_home"] / "plugins" / engine
+    assert target.exists() is (arm != "no_memory")
+    if arm == "wiped":
+        assert isinstance(result.hooks[0], PluginWake)
+        assert result.hooks[0].records()[-1]["wake"] is True
+    else:
+        assert not result.hooks
+    result.cleanup()

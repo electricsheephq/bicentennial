@@ -18,6 +18,7 @@ import json
 import os
 import re
 import ssl
+import stat
 import sys
 import tempfile
 import threading
@@ -443,10 +444,30 @@ def scan(login, paths, run=None) -> dict:
             raise Stop("lease_changed")
         if entry["pin"] != account_pin(store["tokens"]["access_token"]):
             raise Stop("account_changed")
+    paths = list(map(Path, paths))
+    for path in paths:
+        try:
+            path.stat()
+        except (FileNotFoundError, NotADirectoryError):
+            raise Stop("scan_path_missing") from None
+        except OSError:
+            pass
     needles, files, hits, unreadable = login.learn_only(store), 0, {}, 0
-    for path in map(Path, paths):
-        for file in ([path] if path.is_file() else path.rglob("*")):
-            if not file.is_file():
+    def walk_error(exc):
+        nonlocal unreadable
+        unreadable += 1
+    for path in paths:
+        candidates = ([path] if path.is_file() else
+                      (Path(root) / name for root, _, names in os.walk(path, onerror=walk_error) for name in names))
+        for file in candidates:
+            try:
+                mode = file.stat().st_mode
+            except FileNotFoundError:
+                continue
+            except OSError:
+                unreadable += 1
+                continue
+            if not stat.S_ISREG(mode):
                 continue
             files += 1
             try:

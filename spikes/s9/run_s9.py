@@ -367,6 +367,17 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
     failed, resume_sid, summaries = False, None, []
     held = {}
     arm.resume_record, arm.finals = None, []
+
+    def exit_at_boundary(attempt, stop, status, *, finding=False):
+        receipt = holds.at_boundary(attempt) if holds else {}
+        record["exit_holds"] = receipt
+        reason = admission_stop(responder.state() if responder else {}, receipt, active_seconds(), part)
+        record["stop"] = reason or stop
+        if reason:
+            record["superseded_stop"] = stop
+        # Admission stops can explain upstream failures, but cannot erase state-read findings.
+        return record, (1 if finding else 2) if reason else status
+
     for position, session in enumerate(script["sessions"]):
         record["stop"] = admission_stop(responder.state() if responder else {}, held, active_seconds(), part)
         if record["stop"]:
@@ -378,12 +389,9 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
             result = adapter.run_session(index, sim_t_s=BASE + index * DAY, lock_hash=lock,
                                          attempt_id=attempt, **options)
         except HarnessFailed:
-            held = holds.at_boundary(attempt) if holds else {}
-            reason = admission_stop(responder.state() if responder else {}, held, active_seconds(), part)
-            record["stop"] = reason or ("resume_failed" if resume_sid else "harness_failed")
-            if arm.resume_record:
+            if resume_sid and arm.resume_record:
                 arm.resume_record["resumed_ok"] = False
-            return record, 2 if reason else 1
+            return exit_at_boundary(attempt, "resume_failed" if resume_sid else "harness_failed", 1)
         arm.after, arm.surface_hash = index, result.surface_hash
         arm.finals.extend(getattr(result, "finals", ()))
         record["sessions_run"].append(index)
@@ -401,8 +409,7 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
                                      post_resume=observations(adapter, attempt)["counts"])
             resume_sid = None
             if not retained:
-                record["stop"] = "compaction_not_retained"
-                return record, 1
+                return exit_at_boundary(attempt, "compaction_not_retained", 1, finding=True)
         has_next = position + 1 < len(script["sessions"])
         delay = wait_s
         if part == "resume24":
@@ -412,8 +419,7 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
             if qualifies:
                 summaries = observations(adapter)["summaries"][-1:]
                 if not summaries:
-                    record["stop"] = "compaction_unobserved"
-                    return record, 2
+                    return exit_at_boundary(attempt, "compaction_unobserved", 2)
                 resume_sid = result.acp_session_id
                 arm.resume_record = {"pause_after": index, "holds_compaction": True,
                     "summariser_before": sum(r["summariser_records"] for r in record["results"]),
@@ -422,19 +428,16 @@ def run_life(arm, part, run, routes, *, script, wait_s, sleep=time.sleep,
         try:
             proof = boundary(arm, delay if has_next else 0, sleep, proof=has_next)
         except BoundaryBlocked as exc:
-            record["stop"] = str(exc)
-            return record, exc.exit_code
+            return exit_at_boundary(attempt, str(exc), exc.exit_code)
         failed |= proof.get("pause") == "unsettled"
         if has_next:
             record["boundaries"].append(proof)
         if resume_sid:
             arm.resume_record.update({k: proof.get(k) for k in ("equal", "changed")})
             if "equal" not in proof:
-                record["stop"] = "compaction_unsettled"
-                return record, 2
+                return exit_at_boundary(attempt, "compaction_unsettled", 2)
         if proof.get("equal") is False or proof.get("declared_matches") is False:
-            record["stop"] = "proof_failed"
-            return record, 1
+            return exit_at_boundary(attempt, "proof_failed", 1, finding=True)
         state = responder.state() if responder else {}
         held = holds.at_boundary(attempt) if holds else {"reasons": [], "held_ms": 0}
         proof["holds"] = held
@@ -627,7 +630,7 @@ def live_responder(args, spend):
 
 
 def execute(args, marker, checkout, *, worker_argv=None, sleep=time.sleep):
-    out, active = args.out, ActiveClock()
+    out, active = args.out.resolve(), ActiveClock()
     out.mkdir(parents=True)
     spend = zero_spend(out / "spend.json")
     responder, holds, login = live_responder(args, spend) if args.part != "twin" else (None, None, None)

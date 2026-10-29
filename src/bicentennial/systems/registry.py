@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from bicentennial.contracts.run import validate
+from bicentennial.director.roles import SUMMARISER_ALIAS
 
 # Provisional OSI allow-list for C-9 selection (pending), not a final roster decision.
 PROVISIONAL_OSI_LICENCES = frozenset({
@@ -70,6 +71,11 @@ def check(entry) -> list[str]:
         or not _ALIAS.fullmatch(r["alias"]) for r in routes
     ):
         reasons.append("route_unroutable")
+    if isinstance(routes, list) and any(
+        isinstance(r, dict) and r.get("role") == "compaction"
+        and r.get("alias") != SUMMARISER_ALIAS for r in routes
+    ):
+        reasons.append("compaction_alias_mismatch")
     surfaces = entry.get("surfaces", [])
     bad_path = False
     if isinstance(surfaces, list):

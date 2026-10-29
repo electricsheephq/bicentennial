@@ -183,8 +183,8 @@ def _code_refusals():
     codes = set()
     for name in ("t0", "t1", "compare"):
         codes.update(_refusal_codes(REPO / f"src/bicentennial/runner/{name}.py"))
-    # The dependency check raises through the tier's refusal factory, passed in as `refused`.
-    codes.update(_refusal_codes(REPO / "src/bicentennial/systems/hermes_plugin.py", ("refused",)))
+    # Helpers raise through the tier's refusal factory, passed as `refused` or `refuse`.
+    codes.update(_refusal_codes(REPO / "src/bicentennial/systems/hermes_plugin.py", ("refused", "refuse")))
     tree = ast.parse((REPO / "src/bicentennial/systems/registry.py").read_text())
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)

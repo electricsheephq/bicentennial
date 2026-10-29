@@ -6,7 +6,6 @@ import json
 import os
 import selectors
 import signal
-import sqlite3
 import subprocess
 import sys
 import time
@@ -191,7 +190,8 @@ class HermesAdapter:
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
                  memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
-                 scripted: bool = True):
+                 context_engine=None, plugins_enabled=(), extra_env=None, scripted: bool = True,
+                 admission_deadline: float | None = None):
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -205,7 +205,10 @@ class HermesAdapter:
         self.toolsets, self.env_server = T1_TOOLSETS if toolsets is None else toolsets, env_server
         # The scripted tier's config (#191, #192: config.SCRIPTED_DEVIATIONS); a live tier passes False for the pin's defaults.
         hermes_config(1, "bicentennial-main", plugin=plugin, plugin_config=plugin_config, memory=memory,
-                      toolsets=self.toolsets, window=window, scripted=scripted)
+                      toolsets=self.toolsets, window=window, context_engine=context_engine, plugins_enabled=plugins_enabled,
+                      scripted=scripted)
+        self.context_engine, self.plugins_enabled, self.extra_env = context_engine, plugins_enabled, extra_env
+        self.active_context_engine = None
         self.memory, self.window, self.scripted = memory, window, scripted
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
@@ -218,6 +221,7 @@ class HermesAdapter:
         self.entry, self.script, self.schedule, self.clock = entry, script, schedule, clock
         self.checkout, self.plugin, self.kill_mode, self.argv = checkout, plugin, kill_mode, list(worker_argv)
         self.gate_poll_s, self.before_spawn, self.harness_pin = gate_poll_s, before_spawn, harness_pin or {}
+        self.admission_deadline = admission_deadline  # absolute time.monotonic(), or an unbounded admission wait
         self.entrypoint = ENTRYPOINT if self.commit is not None else "test-double"
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
@@ -298,13 +302,9 @@ class HermesAdapter:
             raise
         finally:
             self._held = None
-        db = self.paths["hermes_home"] / "state.db"
-        if db.exists():  # hermes-native.toml line 10: checkpoint the WAL before measuring the tree
-            con = sqlite3.connect(db)
-            try:
-                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                con.close()
+        from bicentennial.systems.hermes_plugin import checkpoint_sqlite
+        roots = {"HERMES_HOME": self.paths["hermes_home"], "SANDBOX_HOME": self.paths["home"]}
+        checkpoint_sqlite(roots[s["root"]] / s["relative"] for s in self.entry["surfaces"])
         summarised = sum(r.get("role") == "summariser" and r.get("attempt_id") == attempt_id for r in self.records())
         return SessionResult(index, session["kind"], sid, self.entrypoint, turns_ok, matched, tuple(restarts),
                              compaction, summarised, surface_hash(self.paths["hermes_home"], self.volatile),
@@ -313,12 +313,18 @@ class HermesAdapter:
 
     def _gate(self, readings) -> None:
         """R15, before every spawn: wait while the busy marker refuses this machine class."""
+        deadline = getattr(self, "admission_deadline", None)  # also supports fakes that bind _gate without __init__
         while True:
             marker = read_marker()
             readings.append({"exit": marker.exit, "state": marker.state})
+            if deadline is not None and time.monotonic() >= deadline:
+                raise HarnessFailed("admission_deadline")
             if admit(marker, heavy=self.entry["machine_class"] == "heavy", roots=1).admitted:
                 return
-            time.sleep(self.gate_poll_s)
+            if deadline is None:
+                time.sleep(self.gate_poll_s)
+            else:
+                time.sleep(max(0, min(self.gate_poll_s, deadline - time.monotonic())))
 
     def _spawn_open(self, reason, sid, t) -> tuple[str, int, bool]:
         """before_spawn, a niced worker, then open: a new session (sid None) or a resume by id."""
@@ -333,9 +339,11 @@ class HermesAdapter:
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self._alias, plugin=self.plugin,
                                                             plugin_config=self.plugin_config, memory=self.memory,
                                                             toolsets=toolsets, mcp_servers=servers, window=self.window,
+                                                            context_engine=self.context_engine,
+                                                            plugins_enabled=self.plugins_enabled,
                                                             scripted=self.scripted))
         t0 = time.monotonic()
-        env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout)
+        env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress)
         assert_niced(self._worker.proc.pid)
@@ -348,6 +356,9 @@ class HermesAdapter:
         self.active_memory_providers = list(out.get("active_memory_providers") or [])
         if self.plugin is not None and self.plugin not in self.active_memory_providers:
             raise HarnessFailed("plugin_inactive")
+        self.active_context_engine = out.get("active_context_engine")
+        if self.context_engine is not None and self.active_context_engine != self.context_engine:
+            raise HarnessFailed("engine_inactive")
         t["open"].append(_ms(t0))
         return out["session_id"], out["history"], wiped
 
@@ -399,7 +410,8 @@ class HermesAdapter:
         return {"name": pin.get("name"), "version": pin.get("version"), "sha256": pin.get("sha256"),
                 "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS) + (list(SCRIPTED_DEVIATIONS) if self.scripted else []),
                 "plugin_config": deepcopy(self.plugin_config), "memory": self.memory,
-                "active_memory_providers": list(self.active_memory_providers)}
+                "active_memory_providers": list(self.active_memory_providers),
+                **({"active_context_engine": self.active_context_engine} if self.active_context_engine is not None else {})}
 
     def close(self) -> dict:
         if self._worker is not None:
