@@ -357,6 +357,27 @@ def test_c8_hash_copy_change_missing_and_dirty(tmp_path, monkeypatch):
     assert not run.c8_dirty(ROOT)
 
 
+def test_resume_keeps_a_pause_the_run_stopped_in(tiny_inputs, tmp_path, monkeypatch):
+    # The history is saved at each event, so a run stopped while paused, after its last checkpoint, keeps that pause
+    config = tiny_config(alternatives=("LITERAL",), constants={**TINY_CONSTANTS, "CHUNK": 1})
+    holding, out = [False], tmp_path / "stopped"
+
+    def stopped():
+        raise InterruptedError("stopped while paused")
+
+    monkeypatch.setattr(run, "_marker", lambda command: 11 if holding[0] else 0)
+    monkeypatch.setattr(run, "_pause_wait", stopped)
+    monkeypatch.setattr(run, "_barrier_hook", lambda point, variant, phase: holding.__setitem__(0, True))
+    with pytest.raises(InterruptedError, match="stopped while paused"):
+        run.run(tiny_inputs, config, out)
+    assert list((out / "checkpoints").glob("*phase0-*.json"))
+    holding[0] = False
+    monkeypatch.setattr(run, "_barrier_hook", lambda *args: None)
+    assert run.run(tiny_inputs, run.copy_config(config, resume=True), out) == 0
+    pauses = json.loads((out / "RESULT-MANIFEST.json").read_bytes())["run"]["pauses"]
+    assert [p["event"] for p in pauses] == ["pause"]
+
+
 def _imported_files(path):
     """The repository files a bicentennial import in `path` runs: each imported module and its packages."""
     package = Path(path).with_suffix("").parts[1:-1]

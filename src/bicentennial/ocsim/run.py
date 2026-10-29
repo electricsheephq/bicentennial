@@ -762,6 +762,21 @@ def _barrier_hook(point, variant, phase):
     """Test seam: may raise after a durable phase checkpoint."""
 
 
+class _Pauses(list):
+    """The busy-marker history, saved at every event (outside checkpoints/, whose files all carry the run's hashes),
+    so a resumed run reports every event before the interruption, including a pause the run was stopped in."""
+
+    def __init__(self, path, events=()):
+        super().__init__(events)
+        self.path = path
+
+    def append(self, event):
+        super().append(event)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_bytes(canon(list(self)))
+        temporary.replace(self.path)
+
+
 class _Pool:
     """One point/variant pool, rebuilt when marker width or niceness changes."""
 
@@ -874,14 +889,13 @@ def _checkpoint_files(out):
     return sorted((out / "checkpoints").glob("*.json"))
 
 
-def _save_checkpoint(out, point, variant, phase, state, hashes, pauses):
+def _save_checkpoint(out, point, variant, phase, state, hashes):
     directory = out / "checkpoints"
     directory.mkdir(parents=True, exist_ok=True)
     name = f"{point[0]}-{point[1]}-{variant}-{phase}-{state['r_end']}.json"
     path = directory / name
     temporary = path.with_suffix(".tmp")
-    # The busy-marker history so far rides along, so a resumed run reports the whole run's pauses
-    temporary.write_bytes(canon({"hashes": hashes, "state": _encode(state), "pauses": pauses}))
+    temporary.write_bytes(canon({"hashes": hashes, "state": _encode(state)}))
     temporary.replace(path)
 
 
@@ -927,9 +941,9 @@ def _phase(pool, phase, start, stop, ids, bounds, out, hashes):
             state["r_end"] = ends[result.r0]
             if state["r_end"] % 1000 == 0:
                 state["wall_ms"] = prior_wall + round((time.perf_counter() - wall_start) * 1000)
-                _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes, pool.pauses)
+                _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes)
     state["wall_ms"] = prior_wall + round((time.perf_counter() - wall_start) * 1000)
-    _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes, pool.pauses)
+    _save_checkpoint(out, pool.point, pool.variant, phase, state, hashes)
     pool.phases[f"{pool.point[0]}-{pool.point[1]}-{pool.variant}-{phase}"] = {
         "wall_s": state["wall_ms"] // 1000, "cpu_s": state["cpu_ms"] // 1000}
     _barrier_hook(pool.point, pool.variant, phase)
@@ -1132,18 +1146,16 @@ def run(inputs: RunInputs, config: RunConfig, out: Path) -> int:
               "config": sha256(canon(_config_data(config))).hexdigest()}
     if out.exists() and not config.resume:
         raise ValueError("output directory exists: refusing to overwrite")
-    pauses = []
     if config.resume:
         files = _checkpoint_files(out)
         if not files:
             raise ValueError("nothing to resume")
         for path in files:
-            saved = json.loads(path.read_bytes())
-            if saved.get("hashes") != hashes:
+            if json.loads(path.read_bytes()).get("hashes") != hashes:
                 raise ValueError("checkpoint does not match the inputs, C-8 hash or config")
-            # Each checkpoint holds the history up to its write, so the longest is the latest
-            pauses = max(pauses, saved.get("pauses", []), key=len)
     out.mkdir(parents=True, exist_ok=True)
+    history = out / "pauses.json"
+    pauses = _Pauses(history, json.loads(history.read_bytes()) if config.resume and history.exists() else ())
     diagnostics = {"audits": {"replicates": 0, "certify_calls": 0, "fields_compared": 0,
                               "mismatches": 0}, "solver": {}, "pauses": pauses, "phases": {}}
     results = {"points": [], "first_passing": {a: None for a in config.alternatives},
@@ -1194,7 +1206,7 @@ def run(inputs: RunInputs, config: RunConfig, out: Path) -> int:
                                      for p in results["points"]],
                       "extra_chains": "not modelled: under-count disclosed",
                       "missing": card.EXTRA_CHAINS},
-        "run": {"phases": diagnostics["phases"], "pauses": diagnostics["pauses"],
+        "run": {"phases": diagnostics["phases"], "pauses": list(diagnostics["pauses"]),
                 "workers": config.workers},
         "machine": {"platform": platform.platform(), "machine": platform.machine(),
                     "python_version": platform.python_version(), "cpu_count": os.cpu_count(),
