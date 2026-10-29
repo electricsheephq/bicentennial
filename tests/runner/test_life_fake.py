@@ -196,6 +196,11 @@ def test_system(lives, tmp_path, harness, life, branch):
     if life == "t1-g2":
         assert result.expected_call_ids == ()
     assert result.verified_empty["taken"] == "before configuration"
+    assert result.store_growth_bytes > 0
+    assert result.process_ids == tuple(harness.made[0].pids) and result.process_ids
+    roles = {r["role"] for r in result.records if r.get("type") == "request"}
+    assert set(result.tokens_by_role) == roles
+    assert all(i > 0 and o > 0 for i, o in result.tokens_by_role.values())
     with pytest.raises(FrozenInstanceError):
         result.arm = "changed"
     result.cleanup()
@@ -681,6 +686,27 @@ def test_pair_inputs_reads_streamed_and_json_tool_calls(tmp_path, stream):
     assert runner._pair_inputs(tmp_path, rows, (3, 2), "G1") == (("a", "b"), (("chat", after),))
 
 
+@pytest.mark.parametrize("response", [
+    {"usage": {"prompt_tokens": 3, "completion_tokens": 5}},
+    {"sse": [{"usage": {"input_tokens": 3, "output_tokens": 5}}, {}]},
+    {"sse": [{"response": {"usage": {"input_tokens": 3, "output_tokens": 5}}}]},
+])
+def test_tokens_read_response_blobs(tmp_path, response):
+    store = BlobStore(tmp_path / "blobs", Guard([]))
+    rows = [dict(type="request", role="aux", resp=store.put(response))] * 2
+    rows += [dict(type="request", role="embeddings", resp=store.put({})), dict(type="diagnostic")]
+    assert runner._tokens(tmp_path, rows) == {"aux": (6, 10), "embeddings": (0, 0)}
+
+
+def test_surface_bytes_counts_regular_files(tmp_path):
+    (tmp_path / "installed").write_bytes(b"initial")
+    (tmp_path / "alias").symlink_to(tmp_path / "installed")
+    surfaces = [(dict(volatile_paths=["installed"]), tmp_path)]
+    before = runner._surface_bytes(surfaces)
+    (tmp_path / "grown").write_bytes(b"12345")
+    assert before == 7 and runner._surface_bytes(surfaces) - before == 5
+
+
 def test_probe_code_uses_attempt_for_unknown_cursor():
     rows = [dict(attempt_id="before", role="unknown", status=400),
             dict(attempt_id="now", cursor=None, role="unknown", status=400)]
@@ -754,6 +780,7 @@ def test_raised_probe_restores_surfaces_and_keeps_unsettled(lives, tmp_path, mon
     assert result.stopped == ("SYSTEM_FAILURE", "turn_failed", 21)
     home = result._root / "run" / "hermes-home"
     assert surface_hash(home, ENTRY["surfaces"][0]["volatile_paths"]) == hashes["original"]
+    assert result.store_growth_bytes == len(b"canonical state at checkpoint")
     assert not (home / "probe-only").exists()
     first_probe = case["compiled"].probes[0]
     assert all((roots[0] / "probe-only").is_file() for iid, roots in result.retained_roots.items()

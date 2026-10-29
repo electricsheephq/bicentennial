@@ -360,8 +360,8 @@ class HermesAdapter:
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress)
-        assert_niced(self._worker.proc.pid)
-        self.pids.append(self._worker.proc.pid)
+        self.pids.append(self._worker.proc.pid)  # recorded before the check, as the memory host does
+        assert_niced(self.pids[-1])
         t["spawn"].append(_ms(t0))
         t0 = time.monotonic()
         out = self._worker.call(op="open", session_id=sid, cwd=str(self.paths["workspace"]))

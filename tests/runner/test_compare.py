@@ -26,7 +26,7 @@ from bicentennial.harness.hermes import adapter, plugin_host
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.keyed import choice
-from bicentennial.ledger import LedgerBusy, stable_digest
+from bicentennial.ledger import BlobStore, Guard, LedgerBusy, stable_digest
 from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.report.determinism import determinism_check
 from bicentennial.report.receipt import loop_time
@@ -174,6 +174,17 @@ def test_full_run(completed, installed, cases):
         assert len(controls["wipes"]) == 4 and controls["floor_mismatches"] == []
         ms, busy = loop_time(read(out, arm, "receipt.json"))
         assert ms > 0 and busy is False
+        receipt = read(out, arm, "receipt.json")
+        pooled = [f for f in completed.runs[:12] if f.arm in (
+            ("system", "no_memory") if arm == "system" else ("wiped",))]
+        assert receipt["store_growth_bytes"] == sum(f.store_growth_bytes for f in pooled) > 0
+        assert receipt["process_ids"] == sorted({p for f in pooled for p in f.process_ids})
+        assert all(f.process_ids for f in pooled)
+        roles = {r["role"] for f in pooled for r in f.records if r.get("type") == "request"}
+        assert {r["role"] for r in receipt["tokens_by_role"]} == roles
+        for key, index in (("input", 0), ("output", 1)):
+            assert receipt["tokens"][key] == sum(f.tokens_by_role[r][index]
+                for f in pooled for r in f.tokens_by_role) > 0
         suites = ET.parse(out / arm / "junit.xml").getroot()
         names = [s.attrib["name"] for s in suites]
         prefix = f"ring0.T1.hermes-native.{arm}"
@@ -707,6 +718,81 @@ def test_receipt_counts_corpus(synth):
     assert probe_ms(receipt) == probe_ms(base) + 7
     assert receipt["latency_ms"] == [*base["latency_ms"], 7]
     assert receipt["raw_body_digest"] != base["raw_body_digest"]
+
+
+def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch, cases):
+    arms = {}
+    for n, (arm, value) in enumerate(synth.arms.items(), 1):
+        units = [replace(u, runs=tuple(replace(f, tokens_by_role={"probe_main": (n, 2 * n)},
+            store_growth_bytes=n * 10, process_ids=(100 + n,)) for f in u.runs)) for u in value.units]
+        arms[arm] = replace(value, units=tuple(units))
+    run = replace(synth, arms=arms)
+    set_run(monkeypatch, run)
+    attempts, hosts = {}, {arm: [] for arm in compare.GATED}
+
+    class Host(ReferenceStore):
+        def __init__(self, entry, **kw):
+            super().__init__()
+            self.paths = {"root": kw["root"]}
+            self.server = SimpleNamespace(port=32109)
+            self.director = SimpleNamespace(run_values={})
+            self.egress = SimpleNamespace(summary=lambda: {"non_loopback": []})
+            self.write_clipped, self.write_max_length = 0, None
+            self.factor = 1 if current[0] == "system" else 2
+            self.pids = [900 * self.factor + len(hosts[current[0]])]
+            self.gate = [dict(exit=10 if current[0] == "system" else 0)]
+            self.surface = kw["root"] / "surface"
+            self.surface.mkdir()
+            (self.surface / "installed").write_bytes(b"initial")
+            blobs = BlobStore(kw["root"] / "ledger/blobs", Guard([]))
+            self.rows = [dict(type="request", role="aux", seq=1, t_ms=7,
+                req=blobs.put({}), resp=blobs.put({"usage": {
+                    "input_tokens": 3 * self.factor, "output_tokens": 5 * self.factor}}))]
+            hosts[current[0]].append(self)
+
+        def surfaces(self):
+            return [(self.surface, [])]
+
+        def fields(self):
+            return dict(actor="not_delivered", text="full", time="session_clock")
+
+        def records(self):
+            return self.rows
+
+        def close(self):
+            (self.surface / "growth").write_bytes(b"12345678901" * self.factor)
+
+    current = []
+
+    def drive(case, factory, **kw):
+        current[:] = [factory.arm]
+        key = factory.arm, case.case_id
+        attempts[key] = attempts.get(key, 0) + 1
+        for _ in range(2):
+            factory().close()
+        return (CaseResult(case.case_id, "INFRA_FAILURE", "infra", None) if attempts[key] == 1 else
+                fake_case(case, factory, **kw))
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    monkeypatch.setattr(compare, "run_case", drive)
+    monkeypatch.setattr(compare, "busy", lambda marker: False)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 0
+    valid(out)
+    for arm in compare.GATED:
+        receipt = read(out, arm, "receipt.json")
+        pooled = compare._runs(run, ("system", "no_memory") if arm == "system" else ("wiped",))
+        count = 4 * len(cases)
+        factor = 1 if arm == "system" else 2
+        assert len(hosts[arm]) == count
+        assert loop_time(receipt)[1] is (arm == "system")
+        assert receipt["store_growth_bytes"] == sum(f.store_growth_bytes for f in pooled) + count * 11 * factor
+        assert receipt["process_ids"] == sorted({p for f in pooled for p in f.process_ids} |
+                                                {p for h in hosts[arm] for p in h.pids})
+        assert receipt["tokens_by_role"] == [dict(role="aux", input=count * 3 * factor, output=count * 5 * factor),
+            dict(role="probe_main", input=sum(f.tokens_by_role["probe_main"][0] for f in pooled),
+                 output=sum(f.tokens_by_role["probe_main"][1] for f in pooled))]
+        assert not any(h.paths["root"].exists() for h in hosts[arm])
 
 
 def catalogue():
