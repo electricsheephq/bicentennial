@@ -212,8 +212,9 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
                     gates.extend(getattr(h, "gate", ()))
                 if hasattr(h, "records") and hasattr(h, "egress"):
                     rows = h.records()
-                    if not _isolated(rows, h.egress.summary()):
-                        raise T1Refused("upstream_record")
+                    egress = h.egress.summary()
+                    if not _isolated(rows, egress):
+                        raise T1Refused("upstream_record", detail=t0._isolation_detail(rows, egress))
                     if audit is not None:
                         audit.extend(rows)
             if held:
@@ -341,7 +342,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     rows = []
     for f in _runs(run, tuple(sorted(run.arms))):
         if not _isolated(f.records, f.egress):
-            raise T1Refused("upstream_record")
+            raise T1Refused("upstream_record", detail=t0._isolation_detail(f.records, f.egress))
         rows.extend(f.records)
     cases = load_corpus(CORPUS_PATH)
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],
@@ -447,7 +448,10 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
             fields = [error.field] if isinstance(error, BaselineMismatch) else sorted(getattr(error, "fields", ()))
             if created:
-                (out / "refusal.json").write_bytes(canon(dict(code=code, fields=fields)))
+                refusal = dict(code=code, fields=fields)
+                if getattr(error, "detail", ()):
+                    refusal["detail"] = list(error.detail)
+                (out / "refusal.json").write_bytes(canon(refusal))
             print(code, file=t0.sys.stderr)
             return 3
     except Exception:
