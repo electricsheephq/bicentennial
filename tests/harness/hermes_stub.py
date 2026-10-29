@@ -67,6 +67,8 @@ def tool(name, args):
         if name == "mem0_add" and MODE == "delayed_sync":
             return json.dumps(dict(ok=True))
         rows = read()
+        if name == "memory" and any(r["text"] == args["content"] for r in rows):
+            return json.dumps(dict(ok=True))
         rows.append(dict(t=time.time(), seq=max((r["seq"] for r in rows), default=0) + 1, text=args["content"]))
         save(rows)
         return json.dumps(dict(ok=True))
