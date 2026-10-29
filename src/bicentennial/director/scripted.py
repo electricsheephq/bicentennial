@@ -103,16 +103,19 @@ def stub_disclosures(entry, tier):
     properties = []
     if entry.get("name") == "omega":
         properties.extend([
-            ("omega.adapter", "benchmark-authored Hermes provider over omega-memory 1.5.20; "
+            ("omega.adapter", "benchmark-authored Hermes provider over omega-memory 1.5.20's documented Python API (store, query_structured, delete_memory); "
              "OMEGA's maintainers are invited to review it"),
+            ("omega.writes", "omega.store as shipped: event type memory, dedup, supersession, 90-day TTL, auto-relate; the result shows the memory id and OMEGA's outcome word"),
+            ("omega.reads", "query_structured as shipped: full content, 10 results by default, memory accesses recorded; OMEGA's query and MCP tool render markdown with 200-character previews by default"),
             ("omega.query_expansion", "off: no LLM key; matches OMEGA without one"),
             ("omega.reranker", "off: the shipped default would download the cross-encoder at first query; "
              "the benchmark runs offline with every model pinned"),
-            ("omega.query_cache", "off: monotonic TTL; results unchanged"),
-            ("omega.deferred_startup", "off: OMEGA's auto-backup files would retain deleted memories; "
-             "INV-FORGET here is an upper bound on OMEGA's forget behaviour as shipped"),
+            ("omega.query_cache", "as shipped: a repeat of an identical query within 60 s (300 s at high confidence) of elapsed time can come from the cache, but every write, delete and non-empty read clears it"),
+            ("omega.deferred_startup", "as shipped: integrity check, WAL checkpoint, and a backup of a non-empty store when the newest backup is over 24 h old; initialization waits for it, so a run's first start with memories makes a backup, which keeps them after a delete"),
+            ("omega.ttl", "as shipped (90 days for memory events), on the worker's wall clock: nothing expires within a run"),
             ("omega.onnx_threads", "1"),
-            ("omega.store_defaults", "as shipped: inference, supersession, dedup; forgetting_log retained"),
+            ("omega.telemetry", "off: ORT_DISABLE_TELEMETRY=1; onnxruntime 1.29.0 would otherwise upload usage events to Microsoft, and runs are offline"),
+            ("omega.forget", "omega.delete_memory as shipped; OMEGA's forgetting_log keeps a 200-character preview of each deleted memory"),
             ("omega.prefetch", "empty: shipped UserPromptSubmit hook captures but does not query"),
         ])
     if any(route["role"] == "embeddings" for route in entry.get("own_model_routes", [])):

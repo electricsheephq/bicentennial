@@ -109,7 +109,7 @@ def test_entries_exact(name):
         expected.update(licence="Apache-2.0", artifact=dict(name="hermes-plugin-omega", version="1.5.20",
             sha256=e["artifact"]["sha256"]), write_tools=[dict(tool=t, actions=[]) for t in ("omega_store", "omega_delete")],
             read_tools=["omega_query"], recall=dict(tool="omega_query", argument_template={"query": "{prompt}"}),
-            fresh_install_hash=e["fresh_install_hash"])  # CLI pins the unmeasured/measured phase.
+            fresh_install_hash=e["fresh_install_hash"], settle=dict(kind="hook", bound_s=5))  # CLI pins the unmeasured/measured phase.
     assert e == expected and check(e) == []
     if name != "omega" or e["artifact"]["sha256"] != ZERO_HASH:
         assert admit_system(e, operator="benchmark") is None
@@ -710,6 +710,17 @@ def test_end_observation_without_process_priority(tmp_path, monkeypatch, payload
         assert cell.settle().settled
     finally:
         a.close()
+
+
+@pytest.mark.parametrize("thread", ["auto-relate", "omega-deferred-init"])
+def test_omega_settle_thread_ends(monkeypatch, thread):
+    cell = PluginCell.__new__(PluginCell)
+    cell.entry = entry("omega")
+    cell.adapter = SimpleNamespace(end_threads=(thread,), director=SimpleNamespace(control=lambda: {"inflight": 0}))
+    monkeypatch.setattr(hermes_plugin, "settle", wait)
+    assert not cell.settle().settled
+    cell.adapter.end_threads = ()
+    assert cell.settle().settled
 
 
 @pytest.mark.parametrize("name", ARCHIVED_NAMES)

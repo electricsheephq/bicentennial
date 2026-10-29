@@ -145,14 +145,13 @@ A system with a dependency lock gets its own clone of the pinned Hermes checkout
 
 The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
 
-**OMEGA prep.** Run `scripts/prepare_omega.py` with a model cache outside the repository,
+**OMEGA prep.** Prepare the benchmark-authored adapter with `scripts/prepare_omega.py`, a model cache outside the repository,
 the pinned Hermes source, a dedicated Hermes copy, a plugin-source destination and
 the full commit A id. It stages four SHA-256-checked bge-small ONNX files at a pinned
 revision and prints the clone, frozen sync, hash-required core install and detached
 worktree commands. The cache must hold no symlinks. Pass that dedicated copy with
 `--hermes`, the detached checkout at A with `--plugin-source`, and the staged directory
-with `--model-cache` on every OMEGA T0/T1 run. Both registry pins remain UNMEASURED
-until the owner measures them and records commit B. Review the adapter's
+with `--model-cache` on every OMEGA T0/T1 run. The registry entry's comments name the adapter commit each pin was measured at. Review the adapter's
 [fidelity table](../../adapters/hermes-plugin-omega/README.md); `omega.adapter` and
 one `omega.*` property per row disclose these choices in T0 and T1 JUnit.
 

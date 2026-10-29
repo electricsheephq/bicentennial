@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import sqlite3
+import threading
 from contextlib import closing
 from pathlib import Path
 
@@ -14,6 +16,7 @@ class OmegaProvider(MemoryProvider):
 
     def __init__(self):
         self.store = self.embedding = None
+        self.reset_memory = None
         self.reason = ""
 
     def is_available(self):
@@ -41,22 +44,20 @@ class OmegaProvider(MemoryProvider):
         home.mkdir(parents=True, exist_ok=True)
         os.environ["OMEGA_HOME"] = str(home)
         # omega.__init__ also imports bridge, whose OMEGA_HOME is import-time state.
-        from omega import embedding
-        from omega.sqlite_store import SQLiteStore
+        from omega import store, query_structured, delete_memory, embedding, type_stats
+        from omega.bridge import reset_memory
 
         self.embedding = embedding
         if not embedding.preload_embedding_model() or not self.is_available():
             raise RuntimeError("plugin_inactive: OMEGA ONNX backend is required")
 
-        class ForegroundStore(SQLiteStore):
-            def _deferred_startup(self):
-                # No integrity/checkpoint/backup work; retain all normal store/delete behaviour.
-                self._deferred_startup_done = True
-
         self.path, self.session_id = home / "omega.db", session_id
-        self.store = ForegroundStore(db_path=self.path)
-        # Upstream creates this no-op thread unconditionally. It cannot outlive initialization.
-        self.store._deferred_thread.join()
+        self.store, self.query, self.delete = store, query_structured, delete_memory
+        self.reset_memory = reset_memory
+        type_stats()
+        for thread in threading.enumerate():
+            if thread.name == "omega-deferred-init":
+                thread.join()
 
     def _lookup(self, select, key, value):
         with closing(sqlite3.connect(self.path)) as db:
@@ -80,19 +81,25 @@ class OmegaProvider(MemoryProvider):
 
     def handle_tool_call(self, tool_name, args, **kwargs):
         if tool_name == "omega_store":
-            node = self.store.store(args["content"], session_id=self.session_id)
-            result = {"id": self._rowid(node)}
+            text = self.store(args["content"], session_id=self.session_id)
+            if text.startswith(("Blocked", "**Memory Blocked**")):
+                result = {"id": None, "outcome": "blocked"}
+            else:
+                outcome = re.match(r"^(Stored |Deduped → |Reconfirmed |Evolved )", text)
+                node = re.search(r"\bmem-[0-9a-f]{12}\b", text)
+                if not outcome or not node:
+                    raise RuntimeError("unrecognized OMEGA store result")
+                result = {"id": self._rowid(node[0]), "outcome": outcome[0].split()[0].lower()}
         elif tool_name == "omega_query":
-            rows = self.store.query(args["query"], limit=args.get("limit", 10),
-                                    use_cache=False, expand_query=False, rerank=False)
-            result = {"results": [{"id": self._rowid(r.id),
-                                   "content": r.content} for r in rows]}
+            rows = self.query(args["query"], limit=args.get("limit", 10))
+            result = {"results": [{"id": self._rowid(r["id"]),
+                                   "content": r["content"]} for r in rows]}
         elif tool_name == "omega_delete":
             memory_id = args["memory_id"]
             if type(memory_id) is not int:
                 raise ValueError("memory_id must be an integer rowid")
             node = self._lookup("node_id", "rowid", memory_id)
-            result = {"deleted": bool(node is not None and self.store.delete_node(node))}
+            result = {"deleted": node is not None and self.delete(node).get("success") is True}
         else:
             raise ValueError("unknown OMEGA tool")
         return json.dumps(result, ensure_ascii=False)
@@ -104,9 +111,9 @@ class OmegaProvider(MemoryProvider):
         return ""  # The shipped UserPromptSubmit hook captures; it does not query.
 
     def shutdown(self):
-        if self.store is not None:
-            self.store.close()
-            self.store = None
+        if self.reset_memory is not None:
+            self.reset_memory()
+            self.reset_memory = None
 
 
 def register(ctx):

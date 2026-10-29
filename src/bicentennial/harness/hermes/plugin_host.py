@@ -51,6 +51,7 @@ from bicentennial.systems.hermes_plugin import (
     ENABLED,
     MARKER,
     MEM0_THREADS,
+    OMEGA_THREADS,
     PROVIDERS,
     PluginCell,
     plugin_dir,
@@ -62,7 +63,7 @@ from bicentennial.world.tokens import estimate_tokens
 ENTRYPOINT = "in-process memory host: MemoryManager or memory tool + SessionDB (T0)"
 WORKER = Path(__file__).resolve().with_name("plugin_host_worker.py")
 CHECKPOINT_FORMAT, SESSION_PREFIX = "bicentennial-t0-host-1", "bicentennial-t0-s"
-SETTLE_THREADS = {"mem0-oss": MEM0_THREADS}
+SETTLE_THREADS = {"mem0-oss": MEM0_THREADS, "omega": OMEGA_THREADS}
 FORGET = {
     "hermes-native": (None, {}, "", "", "", "", "memory", {"action": "remove", "target": "memory"}, "old_text"),
     "holographic": ("fact_store", {"action": "search"}, "query", "results", "content", "fact_id",

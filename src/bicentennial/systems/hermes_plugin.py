@@ -43,12 +43,13 @@ PLUGIN_DIRS = {}  # System -> install directory when it differs from the slot id
 ENABLED = frozenset()  # Systems using Hermes's general plug-in manager.
 WORKER_ENV = {"omega": {"OMEGA_ONNX_MODEL_DIR": "{model_cache}/bge-small-en-v1.5-onnx",
     "OMEGA_ONNX_THREADS": "1", "OMEGA_QUERY_EXPANSION": "0", "OMEGA_CROSS_ENCODER": "0",
-    "OMEGA_RERANKER_AUTODOWNLOAD": "0"}}
+    "OMEGA_RERANKER_AUTODOWNLOAD": "0", "ORT_DISABLE_TELEMETRY": "1"}}
 # Benchmark-owned hash locks, covered by benchmark_commit.
 DEPENDENCIES = {"holographic": "systems/locks/holographic.txt", "mem0-oss": "systems/locks/mem0-oss.txt",
                 "omega": "systems/locks/omega.txt"}
 MARKER = ".bicentennial-sandbox"
 MEM0_THREADS = ("mem0-prefetch", "mem0-sync")
+OMEGA_THREADS = ("auto-relate", "omega-deferred-init")
 
 
 def is_plugin(name):
