@@ -3,7 +3,7 @@
 import math
 import random
 from bisect import bisect_left
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from statistics import NormalDist
@@ -146,9 +146,9 @@ def solve_location(cell: CellModel, rho_t: float, target: float) -> float | str:
 
 def interpolation(cell: CellModel, margin: int | Fraction) -> float:
     lam = 0.5 + 10 * margin / (cell.c0 - cell.f0)
-    if not 0 <= lam <= 1:
+    if not -1e-12 <= lam <= 1 + 1e-12:
         raise ValueError(f"cell {cell.cell}: margin gives lambda outside [0, 1]")
-    return float(lam)
+    return float(max(0, min(1, lam)))
 
 
 def default_tau(cell: CellModel, rho_a: float, lam: float) -> float:
@@ -214,11 +214,7 @@ def expected_units(
     return result
 
 
-def sample_bundles(
-    params: LatentParams, targets: Mapping[tuple[str, str, str, int], float],
-    alloc: Mapping[tuple[str, int], int], pairs: Sequence[str], seed: str, rep: int, *,
-    solver: Callable[[CellModel, float], float | str] | None = None,
-) -> dict[tuple[str, str, str, int], tuple[int, ...]]:
+def _validate_sample(params, targets, alloc, pairs):
     _validate_pairs(pairs)
     cells = {cell.cell: cell for cell in params.cells}
     for key, count in alloc.items():
@@ -235,37 +231,82 @@ def sample_bundles(
             raise ValueError("targets must be finite")
         arm, pair, cell_id, ckpt = key
         units.setdefault((pair, cell_id, ckpt), {})[arm] = target
-    result = {}
+    return units
+
+
+def bundle_latents(
+    params: LatentParams, alloc: Mapping[tuple[str, int], int],
+    pairs: Sequence[str], seed: str, rep: int, *,
+    units: Iterable[tuple[str, str, int]] | None = None,
+) -> dict[tuple[str, str, int], dict[str, tuple[tuple[float, float], ...]]]:
+    """Draw every arm's item latents in the frozen bundle stream order."""
+    _validate_sample(params, {}, alloc, pairs)
+    if units is None:
+        selected = [(pair, cell, ckpt) for pair in pairs for cell, ckpt in alloc]
+    else:
+        selected = list(units)
+        for key in selected:
+            if (not isinstance(key, tuple) or len(key) != 3 or key[0] not in pairs
+                    or type(key[2]) is not int or (key[1], key[2]) not in alloc):
+                raise ValueError(f"bad alloc or target key: {key}")
     rho_e = (params.rho_t - params.sigma_d2) / (1 - params.sigma_d2)
     # Feasible boundary parameters can round a few ulps outside [-1, 1].
     rho_e = max(-1.0, min(1.0, rho_e))
-    for (pair, cell_id, ckpt), arm_targets in sorted(units.items()):
-        cell = cells[cell_id]
-        locations = {arm: (solve_location(cell, params.rho_t, target) if solver is None
-                           else solver(cell, target)) for arm, target in arm_targets.items()}
-        values = {arm: [] for arm in arm_targets}
+    result = {}
+    for pair, cell_id, ckpt in sorted(selected):
+        values = {arm: [] for arm in ARMS}
         rng = _rng(seed, ("ocsim", "bundles", pair, cell_id, str(ckpt)), rep, "bundles")
         for _ in range(alloc[(cell_id, ckpt)]):
             g = _normal(rng)
             for arm in ARMS:
                 e0, e1 = _corr_pair(_normal(rng), _normal(rng), rho_e)
-                if arm not in locations:
-                    continue
-                theta = locations[arm]
-                if theta == "low":
-                    value = cell.levels[0]
-                elif theta == "high":
-                    value = cell.levels[-1]
-                else:
-                    item0 = cell.levels[bisect_left(
-                        cell.cuts, theta + _equicorr(g, e0, params.sigma_d2))]
-                    item1 = cell.levels[bisect_left(
-                        cell.cuts, theta + _equicorr(g, e1, params.sigma_d2))]
-                    value = min(item0, item1)
-                values[arm].append(value)
-        for arm, scores in values.items():
-            result[(arm, pair, cell_id, ckpt)] = tuple(scores)
+                values[arm].append((_equicorr(g, e0, params.sigma_d2),
+                                    _equicorr(g, e1, params.sigma_d2)))
+        result[(pair, cell_id, ckpt)] = {arm: tuple(v) for arm, v in values.items()}
     return result
+
+
+def item_pair(cell: CellModel, theta: float | str, eta0: float, eta1: float) -> tuple[int, int]:
+    """Map the B0 and B1 latents to item scores."""
+    if theta == "low":
+        return cell.levels[0], cell.levels[0]
+    if theta == "high":
+        return cell.levels[-1], cell.levels[-1]
+    if not _finite(theta):
+        raise ValueError('theta must be a finite float, "low" or "high"')
+    return (cell.levels[bisect_left(cell.cuts, theta + eta0)],
+            cell.levels[bisect_left(cell.cuts, theta + eta1)])
+
+
+def sample_items(
+    params: LatentParams, targets: Mapping[tuple[str, str, str, int], float],
+    alloc: Mapping[tuple[str, int], int], pairs: Sequence[str], seed: str, rep: int, *,
+    solver: Callable[[CellModel, float], float | str] | None = None,
+) -> dict[tuple[str, str, str, int], tuple[tuple[int, int], ...]]:
+    """Sample B0 and B1 items with common latents across target sets."""
+    units = _validate_sample(params, targets, alloc, pairs)
+    latents = bundle_latents(params, alloc, pairs, seed, rep, units=units)
+    result = {}
+    for (pair, cell_id, ckpt), arm_targets in sorted(units.items()):
+        cell = params.cell(cell_id)
+        locations = {arm: (solve_location(cell, params.rho_t, target) if solver is None
+                           else solver(cell, target)) for arm, target in arm_targets.items()}
+        values = {arm: tuple(item_pair(cell, locations[arm], eta0, eta1)
+                             for eta0, eta1 in latents[(pair, cell_id, ckpt)][arm])
+                  for arm in arm_targets}
+        for arm, scores in values.items():
+            result[(arm, pair, cell_id, ckpt)] = scores
+    return result
+
+
+def sample_bundles(
+    params: LatentParams, targets: Mapping[tuple[str, str, str, int], float],
+    alloc: Mapping[tuple[str, int], int], pairs: Sequence[str], seed: str, rep: int, *,
+    solver: Callable[[CellModel, float], float | str] | None = None,
+) -> dict[tuple[str, str, str, int], tuple[int, ...]]:
+    return {key: tuple(min(x0, x1) for x0, x1 in values)
+            for key, values in sample_items(
+                params, targets, alloc, pairs, seed, rep, solver=solver).items()}
 
 
 def cell_scores(
