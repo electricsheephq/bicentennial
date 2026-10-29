@@ -34,6 +34,9 @@ class Constraints:
                 raise ValueError("requires needs distinct, nonempty source ids")
 
 
+NO_CONSTRAINTS = Constraints()
+
+
 @dataclass(frozen=True)
 class Shrink:
     kept: tuple[str, ...]
@@ -85,7 +88,7 @@ class _BudgetReached(Exception):
 
 
 def ddmin(ids: Sequence[str], oracle: Oracle, *, target: str,
-          constraints: Constraints = Constraints(), repeats: int = 3,
+          constraints: Constraints = NO_CONSTRAINTS, repeats: int = 3,
           threshold: int = 1, max_tests: int | None = None) -> Shrink:
     """Shrink a failing schedule; each distinct closed set gets all repeat attempts.
 
