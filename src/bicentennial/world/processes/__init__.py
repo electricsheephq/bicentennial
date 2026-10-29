@@ -34,11 +34,12 @@ def pair(schedule, d) -> int:
     return uniform_int(schedule.seed, unit(schedule.life, "commitments", "pair"), 0, f"pair:{d}", 100000, 999999)
 
 
-def token_value(db, schedule, process, unit_id, part, n, stem, *, paired=False) -> str:
-    """Mint STEM-dddddd, retrying taken numbers and token containment collisions.
+def token_value(db, schedule, process, unit_id, part, n, stem, *, paired=False, containment: bool = True) -> str:
+    """Mint STEM-dddddd, retrying taken numbers and, by default, containment collisions.
 
     Reserve each commitment's cancellation number and value in both twins, so a cancel flip moves
     no other draw. With paired=True, check the made and cancellation values together.
+    Twin value flips pass containment=False because their own loop applies check_values.
     """
     if type(stem) is not str or not STEM.fullmatch(stem):
         raise ValueError("token stem must match ^[A-Z]{2,12}$")
@@ -47,7 +48,7 @@ def token_value(db, schedule, process, unit_id, part, n, stem, *, paired=False) 
         "SELECT t.value FROM commitment c JOIN locked_token t ON t.fact_id = c.fact_id") for d in NUMBER.findall(v)}
     taken = {d for v in values for d in NUMBER.findall(v)}
     # No attempt can escape a token contained in the fixed prefix (for example, REQ-).
-    if any(v in f"{stem}-" for v in values):
+    if containment and any(v in f"{stem}-" for v in values):
         raise ValueError("token stem contains a locked token")
     key, attempt = unit(schedule.life, process, unit_id), 0
     while True:
@@ -55,7 +56,7 @@ def token_value(db, schedule, process, unit_id, part, n, stem, *, paired=False) 
         numbers = (d, pair(schedule, d)) if paired else (d,)
         candidates = [f"{stem}-{number}" for number in numbers]
         if (len(set(numbers)) == len(numbers) and not any(str(number) in taken for number in numbers)
-                and not any(a in b or b in a for a in candidates for b in values)):
+                and (not containment or not any(a in b or b in a for a in candidates for b in values))):
             return candidates[0]
         attempt += 1
 

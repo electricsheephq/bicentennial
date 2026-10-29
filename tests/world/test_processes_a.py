@@ -315,6 +315,34 @@ def test_token_containment_retries_same_attempt_sequence(tmp_path, monkeypatch, 
     db.close()
 
 
+def test_token_without_containment_preserves_attempt_zero(tmp_path, monkeypatch):
+    db, schedule = world(tmp_path / "w.db", "g03-containment")
+    # Reuse the containment retry test's attempt sequence: 123456, then 987654.
+    draws = (123456, 987654)
+    first, later = (f"VALUE-{number}" for number in draws)
+    short = str(draws[0])[1:5]
+    insert_fact(db, id="f0", subject_id=PRINCIPAL, predicate="p", object=short, polarity="affirm",
+                modality="stated", strength=HARD, speech_act="assert")
+    insert_locked_token(db, token_id="t0", fact_id="f0", kind="code", value=short)
+    calls = []
+
+    def draw(seed, key, attempt, label, lo, hi):
+        calls.append((seed, key, attempt, label, lo, hi))
+        return draws[attempt]
+
+    monkeypatch.setattr(processes, "uniform_int", draw)
+    unchecked = token_value(db, schedule, "corrections", "chain0", "value", 0, "VALUE", containment=False)
+    assert unchecked == first and short in unchecked
+    expected = [(schedule.seed, unit(LIFE, "corrections", "chain0"), attempt, "token:value:0", 100000, 999999)
+                for attempt in (0, 1)]
+    assert calls == expected[:1]
+    calls.clear()
+    checked = token_value(db, schedule, "corrections", "chain0", "value", 0, "VALUE")
+    assert checked == later and short not in checked and checked != unchecked
+    assert calls == expected
+    db.close()
+
+
 @pytest.mark.parametrize("existing", ["VALUE", "VALUE-"])
 def test_token_prefix_collision_refuses(tmp_path, existing):
     db, schedule = world(tmp_path / "w.db", "g03-prefix")
