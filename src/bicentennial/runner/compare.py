@@ -19,7 +19,11 @@ from bicentennial.corpus.run import corpus_suite, run_case
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed
-from bicentennial.harness.hermes.plugin_host import GateRefused, HermesMemoryHost
+from bicentennial.harness.hermes.plugin_host import (
+    GateRefused,
+    HermesMemoryHost,
+    WriteDelivery,
+)
 from bicentennial.ledger import LedgerBusy, apply_masks
 from bicentennial.packs.catalogue import load_catalogue
 from bicentennial.packs.install import verify
@@ -54,7 +58,14 @@ from bicentennial.systems.controls import (
     control_status,
     floor_mismatches,
 )
-from bicentennial.systems.hermes_plugin import PROVIDERS
+from bicentennial.systems.hermes_plugin import (
+    ENGINES,
+    PROVIDERS,
+    cache_digest,
+    is_plugin,
+    resolve_worker_env,
+)
+from bicentennial.systems.registry import REGISTRY, load
 from bicentennial.world.scale import ANCHOR_T
 from bicentennial.world.tokens import ESTIMATOR
 
@@ -152,13 +163,17 @@ class CorpusFactory:
             ctx = self.ctx
             root = self.unit / "hosts" / f"h{len(self.hosts)}"
             root.mkdir(parents=True)
-            kw = dict(route_table=RouteTable.load(ctx.table), responder=ScriptedResponder(ctx.entry),
+            engine_only = ctx.entry["name"] in ENGINES and ctx.entry["name"] not in PROVIDERS
+            entry = load(REGISTRY / "hermes-native.toml") if engine_only else ctx.entry
+            table = t1._routes(entry["name"]) if engine_only else ctx.table
+            kw = dict(route_table=RouteTable.load(table), responder=ScriptedResponder(entry),
                 clock=SimClock(root / "clock.json", ANCHOR_T, life.STEP_S), root=root,
                 scratch=self.unit / "hosts", life=self.case.case_id, branch="corpus", run=ctx.run_id,
                 lock_hash=lock_hash(ctx.lock), checkout=ctx.hermes, harness_pin=ctx.harness_pin,
-                plugin_source=ctx.plugin_source, sim_epoch_s=0)
+                plugin_source=None if engine_only else ctx.plugin_source, sim_epoch_s=0,
+                extra_env=resolve_worker_env(ctx.entry["name"], getattr(ctx, "model_cache", None)))
             kw.update(self.overrides or {})
-            host = HermesMemoryHost(ctx.entry, **kw)
+            host = HermesMemoryHost(entry, **kw)
             self.hosts.append(host)
             return (_Host if self.arm == "system" else _WipedHost)(host, self.held)
         except t1.REFUSALS as error:
@@ -181,7 +196,7 @@ def _forwarded(records):
                for r in records for a in r.get("upstream", ()))
 
 
-def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None):
+def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None, delivery=None):
     """Retry corpus infrastructure faults, retaining isolation and receipt evidence before cleanup."""
     results = []
     for case in sorted(cases, key=lambda c: c.case_id):
@@ -203,6 +218,8 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
                         audit.extend(rows)
             if held:
                 raise held[0]
+            if delivery is not None:
+                delivery.add(hosts)
             shutil.rmtree(unit)
             if result.status != "INFRA_FAILURE":
                 break
@@ -281,10 +298,10 @@ def _invariants(run, arm):
     return [v.to_obj() for v in run.arms[arm].verdicts]
 
 
-def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=()):
+def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=(), delivery=()):
     a, name = run.arms[arm], run.ctx.entry["name"]
-    extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if name in PROVIDERS else ()),
-        *stub_disclosures(run.ctx.entry, "t1"),
+    extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
+        *stub_disclosures(run.ctx.entry, "t1"), *delivery,
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
         ("t1.transforms", canon(list(a.transforms)).decode()),
         ("t1.reclassified", canon(sorted({i for u in a.units for i in u.reclassified})).decode()),
@@ -292,6 +309,14 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
         ("controls.floor_mismatches", canon(list(fm)).decode()),
         ("controls.wiped_store", json.loads(card)["controls"]["wiped_store"]),
         ("gate", canon(gate.to_obj()).decode()), ("gate.final", final)]
+    if name in ENGINES:
+        extra.extend((("t1.engine", "context engine selected by context.engine; not loaded in corpus hosts"),
+            ("t1.engine_window", "context_length 65536; the context engine decides when to compress; "
+             "compression.threshold_tokens applies to the built-in compressor only")))
+        if name not in PROVIDERS:
+            extra.append(("t1.corpus_engine", "corpus runs Hermes built-in memory, the system's memory layer as shipped"))
+    if getattr(run.ctx, "model_cache_sha256", None) is not None:
+        extra.append(("t1.model_cache", "sha256:" + run.ctx.model_cache_sha256))
     if arm == "system":
         # The wiped gate can block the system arm; name its entries here too (RING0 §6).
         extra.append(("gate.wiped_blocked", canon(sorted(wiped_blocked)).decode()))
@@ -322,9 +347,11 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],
                                tier_path=REPO / CATALOGUE[2])
     corpus_rows, corpus_gates = {arm: [] for arm in GATED}, {arm: [] for arm in GATED}
+    delivery = {arm: WriteDelivery() for arm in GATED}
     try:
         results = {arm: corpus(ctx, arm, cases, catalogue=catalogue, work=out / "corpus-work" / arm,
-            host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm]) for arm in GATED}
+            host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm],
+            delivery=delivery[arm]) for arm in GATED}
     finally:
         if (out / "corpus-work").exists():
             shutil.rmtree(out / "corpus-work")
@@ -360,11 +387,13 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
             for f in _finals(run.arms["no_memory"]) for r in f.results.values()))))
     junit = {arm: _junit(run, arm, cards[arm], s if arm == "system" else w,
         vs if arm == "system" else vw, cases, results[arm], fm, hits, witnesses,
-        wiped_blocked=w.blocked) for arm in GATED}
+        wiped_blocked=w.blocked, delivery=delivery[arm].properties("t1")) for arm in GATED}
     for arm in GATED:
         if receipts[arm]["spend_micro_usd"] > 0:
             raise SpendRefused(receipts[arm]["spend_micro_usd"])
     verify(packs_dir, pack_hash=pack_hash, lock=ctx.current_lock(), expected_lock=ctx.lock)
+    if ctx.model_cache is not None and cache_digest(ctx.model_cache, T1Refused) != ctx.model_cache_sha256:
+        raise T1Refused("model_cache_changed")
     staging = publication.begin()
     for arm in GATED:
         directory = staging / arm
@@ -378,7 +407,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
 
 
 def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
-           plugin_source=None, cache=None, entry=None, worker_argv=None, corpus_host=None) -> int:
+           plugin_source=None, model_cache=None, cache=None, entry=None, worker_argv=None, corpus_host=None) -> int:
     """Run the two-life comparison, returning the Ring 0 exit code."""
     created, published, publication = False, False, None
     try:
@@ -390,7 +419,7 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
             if out.exists() or out.is_symlink():
                 raise T1Refused("out_exists")
             ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
-                plugin_source=plugin_source, entry=entry, worker_argv=worker_argv)
+                plugin_source=plugin_source, entry=entry, worker_argv=worker_argv, model_cache=model_cache)
             data = None
             if baseline is not None:
                 try:

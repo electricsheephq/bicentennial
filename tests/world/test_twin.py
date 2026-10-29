@@ -536,7 +536,7 @@ def test_value_alternate_collision_rejects_later_key(tmp_path, monkeypatch, stem
     finish(db, s)
     taken = {v.rsplit("-", 1)[1] for (v,) in db.execute("SELECT value FROM locked_token")}
     number = next(str(n) for n in range(100000, 999999) if str(n) not in taken)
-    monkeypatch.setattr(twin, "token_value", lambda *args: f"{args[6]}-{number}")
+    monkeypatch.setattr(twin, "token_value", lambda *args, **kwargs: f"{args[6]}-{number}")
     c = cut(db, s, branch="B0", principal_id="principal", expected_state=state(db))
     compiled = compile_branch(db, s, c, templates)
     ids = {(meta["template_id"], meta["instance_key"]): item["item_id"] for item, meta in compiled.entries}
@@ -759,9 +759,9 @@ def test_value_retries_substring_clash(tmp_path, monkeypatch):
     calls = []
     original = twin.token_value
 
-    def observed(*args):
+    def observed(*args, **kwargs):
         calls.append(args[5])
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(twin, "token_value", observed)
     f = flip(db, s, "value", fid)
@@ -769,7 +769,7 @@ def test_value_retries_substring_clash(tmp_path, monkeypatch):
     db1 = twin.apply(db, (f,), tmp_path / "twin.db")
     check_tokens(db1)
     db1.close()
-    monkeypatch.setattr(twin, "token_value", lambda *args: first)
+    monkeypatch.setattr(twin, "token_value", lambda *args, **kwargs: first)
     with pytest.raises(ValueError, match=fid):
         flip(db, s, "value", fid)
     db.close()

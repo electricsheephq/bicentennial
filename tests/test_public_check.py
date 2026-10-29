@@ -70,6 +70,17 @@ def test_clean_repo_passes(repo):
     assert result.stdout == "BICENTENNIAL_DENY_LIST unset; skipping deny-list check.\n"
 
 
+def test_tracked_paths_ignore_git_location_variables(git_checkouts, monkeypatch):
+    clean = check(git_checkouts.checkout)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    for name, value in git_checkouts.conflict.items():
+        monkeypatch.setenv(name, value)
+    result = check(git_checkouts.checkout)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        clean.returncode, clean.stdout, clean.stderr,
+    )
+
+
 def test_only_tracked_selected_paths_checked(repo):
     track(repo, "bad.txt", "/" + "home/example/private\n")
     track(repo, "ok.txt", "Public text.\n")

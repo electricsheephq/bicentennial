@@ -33,6 +33,8 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
+SUMMARISER_ALIAS = "bicentennial-summariser"
+
 ROLES = ("replay_main", "write_turn", "memory_write", "probe_main", "compaction", "summariser", "extraction", "title", "aux",
          "unknown")
 METHODS = ("cursor", "model_alias", "shape", "unknown")

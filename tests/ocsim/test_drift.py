@@ -170,6 +170,16 @@ def test_none_times_leave_expected_unchanged(target_args, case):
     }
 
 
+def test_each_arm_reads_its_own_time(target_args):
+    # V1's pattern (B2.4 test 5): S has no time while F and C were sent.
+    target_args["times"] = {**target_args["times"], ("S", "pair-000", 2): None}
+    assert drifted_targets(**target_args) == {
+        ("F", "pair-000", "X", 2): -200.0,
+        ("C", "pair-000", "X", 2): 650.0,
+        ("S", "pair-000", "X", 2): 200.0,
+    }
+
+
 @pytest.mark.parametrize("scope", [LITERAL, ALL_UNITS, SWAP_GATE, DriftScope(frozenset())])
 def test_none_case_sorted_cartesian_targets(target_args, scope):
     target_args.update(

@@ -286,6 +286,30 @@ def plugin_repo(scratch, name):
     return repo, sha256(archive).hexdigest(), target / "provider.py"
 
 
+def test_install_ignores_git_location_variables(tmp_path, git_checkouts, monkeypatch):
+    def install(label):
+        root = tmp_path / label
+        paths = {name: root / name for name in ("home", "hermes_home", "workspace", "tmp")}
+        for path in paths.values():
+            path.mkdir(parents=True)
+        paths["root"] = root
+        stub = SimpleNamespace(paths=paths, director=SimpleNamespace(run_values={"director_port": 12345}))
+        e = entry("holographic")
+        e["artifact"]["sha256"] = sha256(git_checkouts.archive).hexdigest()
+        cell = PluginCell(e, stub)
+        digest = cell.install(git_checkouts.checkout, alias="bicentennial-main")
+        installed = paths["hermes_home"] / "plugins/holographic/README"
+        assert installed.read_text() == "checkout\n"
+        assert not installed.with_name("other-only.txt").exists()
+        return digest
+
+    clean = install("clean-install")
+    (git_checkouts.other / "README").write_text("Unrelated tracked changes.\n")
+    for name, value in git_checkouts.conflict.items():
+        monkeypatch.setenv(name, value)
+    assert install("conflicting-install") == clean
+
+
 def test_mem0_archive_repeatable(tmp_path):
     assert TREES == {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0")}
     repo, digest, _ = plugin_repo(tmp_path, "mem0-oss")
@@ -582,6 +606,35 @@ def test_checkpoint_and_worker_guards(tmp_path):
         a._worker = None
     finally:
         a.close()
+
+
+def test_checkpoint_refuses_a_held_wal(tmp_path, monkeypatch):
+    import sqlite3
+
+    from bicentennial.harness.hermes.adapter import HarnessFailed
+    from bicentennial.systems import hermes_plugin as hp
+
+    db = tmp_path / "store" / "test.db"
+    db.parent.mkdir()
+    writer, reader = sqlite3.connect(db), sqlite3.connect(db)
+    wal = db.with_name("test.db-wal")
+    monkeypatch.setattr(hp, "sqlite3", SimpleNamespace(connect=lambda path: sqlite3.connect(path, timeout=0.1)))
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE facts(text)")
+        writer.execute("INSERT INTO facts VALUES (?)", (NONCE,))
+        writer.commit()
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM facts").fetchone()  # a read transaction on the WAL
+        with pytest.raises(HarnessFailed, match="checkpoint_busy"):
+            hp.checkpoint_sqlite([db.parent])
+        assert wal.stat().st_size > 0
+        reader.close()
+        hp.checkpoint_sqlite([db.parent])  # the open writer keeps the WAL file, so its truncation is visible
+        assert wal.stat().st_size == 0
+    finally:
+        reader.close()
+        writer.close()
 
 
 def test_import_boundaries():

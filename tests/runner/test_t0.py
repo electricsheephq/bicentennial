@@ -33,6 +33,16 @@ from bicentennial.systems.registry import REGISTRY, ZERO_HASH, load
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_commit_ignores_git_location_variables(git_checkouts, monkeypatch):
+    monkeypatch.setattr(t0, "REPO", git_checkouts.checkout)
+    clean = t0._commit()
+    assert clean == git_checkouts.head
+    assert clean != git_checkouts.other_head
+    for name, value in git_checkouts.conflict.items():
+        monkeypatch.setenv(name, value)
+    assert t0._commit() == clean
+
+
 @pytest.fixture(scope="module")
 def installed(tmp_path_factory):
     root = tmp_path_factory.mktemp("t0-installed")
@@ -385,6 +395,11 @@ def fake_hosts(installed, tmp_path, monkeypatch):
     created = []
 
     class FakeHost(ReferenceStore):
+        write_clipped, write_max_length = 0, None
+
+        def fields(self):
+            return {"actor": "not_delivered", "text": "full", "time": "session_clock"}
+
         def __init__(self, entry, **options):
             super().__init__()
             self.options = options
@@ -1652,8 +1667,9 @@ def stub_hosts(tmp_path, monkeypatch):
 
     monkeypatch.setattr(t0, "HermesMemoryHost", SpyHost)
 
-    def options(mode="none"):
-        checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode)
+    def options(mode="none", max_length=None):
+        checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode,
+                              max_length=max_length)
         return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
                     dict(fresh_install_hash="1" * 64), host_overrides=dict(
                     checkout=checkout, worker_argv=[sys.executable, str(WORKER)]))
@@ -1678,6 +1694,41 @@ def test_actual_stub_host_outputs_and_determinism(installed, tmp_path, stub_host
     assert created and all(h.close_calls == 1 for h in created)
     print("stub_card_sha256=" + json.dumps({p: sha256(data).hexdigest() for p, data in outputs[0].items()
                                           if p.endswith("card.json")}, sort_keys=True))
+
+
+@pytest.mark.parametrize("limit", [None, 3])
+def test_t0_delivery_properties_count_all_hosts_and_repeat(installed, tmp_path, stub_hosts, limit):
+    options, created, denied = stub_hosts
+    kwargs = options(max_length=limit)
+    repeated = []
+    for name in ("one", "two"):
+        first = len(created)
+        out = tmp_path / name
+        assert run(installed, out, **kwargs) in (0, 1)
+        assert not denied
+        hosts = created[first:]
+        expected = sum(h.write_clipped for h in hosts)
+        assert hosts and (expected > 0 if limit is not None else expected == 0)
+        rows = []
+        for rel in sorted(installed[1]["packs"]):
+            suite = ET.parse(out / rel / "junit.xml").getroot()[0]
+            props = {p.attrib["name"]: p.attrib["value"] for p in suite.findall("properties/property")}
+            assert props["t0.write_clipped"] == str(expected)
+            assert props["t0.fields"] == canon({"actor": "not_delivered", "text":
+                "full" if limit is None else f"clipped:{limit}", "time": "session_clock"}).decode()
+            if limit is None:
+                assert "t0.write_max_length" not in props
+            else:
+                assert props["t0.write_max_length"] == str(limit)
+            rows.append(ET.tostring(suite.find("properties")))
+        repeated.append(rows)
+    assert repeated[0] == repeated[1]
+    reference = tmp_path / "reference"
+    assert run(installed, reference) == 0
+    for rel in installed[1]["packs"]:
+        props = ET.parse(reference / rel / "junit.xml").getroot().findall(".//property")
+        assert not {p.attrib["name"] for p in props} & {
+            "t0.write_clipped", "t0.write_max_length", "t0.fields"}
 
 
 def test_actual_stub_keep_on_remove(installed, tmp_path, stub_hosts):
@@ -1715,3 +1766,53 @@ def test_close_error_preserves_system_cause(installed, tmp_path):
     results, outcomes, _ = t0.drive_branch(packs(installed)[0], "B0", Broken, bound_s=5,
                                           snapshot=snapshotter(tmp_path))
     assert not results and all(o["failure_class"] == "SYSTEM_FAILURE" for o in outcomes.values())
+
+
+def test_model_cache_prepare(installed, tmp_path, monkeypatch):
+    from bicentennial.systems import hermes_plugin as hp
+
+    cache = tmp_path / "models"
+    cache.mkdir()
+    (cache / "weights").write_bytes(b"fixture")
+    monkeypatch.setitem(hp.WORKER_ENV, "holographic", {"MODEL_HOME": "{model_cache}"})
+    kw = dict(system="holographic", hermes=tmp_path, plugin_source=tmp_path,
+              host_overrides={"worker_argv": ["fake"]})
+    with pytest.raises(t0.T0Refused, match="^missing_input$"):
+        preflight(installed, **kw)
+    prepared = preflight(installed, model_cache=cache, **kw)
+    assert prepared[6]["extra_env"] == {"MODEL_HOME": str(cache)}
+    assert prepared[6]["model_cache_sha256"] == hp.cache_digest(cache, t0.T0Refused)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_model_cache_end_digest_and_property(installed, tmp_path, monkeypatch, changed):
+    from bicentennial.systems import hermes_plugin as hp
+
+    cache = tmp_path / "models"
+    cache.mkdir()
+    model = cache / "weights"
+    model.write_bytes(b"fixture")
+    digest = hp.cache_digest(cache, t0.T0Refused)
+    # Reference hosts keep this finalization test independent of worker scheduling.
+    prepared = list(preflight(installed, selected=[packs(installed)[0].rel]))
+    prepared[6] = dict(model_cache=cache, model_cache_sha256=digest)
+    monkeypatch.setattr(t0, "_preflight", lambda **kw: tuple(prepared))
+    if changed:
+        real = t0._report_pack
+
+        def mutate(*args, **kw):
+            report = real(*args, **kw)
+            model.write_bytes(b"changed")
+            return report
+
+        monkeypatch.setattr(t0, "_report_pack", mutate)
+    out = tmp_path / "out"
+    code = run(installed, out)
+    if changed:
+        assert code == 3
+        assert json.loads((out / "refusal.json").read_bytes())["code"] == "model_cache_changed"
+        assert_no_results(out)
+    else:
+        assert code in (0, 1, 2)
+        xml = next(out.rglob("junit.xml")).read_text()
+        assert 'name="t0.model_cache" value="sha256:' + digest + '"' in xml

@@ -26,6 +26,24 @@ def test_real_source_checkout():
     assert cli._source_checkout(t0.REPO)
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_source_checkout_ignores_git_location_variables(git_checkouts, monkeypatch, nested):
+    root = git_checkouts.checkout / "nested" if nested else git_checkouts.checkout
+    root.mkdir(exist_ok=True)
+    (root / "schemas").mkdir()
+    (root / "pyproject.toml").touch()
+    clean = cli._source_checkout(root)
+    assert clean is (not nested)
+    # Nested: GIT_DIR alone makes git take the working directory as the top level, so an
+    # unfixed gate would accept the nested folder. With all four set it would refuse it
+    # either way, and the case could not fail.
+    conflict = ({"GIT_DIR": git_checkouts.conflict["GIT_DIR"]} if nested
+                else git_checkouts.conflict)
+    for name, value in conflict.items():
+        monkeypatch.setenv(name, value)
+    assert cli._source_checkout(root) == clean
+
+
 def test_source_checkout_git_root_alias(tmp_path, monkeypatch):
     alias = tmp_path / "root-alias"
     alias.symlink_to(t0.REPO, target_is_directory=True)

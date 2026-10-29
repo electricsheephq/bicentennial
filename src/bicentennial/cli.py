@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bicentennial.gitenv import git_env
+
 # The runners load schema-backed contracts at import, so they load only after the source-checkout check.
 REPO = Path(__file__).resolve().parents[2]
 
@@ -47,7 +49,7 @@ def _source_checkout(root) -> bool:
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=git_env(),
         )
         return result.returncode != 0 or os.path.samefile(result.stdout.strip(), root)
     except OSError:
@@ -69,13 +71,13 @@ def main(argv=None) -> int:
     command.add_argument("--out", required=True)
     command.add_argument("--mode", choices=("api", "hermes"), default="api")
     command.add_argument("--workers", type=_workers, default=1)
-    for name in ("hermes", "plugin-source", "cache"):
+    for name in ("hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command = commands.add_parser("t1")
     for name in ("system", "pack-hash", "out"):
         command.add_argument("--" + name, required=True)
     command.add_argument("--packs", dest="packs_dir", required=True)
-    for name in ("baseline", "hermes", "plugin-source", "cache"):
+    for name in ("baseline", "hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     args = vars(parser.parse_args(argv))
     selected = args.pop("command")
