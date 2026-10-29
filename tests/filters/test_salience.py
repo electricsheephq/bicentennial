@@ -265,6 +265,20 @@ def test_fit_predict_golden(monkeypatch, steps, tolerance):
     assert logits == pytest.approx((0.0, 2 * weight), rel=0, abs=tolerance)
 
 
+@pytest.mark.parametrize("steps,tolerance", [(1, 1e-12), (2, 1e-9)])
+def test_fit_predict_bias_is_unpenalised(monkeypatch, steps, tolerance):
+    monkeypatch.setattr(gate, "GRADIENT_STEPS", steps)
+    # An asymmetric fixture moves the bias. Step 1's errors (1/2, -1/2, -1/2) give
+    # a bias gradient of -1/6, so the bias is 1/60. The logits are then -0.05 and
+    # +0.05, so step 2's bias gradient is -sigmoid(-0.05)/3, with no L2 term. A
+    # held-out row at the training mean standardises to 0 and reads the bias alone.
+    bias = 1 / 60
+    if steps == 2:
+        bias += 0.1 / (1 + math.exp(0.05)) / 3
+    logits = gate._fit_predict([(0.0,), (2.0,), (2.0,)], [False, True, True], [(4 / 3,)])
+    assert logits == pytest.approx((bias,), rel=0, abs=tolerance)
+
+
 def test_folds_by_sorted_life_and_sorted_features(monkeypatch):
     streams = {f"life-{index}": [event("x" * (index + 1), gold, session=f"s-{int(gold)}")
                                 for gold in (False, True)] for index in reversed(range(7))}
