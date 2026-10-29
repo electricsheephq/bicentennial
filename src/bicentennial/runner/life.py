@@ -79,7 +79,7 @@ CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_timeout", "end_timeout")) + tuple(
     (label, "INFRA_FAILURE") for label in (
         "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
-        "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy"))
+        "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy", "admission_deadline"))
 TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only compiled workspace commands; "
                        "a live model could reach the Hermes home")
 
