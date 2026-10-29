@@ -15,6 +15,7 @@ WRITE_ARGS = {
     "hermes-native": ("memory", {"action": "add", "target": "memory"}, "content"),
     "holographic": ("fact_store", {"action": "add"}, "content"),
     "mem0-oss": ("mem0_add", {}, "content"),
+    "omega": ("omega_store", {}, "content"),
 }
 VECTOR_SCALE = 1_000_000_000
 
@@ -100,6 +101,20 @@ FORMATS = {("mem0-oss", "extraction"): _mem0}
 
 def stub_disclosures(entry, tier):
     properties = []
+    if entry.get("name") == "omega":
+        properties.extend([
+            ("omega.adapter", "benchmark-authored Hermes provider over omega-memory 1.5.20; "
+             "OMEGA's maintainers are invited to review it"),
+            ("omega.query_expansion", "off: no LLM key; matches OMEGA without one"),
+            ("omega.reranker", "off: the shipped default would download the cross-encoder at first query; "
+             "the benchmark runs offline with every model pinned"),
+            ("omega.query_cache", "off: monotonic TTL; results unchanged"),
+            ("omega.deferred_startup", "off: OMEGA's auto-backup files would retain deleted memories; "
+             "INV-FORGET here is an upper bound on OMEGA's forget behaviour as shipped"),
+            ("omega.onnx_threads", "1"),
+            ("omega.store_defaults", "as shipped: inference, supersession, dedup; forgetting_log retained"),
+            ("omega.prefetch", "empty: shipped UserPromptSubmit hook captures but does not query"),
+        ])
     if any(route["role"] == "embeddings" for route in entry.get("own_model_routes", [])):
         properties.append((f"{tier}.embeddings", "Hashed-vector stub (RING0 E10): cosine reported as (1 + c)/2 "
             "over D-1 hashed token coordinates; similarity order preserved; hybrid weights and absolute "

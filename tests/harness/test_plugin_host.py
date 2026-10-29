@@ -71,7 +71,7 @@ def no_float(value):
 def plugin_repo(dest, name):
     """Only synthetic repositories are committed; the lane's checkout is never committed."""
     dest.mkdir()
-    target = dest / "integrations/hermes-plugin-mem0" if name == "mem0-oss" else dest
+    target = dest / TREES[name][1] if len(TREES[name]) > 1 else dest
     target.mkdir(parents=True, exist_ok=True)
     (target / "provider.py").write_text("# synthetic archive pin, not an installed provider\n")
     for args in (["init", "-q"], ["add", "."], ["-c", "user.name=test", "-c", "user.email=test@example.invalid",
@@ -91,7 +91,7 @@ def isolated(monkeypatch, request):
 
 
 @pytest.fixture
-def factory(tmp_path, monkeypatch):
+def factory(tmp_path, monkeypatch, git_checkouts):
     opened, checked, summaries = [], [], []
     counter = 0
     real = plugin_host.assert_niced

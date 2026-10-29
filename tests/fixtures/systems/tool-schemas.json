@@ -2,6 +2,11 @@
   "canary": "c168e5f8-3948-4553-8554-7aa162054723",
   "source": "Hermes cca83848ec^ holographic and 781334eea4^ mem0; re-record from the pinned release at install",
   "tools": {
+    "omega": [
+      {"name": "omega_store", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+      {"name": "omega_query", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 10, "minimum": 1}}, "required": ["query"]}},
+      {"name": "omega_delete", "parameters": {"type": "object", "properties": {"memory_id": {"type": "integer"}}, "required": ["memory_id"]}}
+    ],
     "holographic": [
       {
         "name": "fact_store",

@@ -68,6 +68,7 @@ FORGET = {
     "holographic": ("fact_store", {"action": "search"}, "query", "results", "content", "fact_id",
                     "fact_store", {"action": "remove"}, "fact_id"),
     "mem0-oss": ("mem0_search", {}, "query", "results", "memory", "id", "mem0_delete", {}, "memory_id"),
+    "omega": ("omega_query", {}, "query", "results", "content", "id", "omega_delete", {}, "memory_id"),
 }
 
 
