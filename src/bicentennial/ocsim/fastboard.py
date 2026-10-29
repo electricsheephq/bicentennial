@@ -147,8 +147,10 @@ def to_board_inputs(cs: CellSums, block_of: Mapping[str, int]) -> BoardInputs:
         if entry.control_valid and entry.n_control:
             controls[key] = (Fraction(entry.f_sum, 10 * entry.n_control),
                              Fraction(entry.c_sum, 10 * entry.n_control))
+    # Each cell's pairs in block order, as board.assemble returns them.
+    ordered = tuple(sorted(cs.pairs, key=lambda pair: (block_of[pair], pair)))
     return BoardInputs(
-        {k: cs.pairs for k in cs.cells}, scores, controls, dict(cs.coverage),
+        {k: ordered for k in cs.cells}, scores, controls, dict(cs.coverage),
         dict(cs.shortfall), {p: block_of[p] for p in sorted(cs.pairs)},
         dict(cs.assigned), dict(cs.blocked),
     )
