@@ -718,21 +718,26 @@ def _unobserved_detail(egress):
         *egress.get("unsampled", ())]))
 
 
-def _audit(factories):
+def _check_egress(evidence, T0Refused=T0Refused):
+    """Check all available isolation evidence before refusing incomplete observation."""
+    for rows, egress in evidence:
+        if egress.get("non_loopback", []) or _isolation_detail(rows, {}):
+            raise T0Refused("upstream_record", detail=_isolation_detail(rows, egress))
+    for rows, egress in evidence:
+        if detail := _unobserved_detail(egress):
+            raise T0Refused("egress_unobserved", detail=detail)
+
+
+def _audit(factories, evidence=None):
     """Read closed hosts while their ledgers and response blobs still exist."""
     records, texts, tokens, runtime, markers, pids, ports, paths = [], [], {}, {}, [], [], [], []
     hosts = [h for f in factories for h in f.hosts]
+    if evidence is None:
+        evidence = {id(h): (h.records(), h.egress.summary()) for h in hosts}
+    _check_egress(list(evidence.values()))
     failed_samples = {}
     for host in hosts:
-        rows = host.records()
-        egress = host.egress.summary()
-        if (egress["non_loopback"] or any(
-                r.get("served_by") not in (None, "scripted") or any(
-                    (a.get("served_by") != "scripted" and "error" not in a) or a.get("diagnostics")
-                    for a in r.get("upstream", ())) for r in rows)):
-            raise T0Refused("upstream_record", detail=_isolation_detail(rows, egress))
-        if detail := _unobserved_detail(egress):
-            raise T0Refused("egress_unobserved", detail=detail)
+        rows, egress = evidence[id(host)]
         for name, count in egress.get("failed_samples", {}).items():
             failed_samples[name] = failed_samples.get(name, 0) + count
         records.extend(rows)
@@ -923,9 +928,11 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                                       if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
                 verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
                                            baseline_infra=baseline_infra, session_wakes=real)
-                audit = _audit(made)
+                evidence = {id(h): (h.records(), h.egress.summary()) for f in factories for h in f.hosts}
+                _check_egress(list(evidence.values()))
+                audit = _audit(made, evidence)
                 # Audit every auxiliary host too; only the selected drive enters its card digest.
-                auxiliary = _audit([f for f in factories if f not in made])
+                auxiliary = _audit([f for f in factories if f not in made], evidence)
                 audit["texts"] += auxiliary["texts"] + invariant_audit["texts"]
                 audit["receipt_records"] = list(audit["records"])
                 for extra in [auxiliary, *([invariant_audit] if pack is first else [])]:

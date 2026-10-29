@@ -417,6 +417,7 @@ def fake_hosts(installed, tmp_path, monkeypatch):
             self.store.mkdir()
             self.closed = 0
             self.log = []
+            self.records, self.egress = list, SimpleNamespace(summary=dict)
             created.append(self)
 
         def surfaces(self):
@@ -763,7 +764,7 @@ def test_pack_invariant_session_wakes(fake_hosts, installed, tmp_path, monkeypat
     assert not any(kind in ("restart", "kill") and 2 < session <= 3
                    for kind, session, _ in pack.schedule.wakes())
     empty_audit = t0._audit([])
-    monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
+    monkeypatch.setattr(t0, "_audit", lambda factories, *a: dict(empty_audit))
     original = t0.run_invariants
     observed = []
 
@@ -835,12 +836,19 @@ def validate_outputs(out, installed):
 
 def test_reference_whole_run(installed, tmp_path, monkeypatch):
     out, baselines, times = tmp_path / "out", [], {}
+    mixed = False
     original_branch, original_report = t0._branches, t0._report_pack
 
     def branches(*args, **kwargs):
         if "baseline" in Path(args[5]).parts:
             baselines.append(args[1].meta["row"]["id"])
-        return original_branch(*args, **kwargs)
+        result = original_branch(*args, **kwargs)
+        if mixed:
+            summary = (dict(non_loopback=["192.0.2.1:443"], non_loopback_seen=["auxiliary endpoint"])
+                       if "baseline" in Path(args[5]).parts else
+                       dict(non_loopback=[], unsampled=["egress unsampled pid=40 log=worker.stderr"]))
+            result[3][0].hosts.append(SimpleNamespace(records=list, egress=SimpleNamespace(summary=lambda: summary)))
+        return result
 
     def report(pack, *args, **kwargs):
         result = original_report(pack, *args, **kwargs)
@@ -880,6 +888,11 @@ def test_reference_whole_run(installed, tmp_path, monkeypatch):
     assert (relations[0]["row"], relations[0]["base"], relations[0]["test"]) == (
         "g2-drift-asof-dir-2", next(p.meta["row"]["baseline"] for p in packs(installed)
                                  if p.meta["row"]["id"] == "g2-drift-asof-dir-2"), "DIR")
+    mixed, out = True, tmp_path / "mixed"
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-drift-asof-dir-2")
+    assert run(installed, out, packs=[pack.rel]) == 3
+    assert json.loads((out / "refusal.json").read_bytes()) == dict(
+        code="upstream_record", fields=[], detail=["auxiliary endpoint"])
 
 
 def stable_files(out):
@@ -1123,7 +1136,7 @@ def test_invariant_fault_attribution(fake_hosts, installed, tmp_path, monkeypatc
     monkeypatch.setattr(t0.HermesMemoryHost, "query", query)
     monkeypatch.setattr(t0.HermesMemoryHost, "close", close)
     empty_audit = t0._audit([])
-    monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
+    monkeypatch.setattr(t0, "_audit", lambda factories, *a: dict(empty_audit))
     out = tmp_path / "out"
     assert run(installed, out, system="hermes-native", packs=[factory.pack.rel], hermes=tmp_path,
                entry=factory.entry | dict(fresh_install_hash="1" * 64)) == code
@@ -1190,7 +1203,7 @@ def test_invariant_snapshot_infrastructure(fake_hosts, installed, tmp_path, monk
 
     monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
     empty_audit = t0._audit([])
-    monkeypatch.setattr(t0, "_audit", lambda factories: dict(empty_audit))
+    monkeypatch.setattr(t0, "_audit", lambda factories, *a: dict(empty_audit))
     out = tmp_path / "out"
     assert run(installed, out, system="hermes-native", packs=[factory.pack.rel], hermes=tmp_path,
                entry=factory.entry | dict(fresh_install_hash="1" * 64)) == (2 if always else 0)

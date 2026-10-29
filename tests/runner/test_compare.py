@@ -597,21 +597,28 @@ def test_refusal_detail_is_sorted_tuple(refused):
 
 
 @pytest.mark.parametrize("site", ["corpus", "life", "t0"])
-@pytest.mark.parametrize("cause", ["endpoint", "dead", "unsampled"])
+@pytest.mark.parametrize("cause", ["endpoint", "dead", "unsampled", "mixed", "mixed-reversed"])
 def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, capsys, site, cause):
     detail = "egress name=*:* pid=40 comm=worker samples=2"
     summary = dict(non_loopback=[], alive_at_stop=cause != "dead", failed_samples={"ValueError": 2},
-                   unsampled=["egress unsampled pid=40 comm=worker"] if cause == "unsampled" else [])
+                   unsampled=["egress unsampled pid=40 log=worker.stderr"] if cause == "unsampled" else [])
     code = "upstream_record" if cause == "endpoint" else "egress_unobserved"
     if cause == "endpoint":
         summary.update(non_loopback=["*:*"], non_loopback_seen=[detail], alive_at_stop=False)
     expected = [detail] if cause == "endpoint" else sorted([
         f"egress sampler alive_at_stop={str(cause != 'dead').lower()}",
         "egress failed_samples type=ValueError count=2", *summary["unsampled"]])
+    summaries = [summary]
+    if cause.startswith("mixed"):
+        code, expected = "upstream_record", [detail]
+        summaries = [dict(non_loopback=[], unsampled=["egress unsampled pid=40 log=worker.stderr"]),
+                     dict(non_loopback=["*:*"], non_loopback_seen=[detail])]
+        if cause == "mixed-reversed":
+            summaries.reverse()
+    hosts = [SimpleNamespace(records=list, egress=SimpleNamespace(summary=lambda s=s: s)) for s in summaries]
 
     def case(case, factory, **kwargs):
-        factory.hosts.append(SimpleNamespace(records=lambda: [],
-            egress=SimpleNamespace(summary=lambda: summary)))
+        factory.hosts.extend(hosts)
         return fake_case(case, factory, **kwargs)
 
     monkeypatch.setattr(compare, "run_case", case)
@@ -619,12 +626,13 @@ def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, c
         units = list(synth.arms["system"].units)
         units[0] = replace(units[0], runs=(replace(units[0].runs[-1], egress=summary),))
         set_run(monkeypatch, change_arm(synth, "system", units=tuple(units)))
+        if cause.startswith("mixed"):
+            monkeypatch.setattr(compare, "_runs", lambda *a: [SimpleNamespace(records=[], egress=s) for s in summaries])
     if site == "t0":
         monkeypatch.setattr(t0, "_preflight", lambda **kw: None)
 
         def execute(*args, **kwargs):
-            t0._audit([SimpleNamespace(hosts=[SimpleNamespace(records=list,
-                egress=SimpleNamespace(summary=lambda: summary))])])
+            t0._audit([SimpleNamespace(hosts=hosts)])
 
         monkeypatch.setattr(t0, "_execute", execute)
     out = tmp_path / "out"

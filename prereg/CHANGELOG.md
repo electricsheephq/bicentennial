@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-29: egress observation must complete (#264)
+- **RING0 §13 E14:** from the next kit, a dead sampler or a registered pid with no completed sample refuses `egress_unobserved`; `upstream_record` wins across available hosts and runs. Registration samples synchronously before ready; unsampled detail names each pid and stderr log. Failed samples are counted by exception type, never refused, and `stop()` samples once after joining. v0.1's frozen kit keeps its rule. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Design erratum, 2026-10-29: certification's size under the t calibration (#240)
 - **DESIGN §7.7, ERRATA-v2.2 E14:** DESIGN's "the rule's size is at most 5%" holds under the t-calibrated bootstrap bounds that #240's ruling adopted (#242, #251), and the operating-characteristic simulation checks it. PREREG-v0.4 fixes the bootstrap, its weights, the draw count and the seed, not the percentile index. No PREREG version change; PREREG-v0.4 remains frozen.
 

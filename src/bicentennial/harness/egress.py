@@ -44,15 +44,18 @@ class Egress(threading.Thread):
         self.samples = self.rss_peak_kib = 0
         self.commands, self.non_loopback_seen = {}, {}
         self.registered, self.failed_samples, self.alive_at_stop = set(), {}, False
+        self.names = {}
         self._lock, self._halt = threading.Lock(), threading.Event()
         # Held while sampling: a forked child keeps the parent's open files, and their flocks, until it execs, so
         # the adapter holds this while the director reopens its ledger
         self.forking = threading.Lock()
 
-    def add(self, pid: int) -> None:
+    def add(self, pid: int, name: str = "") -> None:
         with self._lock:
             self.pids.add(pid)
             self.registered.add(pid)
+            self.names[pid] = name
+        self._sample()
 
     def discard(self, pid: int) -> None:
         with self._lock:
@@ -122,7 +125,7 @@ class Egress(threading.Thread):
     def summary(self) -> dict:
         with self._lock:
             return {"alive_at_stop": self.alive_at_stop, "failed_samples": dict(self.failed_samples),
-                    "unsampled": sorted(f"egress unsampled pid={p} comm={self.commands.get(p, '')}"
+                    "unsampled": sorted(f"egress unsampled pid={p} log={self.names.get(p, '')}"
                                         for p in self.registered if str(p) not in self.per_pid),
                     "samples": self.samples, "per_pid_samples": dict(self.per_pid),
                     "non_loopback": sorted(self.seen), "rss_peak_kib": self.rss_peak_kib,
