@@ -5,6 +5,8 @@ own pinned-reader controls after the last block, and probe-filtered naive RAG.
 This module does not run arms, establish provenance, or decide required cells.
 Results retain diagnostics even when no certificate can be issued. Stability
 is descriptive, not an error rate or a power guarantee.
+Bounds use t-calibrated percentiles to correct the wild bootstrap's reduced
+variance and normal tails when there are few resampling units.
 """
 
 from collections.abc import Collection, Mapping, Sequence
@@ -29,6 +31,54 @@ REASON_LABELS = (
     "empty_scores", "empty_controls", "r_a", "r_b",
 )
 
+# p_n = Phi(-t_{n-1, 1-alpha} * sqrt(n/(n-1))), alpha = .05 or .025.
+# Computed from the t distribution (regularised incomplete beta) and checked
+# against published t quantiles.
+_ONE_SIDED_PPM = (  # n = 2..200 resampling units; parts per million
+    0, 174, 3290, 8575, 13644, 17914, 21414, 24285, 26663, 28656,
+    30345, 31794, 33047, 34142, 35106, 35961, 36724, 37409, 38027, 38588,
+    39099, 39567, 39996, 40391, 40757, 41096, 41411, 41704, 41979, 42235,
+    42476, 42702, 42916, 43117, 43307, 43487, 43657, 43819, 43972, 44119,
+    44258, 44391, 44518, 44639, 44755, 44866, 44973, 45075, 45173, 45268,
+    45358, 45446, 45530, 45611, 45689, 45764, 45837, 45907, 45975, 46041,
+    46105, 46167, 46226, 46284, 46340, 46395, 46448, 46499, 46549, 46598,
+    46645, 46691, 46735, 46779, 46821, 46862, 46902, 46941, 46980, 47017,
+    47053, 47089, 47123, 47157, 47190, 47222, 47254, 47285, 47315, 47344,
+    47373, 47401, 47429, 47456, 47482, 47508, 47534, 47559, 47583, 47607,
+    47630, 47653, 47676, 47698, 47720, 47741, 47762, 47782, 47802, 47822,
+    47842, 47861, 47879, 47898, 47916, 47934, 47951, 47968, 47985, 48002,
+    48018, 48034, 48050, 48066, 48081, 48096, 48111, 48126, 48140, 48154,
+    48168, 48182, 48196, 48209, 48222, 48235, 48248, 48260, 48273, 48285,
+    48297, 48309, 48321, 48332, 48344, 48355, 48366, 48377, 48388, 48399,
+    48409, 48420, 48430, 48440, 48450, 48460, 48469, 48479, 48489, 48498,
+    48507, 48516, 48525, 48534, 48543, 48552, 48561, 48569, 48577, 48586,
+    48594, 48602, 48610, 48618, 48626, 48634, 48641, 48649, 48656, 48664,
+    48671, 48678, 48686, 48693, 48700, 48707, 48714, 48720, 48727, 48734,
+    48740, 48747, 48753, 48760, 48766, 48772, 48779, 48785, 48791,
+)
+_TWO_SIDED_PPM = (  # n = 2..200 resampling units; parts per million
+    0, 0, 119, 954, 2432, 4109, 5738, 7225, 8551, 9722,
+    10757, 11671, 12483, 13207, 13856, 14439, 14966, 15445, 15881, 16280,
+    16646, 16983, 17294, 17582, 17850, 18099, 18332, 18550, 18754, 18946,
+    19126, 19296, 19456, 19608, 19752, 19888, 20017, 20140, 20258, 20369,
+    20476, 20577, 20675, 20768, 20857, 20943, 21025, 21104, 21179, 21252,
+    21322, 21390, 21455, 21518, 21579, 21637, 21694, 21749, 21802, 21853,
+    21903, 21951, 21998, 22043, 22087, 22129, 22171, 22211, 22250, 22288,
+    22325, 22361, 22396, 22430, 22463, 22496, 22527, 22558, 22588, 22617,
+    22646, 22674, 22701, 22728, 22754, 22779, 22804, 22829, 22852, 22876,
+    22898, 22921, 22943, 22964, 22985, 23005, 23025, 23045, 23064, 23083,
+    23102, 23120, 23138, 23155, 23173, 23190, 23206, 23222, 23238, 23254,
+    23269, 23285, 23299, 23314, 23328, 23343, 23357, 23370, 23384, 23397,
+    23410, 23423, 23435, 23448, 23460, 23472, 23484, 23495, 23507, 23518,
+    23529, 23540, 23551, 23562, 23572, 23582, 23593, 23603, 23612, 23622,
+    23632, 23641, 23651, 23660, 23669, 23678, 23687, 23696, 23704, 23713,
+    23721, 23729, 23738, 23746, 23754, 23762, 23769, 23777, 23785, 23792,
+    23799, 23807, 23814, 23821, 23828, 23835, 23842, 23849, 23856, 23862,
+    23869, 23875, 23882, 23888, 23894, 23901, 23907, 23913, 23919, 23925,
+    23931, 23936, 23942, 23948, 23953, 23959, 23964, 23970, 23975, 23981,
+    23986, 23991, 23996, 24001, 24006, 24011, 24016, 24021, 24026,
+)
+
 
 @dataclass(frozen=True)
 class Estimate:
@@ -38,6 +88,7 @@ class Estimate:
     se2: Fraction
     se_milli: int
     replicates: tuple[Fraction, ...]
+    units: int
 
 
 @dataclass(frozen=True)
@@ -248,18 +299,21 @@ def _replicates(
     return tuple(tuple(_replicate(cell, weights) for cell in cells) for weights in weight_vectors)
 
 
-def _estimate(point: Fraction, replicates: Sequence[Fraction]) -> Estimate:
+def _estimate(point: Fraction, replicates: Sequence[Fraction], *, units: int) -> Estimate:
     ordered = sorted(replicates)
-    n = len(ordered)
+    draws = len(ordered)
+    # Cap on the conservative side; fewer than two units use the extrema.
+    one = _ONE_SIDED_PPM[min(units, 200) - 2] if units >= 2 else 0
+    two = _TWO_SIDED_PPM[min(units, 200) - 2] if units >= 2 else 0
 
-    def percentile(numerator, denominator):
-        return ordered[max(0, (numerator * n + denominator - 1) // denominator - 1)]
+    def percentile(ppm):
+        return ordered[max(0, (draws * ppm + 999_999) // 1_000_000 - 1)]
 
     mean = _mean(ordered)
     se2 = _mean(tuple(v * v for v in ordered)) - mean * mean
     scaled = se2 * 1_000_000
-    return Estimate(point, percentile(1, 20), (percentile(1, 40), percentile(39, 40)),
-                    se2, isqrt(scaled.numerator // scaled.denominator), tuple(replicates))
+    return Estimate(point, percentile(one), (percentile(two), percentile(1_000_000 - two)),
+                    se2, isqrt(scaled.numerator // scaled.denominator), tuple(replicates), units)
 
 
 def cell_statistics(
@@ -295,7 +349,8 @@ def cell_statistics(
     result = []
     for cell, columns in zip(cells, samples, strict=True):
         gate, arm, gap, margin = tuple(
-            _estimate(series.point, values) if series is not None else None
+            _estimate(series.point, values, units=len({ids[p] for p, _ in series.coefficients}))
+            if series is not None else None
             for series, values in zip(cell.series, columns, strict=True))
         blocked = 4 * len(cell.valid) < 3 * len(cell.pairs)
         verdict = None
@@ -353,7 +408,11 @@ def certify(
     stability = None
     if all(m is not None for m in margins):
         joint = tuple(_mean(tuple(row)) for row in zip(*(m.replicates for m in margins), strict=True))
-        mean_margin = _estimate(_mean(tuple(m.point for m in margins)), joint)
+        # Margin coefficients retain every pair in S_k union V_k, including zeros.
+        margin_units = {groups[p] if groups is not None else p
+                        for c in selected for p in (*c.score_pairs, *c.valid_pairs)}
+        mean_margin = _estimate(_mean(tuple(m.point for m in margins)), joint,
+                                units=len(margin_units))
         passes = sum(avg >= 0 and all(m.replicates[r] >= -10 for m in margins)
                      for r, avg in enumerate(joint))
         stability = Fraction(passes, draws)

@@ -3,6 +3,8 @@
 from dataclasses import FrozenInstanceError, replace
 from fractions import Fraction
 from itertools import product
+from math import sqrt
+from statistics import NormalDist
 
 import pytest
 
@@ -70,6 +72,7 @@ def test_four_pair_gate_and_exact_se_hand_worked(monkeypatch):
     assert cell.gate.se_milli == 7071
     assert cell.gate.lower == 15 and cell.gate.interval == (15, 35)
     assert cell.margin.se2 == 50
+    assert all(estimate.units == 4 for estimate in (cell.gate, cell.arm, cell.gap, cell.margin))
 
 
 def pooled_fixture():
@@ -91,11 +94,13 @@ def test_pooled_pair_uses_moving_gate_and_point_is_all_positive():
     cell, = cell_statistics(pairs, scores, controls, **OPTIONS)
     assert cell.margin.point == rows[-1][0][3] == 35
     assert cell.pooled_pairs == ("p3",) and cell.support == 3 and not cell.blocked
+    assert (cell.gate.units, cell.arm.units, cell.gap.units, cell.margin.units) == (3, 2, 3, 4)
     excluded = _replicates(pairs, scores, controls, vectors, exclude_pooled=True)
     assert tuple(row[0][3] for row in excluded) == (40, 20, 40)
     sensitivity, = cell_statistics(pairs, scores, controls, exclude_pooled=True, **OPTIONS)
     assert sensitivity.score_pairs == ("p0",) and sensitivity.pooled_pairs == ()
     assert sensitivity.support == cell.support and sensitivity.gate == cell.gate
+    assert sensitivity.arm.units == 1 and sensitivity.margin.units == 3
 
 
 def test_multiple_pooled_pairs_share_one_gate_error():
@@ -107,8 +112,8 @@ def test_multiple_pooled_pairs_share_one_gate_error():
     rows = _replicates(pairs, scores, controls, vectors)
     assert tuple(row[0][3] for row in rows) == (Fraction(110, 3), Fraction(70, 3))
     assert all(row[0][3] == 40 - row[0][0] for row in rows)
-    gate = _estimate(Fraction(10), tuple(row[0][0] for row in rows))
-    margin = _estimate(Fraction(30), tuple(row[0][3] for row in rows))
+    gate = _estimate(Fraction(10), tuple(row[0][0] for row in rows), units=3)
+    margin = _estimate(Fraction(30), tuple(row[0][3] for row in rows), units=5)
     assert margin.se2 == gate.se2 == Fraction(400, 9)
 
 
@@ -142,13 +147,59 @@ def test_half_gates_use_only_valid_control_blocks():
 
 
 def test_percentile_indices_population_variance_and_integer_sqrt():
-    result = _estimate(Fraction(20), tuple(Fraction(i) for i in range(40)))
-    assert result.lower == 1  # ceil(.05*40)-1
-    assert result.interval == (0, 38)  # bootstrap_ci's inverse empirical CDF
+    result = _estimate(Fraction(20), tuple(Fraction(i) for i in range(40)), units=4)
+    assert result.lower == 0  # ceil(40*3290/10**6)-1
+    assert result.interval == (0, 39)  # ppm=119: ceil(.00476)-1, ceil(39.99524)-1
+    assert result.units == 4
     assert result.se2 == Fraction(533, 4)
     assert result.se_milli == 11543
-    single = _estimate(Fraction(7, 3), (Fraction(7, 3),))
+    single = _estimate(Fraction(7, 3), (Fraction(7, 3),), units=1)
     assert single.lower == Fraction(7, 3) and single.se2 == 0
+
+
+@pytest.mark.parametrize("table,limit", [
+    (module._ONE_SIDED_PPM, 50_000), (module._TWO_SIDED_PPM, 25_000),
+])
+def test_calibration_table_shape(table, limit):
+    assert len(table) == 199
+    assert all(type(ppm) is int and 0 <= ppm < limit for ppm in table)
+    assert all(a <= b for a, b in zip(table[:-1], table[1:], strict=True))
+
+
+@pytest.mark.parametrize("table,n,t", [
+    (module._ONE_SIDED_PPM, 4, 2.353363),
+    (module._ONE_SIDED_PPM, 24, 1.713872),
+    (module._ONE_SIDED_PPM, 48, 1.677927),
+    (module._ONE_SIDED_PPM, 100, 1.660391),
+    (module._TWO_SIDED_PPM, 4, 3.182446),
+    (module._TWO_SIDED_PPM, 24, 2.068658),
+    (module._TWO_SIDED_PPM, 48, 2.011741),
+    (module._TWO_SIDED_PPM, 100, 1.984217),
+])
+def test_calibration_table_published_t_quantiles(table, n, t):
+    expected = round(10**6 * NormalDist().cdf(-t * sqrt(n / (n - 1))))
+    assert abs(table[n - 2] - expected) <= 1
+
+
+@pytest.mark.parametrize("units,lower,interval", [
+    (0, 0, (0, 9999)), (1, 0, (0, 9999)),
+    (24, 399, (172, 9827)),
+    (200, 487, (240, 9759)), (250, 487, (240, 9759)),
+])
+def test_calibrated_indices_and_unit_limits(units, lower, interval):
+    # Sorted values equal their indices, supplied in reverse to exercise sorting.
+    replicates = tuple(Fraction(i) for i in reversed(range(10_000)))
+    result = _estimate(Fraction(0), replicates, units=units)
+    assert result.lower == lower and result.interval == interval
+    assert result.units == units and result.replicates == replicates
+
+
+@pytest.mark.parametrize("units", [1, 2, 4, 24, 48, 100, 200, 250])
+def test_calibration_only_lowers_one_sided_bound(units):
+    replicates = tuple(Fraction(i) for i in reversed(range(40)))
+    result = _estimate(Fraction(20), replicates, units=units)
+    old_index = (40 + 19) // 20 - 1
+    assert result.lower <= sorted(replicates)[old_index]
 
 
 @pytest.mark.parametrize("margins,outcome,reasons", [
@@ -162,6 +213,10 @@ def test_certification_margin_fakes(tight_draw, margins, outcome, reasons):
     assert result.r_a is ("r_a" not in reasons)
     assert result.stability == (Fraction(11, 16) if margins == (0,) else Fraction(outcome == "CERTIFIED"))
     assert all(c.margin is not None and c.margin.se2 == Fraction(1, 400) for c in result.cells)
+    assert tuple(c.margin.lower for c in result.cells) == tuple(Fraction(m) - Fraction(1, 10)
+                                                               for m in margins)
+    assert result.mean_margin.lower == sum(map(Fraction, margins)) / len(margins) - Fraction(1, 10)
+    assert result.mean_margin.units == 4
 
 
 @pytest.mark.parametrize("eligibility,outcome,reason", [
@@ -351,6 +406,8 @@ def test_grouped_resampling_only_plus_or_minus_one_deviation(monkeypatch):
     cell, = cell_statistics(pairs, scores, controls, groups=dict.fromkeys(PAIRS, "one"), **OPTIONS)
     assert set(cell.margin.replicates) == {Fraction(37), Fraction(39)}
     assert cell.margin.point == 39 and cell.margin.se2 == 1
+    assert all(estimate.units == 1 for estimate in (cell.gate, cell.arm, cell.gap, cell.margin))
+    assert cell.margin.lower == 37 and cell.margin.interval == (37, 39)
     assert calls == [("stats", "certify", "one")] * 16
     with pytest.raises(ValueError, match="every pair"):
         cell_statistics(pairs, scores, controls, groups={"p0": "one"}, **OPTIONS)
@@ -437,3 +494,44 @@ def test_required_cells_have_equal_weight_and_r_b_boundary_is_inclusive(tight_dr
                       admissions={"c0": "ADMITTED", "c1": "NOT_ADMITTED"})
     assert subset.outcome == "CERTIFIED" and subset.mean_margin.point == 20
     assert len(subset.cells) == 2 and subset.r_b == (("c0", True),)
+
+
+@pytest.mark.parametrize("grouped,expected", [(False, 5), (True, 3)])
+def test_mean_margin_counts_selected_union_without_duplicate_units(tight_draw, grouped, expected):
+    pairs = {"c0": PAIRS, "c1": ("p0", "p4"), "c2": ("p5",)}
+    controls = {(k, p): (-40, 40) for k in pairs for p in pairs[k]}
+    # All coefficients are zero, but every participating unit still counts.
+    scores = dict.fromkeys(controls, 20)
+    groups = {"p0": "g0", "p1": "g0", "p2": "g1", "p3": "g1",
+              "p4": "g2", "p5": "g3"} if grouped else None
+    result = decision((pairs, scores, controls), required=("c0", "c1"), groups=groups)
+    assert result.mean_margin.units == expected
+    assert tuple(c.margin.units for c in result.cells) == ((2, 2, 1) if grouped else (4, 2, 1))
+    assert result.mean_margin.lower == 20 and result.outcome == "CERTIFIED"
+
+
+def test_calibrated_bounds_reach_all_cell_series_and_mean_margin(monkeypatch):
+    def fake(seed, unit, attempt, name):
+        if attempt == 0:
+            return int(unit[-1] in PAIRS[:2])
+        if attempt == 39:
+            return int(unit[-1] in PAIRS[2:])
+        return 1
+
+    monkeypatch.setattr(module, "draw", fake)
+    pairs = {"c0": PAIRS}
+    controls = {("c0", p): (0, 20 * (i + 1)) for i, p in enumerate(PAIRS)}
+    scores = {("c0", p): 60 - 10 * (i + 1) for i, p in enumerate(PAIRS)}
+    result = decision((pairs, scores, controls), draws=40)
+    cell, = result.cells
+    for estimate, lower, interval in (
+        (cell.gate, 15, (15, 35)), (cell.arm, 25, (25, 45)),
+        (cell.gap, 30, (30, 70)), (cell.margin, -10, (-10, 30)),
+        (result.mean_margin, -10, (-10, 30)),
+    ):
+        assert estimate.units == 4
+        assert estimate.lower == lower and estimate.interval == interval
+    assert cell.margin.se2 == result.mean_margin.se2 == 20
+    assert result.r_a is False and result.r_b == (("c0", True),)
+    assert result.outcome == "NOT_CERTIFIED" and result.reasons == ("r_a",)
+    assert result.stability == Fraction(39, 40)
