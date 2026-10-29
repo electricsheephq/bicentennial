@@ -5,6 +5,7 @@ import os
 import shutil
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.run import SCHEMAS
@@ -82,7 +83,6 @@ DISCLOSURES = (
     ("t1.isolation", "probe isolation is per checkpoint, not per item"),
     ("t1.key_matching", "G2 action predicates key on the planned key and first_execution_t takes the first "
      "call of any step tool; safe at T0/T1 scripted replay only"),
-    ("t1.receipt", "receipt tokens_by_role, store_growth_bytes and process_ids are not measured at T1 v0.1"),
     ("t1.terminal", life.TERMINAL_DISCLOSURE),
     ("t1.tool_search", "scripted-tier Hermes config: tool search off, so every offered tool is eager and scripted "
      "turns call write, recall and environment tools directly; a single API attempt and no auto-recovery waits, "
@@ -115,6 +115,16 @@ INFRA = (*t1.REFUSALS, HarnessFailed, LedgerBusy, CorpusInfra)
 class _Host:
     def __init__(self, host, held):
         self.host, self.held = host, held
+        self.initial_bytes = t0._surface_bytes(host) if hasattr(host, "surfaces") else 0
+        self.growth = 0
+
+    def close(self):
+        try:
+            if hasattr(self.host, "close"):
+                self.__getattr__("close")()
+        finally:
+            if hasattr(self.host, "surfaces"):
+                self.growth = t0._surface_bytes(self.host) - self.initial_bytes
 
     def __getattr__(self, name):
         value = getattr(self.host, name)
@@ -174,8 +184,9 @@ class CorpusFactory:
                 extra_env=resolve_worker_env(ctx.entry["name"], getattr(ctx, "model_cache", None)))
             kw.update(self.overrides or {})
             host = HermesMemoryHost(entry, **kw)
-            self.hosts.append(host)
-            return (_Host if self.arm == "system" else _WipedHost)(host, self.held)
+            owned = (_Host if self.arm == "system" else _WipedHost)(host, self.held)
+            self.hosts.append(owned)
+            return owned
         except t1.REFUSALS as error:
             self.held.append(error)
             raise
@@ -196,7 +207,8 @@ def _forwarded(records):
                for r in records for a in r.get("upstream", ()))
 
 
-def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None, delivery=None):
+def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=None, delivery=None,
+           measurements=None):
     """Retry corpus infrastructure faults, retaining isolation and receipt evidence before cleanup."""
     results = []
     for case in sorted(cases, key=lambda c: c.case_id):
@@ -212,14 +224,18 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
                     gates.extend(getattr(h, "gate", ()))
                 if hasattr(h, "records") and hasattr(h, "egress"):
                     rows = h.records()
-                    if not _isolated(rows, h.egress.summary()):
-                        raise T1Refused("upstream_record")
+                    egress = h.egress.summary()
+                    if not _isolated(rows, egress):
+                        raise T1Refused("upstream_record", detail=t0._isolation_detail(rows, egress))
                     if audit is not None:
                         audit.extend(rows)
             if held:
                 raise held[0]
             if delivery is not None:
                 delivery.add(hosts)
+            if measurements is not None:
+                measured = [h for h in hosts if hasattr(h, "paths")]
+                measurements.append(t0._audit([SimpleNamespace(hosts=measured)]))
             shutil.rmtree(unit)
             if result.status != "INFRA_FAILURE":
                 break
@@ -275,11 +291,18 @@ def _provisional(run, arm, wiped_store, *, base, out):
         duty_items=frozenset(run.duty_items), controls=base | {"wiped_store": wiped_store}, voids=a.voids)
 
 
-def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=()):
+def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corpus_measurements=()):
     runs = _runs(run, (arm, "no_memory") if arm == "system" else (arm,))
     # The arm's corpus hosts ran inside this run's wall time, so their requests and busy readings count.
     rows = [r for f in runs for r in f.records] + list(corpus_rows)
     runtime = {}
+    evidence = [dict(tokens=f.tokens_by_role, growth=f.store_growth_bytes, pids=f.process_ids)
+                for f in runs] + list(corpus_measurements)
+    tokens = {}
+    for measured in evidence:
+        for role, usage in measured["tokens"].items():
+            before = tokens.get(role, (0, 0))
+            tokens[role] = (before[0] + usage[0], before[1] + usage[1])
     for r in rows:
         if r.get("type") == "request":
             runtime[r["role"]] = runtime.get(r["role"], 0) + r["t_ms"]
@@ -288,9 +311,13 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=()):
         busy_marker_readings=[busy(run.ctx.marker),
             *(g["exit"] != 0 for r in runs for s in r.sessions for g in s.gate),
             *(g["exit"] != 0 for g in corpus_gates), busy(read_marker())],
-        tokens_by_role={}, runtime_by_role=runtime, spend_micro_usd=0, store_growth_bytes=0,
-        process_ids=[], ports=[int(r.run_values["director_port"]) for r in runs if r.run_values],
-        temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values],
+        tokens_by_role=tokens, runtime_by_role=runtime, spend_micro_usd=0,
+        store_growth_bytes=sum(m["growth"] for m in evidence),
+        process_ids=[p for m in evidence for p in m["pids"]],
+        ports=[int(r.run_values["director_port"]) for r in runs if r.run_values] + [
+            p for m in corpus_measurements for p in m["ports"]],
+        temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values] + [
+            p for m in corpus_measurements for p in m["paths"]],
         raw_body_digest=raw_body_digest(rows))
 
 
@@ -341,17 +368,18 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     rows = []
     for f in _runs(run, tuple(sorted(run.arms))):
         if not _isolated(f.records, f.egress):
-            raise T1Refused("upstream_record")
+            raise T1Refused("upstream_record", detail=t0._isolation_detail(f.records, f.egress))
         rows.extend(f.records)
     cases = load_corpus(CORPUS_PATH)
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],
                                tier_path=REPO / CATALOGUE[2])
     corpus_rows, corpus_gates = {arm: [] for arm in GATED}, {arm: [] for arm in GATED}
+    measurements = {arm: [] for arm in GATED}
     delivery = {arm: WriteDelivery() for arm in GATED}
     try:
         results = {arm: corpus(ctx, arm, cases, catalogue=catalogue, work=out / "corpus-work" / arm,
             host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm],
-            delivery=delivery[arm]) for arm in GATED}
+            delivery=delivery[arm], measurements=measurements[arm]) for arm in GATED}
     finally:
         if (out / "corpus-work").exists():
             shutil.rmtree(out / "corpus-work")
@@ -378,7 +406,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
                  wiped=finalize(dict(wiped, run_status=rw), vw))
     end = time.time_ns() // 1_000_000
     receipts = {arm: _receipt(run, arm, rs if arm == "system" else rw, start, end,
-                              corpus_rows[arm], corpus_gates[arm]) for arm in GATED}
+                              corpus_rows[arm], corpus_gates[arm], measurements[arm]) for arm in GATED}
     fm = floor_mismatches(list(run.arms["wiped"].bundles), list(run.arms["no_memory"].bundles), run.crossing)
     controls = canon(control_report(tuple(h for u in run.arms["wiped"].units for h in u.runs[-1].hooks), fm))
     witnesses = (("isolation.unknown_requests", str(sum(r.get("role") == "unknown" for r in rows))),
@@ -447,7 +475,10 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
             fields = [error.field] if isinstance(error, BaselineMismatch) else sorted(getattr(error, "fields", ()))
             if created:
-                (out / "refusal.json").write_bytes(canon(dict(code=code, fields=fields)))
+                refusal = dict(code=code, fields=fields)
+                if getattr(error, "detail", ()):
+                    refusal["detail"] = list(error.detail)
+                (out / "refusal.json").write_bytes(canon(refusal))
             print(code, file=t0.sys.stderr)
             return 3
     except Exception:

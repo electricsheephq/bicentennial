@@ -50,8 +50,9 @@ REPO = Path(__file__).resolve().parents[3]
 
 
 class T1Refused(RuntimeError):
-    def __init__(self, code, fields=()):
+    def __init__(self, code, fields=(), detail=()):
         self.code, self.fields = code, tuple(sorted(fields))
+        self.detail = tuple(sorted(detail))
         super().__init__(code)
 
 

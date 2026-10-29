@@ -21,11 +21,12 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.controls.cache import ControlsTampered
 from bicentennial.corpus.run import CaseResult
+from bicentennial.harness import egress
 from bicentennial.harness.hermes import adapter, plugin_host
 from bicentennial.harness.hermes.adapter import HarnessFailed, PinMismatch
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.keyed import choice
-from bicentennial.ledger import LedgerBusy, stable_digest
+from bicentennial.ledger import BlobStore, Guard, LedgerBusy, stable_digest
 from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.report.determinism import determinism_check
 from bicentennial.report.receipt import loop_time
@@ -43,6 +44,13 @@ measured = shared["measured"]
 SUBSET = ("g1-recall-value-dir-2.wipe_on_restart", "g2-drift-asof-dir-1.stale_wins")
 STABLE = ("card.json", "junit.xml", "invariants.json", "corpus.json", "controls.json")
 RESULTS = (*STABLE, "receipt.json")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def synthetic_egress():
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(egress, "_out", lambda argv: "8" if argv[:3] == ["ps", "-o", "rss="] else "")
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -166,6 +174,17 @@ def test_full_run(completed, installed, cases):
         assert len(controls["wipes"]) == 4 and controls["floor_mismatches"] == []
         ms, busy = loop_time(read(out, arm, "receipt.json"))
         assert ms > 0 and busy is False
+        receipt = read(out, arm, "receipt.json")
+        pooled = [f for f in completed.runs[:12] if f.arm in (
+            ("system", "no_memory") if arm == "system" else ("wiped",))]
+        assert receipt["store_growth_bytes"] == sum(f.store_growth_bytes for f in pooled) > 0
+        assert receipt["process_ids"] == sorted({p for f in pooled for p in f.process_ids})
+        assert all(f.process_ids for f in pooled)
+        roles = {r["role"] for f in pooled for r in f.records if r.get("type") == "request"}
+        assert {r["role"] for r in receipt["tokens_by_role"]} == roles
+        for key, index in (("input", 0), ("output", 1)):
+            assert receipt["tokens"][key] == sum(f.tokens_by_role[r][index]
+                for f in pooled for r in f.tokens_by_role) > 0
         suites = ET.parse(out / arm / "junit.xml").getroot()
         names = [s.attrib["name"] for s in suites]
         prefix = f"ring0.T1.hermes-native.{arm}"
@@ -538,23 +557,60 @@ def test_spend_preflight(synth, installed, monkeypatch, tmp_path, capsys):
     no_results(out)
 
 
-@pytest.mark.parametrize("where", ["final", "earlier", "floor", "forwarded", "scripted"])
+@pytest.mark.parametrize("where", ["final", "earlier", "floor", "forwarded", "scripted", "diagnostics", "egress"])
 def test_isolation_refusal(synth, installed, monkeypatch, tmp_path, where, capsys):
     arm = "no_memory" if where == "floor" else "system"
     units = list(synth.arms[arm].units)
     f = units[0].runs[-1]
     row = {"served_by": "live"} if where in ("final", "earlier", "floor") else {
-        "upstream": [{"served_by": "scripted" if where == "scripted" else "live"}]}
+        "upstream": [{"served_by": "scripted" if where in ("scripted", "diagnostics") else "live"}]}
+    if where == "diagnostics":
+        row["upstream"][0]["diagnostics"] = ["synthetic"]
+    if where in ("forwarded", "diagnostics"):
+        row["req"] = "request-7"
     # Isolation executes before report assembly; the passing row needs no digest fields.
     row["type"] = "diagnostic"
     bad = replace(f, records=(row,), run_values=dict(sandbox_root=str(tmp_path), director_port="32109"))
+    endpoint = "egress name=*:* pid=40 comm=worker samples=2"
+    if where == "egress":
+        bad = replace(bad, records=(), egress=dict(non_loopback=["*:*"], non_loopback_seen=[endpoint]))
     units[0] = replace(units[0], runs=(bad, f) if where == "earlier" else (bad,))
     set_run(monkeypatch, change_arm(synth, arm, units=tuple(units)))
     out = tmp_path / "out"
     assert invoke(installed, out) == (0 if where == "scripted" else 3)
     if where != "scripted":
         no_results(out)
-        assert "upstream_record" in capsys.readouterr().err
+        assert capsys.readouterr().err == "upstream_record\n"
+        detail = ("record id=request-7 served_by=scripted diagnostics" if where == "diagnostics" else
+                  f"record id={'request-7' if where == 'forwarded' else 0} served_by=live")
+        detail = endpoint if where == "egress" else detail
+        assert json.loads((out / "refusal.json").read_bytes()) == dict(
+            code="upstream_record", fields=[], detail=[detail])
+
+
+@pytest.mark.parametrize("refused", [t0.T0Refused, t1.T1Refused])
+def test_refusal_detail_is_sorted_tuple(refused):
+    assert refused("upstream_record").detail == ()
+    error = refused("upstream_record", detail=["record id=z served_by=live", "record id=a served_by=live"])
+    assert error.detail == ("record id=a served_by=live", "record id=z served_by=live")
+    assert str(error) == "upstream_record"
+
+
+def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, capsys):
+    detail = "egress name=*:* pid=40 comm=worker samples=2"
+
+    def case(case, factory, **kwargs):
+        factory.hosts.append(SimpleNamespace(records=lambda: [],
+            egress=SimpleNamespace(summary=lambda: dict(non_loopback=["*:*"], non_loopback_seen=[detail]))))
+        return fake_case(case, factory, **kwargs)
+
+    monkeypatch.setattr(compare, "run_case", case)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 3
+    no_results(out)
+    assert capsys.readouterr().err == "upstream_record\n"
+    assert json.loads((out / "refusal.json").read_bytes()) == dict(
+        code="upstream_record", fields=[], detail=[detail])
 
 
 @pytest.mark.parametrize("during", [False, True])
@@ -662,6 +718,81 @@ def test_receipt_counts_corpus(synth):
     assert probe_ms(receipt) == probe_ms(base) + 7
     assert receipt["latency_ms"] == [*base["latency_ms"], 7]
     assert receipt["raw_body_digest"] != base["raw_body_digest"]
+
+
+def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch, cases):
+    arms = {}
+    for n, (arm, value) in enumerate(synth.arms.items(), 1):
+        units = [replace(u, runs=tuple(replace(f, tokens_by_role={"probe_main": (n, 2 * n)},
+            store_growth_bytes=n * 10, process_ids=(100 + n,)) for f in u.runs)) for u in value.units]
+        arms[arm] = replace(value, units=tuple(units))
+    run = replace(synth, arms=arms)
+    set_run(monkeypatch, run)
+    attempts, hosts = {}, {arm: [] for arm in compare.GATED}
+
+    class Host(ReferenceStore):
+        def __init__(self, entry, **kw):
+            super().__init__()
+            self.paths = {"root": kw["root"]}
+            self.server = SimpleNamespace(port=32109)
+            self.director = SimpleNamespace(run_values={})
+            self.egress = SimpleNamespace(summary=lambda: {"non_loopback": []})
+            self.write_clipped, self.write_max_length = 0, None
+            self.factor = 1 if current[0] == "system" else 2
+            self.pids = [900 * self.factor + len(hosts[current[0]])]
+            self.gate = [dict(exit=10 if current[0] == "system" else 0)]
+            self.surface = kw["root"] / "surface"
+            self.surface.mkdir()
+            (self.surface / "installed").write_bytes(b"initial")
+            blobs = BlobStore(kw["root"] / "ledger/blobs", Guard([]))
+            self.rows = [dict(type="request", role="aux", seq=1, t_ms=7,
+                req=blobs.put({}), resp=blobs.put({"usage": {
+                    "input_tokens": 3 * self.factor, "output_tokens": 5 * self.factor}}))]
+            hosts[current[0]].append(self)
+
+        def surfaces(self):
+            return [(self.surface, [])]
+
+        def fields(self):
+            return dict(actor="not_delivered", text="full", time="session_clock")
+
+        def records(self):
+            return self.rows
+
+        def close(self):
+            (self.surface / "growth").write_bytes(b"12345678901" * self.factor)
+
+    current = []
+
+    def drive(case, factory, **kw):
+        current[:] = [factory.arm]
+        key = factory.arm, case.case_id
+        attempts[key] = attempts.get(key, 0) + 1
+        for _ in range(2):
+            factory().close()
+        return (CaseResult(case.case_id, "INFRA_FAILURE", "infra", None) if attempts[key] == 1 else
+                fake_case(case, factory, **kw))
+
+    monkeypatch.setattr(compare, "HermesMemoryHost", Host)
+    monkeypatch.setattr(compare, "run_case", drive)
+    monkeypatch.setattr(compare, "busy", lambda marker: False)
+    out = tmp_path / "out"
+    assert invoke(installed, out) == 0
+    valid(out)
+    for arm in compare.GATED:
+        receipt = read(out, arm, "receipt.json")
+        pooled = compare._runs(run, ("system", "no_memory") if arm == "system" else ("wiped",))
+        count = 4 * len(cases)
+        factor = 1 if arm == "system" else 2
+        assert len(hosts[arm]) == count
+        assert loop_time(receipt)[1] is (arm == "system")
+        assert receipt["store_growth_bytes"] == sum(f.store_growth_bytes for f in pooled) + count * 11 * factor
+        assert receipt["process_ids"] == sorted({p for f in pooled for p in f.process_ids} |
+                                                {p for h in hosts[arm] for p in h.pids})
+        assert receipt["tokens_by_role"] == [dict(role="aux", input=count * 3 * factor, output=count * 5 * factor),
+            dict(role="probe_main", input=sum(f.tokens_by_role["probe_main"][0] for f in pooled),
+                 output=sum(f.tokens_by_role["probe_main"][1] for f in pooled))]
+        assert not any(h.paths["root"].exists() for h in hosts[arm])
 
 
 def catalogue():

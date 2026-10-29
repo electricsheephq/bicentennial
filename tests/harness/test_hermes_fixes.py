@@ -26,6 +26,7 @@ PROTOCOL = Path(__file__).with_name("fake_protocol_worker.py")
 
 @pytest.fixture(autouse=True)
 def fast_drain(monkeypatch):
+    monkeypatch.setattr(egress, "_out", lambda argv: "8" if argv[:3] == ["ps", "-o", "rss="] else "")
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     # Functional fakes do not exercise macOS scheduling policy (covered by the original niceness test).
@@ -285,6 +286,118 @@ def test_sampler_keeps_orphaned_group_members(monkeypatch):
     sampler.sample()
     assert sampled == [41]
 
+
+def test_sampler_non_loopback_detail(monkeypatch):
+    sampler, commands = egress.Egress(), []
+    assert sampler.summary()["non_loopback_seen"] == []
+
+    def output(argv):
+        if argv[:2] == ["ps", "-A"]:
+            assert argv == ["ps", "-A", "-o", "pid=,ppid=,pgid="]
+            return "40 1 40\n41 1 41\n42 1 42\n"
+        if argv[0] == "ps":
+            if argv[2] == "comm=":
+                commands.append(argv)
+                return f"/synthetic/path with spaces/worker {argv[-1]}\n"
+            return "8\n"
+        names = ["127.0.0.1:1234", "[::1]:1234"] if argv[-1] == "42" else ["*:5353", "*:5353", "192.0.2.1:443"]
+        return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + "\n".join(
+            f"worker {argv[-1]} user 3u IPv4 0 0t0 TCP {name}" for name in names)
+
+    monkeypatch.setattr(egress, "_out", output)
+    sampler.add(40)
+    sampler.add(42)
+    sampler.sample()
+    assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "42": 1}, rss_peak_kib=8,
+        non_loopback=["*:5353", "192.0.2.1:443"], non_loopback_seen=[
+            "egress name=*:5353 pid=40 comm=worker 40 samples=1",
+            "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=1"])
+    sampler.discard(40)
+    sampler.add(41)
+    sampler.sample()
+    assert sampler.summary()["non_loopback_seen"] == [
+        "egress name=*:5353 pid=40 comm=worker 40 samples=2",
+        "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=2"]
+    sampler.add(40)
+    sampler.sample()
+    assert all(row.endswith("samples=3") for row in sampler.summary()["non_loopback_seen"])
+    assert commands == [["ps", "-o", "comm=", "-p", str(pid)] for pid in (40, 41)]
+
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
+    sampler, commands = egress.Egress(), []
+    rows = ["TCP *:* (CLOSED)", "UDP *:*", "ICMP *:*", "UDP *:5353", "TCP *:8080 (LISTEN)",
+            "TCP 10.0.0.1:50000->192.0.2.1:443 (ESTABLISHED)",
+            "TCP 127.0.0.1:50000->192.0.2.2:443 (ESTABLISHED)",
+            "TCP 192.0.2.3:50000->127.0.0.1:443 (ESTABLISHED)", "UDP 127.0.0.1:5353"]
+
+    def output(argv):
+        if argv[:2] == ["ps", "-A"]:
+            return "40 1 40\n41 1 41\n"
+        if argv[0] == "ps":
+            if argv[2] == "comm=":
+                commands.append(int(argv[-1]))
+                return f"/synthetic/worker{argv[-1]}\n"
+            return "8\n"
+        selected = rows[:2] if argv[-1] == "40" else rows
+        return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + "\n".join(
+            f"worker {argv[-1]} user 3u IPv4 0 0t0 {row}" for row in selected)
+
+    monkeypatch.setattr(egress, "PLATFORM", platform)
+    monkeypatch.setattr(egress, "_out", output)
+    assert not egress.loopback("*:*")
+    # Pid 40 holds only unbound TCP and UDP sockets, so on macOS it has no endpoint and no command lookup
+    alone = egress.Egress()
+    alone.add(40)
+    alone.sample()
+    unbound = [] if platform == "darwin" else ["*:*"]
+    assert alone.summary() == dict(samples=1, per_pid_samples={"40": 1}, rss_peak_kib=8, non_loopback=unbound,
+        non_loopback_seen=[f"egress name={name} pid=40 comm=worker40 samples=1" for name in unbound])
+    assert commands == ([] if platform == "darwin" else [40])
+    commands.clear()
+    sampler.add(40)
+    sampler.add(41)
+    sampler.sample()
+    names = ["*:*", "*:5353", "*:8080", "10.0.0.1:50000->192.0.2.1:443",
+             "127.0.0.1:50000->192.0.2.2:443", "192.0.2.3:50000->127.0.0.1:443"]
+    first = 41 if platform == "darwin" else 40
+    assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "41": 1}, rss_peak_kib=8,
+        non_loopback=names, non_loopback_seen=[
+            f"egress name={name} pid={first if name == '*:*' else 41} "
+            f"comm=worker{first if name == '*:*' else 41} samples=1" for name in names])
+    assert commands == ([41] if platform == "darwin" else [40, 41])
+
+
+@pytest.mark.parametrize("failure", ["timeout", "empty"])
+def test_sampler_comm_failure_keeps_observation(monkeypatch, failure):
+    # A failed command lookup is diagnostic only: the endpoint still counts, and a later sample fills the name.
+    sampler, fail = egress.Egress(), [True]
+
+    def output(argv):
+        if argv[:2] == ["ps", "-A"]:
+            return "40 1 40\n"
+        if argv[0] == "ps":
+            if argv[2] == "comm=":
+                if fail.pop() if fail else False:
+                    if failure == "timeout":
+                        raise subprocess.TimeoutExpired(argv, 30)
+                    return ""
+                return "/synthetic/worker\n"
+            return "8\n"
+        return ("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+                "worker 40 user 3u IPv4 0 0t0 TCP 192.0.2.1:443")
+
+    monkeypatch.setattr(egress, "_out", output)
+    sampler.add(40)
+    sampler.sample()
+    summary = sampler.summary()
+    assert (summary["samples"], summary["non_loopback"]) == (1, ["192.0.2.1:443"])
+    assert summary["non_loopback_seen"] == ["egress name=192.0.2.1:443 pid=40 comm= samples=1"]
+    sampler.sample()
+    assert sampler.summary()["non_loopback_seen"] == [
+        "egress name=192.0.2.1:443 pid=40 comm=worker samples=2"]
 
 def test_relative_checkout_is_absolute_before_spawn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

@@ -1,11 +1,15 @@
 """Socket and memory sampler for harness worker processes (S6a replay.py Egress, promoted). Once a second it lists
 every registered pid, its process group and descendants, reads sockets with lsof and resident memory with ps, and keeps
-every endpoint that is not loopback. A wildcard bind (lsof's `*`) counts as non-loopback."""
+every endpoint that is not loopback. A wildcard bind (lsof's `*`) counts as non-loopback.
+On macOS, TCP and UDP rows named exactly `*:*` are unbound sockets and are ignored."""
 
 import subprocess
+import sys
 import threading
+from pathlib import Path
 
 LOOPBACK = frozenset(("127.0.0.1", "[::1]", "localhost"))
+PLATFORM = sys.platform
 
 
 def hosts(name: str) -> list[str]:
@@ -17,6 +21,12 @@ def lsof_names(stdout: str) -> list[str]:
     """The NAME field of each lsof row after the header; a trailing `(STATE)` column is skipped."""
     rows = [line.split() for line in stdout.splitlines()[1:] if line.strip()]
     return [row[-2] if row[-1].endswith(")") else row[-1] for row in rows]
+
+
+def lsof_endpoints(stdout: str) -> list[tuple[str, str]]:
+    """The NODE (protocol) and NAME fields, skipping a trailing `(STATE)` column."""
+    rows = [line.split() for line in stdout.splitlines()[1:] if line.strip()]
+    return [(row[-3], row[-2]) if row[-1].endswith(")") else (row[-2], row[-1]) for row in rows]
 
 
 def loopback(name: str) -> bool:
@@ -32,6 +42,7 @@ class Egress(threading.Thread):
         super().__init__(name="egress", daemon=True)
         self.interval_s, self.pids, self.per_pid, self.seen = interval_s, set(), {}, set()
         self.samples = self.rss_peak_kib = 0
+        self.commands, self.non_loopback_seen = {}, {}
         self._lock, self._halt = threading.Lock(), threading.Event()
         # Held while sampling: a forked child keeps the parent's open files, and their flocks, until it execs, so
         # the adapter holds this while the director reopens its ledger
@@ -59,15 +70,31 @@ class Egress(threading.Thread):
             new = [c for c in children.get(todo.pop(), []) if c not in tree]
             tree.update(new)
             todo += new
+        sampled = set()
         for pid in sorted(tree):
             rss = _out(["ps", "-o", "rss=", "-p", str(pid)]).strip()
             if not rss.isdigit():
                 continue  # exited: not a sample
-            names = lsof_names(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
+            endpoints = lsof_endpoints(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
+            non_loopback = {n for protocol, n in endpoints if not loopback(n)
+                            and not (PLATFORM == "darwin" and protocol in {"TCP", "UDP"} and n == "*:*")}
+            if non_loopback and pid not in self.commands:
+                try:
+                    comm = Path(_out(["ps", "-o", "comm=", "-p", str(pid)]).strip()).name
+                    if comm:
+                        self.commands[pid] = comm
+                except (OSError, subprocess.SubprocessError):
+                    pass  # diagnostic only: the endpoint is still recorded, and a later sample retries
             with self._lock:
                 self.samples, self.rss_peak_kib = self.samples + 1, max(self.rss_peak_kib, int(rss))
                 self.per_pid[str(pid)] = self.per_pid.get(str(pid), 0) + 1
-                self.seen.update(n for n in names if not loopback(n))
+                self.seen.update(non_loopback)
+                for name in non_loopback - sampled:
+                    first, comm, count = self.non_loopback_seen.get(name, (pid, "", 0))
+                    if first == pid and not comm:
+                        comm = self.commands.get(pid, "")
+                    self.non_loopback_seen[name] = (first, comm, count + 1)
+                sampled.update(non_loopback)
 
     def run(self) -> None:
         while not self._halt.is_set():
@@ -86,4 +113,6 @@ class Egress(threading.Thread):
     def summary(self) -> dict:
         with self._lock:
             return {"samples": self.samples, "per_pid_samples": dict(self.per_pid),
-                    "non_loopback": sorted(self.seen), "rss_peak_kib": self.rss_peak_kib}
+                    "non_loopback": sorted(self.seen), "rss_peak_kib": self.rss_peak_kib,
+                    "non_loopback_seen": sorted(f"egress name={n} pid={pid} comm={comm} samples={count}"
+                        for n, (pid, comm, count) in self.non_loopback_seen.items())}
