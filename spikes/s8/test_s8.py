@@ -945,6 +945,22 @@ def test_native_workspace_live_turn_requires_pair_image_and_order(tmp_path, nati
     assert pair["requests"] == {"replay_main/tool_results": 1}
 
 
+def test_native_workspace_live_turn_rejects_identity_mismatch(tmp_path, native_routing_evidence):
+    records, _ = native_routing_evidence
+    image = records[2]
+    del image["write_turn_failed"]
+    image["upstream"][0]["status"] = 200
+    image["upstream"][0]["diagnostics"][0]["status"] = 200
+
+    def workspace():
+        return run.summarise(tmp_path)["modes"]["native"]["channels"]["workspace"]
+
+    assert workspace()["routed"] is True
+    image["served"] = "identity_mismatch"
+    pair = workspace()
+    assert pair["lives"] == [False] and pair["routed"] is False
+
+
 def test_boundary_stop_rules(tmp_path):
     from types import SimpleNamespace
     state = {"identity_drift": None, "stopped": False, "spend_stopped": False, "stop_reason": None}

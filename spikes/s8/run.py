@@ -730,6 +730,7 @@ def summarise(scratch, fidelity=None):
                     rec["seq"] >= min((m["seq"] for m in matched), default=10**12) and
                     any(image_ids.get(h) == f"{life}-{kind}" for h in _hashes(blobs[rec["req"]])) and
                     "write_turn_failed" not in rec and
+                    rec["served"] != "identity_mismatch" and
                     any(d.get("kind") == "try" and d.get("status") == 200
                         for up in rec.get("upstream", []) for d in up.get("diagnostics", []))
                     for rec in requests)
