@@ -982,6 +982,25 @@ def test_scan_counts_path_with_inaccessible_ancestor(home, tmp_path, monkeypatch
         blocked.chmod(mode)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can search mode-444 directories")
+def test_scan_counts_file_in_unsearchable_directory(home, tmp_path, monkeypatch, capsys):
+    pin_entry(home)
+    tree = tmp_path / "fake-artifacts"
+    blocked = tree / "fake-blocked"
+    blocked.mkdir(parents=True)
+    (blocked / "fake-hidden.log").write_text(ACCT)
+    mode = stat.S_IMODE(blocked.stat().st_mode)
+    try:
+        blocked.chmod(0o444)
+        code, result = scan_main(home, tree, monkeypatch, capsys)
+        assert "refused" not in result
+        assert code == 1
+        assert result["unreadable"] == 1
+        assert result["files_scanned"] == 0 and result["hits"] == {}
+    finally:
+        blocked.chmod(mode)
+
+
 def test_scan_counts_files_once_per_label_and_escaped_needles(home, tmp_path):
     auth = login(home)
     needle = "fake-backslash\\user"

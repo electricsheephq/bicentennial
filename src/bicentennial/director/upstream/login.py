@@ -18,6 +18,7 @@ import json
 import os
 import re
 import ssl
+import stat
 import sys
 import tempfile
 import threading
@@ -459,7 +460,14 @@ def scan(login, paths, run=None) -> dict:
         candidates = ([path] if path.is_file() else
                       (Path(root) / name for root, _, names in os.walk(path, onerror=walk_error) for name in names))
         for file in candidates:
-            if not file.is_file():
+            try:
+                mode = file.stat().st_mode
+            except FileNotFoundError:
+                continue
+            except OSError:
+                unreadable += 1
+                continue
+            if not stat.S_ISREG(mode):
                 continue
             files += 1
             try:
