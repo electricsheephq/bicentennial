@@ -40,10 +40,10 @@ The optional `BICENTENNIAL_BUSY_CMD` shell command returns a JSON object with op
 
 ## 4. Build and install a pack
 
-The build command below calls `build_tier` directly; v0.1 has no pack-build CLI. Its `harness_artifacts` list contains the registered Hermes-native artifact, so these packs can also serve registry systems. Build into a fresh destination.
+The build command below pins the registered Hermes-native artifact, so these packs can also serve registry systems. The output is a parent directory, which may already exist; the tier directory and its `.staging` and `.work` siblings must not exist, or the command exits 3 with `out_exists`. Success is silent; unexpected build failures exit 70 with `tool_failure` first on stderr (section 8).
 
 ```sh
-python -c 'from bicentennial.packs.build import build_tier; from bicentennial.systems.registry import REGISTRY, load; build_tier("T0", "build/ring0", harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])'
+bicentennial build --tier T0 --out build/ring0
 ```
 
 Install with `python -m bicentennial.packs.install install SRC DEST`. DEST must not exist; its parent must exist. Installation prints the pack hash and makes files 0444 and directories 0555. Verify with `python -m bicentennial.packs.install verify ROOT --pack-hash H`. The install CLI exits 0, or 3 with `hashseed`, `pinned_artifact_changed`, `lock_mismatch` or `refused`; malformed usage also exits 3. An edit to a pinned artifact voids the run ([PREREG §6](../../prereg/PREREG-v0.4.md#6-tiers-rings-subsets-and-branches)).
@@ -60,7 +60,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e .
 export PYTHONHASHSEED=0
-python -c 'from bicentennial.packs.build import build_tier; from bicentennial.systems.registry import REGISTRY, load; build_tier("T0", "build/ring0", harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])'
+bicentennial build --tier T0 --out build/ring0
 mkdir -p runs
 PACK_HASH="$(python -m bicentennial.packs.install install build/ring0/T0 runs/ring0-t0-packs)"
 python -m bicentennial.packs.install verify runs/ring0-t0-packs --pack-hash "$PACK_HASH"
@@ -158,7 +158,7 @@ A plug-in that prefetches memory changes the user text the director sees. The pi
 Build and install the T1 tier, then run native memory twice:
 
 ```sh
-python -c 'from bicentennial.packs.build import build_tier; from bicentennial.systems.registry import REGISTRY, load; build_tier("T1", "build/ring0", harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])'
+bicentennial build --tier T1 --out build/ring0
 PACK_HASH_T1="$(python -m bicentennial.packs.install install build/ring0/T1 runs/ring0-t1-packs)"
 bicentennial t1 --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HERMES_CHECKOUT" --out runs/ring0-t1-first
 bicentennial t1 --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HERMES_CHECKOUT" --baseline runs/ring0-t1-first/system/card.json --out runs/ring0-t1-next

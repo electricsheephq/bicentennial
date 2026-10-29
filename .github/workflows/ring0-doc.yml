@@ -27,7 +27,7 @@ jobs:
           . .venv/bin/activate
           python -m pip install -e .
           export PYTHONHASHSEED=0
-          python -c 'from bicentennial.packs.build import build_tier; from bicentennial.systems.registry import REGISTRY, load; build_tier("T0", "build/ring0", harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])'
+          bicentennial build --tier T0 --out build/ring0
           mkdir -p runs
           PACK_HASH="$(python -m bicentennial.packs.install install build/ring0/T0 runs/ring0-t0-packs)"
           python -m bicentennial.packs.install verify runs/ring0-t0-packs --pack-hash "$PACK_HASH"
