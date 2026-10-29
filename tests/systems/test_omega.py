@@ -58,9 +58,10 @@ def provider(tmp_path, monkeypatch):
             assert kwargs == {"session_id": "s1"}  # inference/supersession retain defaults
             self.events.append("store")
             relate = NS(name="auto-relate", alive=True)
+            relate.is_alive = lambda: relate.alive
 
             def join(timeout=None):
-                relate.alive = False
+                relate.alive = self.stuck  # a stuck relate outlives the wait
                 self.events.append(f"join {timeout}")
             relate.join = join
             self.relates.append(relate)
@@ -93,7 +94,7 @@ def provider(tmp_path, monkeypatch):
 
     api = embedding.api = Store()
     api.stats_calls, api.resets, api.reply, api.deleted, api.success = 0, 0, None, [], True
-    api.queries, api.relates, api.events = [], [], []
+    api.queries, api.relates, api.events, api.stuck = [], [], [], False
     omega, bridge = ModuleType("omega"), ModuleType("omega.bridge")
     omega.embedding, omega.type_stats, omega.store = embedding, api.type_stats, api.store
     omega.query_structured, omega.delete_memory, bridge.reset_memory = api.query, api.delete_node, api.close
@@ -174,6 +175,15 @@ def test_store_waits_for_auto_relate(provider):
     for content in ("first", "first", "second"):  # a dedup starts auto-relate too
         p.handle_tool_call("omega_store", {"content": content})
     assert embedding.api.events == ["store", "join 30"] * 3
+
+
+def test_store_refuses_a_running_auto_relate(provider):
+    p, home, _, embedding = provider
+    p.initialize("s1", hermes_home=home)
+    embedding.api.stuck = True
+    with pytest.raises(RuntimeError, match="auto-relate did not finish within 30 s"):
+        p.handle_tool_call("omega_store", {"content": "synthetic"})
+    assert embedding.api.events == ["store", "join 30"]
 
 
 def test_availability_and_backend_refusal(provider, monkeypatch):

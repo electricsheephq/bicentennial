@@ -12,7 +12,8 @@ from agent.memory_provider import MemoryProvider
 
 
 # OMEGA relates each write on an auto-relate thread; finish it before the next write, so the
-# relation edges a later query walks do not depend on thread timing (omega.writes).
+# relation edges a later query walks do not depend on thread timing, and refuse the write if
+# it is still running after the wait (omega.writes).
 AUTO_RELATE_WAIT_S = 30
 
 
@@ -90,6 +91,8 @@ class OmegaProvider(MemoryProvider):
             for thread in threading.enumerate():
                 if thread.name == "auto-relate":
                     thread.join(AUTO_RELATE_WAIT_S)
+                    if thread.is_alive():
+                        raise RuntimeError(f"OMEGA's auto-relate did not finish within {AUTO_RELATE_WAIT_S} s")
             if text.startswith(("Blocked", "**Memory Blocked**")):
                 result = {"id": None, "outcome": "blocked"}
             else:

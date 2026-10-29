@@ -105,12 +105,12 @@ def stub_disclosures(entry, tier):
         properties.extend([
             ("omega.adapter", "benchmark-authored Hermes provider over omega-memory 1.5.20's Python API: store, query_structured and delete_memory for the tools, "
              "type_stats at start, bridge.reset_memory at shutdown, and the embedding preload and backend checks; OMEGA's maintainers are invited to review it"),
-            ("omega.writes", "omega.store as shipped: event type memory, Jaccard dedup within a session, supersession, 90-day TTL and auto-relate, which the adapter waits for after each write; the store's exact and canonical-hash dedup never match here, because they check the TTL against SQLite's real clock while the worker's clock is simulated; the result shows the memory id and OMEGA's outcome word"),
+            ("omega.writes", "omega.store as shipped: event type memory, Jaccard dedup within a session, supersession, 90-day TTL and auto-relate, which the adapter waits up to 30 s for after each write, refusing the write if it is still running; the store's exact and canonical-hash dedup never match here, because they check the TTL against SQLite's real clock while the worker's clock is simulated; the result shows the memory id and OMEGA's outcome word"),
             ("omega.reads", "query_structured as shipped: full content, 10 results by default, memory accesses recorded; OMEGA's query and MCP tool render markdown with 200-character previews by default"),
             ("omega.query_expansion", "off: no LLM key; matches OMEGA without one"),
             ("omega.reranker", "off: the shipped default would download the cross-encoder at first query; "
              "the benchmark runs offline with every model pinned"),
-            ("omega.query_cache", "as shipped: a repeat of an identical query within 60 s (300 s at high confidence) of elapsed time can come from the cache, but every store, delete and non-empty read clears it"),
+            ("omega.query_cache", "as shipped: a repeat of an identical query within 60 s (300 s at high confidence) of elapsed time can come from the cache, but every write that reaches the store, every delete and every non-empty read clears it (a blocked write or a within-session Jaccard dedup does not)"),
             ("omega.deferred_startup", "as shipped: integrity check, WAL checkpoint, and a backup of a non-empty store when no backup exists (the age check compares the simulated clock with real file times, so an existing backup never counts as stale); initialization waits for it, so a run's first start with memories makes a backup, which keeps them after a delete"),
             ("omega.ttl", "as shipped (90 days for memory events), on the worker's simulated clock: nothing expires within a run; OMEGA's dedup scope checks the TTL against SQLite's real clock instead (omega.writes)"),
             ("omega.onnx_threads", "1"),
