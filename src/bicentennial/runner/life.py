@@ -78,7 +78,7 @@ CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "engine_inactive", "end_failed", "exit_timeout",
     "turn_timeout", "end_timeout")) + tuple(
     (label, "INFRA_FAILURE") for label in (
-        "director_stopped", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
+        "director_stopped", "director_inflight", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
         "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy"))
 TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only compiled workspace commands; "
                        "a live model could reach the Hermes home")
@@ -209,12 +209,18 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm):
         codes = failures(report)
         ignored = ("A4.no_effects_hook",) if plugin else ()
         if arm == "wiped":
-            ignored += ("A4.gaps",)
+            calls = (report["A4"] or {}).get("calls")
+            unclassified = sum(c["applied"] is None for c in calls) if isinstance(calls, list) else "unknown"
+            if unclassified == 0:
+                ignored += ("A4.gaps",)
         status = "OK" if not [c for c in codes if c not in ignored] else run_status(report, mode)
         result = dict(status=status, failures=codes, **(
             {"a4": "not audited for plug-in providers at v0.1"} if plugin else {}))
         if arm == "wiped" and "A4.gaps" in codes:
-            result["a4_gaps"] = "expected: the wiped arm restores the fresh install at every wake"
+            if unclassified == 0:
+                result["a4_gaps"] = "expected: the wiped arm restores the fresh install at every wake"
+            else:
+                result["a4_unclassified"] = unclassified
         return result
     except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
         raise

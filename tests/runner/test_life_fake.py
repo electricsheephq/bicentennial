@@ -265,6 +265,8 @@ def completed_sessions(monkeypatch):
 def test_audit_effect_gaps_by_arm(lives, tmp_path, monkeypatch, completed_sessions, arm, other_failure):
     report = {section: dict.fromkeys(keys, []) for section, keys in FAILING.items()}
     report["A4"]["gaps"] = ["missing write"]
+    report["A4"]["calls"] = [dict(call="missing write", applied=True,
+        operations=[dict(store_satisfied=False, next_session_satisfied=False)])]
     if other_failure:
         report["A1"]["mismatches"] = ["different request"]
     monkeypatch.setattr(runner, "load_ledger", lambda *args: ([], {}, "unit-ledger"))
@@ -278,6 +280,38 @@ def test_audit_effect_gaps_by_arm(lives, tmp_path, monkeypatch, completed_sessio
             assert result.audit["a4_gaps"] == "expected: the wiped arm restores the fresh install at every wake"
         else:
             assert "a4_gaps" not in result.audit
+    finally:
+        result.cleanup()
+
+
+@pytest.mark.parametrize("arm,applied,status,unclassified", [
+    ("wiped", (True, None), "INFRA_FAILURE", 1),
+    ("wiped", (True,), "OK", None),
+    ("wiped", None, "INFRA_FAILURE", "unknown"),
+    ("system", (True, None), "INFRA_FAILURE", None),
+])
+def test_audit_unclassified_effect_gaps(lives, tmp_path, monkeypatch, completed_sessions,
+                                       arm, applied, status, unclassified):
+    report = {section: dict.fromkeys(keys, []) for section, keys in FAILING.items()}
+    report["A4"]["gaps"] = ["missing write"]
+    if applied is not None:
+        report["A4"]["calls"] = [dict(call=f"write-{n}", applied=value,
+            operations=[dict(store_satisfied=False, next_session_satisfied=False)])
+            for n, value in enumerate(applied)]
+        report["A4"]["gaps"] = [c["call"] for c in report["A4"]["calls"]]
+    monkeypatch.setattr(runner, "load_ledger", lambda *args: ([], {}, "unit-ledger"))
+    monkeypatch.setattr(runner, "audit", lambda *args, **kwargs: report)
+    result = drive(lives["t1-g1", "B0"], tmp_path, arm=arm)
+    try:
+        assert result.stopped is None
+        assert result.audit["status"] == status
+        assert result.audit["failures"] == ["A4.gaps"]
+        if unclassified is not None:
+            assert result.audit["a4_unclassified"] == unclassified
+            assert "a4_gaps" not in result.audit
+        else:
+            assert "a4_unclassified" not in result.audit
+            assert ("a4_gaps" in result.audit) == (arm == "wiped")
     finally:
         result.cleanup()
 
@@ -579,7 +613,7 @@ def test_adapter_failure_labels_are_named():
 @pytest.mark.parametrize("label,cls", [
     ("turn_timeout", "SYSTEM_FAILURE"), ("end_timeout", "SYSTEM_FAILURE"),
     ("startup_timeout", "INFRA_FAILURE"), ("open_timeout", "INFRA_FAILURE"),
-    ("worker_start", "INFRA_FAILURE"),
+    ("worker_start", "INFRA_FAILURE"), ("director_inflight", "INFRA_FAILURE"),
 ])
 def test_worker_failure_mappings(label, cls):
     assert dict(CAUSES)[label] == cls

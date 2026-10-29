@@ -444,6 +444,44 @@ def test_session_shutdown_checks_director(tmp_path, monkeypatch, phase, stopped,
         a.close()
 
 
+@pytest.mark.parametrize("phase", ["turn", "end"])
+@pytest.mark.parametrize("stopped,added_failures,inflight,error", [
+    (True, 0, 0, "director_stopped"),
+    (False, 1, 0, "write_failure"),
+    (False, 0, 1, "director_inflight"),
+    (False, 0, 0, None),
+    (True, 0, 1, "director_stopped"),
+])
+def test_session_timeout_checks_director(tmp_path, monkeypatch, phase, stopped, added_failures, inflight, error):
+    a = make(tmp_path, "timeout", faults=[])
+    a.director.write_failures = 7  # earlier failures must not reclassify a healthy director's timeout
+    real_call, injected = adapter._Worker.call, []
+    timeout = adapter.HarnessFailed(f"{phase}_timeout")
+
+    def call(worker, **op):
+        if op.get("op") == phase:
+            a.director.stopped = stopped
+            a.director.write_failures += added_failures
+            a.director.inflight = inflight
+            injected.append(phase)
+            raise timeout
+        return real_call(worker, **op)
+
+    monkeypatch.setattr(adapter._Worker, "call", call)
+    try:
+        with pytest.raises(adapter.HarnessFailed, match=f"^{error or str(timeout)}$") as caught:
+            session(a, 1)
+        assert injected == [phase]
+        if error:
+            assert caught.value.__cause__ is timeout
+        else:
+            assert caught.value is timeout
+        assert a._worker._reaped and a._worker.proc.returncode is not None
+    finally:
+        a.director.inflight = 0
+        a.close()
+
+
 def test_plugin_config_deep_merge_without_mutating_input():
     settings = {"memory": {"fixture": {"enabled": True}}, "agent": {"fixture": 1}}
     cfg = config.hermes_config(4321, "bicentennial-main", plugin_config=settings)

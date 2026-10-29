@@ -241,6 +241,7 @@ class HermesAdapter:
         gate, restarts, finals, compaction, self._wiped = [], [], [], False, False
         self.end_threads = None
         t = {"spawn": [], "open": [], "turn": [], "drain": [], "resume": []}
+        failures = None
         try:
             self._gate(gate)
             with self.egress.forking:  # no sampler fork may hold the ledger's flock while it is reopened
@@ -294,9 +295,18 @@ class HermesAdapter:
             if c["stopped"] or c["write_failures"] > failures:
                 raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")
             t["close"] = _ms(t0)
-        except BaseException:
+        except BaseException as error:
             if self._worker is not None:
                 self._worker.kill()
+            if isinstance(error, HarnessFailed) and str(error) in (
+                    "turn_timeout", "end_timeout", "exit_timeout") and failures is not None:
+                c = d.control()
+                if c["stopped"]:
+                    raise HarnessFailed("director_stopped") from error
+                if c["write_failures"] > failures:
+                    raise HarnessFailed("write_failure") from error
+                if c["inflight"] > 0:
+                    raise HarnessFailed("director_inflight") from error
             raise
         finally:
             self._held = None
