@@ -1,12 +1,15 @@
 """Socket and memory sampler for harness worker processes (S6a replay.py Egress, promoted). Once a second it lists
 every registered pid, its process group and descendants, reads sockets with lsof and resident memory with ps, and keeps
-every endpoint that is not loopback. A wildcard bind (lsof's `*`) counts as non-loopback."""
+every endpoint that is not loopback. A wildcard bind (lsof's `*`) counts as non-loopback.
+On macOS, TCP and UDP rows named exactly `*:*` are unbound sockets and are ignored."""
 
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
 LOOPBACK = frozenset(("127.0.0.1", "[::1]", "localhost"))
+PLATFORM = sys.platform
 
 
 def hosts(name: str) -> list[str]:
@@ -18,6 +21,12 @@ def lsof_names(stdout: str) -> list[str]:
     """The NAME field of each lsof row after the header; a trailing `(STATE)` column is skipped."""
     rows = [line.split() for line in stdout.splitlines()[1:] if line.strip()]
     return [row[-2] if row[-1].endswith(")") else row[-1] for row in rows]
+
+
+def lsof_endpoints(stdout: str) -> list[tuple[str, str]]:
+    """The NODE (protocol) and NAME fields, skipping a trailing `(STATE)` column."""
+    rows = [line.split() for line in stdout.splitlines()[1:] if line.strip()]
+    return [(row[-3], row[-2]) if row[-1].endswith(")") else (row[-2], row[-1]) for row in rows]
 
 
 def loopback(name: str) -> bool:
@@ -66,17 +75,20 @@ class Egress(threading.Thread):
             rss = _out(["ps", "-o", "rss=", "-p", str(pid)]).strip()
             if not rss.isdigit():
                 continue  # exited: not a sample
-            names = lsof_names(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
-            non_loopback = {n for n in names if not loopback(n)}
+            endpoints = lsof_endpoints(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
+            non_loopback = {n for protocol, n in endpoints if not loopback(n)
+                            and not (PLATFORM == "darwin" and protocol in {"TCP", "UDP"} and n == "*:*")}
             if non_loopback and pid not in self.commands:
                 try:
-                    self.commands[pid] = Path(_out(["ps", "-o", "comm=", "-p", str(pid)]).strip()).name
+                    comm = Path(_out(["ps", "-o", "comm=", "-p", str(pid)]).strip()).name
+                    if comm:
+                        self.commands[pid] = comm
                 except (OSError, subprocess.SubprocessError):
                     pass  # diagnostic only: the endpoint is still recorded, and a later sample retries
             with self._lock:
                 self.samples, self.rss_peak_kib = self.samples + 1, max(self.rss_peak_kib, int(rss))
                 self.per_pid[str(pid)] = self.per_pid.get(str(pid), 0) + 1
-                self.seen.update(n for n in names if not loopback(n))
+                self.seen.update(non_loopback)
                 for name in non_loopback - sampled:
                     first, comm, count = self.non_loopback_seen.get(name, (pid, "", 0))
                     if first == pid and not comm:

@@ -300,7 +300,7 @@ def test_sampler_non_loopback_detail(monkeypatch):
                 commands.append(argv)
                 return f"/synthetic/path with spaces/worker {argv[-1]}\n"
             return "8\n"
-        names = ["127.0.0.1:1234", "[::1]:1234"] if argv[-1] == "42" else ["*:*", "*:*", "192.0.2.1:443"]
+        names = ["127.0.0.1:1234", "[::1]:1234"] if argv[-1] == "42" else ["*:5353", "*:5353", "192.0.2.1:443"]
         return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + "\n".join(
             f"worker {argv[-1]} user 3u IPv4 0 0t0 TCP {name}" for name in names)
 
@@ -309,14 +309,14 @@ def test_sampler_non_loopback_detail(monkeypatch):
     sampler.add(42)
     sampler.sample()
     assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "42": 1}, rss_peak_kib=8,
-        non_loopback=["*:*", "192.0.2.1:443"], non_loopback_seen=[
-            "egress name=*:* pid=40 comm=worker 40 samples=1",
+        non_loopback=["*:5353", "192.0.2.1:443"], non_loopback_seen=[
+            "egress name=*:5353 pid=40 comm=worker 40 samples=1",
             "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=1"])
     sampler.discard(40)
     sampler.add(41)
     sampler.sample()
     assert sampler.summary()["non_loopback_seen"] == [
-        "egress name=*:* pid=40 comm=worker 40 samples=2",
+        "egress name=*:5353 pid=40 comm=worker 40 samples=2",
         "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=2"]
     sampler.add(40)
     sampler.sample()
@@ -325,7 +325,44 @@ def test_sampler_non_loopback_detail(monkeypatch):
 
 
 
-def test_sampler_comm_failure_keeps_observation(monkeypatch):
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
+    sampler, commands = egress.Egress(), []
+    rows = ["TCP *:* (CLOSED)", "UDP *:*", "ICMP *:*", "UDP *:5353", "TCP *:8080 (LISTEN)",
+            "TCP 10.0.0.1:50000->192.0.2.1:443 (ESTABLISHED)",
+            "TCP 127.0.0.1:50000->192.0.2.2:443 (ESTABLISHED)",
+            "TCP 192.0.2.3:50000->127.0.0.1:443 (ESTABLISHED)", "UDP 127.0.0.1:5353"]
+
+    def output(argv):
+        if argv[:2] == ["ps", "-A"]:
+            return "40 1 40\n41 1 41\n"
+        if argv[0] == "ps":
+            if argv[2] == "comm=":
+                commands.append(int(argv[-1]))
+                return f"/synthetic/worker{argv[-1]}\n"
+            return "8\n"
+        selected = rows[:2] if argv[-1] == "40" else rows
+        return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + "\n".join(
+            f"worker {argv[-1]} user 3u IPv4 0 0t0 {row}" for row in selected)
+
+    monkeypatch.setattr(egress, "PLATFORM", platform)
+    monkeypatch.setattr(egress, "_out", output)
+    assert not egress.loopback("*:*")
+    sampler.add(40)
+    sampler.add(41)
+    sampler.sample()
+    names = ["*:*", "*:5353", "*:8080", "10.0.0.1:50000->192.0.2.1:443",
+             "127.0.0.1:50000->192.0.2.2:443", "192.0.2.3:50000->127.0.0.1:443"]
+    first = 41 if platform == "darwin" else 40
+    assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "41": 1}, rss_peak_kib=8,
+        non_loopback=names, non_loopback_seen=[
+            f"egress name={name} pid={first if name == '*:*' else 41} "
+            f"comm=worker{first if name == '*:*' else 41} samples=1" for name in names])
+    assert commands == ([41] if platform == "darwin" else [40, 41])
+
+
+@pytest.mark.parametrize("failure", ["timeout", "empty"])
+def test_sampler_comm_failure_keeps_observation(monkeypatch, failure):
     # A failed command lookup is diagnostic only: the endpoint still counts, and a later sample fills the name.
     sampler, fail = egress.Egress(), [True]
 
@@ -335,7 +372,9 @@ def test_sampler_comm_failure_keeps_observation(monkeypatch):
         if argv[0] == "ps":
             if argv[2] == "comm=":
                 if fail.pop() if fail else False:
-                    raise subprocess.TimeoutExpired(argv, 30)
+                    if failure == "timeout":
+                        raise subprocess.TimeoutExpired(argv, 30)
+                    return ""
                 return "/synthetic/worker\n"
             return "8\n"
         return ("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
