@@ -267,9 +267,11 @@ def test_twin_branch_uses_the_residual_correlation(params, monkeypatch):
     (-0.006136, -0.006136, math.nextafter(-1.0, 0.0)),
     (0.006, -0.006, math.nextafter(1.0, 0.0)),
     (-2.0, 1.5, -0.9999),
-    (0.3, 0.31, 0.99995),
+    (-0.006, -0.006, -0.99999),
 ])
 def test_phi2_stays_within_frechet_bounds(h, k, rho):
+    # Unclamped, Simpson's end panel puts these outside the bounds by about 2.2e-4,
+    # 2.2e-4, 1e-11 and 1.5e-5.
     normal = NormalDist()
     value = phi2(h, k, rho)
     assert max(0.0, normal.cdf(h) + normal.cdf(k) - 1) <= value <= normal.cdf(min(h, k))
