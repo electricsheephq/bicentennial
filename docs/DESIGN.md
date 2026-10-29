@@ -117,11 +117,11 @@ The Phase 0 survey covered six families and about 300 benchmarks and methods, in
 Bicentennial builds on prior work rather than around it. It borrows, with credit:
 - generator-first ground truth with validity intervals and as-of questions (Ground Truth First; also MemSim, the GoodAI LTM benchmark);
 - prospective-memory scoring with lures and due sets (PM-Bench);
-- history-dependent task validation (DolphinBench, MemoryArena);
+- history-dependent task validation, including earlier-session evidence scored by hidden executable oracles (DolphinBench, MemoryArena, DreamBench-SWE);
 - write-step scoring (HaluMem);
 - shared-memory governance scoring (GateMem);
 - forgetting probes through derived artifacts (Bemula, AfterDeleteBench);
-- constraint loss through compaction (ConstraintRot, ConPACT, ContinuityBench, ContextEcho);
+- constraint loss through compaction, including multi-round decay under a production compactor and full-history against summary-only continuations (ConstraintRot, ConPACT, ContinuityBench, ContextEcho, The Compaction Cliff, Compact-Bench);
 - no-literal-match items (NoLiMa) and aggregation items (Oolong);
 - item filters (LoCoMo-Plus, ConvoMem, LongMemEval-V2);
 - historical-belief and over-update probes (AToKe, Belief-R) and propagation probes (RippleEdits, MQuAKE);
