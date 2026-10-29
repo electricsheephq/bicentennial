@@ -34,7 +34,12 @@ def test_source_checkout_ignores_git_location_variables(git_checkouts, monkeypat
     (root / "pyproject.toml").touch()
     clean = cli._source_checkout(root)
     assert clean is (not nested)
-    for name, value in git_checkouts.conflict.items():
+    # Nested: GIT_DIR alone makes git take the working directory as the top level, so an
+    # unfixed gate would accept the nested folder. With all four set it would refuse it
+    # either way, and the case could not fail.
+    conflict = ({"GIT_DIR": git_checkouts.conflict["GIT_DIR"]} if nested
+                else git_checkouts.conflict)
+    for name, value in conflict.items():
         monkeypatch.setenv(name, value)
     assert cli._source_checkout(root) == clean
 
