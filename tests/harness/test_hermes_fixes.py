@@ -286,6 +286,41 @@ def test_sampler_keeps_orphaned_group_members(monkeypatch):
     assert sampled == [41]
 
 
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
+    rows = ["TCP *:* (CLOSED)", "UDP *:*", "ICMP *:*", "UDP *:5353", "TCP *:8080 (LISTEN)",
+            "TCP 10.0.0.1:50000->192.0.2.1:443 (ESTABLISHED)",
+            "TCP 127.0.0.1:50000->192.0.2.2:443 (ESTABLISHED)",
+            "TCP 192.0.2.3:50000->127.0.0.1:443 (ESTABLISHED)", "UDP 127.0.0.1:5353"]
+
+    def output(argv):
+        if argv[:2] == ["ps", "-A"]:
+            return "40 1 40\n41 1 41\n"
+        if argv[0] == "ps":
+            return "8\n"
+        selected = rows[:2] if argv[-1] == "40" else rows
+        return "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + "\n".join(
+            f"worker {argv[-1]} user 3u IPv4 0 0t0 {row}" for row in selected)
+
+    monkeypatch.setattr(egress, "PLATFORM", platform)
+    monkeypatch.setattr(egress, "_out", output)
+    assert not egress.loopback("*:*")
+    # Pid 40 holds only unbound TCP and UDP sockets, so on macOS it has no endpoint
+    alone = egress.Egress()
+    alone.add(40)
+    alone.sample()
+    unbound = [] if platform == "darwin" else ["*:*"]
+    assert alone.summary() == dict(samples=1, per_pid_samples={"40": 1}, rss_peak_kib=8, non_loopback=unbound)
+    # ICMP `*:*`, wildcard binds with a port and connections with a non-loopback side still count
+    sampler = egress.Egress()
+    sampler.add(40)
+    sampler.add(41)
+    sampler.sample()
+    assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "41": 1}, rss_peak_kib=8,
+        non_loopback=["*:*", "*:5353", "*:8080", "10.0.0.1:50000->192.0.2.1:443",
+                      "127.0.0.1:50000->192.0.2.2:443", "192.0.2.3:50000->127.0.0.1:443"])
+
+
 def test_relative_checkout_is_absolute_before_spawn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(adapter, "verify_pin", lambda checkout, pin: "fake-pin")
