@@ -20,6 +20,9 @@ from types import SimpleNamespace
 import pytest
 
 from bicentennial.canon import canon, sha256_canon
+from bicentennial.controls.cache import CONTROL_FILES, PACKAGE_ROOT, READER_FILES, code_sha256
+from bicentennial.packs.manifest import file_manifest, tree_sha256
+from bicentennial.packs.scoring import SCORING_FILES
 from bicentennial.report.card import assemble, finalize
 from bicentennial.report.junit import item_suite, junit_xml
 from bicentennial.report.receipt import build_receipt, loop_time
@@ -52,13 +55,13 @@ def dump(path, value):
     path.write_bytes(canon(value))
 
 
-def card(system, tier, verdict, arm="system"):
+def card(system, tier, verdict, arm="system", *, pack_hash=H0):
     source = json.loads((ROOT / "tests/fixtures/aggregate/two_lives.json").read_bytes())
     example = json.loads((ROOT / "tests/fixtures/scoring/contracts.json").read_bytes())["contracts"]["card_ring0"]
     entry = tomllib.loads((ROOT / "systems/registry/hermes-native.toml").read_text())
     entry["name"] = system
     pins = {k: "a" * len(v) for k, v in example["pins"].items() if k != "masks_hash"}
-    pins.update(benchmark_commit=C, pack_hash=H0 if tier == "T0" else H1)
+    pins.update(benchmark_commit=C, pack_hash=pack_hash if tier == "T0" else H1)
     if system in accept.SYSTEMS:
         artifact = tomllib.loads((ROOT / "systems/registry" / f"{system}.toml").read_text())["artifact"]
         pins["system_hash"] = sha256_canon([artifact])
@@ -87,12 +90,37 @@ def receipt(*, busy=False, ms=1000):
         ports=[43210], temporary_paths=["/sandbox/transient-run"], raw_body_digest="a" * 64)
 
 
+def pack_installation(packs, rels):
+    """A minimal installation with real manifests, code pins, hash and modes."""
+    for rel in rels:
+        directory = packs / rel
+        dump(directory / "sealed/scoring.json", {})
+        (directory / "sealed/example.txt").write_bytes(b"fixture\n")
+        dump(directory / "manifest.json", dict(files=file_manifest(directory),
+                                               pins=dict(scoring_sha256=sha256_canon({}))))
+    scorer = [p.relative_to(PACKAGE_ROOT).as_posix()
+              for p in sorted((PACKAGE_ROOT / "score").glob("*.py"))]
+    pins = {name: code_sha256(paths) for name, paths in (
+        ("scorer_sha256", scorer), ("controls_sha256", CONTROL_FILES),
+        ("reader_sha256", READER_FILES), ("scoring_code_sha256", SCORING_FILES))}
+    dump(packs / "index.json", dict(tier="T0", packs={p: {} for p in rels},
+                                   harness_artifacts=[], pins=pins | dict(harness_pin=sha256_canon([]))))
+    for path in [packs, *packs.rglob("*")]:
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    return tree_sha256(packs)
+
+
+def writable(root):
+    for path in [root, *root.rglob("*")]:
+        path.chmod(0o755 if path.is_dir() else 0o644)
+
+
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONHASHSEED", "0")
     runs, packs = tmp_path / "runs", tmp_path / "packs/T0"
     rels = ("pack/G2/a/example/6101", "pack/G2/b/example/6102")
-    dump(packs / "index.json", dict(tier="T0", packs={p: {} for p in rels}))
+    pack_hash = pack_installation(packs, rels)
     inv = [Verdict(n, "NOT_EXERCISED" if n == "INV-FORGET" else "PASS", 1, 0, (), (), (), ()).to_obj()
            for n in INVARIANTS]
     control = dict(canary=source_canary(), label=controls.WIPED_LABEL, wipes=[], floor_mismatches=[])
@@ -108,7 +136,7 @@ def tree(tmp_path, monkeypatch):
                     arm = "system" if tier == "t0" else unit
                     verdict = "PASS" if tier == "t0" or (arm == "system" and name != "base") else (
                         "CONFORMANCE_PASS" if arm == "system" else "FAIL")
-                    data = card(system, tier.upper(), verdict, arm)
+                    data = card(system, tier.upper(), verdict, arm, pack_hash=pack_hash)
                     d = directory / unit
                     d.mkdir(parents=True)
                     (d / "card.json").write_bytes(data)
@@ -137,8 +165,11 @@ def tree(tmp_path, monkeypatch):
                     dump(directory / "adapter_invariants.json", inv)
                     dump(directory / "relations.json", {})
                     (directory / "relations.xml").write_bytes(junit_xml([]))
-    return SimpleNamespace(runs=runs, t0_packs=packs, t0_pack_hash=H0, t1_pack_hash=H1,
-                           commit=C, out=tmp_path / "out", rels=rels)
+    try:
+        yield SimpleNamespace(runs=runs, t0_packs=packs, t0_pack_hash=pack_hash, t1_pack_hash=H1,
+                              commit=C, out=tmp_path / "out", rels=rels)
+    finally:
+        writable(packs)
 
 
 def source_canary():
@@ -185,7 +216,9 @@ def rewrite_receipt(path, **changes):
     dump(target, json.loads(target.read_bytes()) | changes)
 
 
-def test_pass_and_repeat(tree, tmp_path, capsys):
+def test_pass_and_repeat(tree, tmp_path, capsys, monkeypatch):
+    before = file_manifest(tree.t0_packs), {p: p.stat().st_mode for p in
+                                         [tree.t0_packs, *tree.t0_packs.rglob("*")]}
     assert accept.main(argv(tree)) == 0
     assert capsys.readouterr().out.endswith("accepted\n")
     m = load_result(tree)
@@ -210,6 +243,122 @@ def test_pass_and_repeat(tree, tmp_path, capsys):
                                            "Acceptance checks", "What this does not prove")]
     assert md.endswith(accept.LIMITS + "\n")
     assert accept.render(m, accept.contracts()) == md
+    # The new validation paths must not change evidence bytes on valid inputs.
+    unchecked = tmp_path / "unchecked"
+    with monkeypatch.context() as patch:
+        patch.setattr(accept, "verify_t0_packs", lambda *args: None)
+        patch.setattr(accept, "xml_structure", lambda *args: None)
+        assert accept.main(argv(tree, unchecked)) == 0
+    assert (tree.out / "RESULT-MANIFEST.json").read_bytes() == (unchecked / "RESULT-MANIFEST.json").read_bytes()
+    assert before == (file_manifest(tree.t0_packs), {p: p.stat().st_mode for p in
+                                                  [tree.t0_packs, *tree.t0_packs.rglob("*")]})
+
+
+@pytest.mark.parametrize("tier,unit", [("t0", None), ("t1", "system"), ("t1", "wiped")])
+@pytest.mark.parametrize("element,attribute", [
+    (".", "tests"), ("testsuite", "skipped"), ("testsuite/testcase", "classname"),
+    ("testsuite/properties/property", "value"),
+])
+def test_junit_required_attributes(tree, tier, unit, element, attribute):
+    target = unit_path(tree, tier=tier, unit=unit or tree.rels[0]) / "junit.xml"
+    root = ET.fromstring(target.read_bytes())
+    del root.find(element).attrib[attribute]
+    target.write_bytes(ET.tostring(root))
+    assert accept.main(argv(tree)) == 1
+    failures = next(c["failures"] for c in load_result(tree)["checks"] if c["name"] == "schema")
+    where = target.relative_to(tree.runs).as_posix()
+    assert [(code, rule) for code, rule in failures if code == "junit_structure"] == [
+        ("junit_structure", where + ":/testsuites" + {
+            ".": "", "testsuite": "/testsuite[1]", "testsuite/testcase": "/testsuite[1]/testcase[1]",
+            "testsuite/properties/property": "/testsuite[1]/properties[1]/property[1]",
+        }[element] + f"/@{attribute}:required")]
+
+
+@pytest.mark.parametrize("mutation", [
+    "root", "count", "element", "attribute", "property", "order", "choice", "detail", "text", "leaf_text",
+])
+def test_junit_structure_rules(tree, mutation):
+    target = unit_path(tree) / "junit.xml"
+    root = ET.fromstring(target.read_bytes())
+    suite = root.find("testsuite")
+    if mutation == "root":
+        root.tag = "report"
+    elif mutation == "count":
+        suite.set("tests", "-1")
+    elif mutation == "element":
+        ET.SubElement(suite, "unknown")
+    elif mutation == "attribute":
+        suite.find("testcase").set("unexpected", "value")
+    elif mutation == "property":
+        suite.find("properties").clear()
+    elif mutation == "order":
+        props = suite.find("properties")
+        suite.remove(props)
+        suite.append(props)
+    elif mutation in ("choice", "detail"):
+        case = suite.find("testcase")
+        for child in list(case):
+            case.remove(child)
+        ET.SubElement(case, "failure", type="QA", message="failure")
+        if mutation == "choice":
+            ET.SubElement(case, "error", type="SYSTEM_FAILURE", message="error")
+        else:
+            del case[0].attrib["type"]
+    elif mutation == "text":
+        suite.text = "unexpected text"
+    else:
+        suite.find("properties/property").text = " "
+    target.write_bytes(ET.tostring(root))
+    assert accept.main(argv(tree)) == 1
+    assert "junit_structure" in codes(load_result(tree))
+
+
+@pytest.mark.parametrize("attribute", ["name", "tests", "failures", "errors"])
+def test_relations_required_attributes(tree, attribute):
+    target = unit_path(tree, tier="t0", unit="relations.xml")
+    root = ET.fromstring(target.read_bytes())
+    del root.attrib[attribute]
+    target.write_bytes(ET.tostring(root))
+    assert accept.main(argv(tree)) == 1
+    check = next(c for c in load_result(tree)["checks"] if c["name"] == "schema")
+    assert check["failures"] == [["relations_structure",
+        target.relative_to(tree.runs).as_posix() + f":/testsuites/@{attribute}:required"]]
+
+
+@pytest.mark.parametrize("mutation", ["removed", "narrowed_index", "byte"])
+def test_t0_pack_hash_verified_before_index_and_per_pack_checks(tree, monkeypatch, capsys, mutation):
+    directory = tree.t0_packs / tree.rels[0]
+    if mutation == "byte":
+        target = directory / "sealed/example.txt"
+        target.chmod(0o644)
+        target.write_bytes(b"Fixture\n")
+        target.chmod(0o444)
+    else:
+        writable(directory)
+        directory.parent.chmod(0o755)
+        shutil.rmtree(directory)
+        directory.parent.chmod(0o555)
+        if mutation == "narrowed_index":
+            target = tree.t0_packs / "index.json"
+            value = json.loads(target.read_bytes())
+            del value["packs"][tree.rels[0]]
+            target.chmod(0o644)
+            dump(target, value)
+            target.chmod(0o444)
+    called = []
+
+    def observe(name, function):
+        def wrapped(*args):
+            called.append(name)
+            return function(*args)
+        return wrapped
+
+    monkeypatch.setattr(accept, "read_index", observe("index", accept.read_index))
+    monkeypatch.setattr(accept.Predicates, "t0_packs", observe("packs", accept.Predicates.t0_packs))
+    assert accept.main(argv(tree)) == 3
+    assert capsys.readouterr() == ("", "t0_pack_hash_mismatch --t0-packs\n")
+    assert called == []
+    assert not tree.out.exists()
 
 
 # Each row declares all primary and secondary failure codes, not only its intended finding.
@@ -387,7 +536,13 @@ def test_input_errors(tree, capsys, name, expected):
     elif name == "truncated":
         (unit_path(tree) / "card.json").write_text("{")
     elif name == "index":
-        dump(tree.t0_packs / "index.json", dict(tier="T1", packs={}))
+        target = tree.t0_packs / "index.json"
+        value = json.loads(target.read_bytes()) | dict(tier="T1", packs={})
+        target.chmod(0o644)
+        dump(target, value)
+        target.chmod(0o444)
+        # Keep installation verification valid to exercise read_index's tier check.
+        args[args.index("--t0-pack-hash") + 1] = tree_sha256(tree.t0_packs)
     assert accept.main(args) == 3
     captured = capsys.readouterr()
     assert captured.err.splitlines()[-1].startswith(expected + " ")
@@ -518,6 +673,57 @@ def test_empty_marker_readings_are_unmeasured(tree, capsys):
     assert result["loop_time"]["T1"]["busy_n"] == 1
 
 
+def test_junit_structure_pinned_to_xsd():
+    xs = "{http://www.w3.org/2001/XMLSchema}"
+    schema = ET.parse(ROOT / "schemas/junit.xsd").getroot()
+    assert [e.get("name") for e in schema.findall(xs + "element")] == [accept.JUNIT_ROOT]
+    groups = {g.get("name"): g for g in schema.findall(xs + "attributeGroup")}
+    types = {t.get("name"): t for t in schema.findall(xs + "complexType")}
+
+    def attributes(container):
+        result = []
+        for node in container:
+            if node.tag == xs + "attributeGroup":
+                assert set(node.attrib) == {"ref"}
+                result.extend(attributes(groups[node.get("ref")]))
+            elif node.tag == xs + "attribute":
+                assert set(node.attrib) == {"name", "type", "use"}
+                assert node.get("use") == "required"
+                assert node.get("type") in ("xs:string", "xs:nonNegativeInteger")
+                result.append((node.get("name"), node.get("type")))
+            else:
+                assert node.tag in (xs + "sequence", xs + "choice")
+        return tuple(sorted(result))
+
+    def occurs(node):
+        maximum = node.get("maxOccurs", "1")
+        return int(node.get("minOccurs", "1")), None if maximum == "unbounded" else int(maximum)
+
+    actual = {}
+    for element in schema.iter(xs + "element"):
+        assert set(element.attrib) <= {"name", "type", "minOccurs", "maxOccurs"}
+        assert element.get("name") not in actual
+        if element.get("type"):
+            assert not list(element)
+            container = types[element.get("type")]
+        else:
+            assert [n.tag for n in element] == [xs + "complexType"]
+            container = element[0]
+        assert not (set(container.attrib) - {"name"})  # mixed content needs a new rule.
+        models = [n for n in container if n.tag in (xs + "sequence", xs + "choice")]
+        assert len(models) <= 1
+        content = None
+        if models:
+            model = models[0]
+            assert set(model.attrib) <= {"minOccurs", "maxOccurs"}
+            assert all(n.tag == xs + "element" for n in model)
+            content = (model.tag.removeprefix(xs), *occurs(model),
+                       tuple((n.get("name"), *occurs(n)) for n in model))
+        actual[element.get("name")] = attributes(container), content
+    assert accept.JUNIT_STRUCTURE == actual
+    assert accept.RELATIONS_STRUCTURE == actual
+
+
 def test_constants():
     assert accept.T1_DISCLOSURES == tuple(n for n, _ in compare.DISCLOSURES)
     assert accept.PLUGIN_T1_DISCLOSURES == tuple(n for n, _ in compare.PLUGIN_DISCLOSURES)
@@ -537,7 +743,8 @@ def test_purity_ast():
     allowed = {"argparse", "hashlib", "json", "os", "re", "sys", "tomllib", "pathlib",
                "dataclasses", "xml.etree.ElementTree", "bicentennial.canon",
                "bicentennial.contracts.run", "bicentennial.report.receipt",
-               "bicentennial.report.determinism", "bicentennial.report.t1_gate"}
+               "bicentennial.report.determinism", "bicentennial.report.t1_gate",
+               "bicentennial.packs.install"}
     for n in ast.walk(parsed):
         if isinstance(n, ast.Import):
             assert all(a.name in allowed for a in n.names)
@@ -552,14 +759,19 @@ def test_purity_ast():
 
 
 def test_purity_import_graph(tree):
-    program = ("import runpy,sys,json; m=runpy.run_path(sys.argv[1]); "
-               "code=m['main'](sys.argv[2:]); print(json.dumps(sorted(sys.modules))); sys.exit(code)")
+    # The mandatory verifier imports read-only helpers from packs, runner.lock,
+    # adapters and scoring. Allow only that dependency closure through the old ban.
+    program = ("import runpy,sys,json; import bicentennial.packs.install; "
+               "verifier_modules=set(sys.modules); m=runpy.run_path(sys.argv[1]); "
+               "code=m['main'](sys.argv[2:]); print(json.dumps(dict(modules=sorted(sys.modules), "
+               "verifier_modules=sorted(verifier_modules)))); sys.exit(code)")
     result = subprocess.run([sys.executable, "-c", program, str(SCRIPT), *argv(tree)],
                             capture_output=True, text=True, env=dict(os.environ, PYTHONHASHSEED="0"))
     assert result.returncode == 0, result.stderr + result.stdout
     modules = json.loads(result.stdout.splitlines()[-1])
     denied = ("harness", "runner", "systems", "director", "api", "sandbox", "probe", "packs")
-    assert not [n for n in modules if n.startswith(tuple("bicentennial." + p for p in denied))]
+    assert not [n for n in set(modules["modules"]) - set(modules["verifier_modules"])
+                if n.startswith(tuple("bicentennial." + p for p in denied))]
 
 
 def test_seeded_receipt_properties(tree):
