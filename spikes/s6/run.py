@@ -175,6 +175,36 @@ def drain_login(cred, root):
             raise CredentialLeak("credential guard stopped a ledger write")
 
 
+def finalise_failure(root, result, *, adapter, cred, login, run):
+    """Persist failure before cleanup; scan even if close or the first drain fails."""
+    _arm_write(root, result)
+    if adapter is not None:
+        try:
+            adapter.close()
+        except BaseException as exc:
+            result["close_failed"] = type(exc).__name__
+    drain_error = None
+    try:
+        drain_login(cred, root)
+    except BaseException as exc:
+        drain_error = exc
+    try:
+        result["credential_scan"] = scan(login, [root], run)
+    finally:
+        try:
+            drain_login(cred, root)
+        except BaseException as exc:
+            if drain_error is None:
+                drain_error = exc
+        finally:
+            _arm_write(root, result)
+    if result["credential_scan"]["hits"] or result["credential_scan"]["unreadable"]:
+        return True
+    if drain_error is not None:
+        raise drain_error
+    return False
+
+
 def run_arm(arm, adapter, script, starts, *, cred, holds, lock, cell=None, raw=None,
             wall_s=ARM_WALL_S, monotonic=time.monotonic) -> dict:
     """Measure sessions in script order; callers supply an initialised empty-store baseline."""
@@ -233,8 +263,14 @@ def run_arm(arm, adapter, script, starts, *, cred, holds, lock, cell=None, raw=N
                 reason = "non_loopback"
                 break
     finally:
-        out["egress"] = adapter.close()
-        drain_login(cred, root)
+        try:
+            out["egress"] = adapter.close()
+        except BaseException as exc:
+            out["close_failed"] = type(exc).__name__
+            _arm_write(root, out)
+            raise
+        finally:
+            drain_login(cred, root)
     reason = reason or stop_reason(cred)
     attempt_sessions = {attempt_id(lock, arm, LIFE_ID, "B0", s["index"], 0): s["index"]
                         for s in script["sessions"]}
@@ -431,10 +467,12 @@ def run_command(args):
     metadata = dict(run=run, lock=lock, routes=table, start_marker=markers,
                     sol_max_output=args.sol_max_output, sol_max_output_source=args.sol_max_output_source,
                     max_sends=args.max_sends, script_sha256=script_hash)
+    stage = "build_stack"
     try:
         responder, cred, holds = build_stack(entry, spend_path, auth=None,
             base_url=os.environ["BICENTENNIAL_SOL_BASE_URL"], max_output=args.sol_max_output,
             max_sends=args.max_sends, login=login)
+        stage = "adapter"
         adapter = HermesAdapter(entry, script=script, route_table=RouteTable.load(table),
             schedule=faults, responder=responder, clock=SimClock(root / "clock.json", starts[1], STEP_S),
             root=root, scratch=args.scratch, life=LIFE_ID, branch="B0", run=run, checkout=checkout,
@@ -442,27 +480,19 @@ def run_command(args):
             kill_mode="boundary", window=FULL_WINDOW)
         adapter.director.guard = NeedleGuard(login, base=Guard([]))
         if args.arm == "mem0-oss":
+            stage = "plugin_cell"
             cell = PluginCell(entry, adapter)
+            stage = "plugin_install"
             cell.install(args.mem0_source, alias="bicentennial-main")
+        stage = "initialise"
         initial = initialise(adapter, starts, lock, cell)
     except BaseException as exc:
-        mem0_pin = isinstance(exc, PinMismatch) and args.arm == "mem0-oss"
+        mem0_pin = isinstance(exc, PinMismatch) and stage == "plugin_install"
         label = ("initial_settle_failed" if isinstance(exc, HarnessFailed) and
                  exc.args == ("initial_settle_failed",) else type(exc).__name__)
         result = (dict(status="not_run", reason="mem0_pin_mismatch", inputs=metadata) if mem0_pin else
                   dict(status="stopped", stop_reason="init_failed:" + label, inputs=metadata))
-        _arm_write(root, result)
-        try:
-            if adapter is not None:
-                adapter.close()
-        finally:
-            drain_login(cred, root)
-        try:
-            result["credential_scan"] = scan(login, [root], run)
-        finally:
-            drain_login(cred, root)
-        _arm_write(root, result)
-        if result["credential_scan"]["hits"] or result["credential_scan"]["unreadable"]:
+        if finalise_failure(root, result, adapter=adapter, cred=cred, login=login, run=run):
             return 1
         if mem0_pin:
             print("mem0_pin_mismatch")
@@ -470,19 +500,30 @@ def run_command(args):
         if isinstance(exc, PinMismatch):
             raise Stop("hermes_pin_mismatch") from None
         raise
-    result = run_arm(args.arm, adapter, script, starts, cred=cred, holds=holds, lock=lock,
-                     cell=cell, raw=raw, wall_s=max(0, ARM_WALL_S - (time.monotonic() - began)))
-    result["session_loop_wall_ms"] = result["wall_ms"]
-    result["wall_ms"] = round((time.monotonic() - began) * 1000)
-    spend = read_json(spend_path)
-    result.update(inputs=metadata, initial=initial, harness=adapter.harness_record(),
-                  settled=spend["settled"], refused_calls=spend["refused_calls"])
-    _arm_write(root, result)
+    result = None
     try:
-        result["credential_scan"] = scan(login, [root], run)
-    finally:
-        drain_login(cred, root)
-    _arm_write(root, result)
+        result = run_arm(args.arm, adapter, script, starts, cred=cred, holds=holds, lock=lock,
+                         cell=cell, raw=raw, wall_s=max(0, ARM_WALL_S - (time.monotonic() - began)))
+        result["session_loop_wall_ms"] = result["wall_ms"]
+        result["wall_ms"] = round((time.monotonic() - began) * 1000)
+        spend = read_json(spend_path)
+        result.update(inputs=metadata, initial=initial, harness=adapter.harness_record(),
+                      settled=spend["settled"], refused_calls=spend["refused_calls"])
+        _arm_write(root, result)
+        try:
+            result["credential_scan"] = scan(login, [root], run)
+        finally:
+            drain_login(cred, root)
+        _arm_write(root, result)
+    except BaseException as exc:
+        if result is None:
+            path = root / "arm.json"
+            result = read_json(path) if path.exists() else {}
+        result.update(status="stopped", stop_reason="replay_failed:" + type(exc).__name__,
+                      inputs=metadata, initial=initial, wall_ms=round((time.monotonic() - began) * 1000))
+        if finalise_failure(root, result, adapter=adapter, cred=cred, login=login, run=run):
+            return 1
+        return 4
     if result["credential_scan"]["hits"] or result["credential_scan"]["unreadable"]:
         return 1
     if result["settled"]:
@@ -518,8 +559,12 @@ def measurements(result, rows, blobs, script, plans):
         else:
             probes.append(index)
             timing = session["timings_ms"]
-            fixed.append(sum(timing.get("spawn", [])) + sum(timing.get("open", [])) + timing.get("close", 0))
-            own_turn.append(max(0, sum(timing.get("turn", [])) - total.held_ms))
+            turns, drains = timing.get("turn", []), timing.get("drain", [])
+            if len(drains) != len(turns) + 1:
+                raise ValueError("summary_drain_mismatch")
+            fixed.append(sum(timing.get("spawn", [])) + sum(timing.get("open", [])) +
+                         timing.get("close", 0) + drains[-1])
+            own_turn.append(max(0, sum(turns) + sum(drains[:-1]) - total.held_ms))
             episode_cost += replace(total, wall_ms=0)
     n_items = sum(probe_sizes[i] for i in probes)
     episode = episode_cost * Fraction(1, n_items) if n_items else Cost()
@@ -589,12 +634,17 @@ def summarise(args):
                           "artifact.sha256" in registry.unmeasured(load_entry(arm)) else "no_run")
         else:
             result = read_json(path)
-        if result["status"] == "not_run":
-            for key in ("arms", "bytes", "terms", "projection"):
-                obj[key][arm] = {k: result[k] for k in ("status", "reason")}
-            continue
         scan_result = result.get("credential_scan", {})
-        if scan_result.get("hits") or scan_result.get("unreadable") or not scan_result:
+        if scan_result.get("hits") or scan_result.get("unreadable"):
+            raise CredentialLeak("summary requires a clean credential scan")
+        if result["status"] == "not_run" or result.get("close_failed"):
+            refusal = (dict(status="not_run", reason="close_failed:" + result["close_failed"])
+                       if result.get("close_failed") else
+                       {k: result[k] for k in ("status", "reason")})
+            for key in ("arms", "bytes", "terms", "projection"):
+                obj[key][arm] = refusal
+            continue
+        if not scan_result:
             raise CredentialLeak("summary requires a clean credential scan")
         if result["inputs"]["script_sha256"] != digest(args.life / "script.json"):
             raise ValueError("summary_script_mismatch")
@@ -670,7 +720,8 @@ def main(argv=None) -> int:
         refused = isinstance(exc, SystemRefused) or (args.command in ("summarise", "build") and
                                                    isinstance(exc, (ValueError, FileExistsError)))
         label = (exc.args[0] if args.command == "summarise" and isinstance(exc, ValueError) and
-                 exc.args in (("summary_script_mismatch",), ("summary_session_mismatch",)) else type(exc).__name__)
+                 exc.args in (("summary_script_mismatch",), ("summary_session_mismatch",),
+                              ("summary_drain_mismatch",)) else type(exc).__name__)
         print(label, file=sys.stderr)
         return 3 if refused else 4
 

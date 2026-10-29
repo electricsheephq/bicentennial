@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -182,7 +183,7 @@ class FakeAdapter:
         return SimpleNamespace(session=index, kind="replay", turns_ok=1, finals_matched=1,
                                restarts=(), compaction_expected=False, summariser_records=0,
                                surface_hash="a" * 64, gate=(), end_threads=(),
-                               timings_ms=dict(spawn=[3], open=[4], turn=[10], close=5),
+                               timings_ms=dict(spawn=[3], open=[4], turn=[10], drain=[0, 0], close=5),
                                finals=((1, "probe final must stay out of artifacts"),))
 
     def records(self):
@@ -288,6 +289,44 @@ def ready_preflight(monkeypatch):
     monkeypatch.setattr(s6.shutil, "disk_usage", lambda path: SimpleNamespace(free=150_000_000_000))
     monkeypatch.setattr(s6, "read_marker", lambda: (order.append("marker") or Marker(0, False, "idle")))
     return order
+
+
+@pytest.fixture
+def fake_replay(built, tmp_path, monkeypatch, offline_login):
+    ready_preflight(monkeypatch)
+    cred = SimpleNamespace(login=offline_login, state=lambda: {}, served_identities=lambda: {})
+    holds = SimpleNamespace(at_boundary=lambda _: dict(reasons=[], held_ms=0))
+
+    def stack(entry, path, **kwargs):
+        Spend(path, 0, Price(0, 0))
+        return None, cred, holds
+
+    monkeypatch.setattr(s6, "build_stack", stack)
+    adapter = FakeAdapter(tmp_path / "fake-adapter")
+    adapter.director = SimpleNamespace(guard=None)
+    adapter.harness_record = lambda: dict(name="fake", sha256="a" * 64)
+    run_session = adapter.run_session
+
+    def session(index, **kwargs):
+        result = run_session(index, **kwargs)
+        if index == 201:
+            result.kind = "probe"
+            result.timings_ms.update(turn=[10, 10], drain=[0, 0, 0])
+        return result
+
+    adapter.run_session = session
+
+    def make_adapter(entry, **kwargs):
+        root = kwargs["root"]
+        adapter.paths = dict(root=root, hermes_home=root, home=root)
+        return adapter
+
+    monkeypatch.setattr(s6, "HermesAdapter", make_adapter)
+    monkeypatch.setattr(s6, "initialise", lambda *a: dict(baseline=[0]))
+    args = run_args(tmp_path)
+    args[args.index("--life") + 1] = str(built[0])
+    return SimpleNamespace(args=args, adapter=adapter, holds=holds,
+                           root=tmp_path / "p06-hermes-native", login=offline_login)
 
 
 def test_mem0_cli_blocks_before_preflight_or_login(tmp_path, monkeypatch, capsys):
@@ -416,8 +455,9 @@ def test_recovery_timing_and_own_probe_measurements():
     assert job == 233 and clean["resume"] == [30]
     sessions = [dict(session=110, kind="replay", attempt_id="r", job_ms=job,
                      timings_ms=clean, summariser_records=1),
-                dict(session=201, kind="probe", attempt_id="p", job_ms=160,
-                     timings_ms=dict(spawn=[10], open=[20], turn=[60, 40], close=30), summariser_records=0)]
+                dict(session=201, kind="probe", attempt_id="p", job_ms=190,
+                     timings_ms=dict(spawn=[10], open=[20], turn=[60, 40], drain=[5, 10, 15], close=30),
+                     summariser_records=0)]
     rows = [dict(type="request", attempt_id=a, role=role, subrole="cursor", upstream=[dict(role=role,
              resp="blob", diagnostics=[dict(kind="try", sent=True, t_ms=100),
                                          dict(kind="hold", held_ms=20)])])
@@ -427,8 +467,8 @@ def test_recovery_timing_and_own_probe_measurements():
         {"sessions": [dict(index=110, kind="replay"), dict(index=201, kind="probe", turns=[{}, {}])]},
         [dict(index=110, long_sprint=True)])
     assert t.R.wall_ms == 213
-    assert t.e_probe.wall_ms == 100  # fixed 60 + (turn 100 - hold 20) / 2
-    assert metrics["critical_path_lower_bound_ms"] == 313
+    assert t.e_probe.wall_ms == s6.Fraction(245, 2)  # fixed 75 + (turn 100 + drains 15 - hold 20) / 2
+    assert metrics["critical_path_lower_bound_ms"] == 336
     assert metrics["roles"]["write_turn/cursor"]["requests"] == 1
     assert metrics["probe_roles"]["probe_main/cursor"]["input_tokens"] == 10
     assert metrics["recovery_110_120"] == t.R.to_obj()
@@ -438,6 +478,33 @@ def test_recovery_timing_and_own_probe_measurements():
                                    "C_ctrl", "C_ring1", "C_ring2"}
     canon(metrics)
     canon(s6.term_table(t))
+
+
+@pytest.mark.parametrize("slot,share", [(0, s6.Fraction(1, 4)), (2, s6.Fraction(1, 2))])
+def test_probe_drain_cost_shares(slot, share):
+    sessions = [dict(session=i, kind="probe", attempt_id=str(i), job_ms=160,
+                     timings_ms=dict(spawn=[10], open=[20], turn=[40, 60], drain=[0, 0, 0], close=30),
+                     summariser_records=0) for i in (201, 202)]
+    script = dict(sessions=[dict(index=i, kind="probe", turns=[{}, {}]) for i in (201, 202)])
+    before, _ = s6.measurements(dict(sessions=sessions), [], {}, script, [])
+    sessions[0]["timings_ms"]["drain"][slot] += 40
+    sessions[0]["job_ms"] += 40
+    after, _ = s6.measurements(dict(sessions=sessions), [], {}, script, [])
+    # Four items share turn work; two sessions share fixed work.
+    assert after.e_probe.wall_ms - before.e_probe.wall_ms == 40 * share
+    assert before.R == after.R == s6.Cost()
+
+
+@pytest.mark.parametrize("drains", [None, [], [5, 10], [5, 10, 15, 20]])
+def test_probe_drain_length_mismatch_is_refused(drains):
+    timing = dict(spawn=[10], open=[20], turn=[40, 60], close=30)
+    if drains is not None:
+        timing["drain"] = drains
+    result = dict(sessions=[dict(session=201, kind="probe", attempt_id="p", job_ms=160,
+                                 timings_ms=timing, summariser_records=0)])
+    script = dict(sessions=[dict(index=201, kind="probe", turns=[{}, {}])])
+    with pytest.raises(ValueError, match="^summary_drain_mismatch$"):
+        s6.measurements(result, [], {}, script, [])
 
 
 def test_last_session_drift_and_quota_are_stops(tmp_path):
@@ -884,6 +951,123 @@ def test_unusable_scratch_is_preflight_refusal(tmp_path, monkeypatch, capsys, sc
     assert not list(tmp_path.glob("p06-*"))
 
 
+@pytest.mark.parametrize("failure_session", [1, 2])
+@pytest.mark.parametrize("scan_mode,code", [("clean", 4), ("hit", 1), ("unreadable", 1)])
+def test_replay_operational_failure_scans_root(
+        fake_replay, monkeypatch, failure_session, scan_mode, code):
+    run = fake_replay
+    run_session = run.adapter.run_session
+    planted = run.root / "checkpoint.txt"
+
+    def fail(index, **kwargs):
+        if index == failure_session:
+            run.login.log.append(dict(type="offline_failure", label="synthetic"))
+            if scan_mode != "clean":
+                planted.write_text(run.login.token())
+            raise sqlite3.OperationalError("private checkpoint diagnostic")
+        return run_session(index, **kwargs)
+
+    run.adapter.run_session = fail
+    read_bytes = Path.read_bytes
+
+    def read(path):
+        if scan_mode == "unreadable" and path == planted:
+            raise PermissionError("offline unreadable file")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    scan = s6.scan
+    scans = []
+
+    def scan_and_log(login, paths, run_id):
+        assert paths == [run.root] and not login.log and run.adapter.closed
+        assert s6.read_json(run.root / "arm.json")["status"] == "stopped"
+        result = scan(login, paths, run_id)
+        scans.append(result)
+        login.log.append(dict(type="offline_scan", label="synthetic"))
+        return result
+
+    monkeypatch.setattr(s6, "scan", scan_and_log)
+    assert s6.main(run.args) == code
+    result = s6.read_json(run.root / "arm.json")
+    assert result["status"] == "stopped"
+    assert result["stop_reason"] == "replay_failed:OperationalError"
+    assert len(result.get("sessions", [])) == failure_session - 1
+    if failure_session == 2:
+        assert result["sessions_run"] == 1 and result["sessions"][0]["session"] == 1
+    assert scans == [result["credential_scan"]]
+    assert result["credential_scan"]["hits"] == (
+        {"synthetic_access_token": 1} if scan_mode == "hit" else {})
+    assert result["credential_scan"]["unreadable"] == int(scan_mode == "unreadable")
+    assert not run.login.log
+    assert [json.loads(row) for row in (run.root / "login.jsonl").read_bytes().splitlines()] == [
+        dict(type="offline_failure", label="synthetic"), dict(type="offline_scan", label="synthetic")]
+    assert b"private checkpoint diagnostic" not in (run.root / "arm.json").read_bytes()
+
+
+def test_replay_escaping_harness_failure_keeps_completed_session(fake_replay):
+    run = fake_replay
+
+    def boundary(previous):
+        if previous is not None:
+            raise s6.HarnessFailed("private boundary diagnostic")
+        return dict(reasons=[], held_ms=0)
+
+    run.holds.at_boundary = boundary
+    assert s6.main(run.args) == 4
+    result = s6.read_json(run.root / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "replay_failed:HarnessFailed"
+    assert result["sessions_run"] == 1 and result["sessions"][0]["session"] == 1
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+
+
+@pytest.mark.parametrize("phase", ["spend", "harness_record", "scan"])
+def test_post_replay_failure_is_finalised(fake_replay, monkeypatch, phase):
+    run = fake_replay
+
+    def fail(*args, **kwargs):
+        raise s6.HarnessFailed("private finalisation diagnostic")
+
+    if phase == "spend":
+        read_json = s6.read_json
+
+        def read(path):
+            return fail() if path == run.root / "spend.json" else read_json(path)
+
+        monkeypatch.setattr(s6, "read_json", read)
+    elif phase == "harness_record":
+        run.adapter.harness_record = fail
+    else:
+        scan, calls = s6.scan, []
+
+        def scan_once(*args):
+            calls.append(True)
+            return fail() if len(calls) == 1 else scan(*args)
+
+        monkeypatch.setattr(s6, "scan", scan_once)
+    assert s6.main(run.args) == 4
+    result = s6.read_json(run.root / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "replay_failed:HarnessFailed"
+    assert result["sessions_run"] == 201 and len(result["sessions"]) == 201
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+    assert run.adapter.closed
+
+
+def test_replay_close_failure_is_recorded_and_scanned(fake_replay):
+    run = fake_replay
+
+    def close():
+        raise sqlite3.OperationalError("private close diagnostic")
+
+    run.adapter.close = close
+    assert s6.main(run.args) == 4
+    result = s6.read_json(run.root / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "replay_failed:OperationalError"
+    assert result["close_failed"] == "OperationalError"
+    assert result["sessions_run"] == 201 and len(result["sessions"]) == 201
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+
+
 @pytest.mark.parametrize("phase,exception,code,label", [
     ("build_stack", RuntimeError("private diagnostic"), 4, "RuntimeError"),
     ("HermesAdapter", s6.registry.SystemRefused(["private diagnostic"]), 3, "SystemRefused"),
@@ -928,22 +1112,130 @@ def test_initialisation_failures_record_attempt_and_drain_login(
         assert obj[key]["hermes-native"] == dict(status="not_run", reason="incomplete_life")
 
 
+@pytest.mark.parametrize("drain_failure", [False, True])
+@pytest.mark.parametrize("scan_mode,code", [("clean", 4), ("hit", 1), ("unreadable", 1)])
+def test_initialisation_close_failure_is_scanned_and_refused(
+        built, tmp_path, monkeypatch, offline_login, scan_mode, code, drain_failure):
+    ready_preflight(monkeypatch)
+    login = offline_login
+    if drain_failure:
+        drain, calls = login.drain, []
+
+        def drain_once():
+            calls.append(True)
+            if len(calls) == 1:
+                raise OSError("offline first drain failure")
+            return drain()
+
+        login.drain = drain_once
+    monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, SimpleNamespace(login=login), None))
+    root = tmp_path / "p06-hermes-native"
+    planted = root / "close.txt"
+
+    def close():
+        if scan_mode != "clean":
+            planted.write_text(login.token())
+        login.log.append(dict(type="offline_close", label="synthetic"))
+        raise sqlite3.OperationalError("private close diagnostic")
+
+    adapter = SimpleNamespace(director=SimpleNamespace(guard=None), close=close)
+    monkeypatch.setattr(s6, "HermesAdapter", lambda *a, **k: adapter)
+
+    def fail(*args):
+        raise s6.HarnessFailed("initial_settle_failed")
+
+    monkeypatch.setattr(s6, "initialise", fail)
+    read_bytes = Path.read_bytes
+
+    def read(path):
+        if scan_mode == "unreadable" and path == planted:
+            raise PermissionError("offline unreadable file")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    args = run_args(tmp_path)
+    args[args.index("--life") + 1] = str(built[0])
+    assert s6.main(args) == code
+    result = s6.read_json(root / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "init_failed:initial_settle_failed"
+    assert result["close_failed"] == "OperationalError"
+    assert result["credential_scan"]["hits"] == (
+        {"synthetic_access_token": 1} if scan_mode == "hit" else {})
+    assert result["credential_scan"]["unreadable"] == int(scan_mode == "unreadable")
+    assert not login.log
+    assert s6.read_json(root / "login.jsonl") == dict(type="offline_close", label="synthetic")
+    out = tmp_path / "summary.json"
+    summary_args = SimpleNamespace(out=out, life=built[0], scratch=tmp_path)
+    if scan_mode != "clean":
+        with pytest.raises(s6.CredentialLeak):
+            s6.summarise(summary_args)
+        assert not out.exists()
+    else:
+        assert s6.summarise(summary_args) == 0
+        obj = s6.read_json(out)
+        for key in ("arms", "bytes", "terms", "projection"):
+            assert obj[key]["hermes-native"] == dict(status="not_run", reason="close_failed:OperationalError")
+            assert obj[key]["mem0-oss"] == dict(status="not_run", reason="mem0_blocked")
+
+
+@pytest.mark.parametrize("phase", ["build_stack", "HermesAdapter", "PluginCell", "initialise"])
+def test_mem0_arm_hermes_pin_mismatch_uses_stage(
+        built, tmp_path, monkeypatch, capsys, offline_login, phase):
+    ready_preflight(monkeypatch)
+    entry = s6.load_entry("mem0-oss")
+    entry["artifact"]["sha256"] = "a" * 64
+    original = s6.load_entry
+    monkeypatch.setattr(s6, "load_entry", lambda name: entry if name == "mem0-oss" else original(name))
+    monkeypatch.setattr(s6.registry, "unmeasured", lambda entry: [])
+    monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, SimpleNamespace(login=offline_login), None))
+    closed = []
+    adapter = SimpleNamespace(director=SimpleNamespace(guard=None), close=lambda: closed.append(True))
+    monkeypatch.setattr(s6, "HermesAdapter", lambda *a, **k: adapter)
+    monkeypatch.setattr(s6, "PluginCell", lambda *a: SimpleNamespace(install=lambda *a, **k: None))
+
+    def fail(*args, **kwargs):
+        raise s6.PinMismatch("private pin diagnostic")
+
+    monkeypatch.setattr(s6, phase, fail)
+    args = run_args(tmp_path, "mem0-oss") + ["--mem0-source", str(tmp_path / "source")]
+    args[args.index("--life") + 1] = str(built[0])
+    with pytest.raises(SystemExit) as exc:
+        s6.main(args)
+    assert exc.value.code == 3
+    output = capsys.readouterr()
+    assert output.err == "hermes_pin_mismatch\n" and output.out == ""
+    result = s6.read_json(tmp_path / "p06-mem0-oss" / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "init_failed:PinMismatch"
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+    assert closed == ([] if phase in ("build_stack", "HermesAdapter") else [True])
+
+
+@pytest.mark.parametrize("arm", ["hermes-native", "mem0-oss"])
 @pytest.mark.parametrize("relative,unreadable", [
     ("clock.json", False), ("ledger/init.json", False), ("home/init.txt", False), ("home/init.txt", True)])
-def test_initialisation_failure_scans_root(built, tmp_path, monkeypatch, offline_login, relative, unreadable):
+def test_initialisation_failure_scans_root(built, tmp_path, monkeypatch, offline_login, arm, relative, unreadable):
     ready_preflight(monkeypatch)
     monkeypatch.setattr(s6, "build_stack", lambda *a, **k: (None, SimpleNamespace(login=offline_login), None))
     adapter = SimpleNamespace(director=SimpleNamespace(guard=None), close=lambda: None)
     monkeypatch.setattr(s6, "HermesAdapter", lambda *a, **k: adapter)
-    root = tmp_path / "p06-hermes-native"
+    root = tmp_path / ("p06-" + arm)
     planted = root / relative
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         planted.parent.mkdir(parents=True, exist_ok=True)
         planted.write_text(offline_login.token())
+        if arm == "mem0-oss":
+            raise s6.PinMismatch("offline plugin pin mismatch")
         raise s6.HarnessFailed("initial_settle_failed")
 
     monkeypatch.setattr(s6, "initialise", fail)
+    if arm == "mem0-oss":
+        entry = s6.load_entry(arm)
+        entry["artifact"]["sha256"] = "a" * 64
+        original = s6.load_entry
+        monkeypatch.setattr(s6, "load_entry", lambda name: entry if name == arm else original(name))
+        monkeypatch.setattr(s6.registry, "unmeasured", lambda entry: [])
+        monkeypatch.setattr(s6, "PluginCell", lambda *a: SimpleNamespace(install=fail))
     read_bytes = Path.read_bytes
 
     def read(path):
@@ -964,16 +1256,22 @@ def test_initialisation_failure_scans_root(built, tmp_path, monkeypatch, offline
         return result
 
     monkeypatch.setattr(s6, "scan", scan_and_log)
-    args = run_args(tmp_path)
+    args = run_args(tmp_path, arm)
     args[args.index("--life") + 1] = str(built[0])
+    if arm == "mem0-oss":
+        args += ["--mem0-source", str(tmp_path / "source")]
     assert s6.main(args) == 1
     result = s6.read_json(root / "arm.json")
+    if arm == "mem0-oss":
+        assert result["status"] == "not_run" and result["reason"] == "mem0_pin_mismatch"
     assert scans == [result["credential_scan"]]
     assert result["credential_scan"]["hits"] == ({} if unreadable else {"synthetic_access_token": 1})
     assert result["credential_scan"]["unreadable"] == int(unreadable)
     assert not offline_login.log  # The scan's new login rows are drained again.
     assert s6.read_json(root / "login.jsonl") == dict(type="offline_scan", label="synthetic")
     out = tmp_path / "summary.json"
+    with pytest.raises(s6.CredentialLeak):
+        s6.summarise(SimpleNamespace(out=out, life=built[0], scratch=tmp_path))
     assert s6.main(["summarise", "--scratch", str(tmp_path), "--life", str(built[0]), "--out", str(out)]) == 1
     assert not out.exists()
 
