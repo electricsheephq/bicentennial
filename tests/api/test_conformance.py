@@ -22,7 +22,13 @@ from bicentennial.api.adapters.mutants import (
 from bicentennial.api.adapters.nomemory import NoMemory
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.api.adapters.reference_store import ReferenceStore
-from bicentennial.api.conformance import CHECKS, EXEMPTIONS, LONG_TEXT_CHARS, declared, run
+from bicentennial.api.conformance import (
+    CHECKS,
+    EXEMPTIONS,
+    LONG_TEXT_CHARS,
+    declared,
+    run,
+)
 from bicentennial.packs import build
 
 ADAPTERS = (ReferenceStore, BM25, NoMemory, OracleEvidence, wipe_on_restart,

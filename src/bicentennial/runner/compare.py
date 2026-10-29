@@ -19,7 +19,11 @@ from bicentennial.corpus.run import corpus_suite, run_case
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed
-from bicentennial.harness.hermes.plugin_host import GateRefused, HermesMemoryHost, WriteDelivery
+from bicentennial.harness.hermes.plugin_host import (
+    GateRefused,
+    HermesMemoryHost,
+    WriteDelivery,
+)
 from bicentennial.ledger import LedgerBusy, apply_masks
 from bicentennial.packs.catalogue import load_catalogue
 from bicentennial.packs.install import verify
