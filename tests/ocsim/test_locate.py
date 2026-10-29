@@ -186,11 +186,39 @@ def test_nonfinite_target(cells, tables, target):
 def test_clamps_and_leftmost_plateau(cells):
     table = locate.LocationTable("X", 0.0, 8, (-1 / 256, 0.0, 1 / 256, 2 / 256),
                                  (-10.0, 0.0, 0.0, 10.0), 0.0, 0.0)
-    assert locate.locate(table, cells["X"], -20.0) == -1 / 256
-    assert locate.locate(table, cells["X"], 20.0) == 2 / 256
+    assert locate.locate(table, cells["X"], -10.005) == -1 / 256
+    assert locate.locate(table, cells["X"], 10.005) == 2 / 256
+    for target in (-20.0, 20.0):
+        with pytest.raises(ValueError) as exc:
+            locate.locate(table, cells["X"], target)
+        assert str(exc.value) == "location bracket [-10, 10] does not enclose the target"
     assert locate.locate(table, cells["X"], 0.0) == 0.0
     assert locate.locate(table, cells["X"], -5.0) == -1 / 512
     assert locate.locate(table, cells["X"], 5.0) == 3 / 512
+
+
+@pytest.mark.parametrize("cut", [12.0, -12.0])
+def test_bracket_miss_raises_like_the_exact_solver(cut):
+    # A cut beyond the grid leaves target 0 outside every table value, by about 999 or 910 milli.
+    cell = model.CellModel("X", (-1000, 1000), (cut,), -200.0, 600.0, 0.0, 0.0)
+    table = locate.build_table(cell, 0.0)
+    assert min(abs(table.values[0]), abs(table.values[-1])) > 900
+    message = "location bracket [-10, 10] does not enclose the target"
+    for solve in (locate.table_solver(model.LatentParams((cell,), 0.0, 0.0, 0.0, 0.0)),
+                  lambda c, t: model.solve_location(c, 0.0, t)):
+        with pytest.raises(ValueError) as exc:
+            solve(cell, 0.0)
+        assert str(exc.value) == message
+
+
+def test_bracket_miss_within_tolerance_clamps_like_the_exact_solver():
+    # E(10) is about 1000 - 5.7e-4, so a target 1e-4 below the top misses by less than the tolerance.
+    cell = model.CellModel("Y", (-1000, 0, 1000), (-5.0, 5.0), -200.0, 600.0, 0.0, 0.0)
+    table = locate.build_table(cell, 0.0)
+    target = 1000 - 1e-4
+    assert target - model.BRACKET_TOL_MILLI < table.values[-1] < target
+    assert locate.locate(table, cell, target) == table.thetas[-1] == 10.0
+    assert model.solve_location(cell, 0.0, target) == pytest.approx(10.0, abs=1e-9)
 
 
 def test_table_solver_builds_once_per_cell(cells, tables, monkeypatch):
