@@ -39,6 +39,7 @@ _OWNED_ROUTE_KEYS = {"model", "auxiliary", "fallback_providers", "fallback_model
 
 def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_config: dict | None = None,
                   memory: bool = True, toolsets=T1_TOOLSETS, mcp_servers=None, window=None,
+                  context_engine: str | None = None, plugins_enabled: tuple = (),
                   scripted: bool = False) -> dict:
     if window is not None and (type(window) is not int or window < THRESHOLD_TOKENS):
         raise ValueError("window must be an int of at least 16384")
@@ -46,13 +47,19 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         raise ValueError("a port and an alias are required")
     if plugin is not None and (not isinstance(plugin, str) or not _PLUGIN.fullmatch(plugin)):
         raise ValueError("a memory plug-in is named by ^[a-z0-9][a-z0-9_-]*$")
+    if context_engine is not None and (not isinstance(context_engine, str)
+            or not _PLUGIN.fullmatch(context_engine) or context_engine == "compressor"):
+        raise ValueError("invalid context engine")
+    if type(plugins_enabled) is not tuple or any(not isinstance(d, str) or not _PLUGIN.fullmatch(d)
+                                               for d in plugins_enabled):
+        raise ValueError("invalid enabled plug-in directories")
     if type(memory) is not bool:
         raise ValueError("memory is a bool")
     if type(scripted) is not bool:
         raise ValueError("scripted is a bool")
     if type(toolsets) is not tuple or any(type(t) is not str or not re.fullmatch(r"[a-z0-9_-]+", t) for t in toolsets):
         raise ValueError("toolsets must be a tuple of toolset names")
-    if not memory and (plugin is not None or plugin_config):
+    if not memory and (plugin is not None or plugin_config or context_engine is not None or plugins_enabled):
         raise ValueError("a memory plug-in or plugin_config requires memory enabled")
     base = f"http://127.0.0.1:{port}"
     aux = {t: {"provider": "auto", "model": "bicentennial-summariser" if t == "compression"
@@ -73,18 +80,34 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
             "agent": {"environment_probe": False},
             "platform_toolsets": {"acp": list(toolsets)},
             "compression": {"enabled": True, "threshold_tokens": THRESHOLD_TOKENS, "micro_compact": False}}
+    if context_engine is not None:
+        cfg["context"] = {"engine": context_engine}
+    if plugins_enabled:
+        cfg["plugins"] = {"enabled": list(plugins_enabled)}
     if scripted:
         cfg["tools"] = {"tool_search": {"enabled": "off"}}
         cfg["agent"].update(_SCRIPTED_AGENT)
     if plugin_config is not None:
         if not isinstance(plugin_config, dict):
             raise ValueError("plugin_config must be a dict")
+        for section, owned in (("context", ("engine",)), ("plugins", ("enabled", "isolation"))):
+            if section not in plugin_config:
+                continue
+            settings = plugin_config[section]
+            if not isinstance(settings, dict):
+                raise ValueError(f"plugin_config touches adapter-owned {section}")
+            for key in owned:
+                if key in settings:
+                    raise ValueError(f"plugin_config touches adapter-owned {section}.{key}")
         if _OWNED_ROUTE_KEYS & plugin_config.keys():
             raise ValueError("plugin_config touches adapter-owned routes")
         if ((isinstance(plugin_config.get("tools"), dict) and "tool_search" in plugin_config["tools"])
                 or (isinstance(plugin_config.get("agent"), dict) and _SCRIPTED_AGENT.keys() & plugin_config["agent"].keys())):
             raise ValueError("plugin_config touches adapter-owned scripted settings")
-        _merge_plugin(cfg, plugin_config)
+        _merge_plugin(cfg, {k: v for k, v in plugin_config.items() if k not in {"context", "plugins"}})
+        for section in ("context", "plugins"):
+            if section in plugin_config:
+                cfg.setdefault(section, {}).update(deepcopy(plugin_config[section]))
     if not memory:
         cfg["memory"] = {"memory_enabled": False, "user_profile_enabled": False, "provider": ""}
         cfg["platform_toolsets"] = {"acp": [t for t in toolsets if t not in ("memory", "session_search")]}
@@ -150,7 +173,7 @@ def validate_paths(paths: dict) -> None:
             raise ValueError(f"{key} is a symlink or resolves outside the run root")
 
 
-def worker_env(paths: dict, port: int, clock_path, checkout) -> dict:
+def worker_env(paths: dict, port: int, clock_path, checkout, extra=None) -> dict:
     """Built from an allowlist, never a filtered copy: no inherited provider key or credential reaches Hermes."""
     env = {k: os.environ[k] for k in _PASSED if k in os.environ}
     env.update(HERMES_HOME=str(paths["hermes_home"]), HOME=str(paths["home"]), TMPDIR=str(paths["tmp"]),
@@ -159,4 +182,5 @@ def worker_env(paths: dict, port: int, clock_path, checkout) -> dict:
                HERMES_DISABLE_LAZY_INSTALLS="1", HERMES_ACP_SKIP_CONFIGURED_MCP="1",
                NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
                **dict.fromkeys(_PROXIES, f"http://127.0.0.1:{port}"))
+    env.update(extra or {})
     return env

@@ -742,7 +742,7 @@ def test_cli(monkeypatch):
     args = ["t1", "--system", "s", "--packs", "p", "--pack-hash", "h", "--out", "o"]
     assert cli.main(args) == 2
     assert calls == [["-m", "bicentennial.cli", *args], dict(system="s", packs_dir="p",
-        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, cache=None)]
+        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, model_cache=None, cache=None)]
     assert cli.main(["t0", "--system", "s", "--pack", "all", "--packs", "p",
                      "--pack-hash", "h", "--out", "o"]) == 0
 
@@ -782,3 +782,43 @@ def test_purity_and_masking():
     assert compare._isolated([{"upstream": [{"error": "refused"}]}], {})
     assert not compare._isolated([{"upstream": [{"served_by": "scripted", "diagnostics": ["bad"]}]}], {})
     assert not compare._isolated([], {"non_loopback": ["remote"]})
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_engine_and_cache_disclosures_and_change_refusal(synth, installed, monkeypatch, tmp_path, changed):
+    from bicentennial.systems import hermes_plugin as hp
+
+    name = synth.ctx.entry["name"]
+    monkeypatch.setitem(hp.ENGINES, name, "fixture_engine")
+    cache = tmp_path / "model-cache"
+    cache.mkdir()
+    model = cache / "weights"
+    model.write_bytes(b"before")
+    digest = hp.cache_digest(cache, t1.T1Refused)
+    ctx = replace(synth.ctx, model_cache=cache, model_cache_sha256=digest)
+    run = replace(synth, ctx=ctx)
+    monkeypatch.setattr(t1, "prepare", lambda **kw: ctx)
+    set_run(monkeypatch, run)
+    if changed:
+        real = compare.corpus
+
+        def mutate(*args, **kw):
+            result = real(*args, **kw)
+            model.write_bytes(b"after")
+            return result
+
+        monkeypatch.setattr(compare, "corpus", mutate)
+    out = tmp_path / "out"
+    assert invoke(installed, out, model_cache=cache) == (3 if changed else 0)
+    if changed:
+        assert json.loads((out / "refusal.json").read_bytes())["code"] == "model_cache_changed"
+        no_results(out)
+    else:
+        for arm in compare.GATED:
+            props = properties(out, arm)
+            assert props["t1.model_cache"] == "sha256:" + digest
+            assert props["t1.engine"] == "context engine selected by context.engine; not loaded in corpus hosts"
+            assert props["t1.engine_window"] == ("context_length 65536; the context engine decides when to compress; "
+                "compression.threshold_tokens applies to the built-in compressor only")
+            assert props["t1.corpus_engine"] == "corpus runs Hermes built-in memory, the system's memory layer as shipped"
+            assert all(props[k] == v for k, v in compare.PLUGIN_DISCLOSURES)
