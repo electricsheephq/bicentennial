@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Design erratum, 2026-10-29: certification's size under the t calibration (#240)
+- **DESIGN §7.7, ERRATA-v2.2 E14:** DESIGN's "the rule's size is at most 5%" holds under the t-calibrated bootstrap bounds that #240's ruling adopted (#242, #251), and the operating-characteristic simulation checks it. PREREG-v0.4 fixes the bootstrap, its weights, the draw count and the seed, not the percentile index. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-29: forgetting identical texts and recalling clipped writes (#135)
 - **RING0 §7:** a plug-in host's forget keeps one row for each unselected event with the same written text, and with a search backend it searches each text again after a pass that issued a delete, until a pass issues none. Recall matches a clipped write on its written text, so it is cited. v0.1's frozen kit keeps the old host. No PREREG version change; PREREG-v0.4 remains frozen.
 
