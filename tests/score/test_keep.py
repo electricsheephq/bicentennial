@@ -10,8 +10,9 @@ TIERS = ("K100", "K30", "K10", "K3")
 
 
 def test_non_capping_eight_percent_worked_example():
-    scores = {"K100": 1}
-    result = tier_scores(scores, store_bytes={"K100": 8}, raw_bytes=100, can_cap=False)
+    scores = dict.fromkeys(TIERS, 1)
+    result = tier_scores(scores, store_bytes=dict.fromkeys(TIERS, 8), raw_bytes=100,
+                         can_cap=False)
     assert result == {
         "K100": {"score": Fraction(1), "cause": None},
         "K30": {"score": Fraction(1), "cause": None},
@@ -19,7 +20,7 @@ def test_non_capping_eight_percent_worked_example():
         "K3": {"score": Fraction(0), "cause": "unsupported"},
     }
     assert t_keep(result["K100"]["score"], result["K10"]["score"]) == 1
-    assert scores == {"K100": 1}
+    assert scores == dict.fromkeys(TIERS, 1)
 
 
 def test_capping_above_every_reduced_cap():
@@ -32,17 +33,20 @@ def test_capping_above_every_reduced_cap():
     assert t_keep(result["K100"]["score"], result["K10"]["score"]) == Fraction(1, 6)
 
 
-def test_capping_reads_each_tiers_own_store_size():
-    # Each tier is its own run, so a large K100 store does not zero the reduced tiers.
+@pytest.mark.parametrize("can_cap,cause", [(True, "over_cap"), (False, "unsupported")])
+def test_each_tier_reads_its_own_branch(can_cap, cause):
+    # A large base-life store does not zero a reduced tier whose own branch fits.
     sizes = {"K100": 90, "K30": 30, "K10": 11, "K3": 3}
-    result = tier_scores(dict.fromkeys(TIERS, 1), store_bytes=sizes, raw_bytes=100,
-                         can_cap=True)
+    scores = {"K100": 1, "K30": Fraction(2, 3), "K10": Fraction(1, 3), "K3": -1}
+    before = scores.copy()
+    result = tier_scores(scores, store_bytes=sizes, raw_bytes=100, can_cap=can_cap)
     assert result == {
         "K100": {"score": Fraction(1), "cause": None},
-        "K30": {"score": Fraction(1), "cause": None},
-        "K10": {"score": Fraction(0), "cause": "over_cap"},
-        "K3": {"score": Fraction(1), "cause": None},
+        "K30": {"score": Fraction(2, 3), "cause": None},
+        "K10": {"score": Fraction(0), "cause": cause},
+        "K3": {"score": Fraction(-1), "cause": None},
     }
+    assert scores == before
     assert sizes == {"K100": 90, "K30": 30, "K10": 11, "K3": 3}
 
 
@@ -57,7 +61,7 @@ def test_same_score_at_every_tier_is_keep_score(can_cap, score):
     assert isinstance(actual, Fraction)
 
 
-def test_capping_uses_each_tiers_measured_score_without_mutation():
+def test_measured_scores_are_used_without_mutation():
     scores = {"K100": 1, "K30": Fraction(2, 3), "K10": Fraction(1, 3), "K3": -1}
     before = scores.copy()
     result = tier_scores(scores, store_bytes=dict.fromkeys(TIERS, 0), raw_bytes=100,
@@ -68,13 +72,13 @@ def test_capping_uses_each_tiers_measured_score_without_mutation():
     assert scores == before
 
 
-def test_non_capping_uses_only_k100_measurement():
-    # Reduced-tier scores and store sizes cannot replace the one K100 run.
-    result = tier_scores({"K100": Fraction(2, 3), "K30": -1, "K10": 0, "K3": -1},
-                         store_bytes={"K100": 8, "K3": 0}, raw_bytes=100, can_cap=False)
-    for tier in ("K100", "K30", "K10"):
-        assert result[tier] == {"score": Fraction(2, 3), "cause": None}
-    assert result["K3"] == {"score": Fraction(0), "cause": "unsupported"}
+@pytest.mark.parametrize("can_cap", [True, False])
+def test_tiers_that_did_not_run_are_absent(can_cap):
+    # The board runs K100 and K10; K30 and K3 run only in the robustness study.
+    result = tier_scores({"K100": 1, "K10": Fraction(1, 2)},
+                         store_bytes={"K100": 8, "K10": 8}, raw_bytes=100, can_cap=can_cap)
+    assert result == {"K100": {"score": Fraction(1), "cause": None},
+                      "K10": {"score": Fraction(1, 2), "cause": None}}
 
 
 @pytest.mark.parametrize("can_cap,cause", [(True, "over_cap"), (False, "unsupported")])
@@ -89,26 +93,27 @@ def test_above_k100_zeroes_every_tier(can_cap, cause, store_bytes, raw_bytes):
 @pytest.mark.parametrize("can_cap", [True, False])
 def test_tier_scores_rejects_unknown_tiers(can_cap):
     sizes = dict.fromkeys(TIERS, 0)
-    with pytest.raises(ValueError, match="unknown Keep tier"):
+    with pytest.raises(ValueError, match="^unknown Keep tier$"):
         tier_scores({**dict.fromkeys(TIERS, 1), "unknown": 1},
-                    store_bytes=sizes, raw_bytes=100, can_cap=can_cap)
-    with pytest.raises(ValueError, match="unknown Keep tier"):
+                    store_bytes={**sizes, "unknown": 0}, raw_bytes=100, can_cap=can_cap)
+    with pytest.raises(ValueError, match="^unknown Keep tier$"):
         tier_scores(dict.fromkeys(TIERS, 1), store_bytes={**sizes, "unknown": 0},
                     raw_bytes=100, can_cap=can_cap)
 
 
-@pytest.mark.parametrize("can_cap,scores", [(True, {"K100": 1}), (False, {"K10": 1})])
-def test_tier_scores_requires_measured_scores(can_cap, scores):
-    with pytest.raises(ValueError, match="missing measured Keep tier score"):
-        tier_scores(scores, store_bytes=dict.fromkeys(TIERS, 0), raw_bytes=100,
-                    can_cap=can_cap)
+@pytest.mark.parametrize("scores,sizes", [
+    ({"K100": 1, "K10": 1}, {"K100": 0}),
+    ({"K100": 1}, {"K100": 0, "K10": 0}),
+])
+def test_every_scored_tier_needs_its_store_size(scores, sizes):
+    with pytest.raises(ValueError, match="^every scored Keep tier needs its store size$"):
+        tier_scores(scores, store_bytes=sizes, raw_bytes=100, can_cap=True)
 
 
-@pytest.mark.parametrize("can_cap,sizes", [(True, {"K100": 0}), (False, {"K10": 0})])
-def test_tier_scores_requires_measured_store_sizes(can_cap, sizes):
-    with pytest.raises(ValueError, match="missing measured Keep tier store size"):
-        tier_scores(dict.fromkeys(TIERS, 1), store_bytes=sizes, raw_bytes=100,
-                    can_cap=can_cap)
+@pytest.mark.parametrize("can_cap", [True, False])
+def test_tier_scores_requires_the_base_life(can_cap):
+    with pytest.raises(ValueError, match="^missing K100 base-life measurement$"):
+        tier_scores({"K10": 1}, store_bytes={"K10": 0}, raw_bytes=100, can_cap=can_cap)
 
 
 def test_t_keep_preserves_fractional_milli_units():
