@@ -191,6 +191,16 @@ def _prepare(pairs, scores, controls, block_of, exclude_pooled) -> tuple[_Cell, 
         if not isinstance(value, tuple) or len(value) != 2:
             raise ValueError("controls must be (floor, ceiling) tuples")
         control[key] = tuple(_score(v) for v in value)
+    first = None
+    if block_of is not None:
+        # The run's blocks fix the halves, whether or not a block kept its controls.
+        run = {p for all_pairs in universe.values() for p in all_pairs}
+        if any(p not in block_of for p in run):
+            raise ValueError("block_of must include every pair")
+        if any(type(block_of[p]) is not int for p in run):
+            raise TypeError("block IDs must be integers")
+        blocks = sorted({block_of[p] for p in run})
+        first = set(blocks[:len(blocks) // 2])
     result = []
     for k, all_pairs in universe.items():
         floors = {p: control[k, p][0] for p in all_pairs if (k, p) in control}
@@ -212,13 +222,7 @@ def _prepare(pairs, scores, controls, block_of, exclude_pooled) -> tuple[_Cell, 
                 coefficients[p] = coefficients.get(p, Fraction(0)) - gate_weights[p] * (gates[p] - gate.point)
             margin = _series(point, coefficients, center=system.point - gate.point)
         halves = (None, None)
-        if block_of is not None:
-            if any(p not in block_of for p in gates):
-                raise ValueError("block_of must include every valid-control pair")
-            if any(type(block_of[p]) is not int for p in gates):
-                raise TypeError("block IDs must be integers")
-            blocks = sorted({block_of[p] for p in gates})
-            first = set(blocks[:len(blocks) // 2])
+        if first is not None:
             split = (tuple(gates[p] for p in gates if block_of[p] in first),
                      tuple(gates[p] for p in gates if block_of[p] not in first))
             halves = tuple(_mean(part) if part else None for part in split)
@@ -279,9 +283,10 @@ def cell_statistics(
 ) -> tuple[CellResult, ...]:
     """Return sorted immutable cells; pooled gate is ``cell.gate.point``.
 
-    Groups cover the whole pair universe. Blocks need cover valid controls;
-    integer block IDs encode start order. Exclusion drops only arm scores with
-    missing controls; it never changes control support or the run universe.
+    Groups and blocks cover the whole pair universe; integer block IDs encode
+    start order, and the run's blocks fix the gate halves. Exclusion drops only
+    arm scores with missing controls; it never changes control support or the
+    run universe.
     Empty score/control sets yield undefined estimates where appropriate.
     """
     _count(draws, "draws")
@@ -319,12 +324,19 @@ def cell_statistics(
 
 
 def cell_admission(cell: CellResult, naive_rag: CellResult) -> Admission | None:
-    """§4: caller supplies naive RAG after §11 probe-only exclusions."""
+    """§4: caller supplies naive RAG after §11 probe-only exclusions.
+
+    Naive RAG must come from cell_statistics(..., exclude_pooled=True):
+    admission uses the surviving pairs only (PREREG-v0.4 §7, l.526).
+    """
     if cell.cell != naive_rag.cell or cell.pairs != naive_rag.pairs:
         raise ValueError("admission requires the same cell universe")
     if (cell.blocked or naive_rag.verdict in (None, "BLOCKED")
             or 4 * len(naive_rag.score_pairs) < 3 * len(cell.pairs) or cell.gap is None):
         return None
+    if naive_rag.pooled_pairs:
+        raise ValueError("admission uses surviving pairs only: "
+                         "compute naive RAG with exclude_pooled=True")
     if cell.gap.lower < 30 or naive_rag.verdict == "CLEAR":
         return "NOT_ADMITTED"
     return "ADMITTED"
