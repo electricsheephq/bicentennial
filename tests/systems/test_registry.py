@@ -53,7 +53,7 @@ def test_shipped_cli(capsys):
         "lcm-x: UNMEASURED artifact.sha256 fresh_install_hash",
         "mem0-oss: ok",
         "no-memory: ok",
-        "omega: UNMEASURED artifact.sha256 fresh_install_hash",
+        "omega: ok",
     ]
 
 
