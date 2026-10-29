@@ -867,32 +867,37 @@ def native_routing_evidence(tmp_path, routing_evidence):
     receipt = json.loads((native_root / "receipt.json").read_bytes())
     receipt["mode"] = "native"
     (native_root / "receipt.json").write_bytes(canon(receipt))
-    # Native images travel on main requests whose outward reply is scripted 200.
+    # The attachment reaches a live write turn immediately. The workspace image
+    # first appears in scripted tool_results, then reaches the turn-3 write turn.
     records[:] = records[::2]
     for turn_n, record in enumerate(records, 1):
-        status = 200 if turn_n == 1 else 503
-        record.update(seq=turn_n, role="replay_main", subrole="cursor", status=200, served="script",
-                      cursor={"session": 2, "turn": turn_n}, upstream=[{
-                          "role": "write_turn", "status": status, "served_by": "live", "diagnostics": [
-                              {"kind": "try", "try": 1, "status": status, "sent": True,
-                               "reserved": 0, "charged": 0}]}])
-        if status != 200:
-            record["write_turn_failed"] = "status_503"
+        record.update(seq=turn_n, role="replay_main", subrole="cursor" if turn_n == 1 else "tool_results",
+                      status=200, served="script", cursor={"session": 2, "turn": turn_n}, upstream=[])
+    records[0]["upstream"] = [{"role": "write_turn", "status": 200, "served_by": "live", "diagnostics": [
+        {"kind": "try", "try": 1, "status": 200, "sent": True, "reserved": 0, "charged": 0}]}]
+    records.append(dict(records[1], seq=3, subrole="cursor", cursor={"session": 2, "turn": 3},
+                        write_turn_failed="status_503", upstream=[{
+                            "role": "write_turn", "status": 503, "served_by": "live", "diagnostics": [
+                                {"kind": "try", "try": 1, "status": 503, "sent": True,
+                                 "reserved": 0, "charged": 0}]}]))
     return records, blobs
 
 
-@pytest.mark.parametrize("role", ("replay_main", "write_turn"))
-def test_native_image_routes_only_after_successful_live_attempt(tmp_path, native_routing_evidence, role):
+def test_native_image_routes_only_after_successful_live_attempt(tmp_path, native_routing_evidence):
     records, _ = native_routing_evidence
-    image = records[1]
-    image["role"] = role
 
     def channels():
         return run.summarise(tmp_path)["modes"]["native"]["channels"]
 
+    image = records.pop()
+    assert records[1]["subrole"] == "tool_results" and records[1]["upstream"] == []
+    assert records[1]["status"] == 200
+    assert channels()["workspace"]["routed"] is False
+    records.append(image)
     failed = channels()
     assert image["status"] == 200 and image["write_turn_failed"] == "status_503"
     assert failed["attachment"]["routed"] is True
+    assert failed["attachment"]["requests"] == {"replay_main/cursor": 1}
     assert failed["workspace"]["lives"] == [False]
     assert failed["workspace"]["routed"] is False
     # Absence of a failure flag alone cannot establish successful perception.
@@ -904,12 +909,40 @@ def test_native_image_routes_only_after_successful_live_attempt(tmp_path, native
                                     "reserved": 0, "charged": 0})
     successful = channels()["workspace"]
     assert successful["lives"] == [True] and successful["routed"] is True
-    assert successful["requests"] == {f"{role}/cursor": 1}
+    assert successful["requests"] == {"replay_main/tool_results": 1}
     image["write_turn_failed"] = "status_503"
     assert channels()["workspace"]["routed"] is False
     del image["write_turn_failed"]
     upstream["diagnostics"] = []
     assert channels()["workspace"]["routed"] is False
+
+
+@pytest.mark.parametrize("invalid", ("missing_image", "other_image", "early_turn", "early_seq", "other_session"))
+def test_native_workspace_live_turn_requires_pair_image_and_order(tmp_path, native_routing_evidence, invalid):
+    records, _ = native_routing_evidence
+    image = records[2]
+    del image["write_turn_failed"]
+    image["upstream"][0]["status"] = 200
+    image["upstream"][0]["diagnostics"][0]["status"] = 200
+
+    def workspace():
+        return run.summarise(tmp_path)["modes"]["native"]["channels"]["workspace"]
+
+    assert workspace()["routed"] is True
+    if invalid == "missing_image":
+        image["req"] = "main"
+    elif invalid == "other_image":
+        image["req"] = "attachment"
+    elif invalid == "early_turn":
+        image["cursor"]["turn"] = 1
+    elif invalid == "early_seq":
+        image["seq"] = records[1]["seq"] - 1
+    else:
+        image["attempt_id"] = "s3"
+        image["cursor"]["session"] = 3
+    pair = workspace()
+    assert pair["lives"] == [False] and pair["routed"] is False
+    assert pair["requests"] == {"replay_main/tool_results": 1}
 
 
 def test_boundary_stop_rules(tmp_path):

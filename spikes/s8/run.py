@@ -719,14 +719,20 @@ def summarise(scratch, fidelity=None):
                 answered = any(r["status"] == 200 and r["role"] in ("replay_main", "write_turn") and
                                (r.get("cursor") or {}) == {"session": 2, "turn": turn_n} and
                                r["seq"] >= min((m["seq"] for m in matched), default=10**12) for r in requests)
-                # Vision status is final after retries; scripted main replies can
-                # still be 200 when their live write turn failed.
+                # Vision status is final after retries. Native workspace images
+                # can first reach a live write turn on a later main request.
                 perceived = any(
-                    ((rec["role"], rec["subrole"]) == ("aux", "vision") and rec["status"] == 200) or
-                    (rec["role"] in ("replay_main", "write_turn") and "write_turn_failed" not in rec and
-                     any(d.get("kind") == "try" and d.get("status") == 200
-                         for up in rec.get("upstream", []) for d in up.get("diagnostics", [])))
-                    for rec in matched)
+                    (rec["role"], rec["subrole"]) == ("aux", "vision") and rec["status"] == 200
+                    for rec in matched) or any(
+                    rec["role"] == "replay_main" and
+                    (rec.get("cursor") or {}).get("session") == 2 and
+                    (rec.get("cursor") or {}).get("turn", 0) >= turn_n and
+                    rec["seq"] >= min((m["seq"] for m in matched), default=10**12) and
+                    any(image_ids.get(h) == f"{life}-{kind}" for h in _hashes(blobs[rec["req"]])) and
+                    "write_turn_failed" not in rec and
+                    any(d.get("kind") == "try" and d.get("status") == 200
+                        for up in rec.get("upstream", []) for d in up.get("diagnostics", []))
+                    for rec in requests)
                 pair["lives"].append(bool(matched) and answered and perceived)
                 pair["routed"] = all(pair["lives"])
     for mode, view in result["modes"].items():
