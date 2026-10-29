@@ -95,3 +95,14 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 - Every other conformance result of a real system is its measured behaviour: it is reported and never a refusal. These checks against the stand-in do not gate real-system retrieval, extraction, compaction or other measured behaviour.
 - The controls' expected results are fixed in their tests. In particular, naive RAG fails exactly `supersession_current` and `text_full_length`; its actor storage passes.
 - This adds the Phase 1 API-mode rule without changing PREREG-v0.4 or any frozen quantity. Ring 0's checks and host delivery disclosures are specified in RING0 §13 E12.
+
+## Certification
+
+**E14. Certification's size holds under the t calibration (#240).**
+- **The text:** DESIGN §7.7 (line 926) says that under the intersection-union test "the rule's size is at most 5% with no multiplicity correction".
+- **The finding:** with few life pairs, the percentile bound of the Rademacher wild cluster bootstrap undercovers. The bootstrap's spread is √((n−1)/n) of the usual standard error, and the normal quantile ignores t tails. Under a normal approximation, R-a's nominal bound certifies about 6.05% of systems whose true margin is 0, at 24 life pairs (#240).
+- **The correction:**
+  - The size is at most 5% under the t calibration that #240's ruling adopted.
+  - Every bootstrap bound that certification uses takes the level p_n = Φ(−t_{n−1, 1−α}·√(n/(n−1))) instead of the fixed percentile (#242, #251).
+  - The operating-characteristic simulation (#245) checks the bound. PREREG-v0.4's freeze gate for PREREG-v1 requires a certification rate of at most 5% with margin 0 in every cell, and that simulation decides it.
+- **Scope:** PREREG-v0.4 fixes the bootstrap, its weights, the draw count and the seed, not the percentile index, so no frozen quantity changes. The v0.1 Kit is unaffected, because its T0 and T1 runs never certify.
