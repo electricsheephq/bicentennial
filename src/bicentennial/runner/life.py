@@ -292,6 +292,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     raise SystemRefused(["visible_path_escape"])
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(content)
+            for surface, directory in surfaces:
+                if (surface["root"] == "SANDBOX_HOME" and directory.exists()
+                        and any(p.name != MARKER for p in directory.iterdir())):
+                    raise SystemRefused(["surface_not_empty"])
             for _, directory in surfaces:
                 directory.mkdir(parents=True, exist_ok=True)
                 if not (directory / MARKER).exists():

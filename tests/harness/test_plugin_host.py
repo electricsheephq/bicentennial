@@ -35,7 +35,7 @@ from bicentennial.items.protocol import CANARY
 from bicentennial.probe.scripted_reader import read_api
 from bicentennial.runner.guard import assert_niced
 from bicentennial.runtime.clock import SimClock
-from bicentennial.systems.hermes_plugin import TREES
+from bicentennial.systems.hermes_plugin import MARKER, TREES, PluginCell
 from bicentennial.systems.registry import REGISTRY, SystemRefused, load
 
 NAMES = ("hermes-native", "holographic", "mem0-oss")
@@ -145,6 +145,35 @@ def factory(tmp_path, monkeypatch):
     assert checked == [pid for host in opened for pid in host.pids]
     if shutil.which("lsof"):
         assert all(s["non_loopback"] == [] for s in summaries)
+
+
+def test_host_surface_before_install(factory, monkeypatch):
+    layout, install = plugin_host.layout, PluginCell.install
+    installed = []
+
+    def populate(*args, **kwargs):
+        paths = layout(*args, **kwargs)
+        directory = paths["hermes_home"] if content == "hermes" else paths["home"] / ".mem0"
+        directory.mkdir(exist_ok=True)
+        (directory / (MARKER if content == "marker" else "stray")).write_bytes(b"")
+        return paths
+
+    def installing(self, *args, **kwargs):
+        installed.append(content)
+        return install(self, *args, **kwargs)
+
+    monkeypatch.setattr(plugin_host, "layout", populate)
+    monkeypatch.setattr(PluginCell, "install", installing)
+    for content in ("stray", "marker", "hermes"):
+        if content == "stray":
+            with pytest.raises(SystemRefused) as error:
+                factory("mem0-oss")
+            assert error.value.reasons == ("surface_not_empty",)
+            assert installed == []
+        else:
+            host = factory("mem0-oss")
+            assert installed[-1] == content
+            assert (host.paths["hermes_home"] / "stray").exists() == (content == "hermes")
 
 
 @pytest.mark.parametrize("name", NAMES)

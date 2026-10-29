@@ -543,17 +543,48 @@ def test_mem0_failed_session_clears_end_observation(tmp_path, monkeypatch, failu
 def test_mem0_requires_observed_threads(tmp_path, monkeypatch, payload, expected):
     repo, digest, _ = plugin_repo(tmp_path, "mem0-oss")
     a, cell = make(tmp_path, "pending", "mem0-oss", digest)
-    monkeypatch.setattr(hermes_plugin, "settle", wait)
+    monkeypatch.setattr(hermes_plugin, "settle", (lambda *a, **kw: pytest.fail("cut work must not poll"))
+                        if expected is not None else wait)
     try:
         cell.install(repo, alias="bicentennial-main")
         (a.paths["hermes_home"] / ".fake-end").write_bytes(canon(payload))
         result = session(a, 1)
         assert result.end_threads == expected and a.end_threads == expected
         barrier = cell.settle()
-        assert not barrier.settled and barrier.reason == "bound_reached"
-        assert barrier.waited_ms == 5000
+        assert not barrier.settled
+        if expected is not None:
+            assert (barrier.reason, barrier.polls, barrier.waited_ms) == ("cut_at_exit", 0, 0)
+        else:
+            assert barrier.reason == "bound_reached" and barrier.waited_ms == 5000
     finally:
         a.close()
+
+
+@pytest.mark.parametrize("kind,threads,expected", [
+    ("hook", ("mem0-sync",), ("cut_at_exit", False, 0, 0)),
+    ("hook", ("unrelated-worker",), ("drained", True, 2, 250)),
+    ("none", ("mem0-sync",), ("no_background_work", True, 0, 0)),
+    ("hook", ["mem0-sync"], ("bound_reached", False, 21, 5000)),
+])
+def test_settle_cut_and_delegation(tmp_path, monkeypatch, kind, threads, expected):
+    inflight, calls = iter((1, 0)), []
+    paths = {k: tmp_path / k for k in ("home", "hermes_home", "workspace", "tmp")}
+    a = SimpleNamespace(paths=dict(paths, root=tmp_path), end_threads=threads,
+                        director=SimpleNamespace(control=lambda: dict(inflight=next(inflight))))
+    cell = PluginCell(entry("mem0-oss"), a)
+    cell.entry["settle"]["kind"] = kind
+
+    def polling(entry, observe):
+        if expected[0] == "cut_at_exit":
+            pytest.fail("cut work must not poll")
+        calls.append(entry["settle"]["kind"])
+        return wait(entry, observe)
+
+    monkeypatch.setattr(hermes_plugin, "settle", polling)
+    result = cell.settle()
+    assert calls == ([] if expected[0] == "cut_at_exit" else [kind])
+    assert result.kind == kind
+    assert (result.reason, result.settled, result.polls, result.waited_ms) == expected
 
 
 def test_surface_and_home_refusals(tmp_path, monkeypatch):

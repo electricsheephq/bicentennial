@@ -142,6 +142,11 @@ class HermesMemoryHost(Adapter):
         try:
             assert self.director.run_values["director_port"] == str(self.server.port)
             self.director.start_session(1, clock.sim_t_s, lock_hash, "t0-s1", self.paths["root"] / "ledger")
+            for surface in entry["surfaces"]:
+                directory = self.paths["home"] / surface["relative"]
+                if (surface["root"] == "SANDBOX_HOME" and directory.exists()
+                        and any(p.name != MARKER for p in directory.iterdir())):
+                    raise SystemRefused(["surface_not_empty"])
             if self.name in PROVIDERS:
                 if plugin_source is None:
                     raise ValueError("plugin_source required")

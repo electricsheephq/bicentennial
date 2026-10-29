@@ -523,6 +523,38 @@ def plugin_source(tmp_path):
     return source, entry
 
 
+def test_life_surface_before_install(lives, tmp_path, monkeypatch, completed_sessions):
+    source, entry = plugin_source(tmp_path)
+    entry["surfaces"].append(dict(root="SANDBOX_HOME", relative=".state", volatile_paths=[]))
+    construct, install = adapter.HermesAdapter.__init__, PluginCell.install
+    installed = []
+
+    def populate(self, *args, **kwargs):
+        construct(self, *args, **kwargs)
+        directory = self.paths["hermes_home"] if content == "hermes" else self.paths["home"] / ".state"
+        directory.mkdir(exist_ok=True)
+        (directory / (MARKER if content == "marker" else "stray")).write_bytes(b"")
+
+    def installing(self, *args, **kwargs):
+        installed.append(content)
+        return install(self, *args, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "__init__", populate)
+    monkeypatch.setattr(PluginCell, "install", installing)
+    for content in ("stray", "marker", "hermes"):
+        kwargs = dict(entry=entry, plugin_source=source)
+        if content == "stray":
+            with pytest.raises(SystemRefused) as error:
+                drive(lives["t1-g1", "B0"], tmp_path / content, **kwargs)
+            assert error.value.reasons == ("surface_not_empty",)
+            assert installed == []
+        else:
+            result = drive(lives["t1-g1", "B0"], tmp_path / content, **kwargs)
+            assert result.stopped is None
+            assert installed[-1] == content
+            result.cleanup()
+
+
 @pytest.mark.parametrize("settled", [True, False])
 def test_wiped_plugin(lives, tmp_path, monkeypatch, harness, settled):
     case = lives["t1-g1", "B0"]
