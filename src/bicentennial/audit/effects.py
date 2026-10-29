@@ -8,6 +8,11 @@ from pathlib import Path
 ACTIONS = {"add", "patch", "replace", "remove"}
 ENTRY_DELIMITER = "\n§\n"  # Hermes memory_tool_store, not an arbitrary line or paragraph boundary
 MEMORY_HEADER = re.compile(r"═{46}\n(MEMORY \(your personal notes\)|USER PROFILE \(who the user is\))[^\n]*\n═{46}\n")
+# Pinned Hermes agent/system_prompt.py:35,386,498,507,727,779-792 and
+# agent/prompt_builder.py:1153; retain the older date labels as well.
+FOLLOWING_PART = re.compile(r"\n\n(?:Active Hermes profile:|Conversation started:|Current date:|Today's date:|"
+                            r"Today's date \(as of the last context rebuild\):|## Plugin Context: |"
+                            r"# Hermes runtime environment)")
 
 
 def strings(obj):
@@ -69,7 +74,7 @@ def entry_texts(text):
 
 def snapshot_entries(body, wire, target):
     """Read Hermes' rendered memory blocks, or a bare store supplied as a system/developer text part.
-    The prompt's date trailer is outside the last memory block; preserve paragraphs inside entries."""
+    Known following parts end a block; only the final block's final entry may precede an unknown part."""
     found = []
     for part in snapshot_parts(body, wire):
         headers = list(MEMORY_HEADER.finditer(part))
@@ -80,9 +85,17 @@ def snapshot_entries(body, wire, target):
             if header.group(1).startswith("USER") != (target == "user"):
                 continue
             end = headers[i + 1].start() if i + 1 < len(headers) else len(part)
-            content = part[header.end():end].rstrip()
-            content = re.split(r"\n\n(?:Conversation started:|Current date:|Today's date:)", content, maxsplit=1)[0]
+            content = FOLLOWING_PART.split(part[header.end():end].rstrip(), maxsplit=1)[0]
             found.extend(entry_texts(content))
+            if i == len(headers) - 1:
+                # No trailer: pinned Hermes tools/memory_tool_store.py:638-644.
+                # An external provider can follow this entry (agent/system_prompt.py:516-543).
+                # Keep raw paragraph boundaries until after choosing each possible entry prefix.
+                entries = [e.strip() for e in content.split(ENTRY_DELIMITER) if e.strip()]
+                if entries:
+                    last = entries[-1]
+                    found.extend(norm(last[:boundary.start()]) for boundary in re.finditer(r"\n\n", last)
+                                 if last[:boundary.start()].strip())
     return found
 
 
@@ -243,14 +256,15 @@ def effects(calls, requests, stores, wire):
         if nxt is None:
             reasons.append("no_next_session")
         gone = "remove" if action == "remove" else "removed_content"  # the effect expected absent
-        if op["applied"] and not store_ok:
-            reasons.append("absent_from_final_store" if final[0] == "present" else f"{gone}_still_present")
-        if op["applied"] and next_ok is False:
-            reasons.append("absent_from_next_session" if wanted[0] == "present" else f"{gone}_visible_next_session")
-        if op["applied"] and not side_ok:
-            reasons.append("absent_from_final_store" if side[0] == "present" else "replaced_span_still_present")
-        if op["applied"] and next_side_ok is False:
-            reasons.append("absent_from_next_session" if next_side[0] == "present" else "replaced_span_visible_next_session")
+        if op["applied"] and op["entry"] is not None:
+            if not store_ok:
+                reasons.append("absent_from_final_store" if final[0] == "present" else f"{gone}_still_present")
+            if next_ok is False:
+                reasons.append("absent_from_next_session" if wanted[0] == "present" else f"{gone}_visible_next_session")
+            if not side_ok:
+                reasons.append("absent_from_final_store" if side[0] == "present" else "replaced_span_still_present")
+            if next_side_ok is False:
+                reasons.append("absent_from_next_session" if next_side[0] == "present" else "replaced_span_visible_next_session")
         store_ok, next_ok = store_ok and side_ok, next_ok and next_side_ok if nxt else next_ok
         op["report"]["operations"].append({"id": op["id"], "action": action, "in_store": present,
             "visible_next_session": visible, "store_satisfied": store_ok, "next_session_satisfied": next_ok,

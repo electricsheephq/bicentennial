@@ -319,24 +319,14 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     calls, drafts, discarded_reasoning, issued = [], [], [], 0
     issued_at = {}  # each call id served to the harness, by the record that served it
     for r in rows:
-        response, rw = blobs.get(r.get("resp")), request_wire(r, wire)
-        if (rw in {"chat", "responses"} and not refused(r, response) and
-                any(k in response for k in ("choices", "__sse__", "sse"))):
-            for tc in output(response, rw)[0]:
+        if r.get("served") in {"write_tool_calls", "script_tool_calls", "script_tool_calls_retry"} and not refused(r, blobs.get(r.get("resp"))):
+            for tc in output(blobs[r["resp"]], wire)[0]:
                 issued_at.setdefault(tc["id"], r["seq"])
     minted = _minted_ids(rows, blobs) if fmt == "kit" else {}
     last_k, served_ids = {}, set()  # each namespace's last served counter; ids served once in the ledger
-    seen_results = set()
-    first_request = requests[0][0]["seq"] if requests else None
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
         attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
-        current_results = results(body, request_wire(r, wire))
-        if seq != first_request and r.get("role") in {"replay_main", "probe_main"}:
-            for tid in current_results.keys() - seen_results:
-                if not issued_at.get(tid, float("inf")) < seq:
-                    a3["failures"].append({"record": seq, "kind": "unissued_later_execution", "call": tid})
-        seen_results.update(current_results)
         if bad and (attempts or r.get("served") in {"write_tool_calls", "script", "script_retry"}):
             a3["failures"].append({"record": seq, "kind": "served_refusal"})  # the turn served no completion
         if r.get("write_turn_failed"):
