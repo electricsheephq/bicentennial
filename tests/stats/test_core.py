@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from bicentennial.stats import core
+from bicentennial import keyed
+from bicentennial.stats import core, tcal
 from bicentennial.stats.core import bootstrap_ci, contributions, holm, sign_flip_p
 
 
@@ -161,11 +162,7 @@ def test_monte_carlo_seed_reproducibility_and_sensitivity():
     assert (first * 100_001).denominator == 1
 
 
-@pytest.mark.parametrize("level,expected", [
-    (Fraction(1, 2), (Fraction(1), Fraction(2))),
-    (Fraction(2, 3), (Fraction(1), Fraction(3))),
-])
-def test_bootstrap_centering_percentile_indices_and_keys(monkeypatch, level, expected):
+def test_bootstrap_centering_percentile_indices_and_keys(monkeypatch):
     signs = ((0, 0), (1, 0), (0, 1), (1, 1))
     calls = []
 
@@ -175,9 +172,31 @@ def test_bootstrap_centering_percentile_indices_and_keys(monkeypatch, level, exp
 
     monkeypatch.setattr(core, "draw", controlled_draw)
     # Mean=2, deviations=(-1,+1); replicates in draw order are [2,1,3,2].
-    assert bootstrap_ci([1, 3], seed="ci", name="headline", draws=4, level=level) == expected
+    # At n=2 the calibrated tail is zero ppm, selecting both extrema.
+    assert bootstrap_ci([1, 3], seed="ci", name="headline", draws=4) == (Fraction(1), Fraction(3))
     assert calls == [("ci", ("stats", "bootstrap", str(life)), replicate, "headline")
                      for replicate in range(4) for life in range(2)]
+
+
+def test_bootstrap_24_life_calibrated_endpoints_from_keyed_draws():
+    seed, name, draws = "tcal-247", "headline", 10_000
+    values = {f"life-{i:02}": Fraction((i - 12) * (i + 1), 2 if i % 2 else 3)
+              for i in range(24)}
+    # All values have denominators dividing six; keep reconstruction in integers.
+    n, scale = len(values), 6
+    integers = {life: int(value * scale) for life, value in values.items()}
+    total = sum(integers.values())
+    replicates = sorted(
+        n * total + sum((n * value - total)
+                        * (1 if keyed.draw(seed, ("stats", "bootstrap", life), attempt, name) & 1
+                           else -1)
+                        for life, value in integers.items())
+        for attempt in range(draws))
+    denominator = n * n * scale
+    result = bootstrap_ci(values, seed=seed, name=name, draws=draws)
+    assert result == (Fraction(replicates[172], denominator),
+                      Fraction(replicates[9827], denominator))
+    assert all(isinstance(bound, Fraction) for bound in result)
 
 
 def test_bootstrap_seed_reproducibility_and_sensitivity():
@@ -195,6 +214,16 @@ def test_bootstrap_seed_reproducibility_and_sensitivity():
 @pytest.mark.parametrize("values", [[Fraction(7, 3)], [Fraction(7, 3)] * 4])
 def test_bootstrap_constant_and_single_draw(values):
     assert bootstrap_ci(values, seed="constant", name="ci", draws=1) == (Fraction(7, 3),) * 2
+
+
+def test_bootstrap_single_life_retains_uncalibrated_indices(monkeypatch):
+    def forbidden_calibration(*args):
+        raise AssertionError("a single life must retain the existing indices")
+
+    monkeypatch.setattr(tcal, "ppm", forbidden_calibration)
+    monkeypatch.setattr(tcal, "index", forbidden_calibration)
+    monkeypatch.setattr(core, "draw", lambda seed, unit, attempt, name: attempt & 1)
+    assert bootstrap_ci([Fraction(7, 3)], seed="single", name="ci", draws=40) == (Fraction(7, 3),) * 2
 
 
 def test_holm_hand_worked_three_hypotheses():
@@ -232,8 +261,15 @@ def test_invalid_bootstrap_draws_refused(draws):
 
 @pytest.mark.parametrize("level", [Fraction(0), Fraction(1), Fraction(-1, 10), Fraction(11, 10)])
 def test_invalid_bootstrap_level_refused(level):
-    with pytest.raises(ValueError, match="strictly between"):
+    with pytest.raises(ValueError, match="^level must lie strictly between zero and one$"):
         bootstrap_ci([1, 2], seed="seed", name="name", level=level)
+
+
+@pytest.mark.parametrize("level", [Fraction(1, 2), Fraction(2, 3), Fraction(90, 100)])
+@pytest.mark.parametrize("values", [[1], [1, 2]])
+def test_uncalibrated_bootstrap_level_refused(level, values):
+    with pytest.raises(ValueError, match=r"^only the 95% interval is calibrated \(#247\)$"):
+        bootstrap_ci(values, seed="seed", name="name", level=level)
 
 
 @pytest.mark.parametrize("value", [Fraction(-1, 10), Fraction(11, 10)])
