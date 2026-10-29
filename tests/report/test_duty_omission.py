@@ -3,11 +3,12 @@
 import json
 from types import SimpleNamespace
 
+from packs.test_build import A, catalogue, load
+
 from bicentennial.packs import build
 from bicentennial.runner import t0
 from bicentennial.score.action import ActionResult
 from bicentennial.score.classes import outcome
-from packs.test_build import A, catalogue, load
 
 
 def test_generated_duty_omission_reaches_card(tmp_path, monkeypatch):
