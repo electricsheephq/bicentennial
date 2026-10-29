@@ -52,6 +52,7 @@ AUDIT_PPM, AUDIT_CASES = 5_000, 4
 CHUNK, CHUNK_LARGE, BUSY_POLL_S = 25, 5, 30
 STEP_EXP, MAX_STEP_EXP = locate.STEP_EXP, locate.MAX_STEP_EXP
 BOUND_MILLI = locate.BOUND_MILLI
+MARKER_TIMEOUT_S = 60  # a busy-marker poll that hangs fails the run instead of stalling it
 GRID_LOW, GRID_HIGH = locate.GRID_LOW, locate.GRID_HIGH
 KINDS, DRIFT_CASES = schedule.KINDS, drift.DRIFT_CASES
 OUTCOMES = ("CERTIFIED", "DEFERRED", "NOT_CERTIFIED", "NO_CERTIFICATE")
@@ -738,7 +739,10 @@ def _config_data(config):
 def _marker(command):
     if not command:
         return 0
-    code = subprocess.run(command, check=False, capture_output=True).returncode
+    try:
+        code = subprocess.run(command, check=False, capture_output=True, timeout=MARKER_TIMEOUT_S).returncode
+    except subprocess.TimeoutExpired:
+        raise ValueError(f"busy marker did not exit within {MARKER_TIMEOUT_S} s") from None
     if code not in (0, 10, 11):
         raise ValueError(f"busy marker exited {code}")
     return code

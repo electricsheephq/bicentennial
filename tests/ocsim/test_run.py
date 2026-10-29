@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import re
+import sys
 from concurrent.futures import Future
 from dataclasses import replace
 from fractions import Fraction
@@ -18,6 +19,8 @@ from bicentennial.stats import seeds, tcal
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/fixtures/ocsim/planning.json"
+# RunConfig caps workers at cpu_count, and the width checks need more than two workers.
+NEEDS_4_CPUS = pytest.mark.skipif((os.cpu_count() or 1) < 4, reason="needs four workers")
 TINY_CONSTANTS = run.test_constants(DRAWS=64, R_SCREEN=4, R_REPORT=4, R_SENS=4,
                                    R_MAIN=8, R_MAX=16, CHUNK=25, CHUNK_LARGE=5)
 
@@ -366,6 +369,7 @@ def test_nonplanning_pins_and_output_validation(tiny_inputs, tmp_path, monkeypat
         run.run(tiny_inputs, run.copy_config(config, resume=True), tmp_path / "missing")
 
 
+@NEEDS_4_CPUS
 def test_byte_identity_workers_and_chunks(tiny_inputs, tmp_path):
     payloads = []
     for i, (workers, chunk) in enumerate(((1, 1), (4, 1), (4, 25))):
@@ -442,6 +446,7 @@ def test_busy_marker_pause_byte_identity(tiny_inputs, tmp_path, monkeypatch):
     assert len([p for p in manifest["run"]["pauses"] if p["event"] == "pause"]) == 1
 
 
+@NEEDS_4_CPUS
 @pytest.mark.parametrize("initial", (0, 10))
 def test_busy_marker_exit10_drain_and_pool_width(tiny_inputs, tables, tmp_path, monkeypatch, initial):
     config = tiny_config(workers=4, variants=("main", "reserve0"),
@@ -497,6 +502,13 @@ def test_busy_marker_exit10_drain_and_pool_width(tiny_inputs, tables, tmp_path, 
     assert [(p["exit"], p["workers"]) for p in pauses] == [(10, 2), (0, 4)]
 
 
+def test_busy_marker_poll_times_out(monkeypatch):
+    monkeypatch.setattr(run, "MARKER_TIMEOUT_S", 0.5)
+    with pytest.raises(ValueError, match="busy marker did not exit within 0.5 s"):
+        run._marker([sys.executable, "-c", "import time; time.sleep(30)"])
+    assert run._marker([sys.executable, "-c", "raise SystemExit(10)"]) == 10
+
+
 def test_busy_marker_same_width_mode_changes(tiny_inputs, monkeypatch):
     config = tiny_config(workers=2)
     code, pauses = [0], []
@@ -532,6 +544,7 @@ def test_busy_marker_same_width_mode_changes(tiny_inputs, monkeypatch):
     following.close()
 
 
+@NEEDS_4_CPUS
 def test_busy_marker_exit10_niceness_owner_run(tiny_inputs, monkeypatch):
     """Amendments 6/11: owner-run if sandbox refuses spawn/setpriority."""
     config = tiny_config(workers=4)
