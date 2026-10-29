@@ -20,7 +20,12 @@ from types import SimpleNamespace
 import pytest
 
 from bicentennial.canon import canon, sha256_canon
-from bicentennial.controls.cache import CONTROL_FILES, PACKAGE_ROOT, READER_FILES, code_sha256
+from bicentennial.controls.cache import (
+    CONTROL_FILES,
+    PACKAGE_ROOT,
+    READER_FILES,
+    code_sha256,
+)
 from bicentennial.packs.manifest import file_manifest, tree_sha256
 from bicentennial.packs.scoring import SCORING_FILES
 from bicentennial.report.card import assemble, finalize
