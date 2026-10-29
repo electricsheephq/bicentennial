@@ -37,12 +37,12 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 7. **Shortcut checks:**
    - presentation randomised independently of gold (item 1);
    - **stylistically matched twins:** twin items built from the same template with the gold value changed and presentation matched, so that style alone cannot tell the twins apart;
-   - **shuffled history:** the session-2 images swapped for presentation-matched images carrying different values. A high score here means a shortcut;
+   - **shuffled history:** the session-2 images swapped for presentation-matched images carrying different values. A high score here means the shortcut check has not passed; report whether the result shows a shortcut or is inconclusive before deciding whether to redesign the twins or presentation;
    - **a held-out style:** one presentation family used only at question time.
 8. **Gist and detail as descriptive tags.** Any representation that keeps the information earns credit; the design principle is the unforeseen later question. For each question, record whether the text-mode description retained the asked value. This measures how often a description keeps a detail; it is not a pass rule.
 
 ## What it measures
-- Routing works in each mode and channel: yes or no, with the request ledger.
+- Routing works in each mode and channel: yes or no, with the request ledger. A pair routes only when a session-2 image request has a known role, at least one matched image-bearing request succeeds after normalised retries, and the pair's next main or write-turn request is answered 200.
 - Direct-evidence accuracy per mode, which measures perception, and the N/A_READER count.
 - Delayed accuracy after 4 sessions per mode, against the no-memory floor, naive RAG, stylistically matched twins and shuffled history.
 - Detail retention in text-mode descriptions: the share of asked values present in the description.
@@ -57,7 +57,7 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 2. **Sample size.** At least 30 base questions in the mode, from at least 10 lives; twins are counted separately.
 3. **The reader can perceive.** At most 20% of the mode's items are N/A_READER. N/A_READER items leave the delayed comparison, and their count is reported. A mode above 20% is not admitted, because it would measure perception, not memory.
 4. **Direct evidence clears the floor.** The one-sided 95% lower bound of (direct-evidence accuracy − no-memory accuracy) is at least 30 percentage points.
-5. **Shuffled history does not clear it.** The one-sided 95% upper bound of (shuffled-history accuracy − no-memory accuracy) is at most 10 points. Otherwise a shortcut exists, and the twins or presentation are redesigned.
+5. **Shuffled history does not clear it.** The one-sided 95% upper bound of (shuffled-history accuracy − no-memory accuracy) is at most 10 points. Otherwise the shortcut check has not passed, and the profile stays pending. Report whether the result shows a shortcut or is inconclusive before deciding whether to redesign the twins or presentation.
 
 Bounds come from a cluster bootstrap over lives (10,000 draws), because items within a life are correlated. The Image profile is admitted to Ring 0 when every mode × channel pair routes and both modes are admitted. A mode that fails is reported with its numbers, and the profile stays "pending".
 

@@ -316,6 +316,36 @@ def attach(text, path, mode, paths):
     return user
 
 
+def check_dialogue_values(script, life, paths):
+    """Scan dialogue only, masking operator prefixes without changing the script."""
+    prefixes = sorted({str(paths["home"]), str(paths["workspace"])}, key=len, reverse=True)
+    path_prefix = re.compile("|".join(re.escape(prefix) for prefix in prefixes))
+
+    def masked(value):
+        if isinstance(value, str):
+            return path_prefix.sub("<s8-path>", value).casefold()
+        if isinstance(value, dict):
+            return {masked(key): masked(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [masked(child) for child in value]
+        return value
+
+    disclosed = {("desk", "OBJECT1")}  # Named by the code question; never gold.
+    values = [(f"{record['image_id']}:{field}:{branch}", value.casefold())
+              for branch in ("B0", "B1") for record in world(life, branch)
+              for field, value in record["values"].items() if (record["kind"], field) not in disclosed]
+    for session in script["sessions"]:
+        for scripted in session["turns"]:
+            fields = [("user text", scripted["user"]), ("assistant text", scripted["assistant"])]
+            fields.extend((f"tool argument[{i}]", call["args"]) for i, call in enumerate(scripted["tool_calls"]))
+            for field, value in fields:
+                dialogue = masked(value)
+                for item_id, token in values:
+                    if scan_script(dialogue, [], [token]):
+                        raise ValueError(f"script_value_leak session={session['index']} turn={scripted['n']} "
+                                         f"field={field} item_id={item_id}")
+
+
 def build_script(life, mode, *, branch, paths):
     mapping, sessions = channels(life), []
     for index in range(1, 7):
@@ -334,11 +364,7 @@ def build_script(life, mode, *, branch, paths):
             turns = [turn(user, n, kind) for n, user in enumerate(users, 1)]
         sessions.append({"index": index, "kind": kind, "turns": turns})
     obj = script_of(life, sessions)
-    disclosed = {("desk", "OBJECT1")}  # Named by the code question; never gold.
-    values = [v.casefold() for b in ("B0", "B1") for r in world(life, b) for f, v in r["values"].items()
-              if (r["kind"], f) not in disclosed]
-    if scan_script(json.loads(canon(obj).decode().casefold()), [], values):
-        raise ValueError("script_value_leak")
+    check_dialogue_values(obj, life, paths)
     return obj
 
 
@@ -693,7 +719,10 @@ def summarise(scratch, fidelity=None):
                 answered = any(r["status"] == 200 and r["role"] in ("replay_main", "write_turn") and
                                (r.get("cursor") or {}) == {"session": 2, "turn": turn_n} and
                                r["seq"] >= min((m["seq"] for m in matched), default=10**12) for r in requests)
-                pair["lives"].append(bool(matched) and answered)
+                # The ledger status is final after provider retries. Float-normalised
+                # retries already enter matched through the image/hash logic above.
+                perceived = any(rec["status"] == 200 for rec in matched)
+                pair["lives"].append(bool(matched) and answered and perceived)
                 pair["routed"] = all(pair["lives"])
     for mode, view in result["modes"].items():
         lives = list(view.pop("lives").values())
