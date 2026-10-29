@@ -177,13 +177,28 @@ def test_store_waits_for_auto_relate(provider):
     assert embedding.api.events == ["store", "join 30"] * 3
 
 
-def test_store_refuses_a_running_auto_relate(provider):
+def test_a_running_relate_refuses_calls_before_omega(provider):
     p, home, _, embedding = provider
+    api = embedding.api
     p.initialize("s1", hermes_home=home)
-    embedding.api.stuck = True
-    with pytest.raises(RuntimeError, match="auto-relate did not finish within 30 s"):
-        p.handle_tool_call("omega_store", {"content": "synthetic"})
-    assert embedding.api.events == ["store", "join 30"]
+
+    def manager(name, args):  # Hermes's MemoryManager.handle_tool_call returns provider errors as tool errors
+        try:
+            return json.loads(p.handle_tool_call(name, args))
+        except Exception as e:
+            return {"error": f"Memory tool '{name}' failed: {e}"}
+    api.stuck = True  # the relate outlives every wait
+    assert manager("omega_store", {"content": "first"}) == {"id": 41, "outcome": "stored"}
+    for name, args in (("omega_store", {"content": "second"}), ("omega_query", {"query": "first"}),
+                       ("omega_delete", {"memory_id": 41})):
+        assert manager(name, args) == {"error": f"Memory tool '{name}' failed: "
+                                      "OMEGA's auto-relate is still running after 30 s; call refused"}
+    assert api.events == ["store"] + ["join 30"] * 4
+    assert api.queries == [] and api.deleted == []
+    assert api.db.execute("SELECT content FROM memories").fetchall() == [("first",)]
+    api.stuck = False  # once the relate finishes, calls reach OMEGA again
+    assert manager("omega_store", {"content": "second"}) == {"id": 82, "outcome": "stored"}
+    assert api.events[5:] == ["join 30", "store", "join 30"]
 
 
 def test_availability_and_backend_refusal(provider, monkeypatch):

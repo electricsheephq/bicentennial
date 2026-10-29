@@ -11,9 +11,9 @@ from pathlib import Path
 from agent.memory_provider import MemoryProvider
 
 
-# OMEGA relates each write on an auto-relate thread; finish it before the next write, so the
-# relation edges a later query walks do not depend on thread timing, and refuse the write if
-# it is still running after the wait (omega.writes).
+# OMEGA relates each write on an auto-relate thread. The adapter waits for it after each write
+# and again before each OMEGA call, and refuses a call that still finds one running before the
+# call reaches OMEGA, so no call overlaps a relate (omega.writes).
 AUTO_RELATE_WAIT_S = 30
 
 
@@ -85,14 +85,20 @@ class OmegaProvider(MemoryProvider):
             raise RuntimeError("OMEGA returned a missing memory")
         return rowid
 
+    def _relate_running(self):
+        running = False
+        for thread in threading.enumerate():
+            if thread.name == "auto-relate":
+                thread.join(AUTO_RELATE_WAIT_S)
+                running = running or thread.is_alive()
+        return running
+
     def handle_tool_call(self, tool_name, args, **kwargs):
+        if self._relate_running():
+            raise RuntimeError(f"OMEGA's auto-relate is still running after {AUTO_RELATE_WAIT_S} s; call refused")
         if tool_name == "omega_store":
             text = self.store(args["content"], session_id=self.session_id)
-            for thread in threading.enumerate():
-                if thread.name == "auto-relate":
-                    thread.join(AUTO_RELATE_WAIT_S)
-                    if thread.is_alive():
-                        raise RuntimeError(f"OMEGA's auto-relate did not finish within {AUTO_RELATE_WAIT_S} s")
+            self._relate_running()  # the write happened, so its result is returned either way
             if text.startswith(("Blocked", "**Memory Blocked**")):
                 result = {"id": None, "outcome": "blocked"}
             else:
