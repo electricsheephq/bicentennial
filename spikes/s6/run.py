@@ -213,6 +213,7 @@ def run_arm(arm, adapter, script, starts, *, cred, holds, lock, cell=None, raw=N
     baseline = [allocated_bytes(path, volatile) for path, volatile in trees]
     out = dict(status="running", sessions=[], sessions_run=0, pauses=[], flagged_sessions=[], bytes={})
     previous, reason = None, None
+    failed = False
     try:
         for session in script["sessions"]:
             reason = stop_reason(cred)
@@ -262,6 +263,9 @@ def run_arm(arm, adapter, script, starts, *, cred, holds, lock, cell=None, raw=N
             if hasattr(adapter, "egress") and adapter.egress.summary()["non_loopback"]:
                 reason = "non_loopback"
                 break
+    except BaseException:
+        failed = True
+        raise
     finally:
         try:
             out["egress"] = adapter.close()
@@ -270,7 +274,17 @@ def run_arm(arm, adapter, script, starts, *, cred, holds, lock, cell=None, raw=N
             _arm_write(root, out)
             raise
         finally:
-            drain_login(cred, root)
+            try:
+                drain_login(cred, root)
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                # A loop or cleanup exception skips the normal receipt write below.
+                if failed and "egress" in out:
+                    out["egress"]["non_loopback"] = [sha256(v.encode()).hexdigest()
+                                                       for v in out["egress"]["non_loopback"]]
+                    _arm_write(root, out)
     reason = reason or stop_reason(cred)
     attempt_sessions = {attempt_id(lock, arm, LIFE_ID, "B0", s["index"], 0): s["index"]
                         for s in script["sessions"]}
@@ -523,6 +537,8 @@ def run_command(args):
                       inputs=metadata, initial=initial, wall_ms=round((time.monotonic() - began) * 1000))
         if finalise_failure(root, result, adapter=adapter, cred=cred, login=login, run=run):
             return 1
+        if isinstance(exc, (CredentialLeak, Stop, SystemRefused)):
+            raise
         return 4
     if result["credential_scan"]["hits"] or result["credential_scan"]["unreadable"]:
         return 1
@@ -635,7 +651,7 @@ def summarise(args):
         else:
             result = read_json(path)
         scan_result = result.get("credential_scan", {})
-        if scan_result.get("hits") or scan_result.get("unreadable"):
+        if (path.exists() and not scan_result) or scan_result.get("hits") or scan_result.get("unreadable"):
             raise CredentialLeak("summary requires a clean credential scan")
         if result["status"] == "not_run" or result.get("close_failed"):
             refusal = (dict(status="not_run", reason="close_failed:" + result["close_failed"])

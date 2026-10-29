@@ -738,6 +738,26 @@ def test_summary_without_run_and_incomplete_run(built, tmp_path, monkeypatch):
     assert obj["terms"]["hermes-native"]["R"]["status"] == "partial"
 
 
+@pytest.mark.parametrize("arm,record,reason", [
+    ("hermes-native", dict(status="stopped", close_failed="OperationalError"),
+     "close_failed:OperationalError"),
+    ("mem0-oss", dict(status="not_run", reason="mem0_pin_mismatch"), "mem0_pin_mismatch")])
+def test_summary_requires_scan_for_on_disk_refusals(built, tmp_path, arm, record, reason):
+    root = tmp_path / ("p06-" + arm)
+    root.mkdir()
+    s6._arm_write(root, record)
+    out = tmp_path / "summary.json"
+    args = SimpleNamespace(out=out, life=built[0], scratch=tmp_path)
+    with pytest.raises(s6.CredentialLeak, match="^summary requires a clean credential scan$"):
+        s6.summarise(args)
+    assert not out.exists()
+    s6._arm_write(root, dict(record, credential_scan=dict(hits={}, unreadable=0)))
+    assert s6.summarise(args) == 0
+    obj = s6.read_json(out)
+    for key in ("arms", "bytes", "terms", "projection"):
+        assert obj[key][arm] == dict(status="not_run", reason=reason)
+
+
 def test_final_boundary_enforces_wall_and_initial_egress(tmp_path):
     now = [0]
     adapter = FakeAdapter(tmp_path / "wall-final")
@@ -1018,6 +1038,91 @@ def test_replay_escaping_harness_failure_keeps_completed_session(fake_replay):
     result = s6.read_json(run.root / "arm.json")
     assert result["status"] == "stopped" and result["stop_reason"] == "replay_failed:HarnessFailed"
     assert result["sessions_run"] == 1 and result["sessions"][0]["session"] == 1
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+
+
+def test_replay_guard_drain_exits_one_and_keeps_completed_session(fake_replay, monkeypatch):
+    run = fake_replay
+    run.login.needles = lambda: {run.login.token(): "synthetic_access_token"}
+    run_session = run.adapter.run_session
+
+    def guarded(index, **kwargs):
+        if index == 2:
+            try:
+                run.adapter.director.guard.check(canon(dict(text=run.login.token())))
+            except s6.CredentialLeak:
+                raise s6.HarnessFailed("director_stopped") from None
+            pytest.fail("the guard must stop the synthetic ledger write")
+        return run_session(index, **kwargs)
+
+    run.adapter.run_session = guarded
+    assert s6.main(run.args) == 1
+    result = s6.read_json(run.root / "arm.json")
+    assert result["status"] == "stopped" and result["stop_reason"] == "replay_failed:CredentialLeak"
+    assert result["sessions_run"] == 1 and result["sessions"][0]["session"] == 1
+    assert result["failed_attempt"]["session"] == 2
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+    assert "credential_leak" not in result
+    assert not run.login.log
+    assert s6.read_json(run.root / "login.jsonl") == dict(type="guard", label="synthetic_access_token")
+    # A blocked write leaves clean evidence, so the stopped arm remains summarisable.
+    monkeypatch.setattr(s6, "load_ledger", lambda *a: ([], {}, "b" * 64))
+    life = Path(run.args[run.args.index("--life") + 1])
+    out = run.root.parent / "summary.json"
+    assert s6.summarise(SimpleNamespace(out=out, life=life, scratch=run.root.parent)) == 0
+    obj = s6.read_json(out)
+    assert obj["arms"]["hermes-native"]["status"] == "stopped"
+    assert obj["projection"]["hermes-native"] == dict(status="not_run", reason="incomplete_life")
+
+
+@pytest.mark.parametrize("exception", [s6.Stop("offline_replay_stop"), s6.SystemRefused(["offline refusal"])])
+def test_replay_refusal_exits_three_after_clean_rescan(fake_replay, monkeypatch, exception):
+    run = fake_replay
+    scan, scans = s6.scan, []
+
+    def scan_once(*args):
+        scans.append(True)
+        if len(scans) == 1:
+            raise exception
+        return scan(*args)
+
+    monkeypatch.setattr(s6, "scan", scan_once)
+    if isinstance(exception, s6.Stop):
+        with pytest.raises(SystemExit) as exc:
+            s6.main(run.args)
+        assert exc.value.code == 3
+    else:
+        assert s6.main(run.args) == 3
+    result = s6.read_json(run.root / "arm.json")
+    assert scans == [True, True]
+    assert result["status"] == "stopped" and result["stop_reason"] == "replay_failed:" + type(exception).__name__
+    assert result["sessions_run"] == 201 and len(result["sessions"]) == 201
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+
+
+def test_replay_operational_failure_keeps_hashed_egress(fake_replay):
+    run = fake_replay
+    close = run.adapter.close
+    destinations = ["203.0.113.7:443"]
+
+    def close_with_egress():
+        return dict(close(), non_loopback=destinations[:])
+
+    run.adapter.close = close_with_egress
+    run_session = run.adapter.run_session
+
+    def fail(index, **kwargs):
+        if index == 2:
+            raise sqlite3.OperationalError("offline replay failure")
+        return run_session(index, **kwargs)
+
+    run.adapter.run_session = fail
+    assert s6.main(run.args) == 4
+    result = s6.read_json(run.root / "arm.json")
+    assert result["stop_reason"] == "replay_failed:OperationalError"
+    assert result["sessions_run"] == 1
+    assert result["egress"] == dict(non_loopback=[s6.sha256(value.encode()).hexdigest() for value in destinations])
+    assert destinations[0].encode() not in (run.root / "arm.json").read_bytes()
     assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
 
 
