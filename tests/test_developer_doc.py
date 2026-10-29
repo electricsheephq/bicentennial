@@ -56,6 +56,13 @@ def test_ci_block_matches_doc():
     assert block == workflow_run(WORKFLOW.read_text(), STEP)
 
 
+def test_doc_uses_build_command():
+    text = GUIDE.read_text()
+    assert list(re.findall(r"^bicentennial build .+$", text, re.MULTILINE)) == [
+        f"bicentennial build --tier {tier} --out build/ring0" for tier in ("T0", "T0", "T1")]
+    assert "build_tier" not in text and "no pack-build CLI" not in text
+
+
 def _on_block(text):
     lines = text.splitlines()
     start = lines.index("on:")
