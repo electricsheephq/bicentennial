@@ -104,5 +104,5 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 - **The correction:**
   - The size is at most 5% under the t calibration that #240's ruling adopted.
   - Every bootstrap bound that certification uses takes the level p_n = Φ(−t_{n−1, 1−α}·√(n/(n−1))) instead of the fixed percentile (#242, #251).
-  - The operating-characteristic simulation (#245) checks the bound. PREREG-v0.4's freeze gate for PREREG-v1 requires a certification rate of at most 5% with margin 0 in every cell, and that simulation decides it.
+  - The operating-characteristic simulation (#245) checks the bound. The bound is the first of the three pass criteria of PREREG-v0.4's freeze gate for PREREG-v1: a certification rate of at most 5% with margin 0 in every cell. The other two are at least 80% with +10 in every cell, and at most 20% with +10 in every cell but one at −10 (PREREG-v0.4 line 44).
 - **Scope:** PREREG-v0.4 fixes the bootstrap, its weights, the draw count and the seed, not the percentile index, so no frozen quantity changes. The v0.1 Kit is unaffected, because its T0 and T1 runs never certify.
