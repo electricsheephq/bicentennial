@@ -257,12 +257,22 @@ def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> Ru
     if required != tuple(c.cell for c in params.cells):
         raise ValueError("required cells must equal the model's cells")
     checkpoints = tuple(raw["checkpoints"])
-    alloc = {int(b): {(k, c): n for k, c, n in values}
-             for b, values in sorted(raw["alloc_by_b"].items())}
+    for key in raw["alloc_by_b"]:
+        try:
+            canonical = str(int(key)) == key
+        except ValueError:
+            canonical = False
+        if not canonical:
+            raise ValueError(f"allocation for b = {key} must cover every (cell, checkpoint)")
+    alloc = {}
+    for key, values in raw["alloc_by_b"].items():
+        rows_by_pair = {(k, c): n for k, c, n in values}
+        if len(values) != len(rows_by_pair):
+            raise ValueError(f"allocation for b = {key} must cover every (cell, checkpoint)")
+        alloc[int(key)] = rows_by_pair
     expected = {(k, c) for k in required for c in checkpoints}
     for b in sorted({b for _, b in ladder} | set(alloc)):
-        if (b not in alloc or set(alloc[b]) != expected
-                or len(raw["alloc_by_b"][str(b)]) != len(alloc[b])):
+        if b not in alloc or set(alloc[b]) != expected:
             raise ValueError(f"allocation for b = {b} must cover every (cell, checkpoint)")
         if any(type(n) is not int or n < 0 for n in alloc[b].values()):
             raise ValueError("allocations must be ints >= 0")
@@ -778,10 +788,11 @@ class _Pool:
                                 "event": "pause", "exit": 11})
         else:
             width = min(2, self.config.workers) if code == 10 else self.config.workers
-            current = next((p["workers"] for p in reversed(self.pauses)
-                            if p["event"] == "width"), self.config.workers)
-            if width == current:
-                return
+            if self.mode is None:
+                current = next((p["workers"] for p in reversed(self.pauses)
+                                if p["event"] == "width"), self.config.workers)
+                if width == current:
+                    return
             self.pauses.append({"point": list(self.point), "variant": self.variant,
                                 "event": "width", "exit": code,
                                 "workers": width})
@@ -1037,7 +1048,10 @@ def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
 
 
 def _sensitivities(inputs, config, point_result, out, hashes, diagnostics):
-    if config.variants == ("main",):
+    variants = [variant for variant in config.variants
+                if variant != "main" and (not variant.startswith("inputs_")
+                                          or variant in inputs.sensitivity_params)]
+    if not variants:
         return
     point = point_result["n_L"], point_result["b"]
     literal = point_result["alternatives"].get("LITERAL")
@@ -1060,10 +1074,7 @@ def _sensitivities(inputs, config, point_result, out, hashes, diagnostics):
         pooled_bound = None if literal["se_bound_pooled"] is None else Fraction(literal["se_bound_pooled"])
     if bound is None:
         return
-    for variant in config.variants:
-        if variant == "main" or (variant.startswith("inputs_")
-                                  and variant not in inputs.sensitivity_params):
-            continue
+    for variant in variants:
         pool = _Pool(inputs, config, point, variant, diagnostics["pauses"], diagnostics["phases"])
         try:
             try:

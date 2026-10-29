@@ -294,6 +294,14 @@ def test_parser_validation_and_fallback():
         run.parse_inputs(canon(raw), ladder=((2, 5),))
 
 
+@pytest.mark.parametrize("keys", (("0150",), (" 150",), ("+150",), ("x",), ("x", "+150")))
+def test_parser_canonical_allocation_keys(keys):
+    raw = json.loads(FIXTURE.read_bytes())
+    raw["alloc_by_b"] = {key: raw["alloc_by_b"]["150"] for key in keys}
+    with rejects(f"allocation for b = {keys[0]} must cover every (cell, checkpoint)"):
+        run.parse_inputs(json.dumps(raw).encode())
+
+
 def test_planning_fixture_real_parser_and_replicate():
     inputs = run.load_inputs(FIXTURE)
     assert inputs.planning and len(inputs.lives) == 48 and len(inputs.rows) == 6
@@ -442,12 +450,14 @@ def test_busy_marker_exit10_drain_and_pool_width(tiny_inputs, tables, tmp_path, 
     class Executor:
         def __init__(self, *, max_workers, mp_context, initializer, initargs):
             self.mode = 10 if initargs[-1] else 0
+            self.issued = []
             assert max_workers == (2 if self.mode == 10 else 4)
             monkeypatch.setattr(run, "_WORKER", context(tiny_inputs, config, tables, variant=initargs[3]))
         def submit(self, fn, *args):
             assert code[0] == self.mode, "submission during drain"
             future = Future()
             future.set_result(fn(*args))
+            self.issued.append(future)
             submitted.append(args)
             if controlled[0] and initial == 0 and len(submitted) == 3:
                 code[0] = 10
@@ -455,15 +465,23 @@ def test_busy_marker_exit10_drain_and_pool_width(tiny_inputs, tables, tmp_path, 
                 code[0] = 0
             return future
         def shutdown(self, **kwargs):
+            assert all(future in waited for future in self.issued), "pool rebuilt before drain"
             if initial == 10:
                 code[0] = 0
+        def terminate_workers(self):
+            pass
+    waited = set()
+    def wait(pending, **kwargs):
+        future = next(iter(pending))
+        waited.add(future)
+        return {future}, set()
     original = run._Pool.results
     def results(pool, tasks, bounds, **kwargs):
         for result in original(pool, tasks, bounds, **kwargs):
             reduced.append((pool.variant, getattr(result, "r0", -1)))
             yield result
     monkeypatch.setattr(run, "ProcessPoolExecutor", Executor)
-    monkeypatch.setattr(run, "wait", lambda pending, **kwargs: ({next(iter(pending))}, set()))
+    monkeypatch.setattr(run, "wait", wait)
     monkeypatch.setattr(run._Pool, "results", results)
     monkeypatch.setattr(run, "_marker", lambda command: code[0])
     # Baseline keeps the marker at zero, even at the third and sixth submission.
@@ -477,6 +495,41 @@ def test_busy_marker_exit10_drain_and_pool_width(tiny_inputs, tables, tmp_path, 
     assert (tmp_path / "whole/results.json").read_bytes() == (tmp_path / "controlled/results.json").read_bytes()
     pauses = json.loads((tmp_path / "controlled/RESULT-MANIFEST.json").read_bytes())["run"]["pauses"]
     assert [(p["exit"], p["workers"]) for p in pauses] == [(10, 2), (0, 4)]
+
+
+def test_busy_marker_same_width_mode_changes(tiny_inputs, monkeypatch):
+    config = tiny_config(workers=2)
+    code, pauses = [0], []
+    class Executor:
+        def __init__(self, **kwargs):
+            pass
+        def submit(self, fn):
+            future = Future()
+            future.set_result({})
+            return future
+        def shutdown(self, **kwargs):
+            pass
+        def terminate_workers(self):
+            pass
+    monkeypatch.setattr(run, "ProcessPoolExecutor", Executor)
+    monkeypatch.setattr(run, "_marker", lambda command: code[0])
+    monkeypatch.setattr(run, "wait", lambda pending, **kwargs: (set(pending), set()))
+    monkeypatch.setattr(run, "_pause_wait", lambda: code.__setitem__(0, 0))
+    pool = run._Pool(tiny_inputs, config, (2, 5), "main", pauses)
+    tasks = [("phase0", 0, 1, ())]
+    for mode in (0, 10, 0):
+        code[0] = mode
+        assert list(pool.results(tasks, {}, solver=True)) == [{}]
+    assert [(p["exit"], p["workers"]) for p in pauses] == [(10, 2), (0, 2)]
+    following = run._Pool(tiny_inputs, config, (2, 5), "reserve0", pauses)
+    assert list(following.results(tasks, {}, solver=True)) == [{}]
+    assert len(pauses) == 2
+    code[0] = 11
+    assert list(pool.results(tasks, {}, solver=True)) == [{}]
+    assert [(p["event"], p["exit"]) for p in pauses[2:]] == [("pause", 11), ("width", 0)]
+    assert pauses[-1]["workers"] == 2
+    pool.close()
+    following.close()
 
 
 def test_busy_marker_exit10_niceness_owner_run(tiny_inputs, monkeypatch):
@@ -547,6 +600,20 @@ def test_ladder_and_sensitivities(tiny_inputs, tables, tmp_path, monkeypatch):
     run._sensitivities(inputs, config, point, tmp_path / "bound", {}, diagnostics)
     assert phases.count("sensitivity_bound") == 1 and phases.count("sensitivity") == 3
     assert len(diagnostics["phases"]) == 4 and diagnostics["audits"]["replicates"] == 8 + 3 * 4
+
+
+def test_sensitivities_without_runnable_variant(tiny_inputs, tables, tmp_path, monkeypatch):
+    inline_pool(monkeypatch, tables)
+    config = tiny_config(variants=("main", "inputs_low"))
+    assert tiny_inputs.sensitivity_params == {}
+    phases = {"already": {"wall_s": 1, "cpu_s": 1}}
+    audits = {"replicates": 7, "certify_calls": 8, "fields_compared": 9, "mismatches": 0}
+    diagnostics = {"pauses": [], "phases": dict(phases), "audits": dict(audits)}
+    point = {"n_L": 2, "b": 5, "alternatives": {}, "variants": {}}
+    run._sensitivities(tiny_inputs, config, point, tmp_path, {}, diagnostics)
+    assert diagnostics["phases"] == phases and diagnostics["audits"] == audits
+    assert not list(tmp_path.glob("checkpoints/*sensitivity*.json"))
+    assert point["variants"] == {} and diagnostics["pauses"] == []
 
 
 def test_missing_bound_skip_and_capacity(tiny_inputs, tables, tmp_path, monkeypatch):
