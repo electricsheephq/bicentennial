@@ -43,44 +43,48 @@ def contributions(
     scores_a: Mapping[tuple[str, str], Score],
     scores_b: Mapping[tuple[str, str], Score],
     valid: Mapping[str, Collection[str]],
+    *, lives: Collection[str],
 ) -> dict[str, Fraction]:
     """Return the §2 (lines 135–139) common-set contributions c_l.
 
     Scores are flat {(track_id, life_id): Fraction | int} mappings. Each score
     must already be a within-life mean over bundles valid for both systems.
     valid is {track_id: collection_of_common_valid_life_ids}; IDs are strings.
-    The life universe L is the union of these collections, so callers must
-    supply support covering every life in the intended run. No score may
-    occur outside valid, and both systems must score every valid pair.
+    lives explicitly gives the life universe L: every life of the run, even
+    those with no common-valid bundle on any track. It must include the union
+    of the valid sets, otherwise ValueError is raised. No score may occur
+    outside valid, and both systems must score every valid pair.
     Empty tracks (including an empty track family) raise ValueError, as do
-    extra or missing scores. Output keys are sorted life IDs.
+    extra or missing scores. Output includes every life in sorted order;
+    lives with no valid bundle contribute Fraction(0).
 
     Each term has weight len(L) / (len(valid) * len(valid[track])). For the
-    budget row (§2, lines 140–147), pass only the Keep subset and the K10
-    scores for all included tracks; the same common-set reweighting applies.
+    budget row (§2, lines 140–147), pass the Keep subset as lives and the K10
+    scores and valid sets for all included tracks; the same reweighting applies.
     """
     if not valid:
         raise ValueError("at least one track is required")
     support = {}
-    life_ids = {}
+    life_ids = dict.fromkeys(sorted(lives))
     for track in sorted(valid):
-        lives = dict.fromkeys(sorted(valid[track]))
-        if not lives:
+        track_lives = dict.fromkeys(sorted(valid[track]))
+        if not track_lives:
             raise ValueError(f"empty common valid set for track {track!r}")
-        support[track] = lives
-        life_ids.update(lives)
+        if any(life not in life_ids for life in track_lives):
+            raise ValueError("lives must include every life in the valid sets")
+        support[track] = track_lives
     for scores in (scores_a, scores_b):
         for track, life in sorted(scores):
             if track not in support or life not in support[track]:
                 raise ValueError(f"score outside valid set: {(track, life)!r}")
-        for track, lives in support.items():
-            for life in lives:
+        for track, track_lives in support.items():
+            for life in track_lives:
                 if (track, life) not in scores:
                     raise ValueError(f"missing score: {(track, life)!r}")
     result = dict.fromkeys(sorted(life_ids), Fraction(0))
-    for track, lives in support.items():
-        weight = Fraction(len(result), len(support) * len(lives))
-        for life in lives:
+    for track, track_lives in support.items():
+        weight = Fraction(len(result), len(support) * len(track_lives))
+        for life in track_lives:
             key = (track, life)
             result[life] += weight * (_fraction(scores_a[key]) - _fraction(scores_b[key]))
     return result

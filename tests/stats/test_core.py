@@ -15,6 +15,7 @@ from bicentennial.stats.core import bootstrap_ci, contributions, holm, sign_flip
 
 @pytest.mark.parametrize("keep_lives", [("l3", "l1", "l2"), ("l1",)])
 def test_contribution_mean_equals_independent_headline(keep_lives):
+    lives = ("l3", "l1", "l2")
     valid = {"Wake": ("l3", "l1", "l2"), "Keep": keep_lives}
     a = {("Wake", "l1"): Fraction(8, 3), ("Wake", "l2"): 5,
          ("Wake", "l3"): -2, ("Keep", "l1"): 9,
@@ -29,7 +30,7 @@ def test_contribution_mean_equals_independent_headline(keep_lives):
                       / len(lives) for track, lives in valid.items()), Fraction(0)) / 2
     headline_b = sum((sum((Fraction(b[track, life]) for life in lives), Fraction(0))
                       / len(lives) for track, lives in valid.items()), Fraction(0)) / 2
-    result = contributions(a, b, valid)
+    result = contributions(a, b, valid, lives=lives)
     assert sum(result.values(), Fraction(0)) / 3 == headline_a - headline_b
     assert list(result) == ["l1", "l2", "l3"]
     assert all(isinstance(value, Fraction) for value in result.values())
@@ -39,16 +40,41 @@ def test_contribution_mean_equals_independent_headline(keep_lives):
     else:
         assert result == {"l1": Fraction(5), "l2": Fraction(1, 2), "l3": Fraction(0)}
     assert contributions(dict(reversed(tuple(a.items()))), dict(reversed(tuple(b.items()))),
-                         dict(reversed(tuple(valid.items())))) == result
+                         dict(reversed(tuple(valid.items()))), lives=tuple(reversed(lives))) == result
 
 
 def test_budget_subset_uses_same_common_set_reweighting():
-    # All scores are already K10 scores; the inferred universe is only k1,k2.
+    # All scores are already K10 scores; the declared Keep subset is k1,k2.
     a = {("Wake", "k1"): 4, ("Wake", "k2"): 2, ("Keep", "k1"): 6}
     b = dict.fromkeys(a, 0)
-    result = contributions(a, b, {"Wake": ("k2", "k1"), "Keep": ("k1",)})
+    result = contributions(a, b, {"Wake": ("k2", "k1"), "Keep": ("k1",)}, lives=("k1", "k2"))
     assert result == {"k1": Fraction(8), "k2": Fraction(1)}
     assert sum(result.values()) / 2 == Fraction(9, 2)
+
+
+def test_contributions_include_life_without_any_valid_bundle():
+    lives = ("l3", "l2", "l1")
+    valid = {"Wake": ("l1", "l2"), "Keep": ("l1",)}
+    a = {("Wake", "l1"): 4, ("Wake", "l2"): 2, ("Keep", "l1"): 6}
+    b = dict.fromkeys(a, 0)
+    result = contributions(a, b, valid, lives=lives)
+    # Weights are 3/(2*2) for Wake and 3/(2*1) for Keep.
+    assert result == {"l1": Fraction(12), "l2": Fraction(3, 2), "l3": Fraction(0)}
+    assert list(result) == ["l1", "l2", "l3"]
+    assert isinstance(result["l3"], Fraction)
+    headline_difference = sum(
+        (sum((Fraction(a[track, life]) - Fraction(b[track, life]) for life in track_lives),
+             Fraction(0)) / len(track_lives) for track, track_lives in valid.items()),
+        Fraction(0)) / len(valid)
+    assert sum(result.values(), Fraction(0)) / len(lives) == headline_difference == Fraction(9, 2)
+
+
+@pytest.mark.parametrize("lives", [(), ("l1",)])
+def test_contributions_refuses_universe_missing_valid_life(lives):
+    a = {("Wake", "l1"): 1, ("Keep", "l2"): 2}
+    b = dict.fromkeys(a, 0)
+    with pytest.raises(ValueError, match="lives must include every life in the valid sets"):
+        contributions(a, b, {"Wake": ("l1",), "Keep": ("l2",)}, lives=lives)
 
 
 @pytest.mark.parametrize("side", ["a", "b"])
@@ -63,13 +89,13 @@ def test_contributions_refuses_missing_or_outside_scores(side, problem):
     else:
         target["Keep", "l1"] = 2
     with pytest.raises(ValueError, match="missing score|outside valid set"):
-        contributions(a, b, {"Wake": ("l1",)})
+        contributions(a, b, {"Wake": ("l1",)}, lives=("l1",))
 
 
 @pytest.mark.parametrize("valid", [{}, {"Wake": ()}, {"Wake": ("l1",), "Keep": ()}])
 def test_contributions_refuses_empty_support(valid):
     with pytest.raises(ValueError, match="at least one track|empty common valid set"):
-        contributions({}, {}, valid)
+        contributions({}, {}, valid, lives=("l1",))
 
 
 @pytest.mark.parametrize("n", [12, 16, 20])
@@ -221,7 +247,7 @@ def test_invalid_holm_probabilities_refused(value):
 @pytest.mark.parametrize("value", [0.5, True])
 def test_inexact_or_boolean_inputs_refused(value):
     with pytest.raises(TypeError, match="Fraction or int"):
-        contributions({("t", "l"): value}, {("t", "l"): 0}, {"t": ("l",)})
+        contributions({("t", "l"): value}, {("t", "l"): 0}, {"t": ("l",)}, lives=("l",))
     for function in (sign_flip_p, bootstrap_ci):
         with pytest.raises(TypeError, match="Fraction or int"):
             function([value], seed="seed", name="name")
@@ -242,7 +268,7 @@ lives = {"l1", "l2", "l3"}
 valid = {track: lives if track == "Wake" else {"l1"} for track in {"Wake", "Keep"}}
 a = {(track, life): Fraction(int(life[-1]), 3) for track in valid for life in valid[track]}
 b = dict.fromkeys(a, 0)
-c = contributions(a, b, valid)
+c = contributions(a, b, valid, lives=lives)
 print(repr(c))
 print(repr(sign_flip_p(c, seed="hashseed", name="primary")))
 print(repr(bootstrap_ci(c, seed="hashseed", name="ci", draws=100)))
