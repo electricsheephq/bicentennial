@@ -188,6 +188,15 @@ def test_rho_x_upper_clamp():
     assert "rho_x_clamped" in inputs.flags
 
 
+def test_rho_x_skips_an_undefined_cell():
+    # Z has one bundle per life, so its ANOVA is undefined. Counting its covariances
+    # (750,000 each) without a denominator term would give about 5.0 instead of 1.4.
+    rows = records() + records(cell="Y") + records(((1000,), (0,), (-1000,)), cell="Z")
+    inputs = estimate(rows)
+    assert "anova_undefined:F:Z" in inputs.flags
+    assert inputs.rho_x_raw == pytest.approx(1.4)
+
+
 def test_rho_x_lower_clamp():
     reverse = tuple(tuple(-v for v in values) for values in FAKE_X)
     inputs = estimate(records() + records(reverse, cell="Y"))

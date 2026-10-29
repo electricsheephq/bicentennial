@@ -148,6 +148,8 @@ def _life_correlations(lives, moments, flags):
         for i, cell in enumerate(cells):
             for other in cells[i + 1:]:
                 left, right = (arm, cell), (arm, other)
+                if moments[left].msw is None or moments[right].msw is None:
+                    continue  # an undefined cell is skipped by pooling, as in the ICC
                 common = sorted(means[left].keys() & means[right].keys())
                 if len(common) >= 2:
                     numerator += _covariance([means[left][life] for life in common],
