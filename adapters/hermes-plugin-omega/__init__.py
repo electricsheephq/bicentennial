@@ -11,6 +11,11 @@ from pathlib import Path
 from agent.memory_provider import MemoryProvider
 
 
+# OMEGA relates each write on an auto-relate thread; finish it before the next write, so the
+# relation edges a later query walks do not depend on thread timing (omega.writes).
+AUTO_RELATE_WAIT_S = 30
+
+
 class OmegaProvider(MemoryProvider):
     name = "omega"
 
@@ -82,6 +87,9 @@ class OmegaProvider(MemoryProvider):
     def handle_tool_call(self, tool_name, args, **kwargs):
         if tool_name == "omega_store":
             text = self.store(args["content"], session_id=self.session_id)
+            for thread in threading.enumerate():
+                if thread.name == "auto-relate":
+                    thread.join(AUTO_RELATE_WAIT_S)
             if text.startswith(("Blocked", "**Memory Blocked**")):
                 result = {"id": None, "outcome": "blocked"}
             else:

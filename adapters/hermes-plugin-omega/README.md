@@ -1,6 +1,6 @@
 # OMEGA Hermes provider
 
-Benchmark-authored provider over `omega-memory==1.5.20`'s documented Python API. OMEGA's maintainers
+Benchmark-authored provider over `omega-memory==1.5.20`'s Python API (calls listed under `omega.adapter`). OMEGA's maintainers
 are invited to review it. Adapter and OMEGA core: Apache-2.0; staged BAAI
 bge-small-en-v1.5 model: MIT. No upstream code is copied here. Dependencies live
 in the benchmark-owned `systems/locks/omega.txt`, constrained against pinned
@@ -8,14 +8,14 @@ Hermes on Python 3.14; omit the conflicting `[server]` extra.
 
 | Fidelity row / card property | Behaviour and reason |
 |---|---|
-| `omega.adapter` | Benchmark-authored Hermes provider using the documented `store`, `query_structured`, `delete_memory` API; OMEGA's maintainers are invited to review it. |
-| `omega.writes` | `omega.store(content, session_id=...)` retains shipped memory event type, dedup, supersession, 90-day TTL, auto-relate and milestones; return the rowid and outcome word so callers can distinguish writes from dedup and blocks. |
+| `omega.adapter` | Benchmark-authored Hermes provider. Its tools call the documented `store`, `query_structured` and `delete_memory`; it also calls `type_stats()` at start, `bridge.reset_memory()` at shutdown, and the embedding preload and backend checks. OMEGA's maintainers are invited to review it. |
+| `omega.writes` | `omega.store(content, session_id=...)` keeps the shipped memory event type, Jaccard dedup within a session, supersession, 90-day TTL and auto-relate. The adapter waits for auto-relate after each write, so relation edges do not depend on thread timing. The store's exact and canonical-hash dedup check the TTL against SQLite's real clock (`datetime('now')`) while the worker's clock is simulated, so they never match here. The result returns the rowid and outcome word so callers can distinguish writes from dedup and blocks. |
 | `omega.reads` | `omega.query_structured(query, limit=10)` delivers full content in OMEGA's order, including injected constraints/preferences, and records accesses. The markdown query/MCP previews default to 200 characters, hiding long event text. |
 | `omega.query_expansion` | `OMEGA_QUERY_EXPANSION=0`: off because no LLM key is provided, matching OMEGA without one. |
 | `omega.reranker` | `OMEGA_CROSS_ENCODER=0`, `OMEGA_RERANKER_AUTODOWNLOAD=0`: off because the shipped default downloads a cross-encoder at first query; runs are offline with every model pinned. |
-| `omega.query_cache` | `query_structured` retains shipped caching: identical queries can use elapsed-time TTLs of 60 s (300 s at high confidence); writes, deletes and non-empty reads clear it. |
-| `omega.deferred_startup` | `omega.type_stats()` opens the shipped store; join `omega-deferred-init` before returning so integrity check, WAL checkpoint and backup finish before the first turn. A non-empty store is backed up if no backup is under 24 h old; backups retain deleted memories. |
-| `omega.ttl` | `omega.store` retains the shipped 90-day memory TTL on the worker's wall clock; nothing expires within a run. |
+| `omega.query_cache` | `query_structured` retains shipped caching: identical queries can use elapsed-time TTLs of 60 s (300 s at high confidence); stores, deletes and non-empty reads clear it (auto-relate's edge writes do not). |
+| `omega.deferred_startup` | `omega.type_stats()` opens the shipped store; join `omega-deferred-init` before returning so integrity check, WAL checkpoint and backup finish before the first turn. A non-empty store is backed up when no backup exists: the shipped 24-hour age check compares the simulated clock with real file times, so an existing backup never counts as stale. Backups retain deleted memories. |
+| `omega.ttl` | `omega.store` retains the shipped 90-day memory TTL. Expiry runs on the worker's simulated clock, so nothing expires within a run; the store's dedup scope checks the TTL against SQLite's real clock instead (`omega.writes`). |
 | `omega.onnx_threads` | `OMEGA_ONNX_THREADS=1` bounds ONNX worker threads for reproducible resource use. |
 | `omega.telemetry` | `ORT_DISABLE_TELEMETRY=1` turns off onnxruntime 1.29.0's usage uploads to Microsoft because runs are offline (owner measurement). |
 | `omega.forget` | `omega.delete_memory(node_id)` retains shipped deletion, including `forgetting_log`'s 200-character preview; disclose the residue. |

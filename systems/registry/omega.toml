@@ -1,9 +1,9 @@
 name = "omega"
 licence = "Apache-2.0"
 harness = "hermes"
-# Adapter commit 0b2d3e69bb3cd63f71784e1573c74d55953b72d8; archive recipe:
-# env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git archive --format=tar 0b2d3e69bb3cd63f71784e1573c74d55953b72d8 adapters/hermes-plugin-omega | shasum -a 256
-artifact = {name = "hermes-plugin-omega", version = "1.5.20", sha256 = "2d51261a9122c4a6a4fd6d6f53f516bf98417345481323419975f7031e11b6fc"}
+# UNMEASURED: owner commit A adds the adapter; commit B names A and records:
+# env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git archive --format=tar <A> adapters/hermes-plugin-omega | shasum -a 256
+artifact = {name = "hermes-plugin-omega", version = "1.5.20", sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
 write_tools = [{tool = "omega_store", actions = []}, {tool = "omega_delete", actions = []}]
 read_tools = ["omega_query"]
 recall = {tool = "omega_query", argument_template = {query = "{prompt}"}}
@@ -11,7 +11,7 @@ own_model_routes = []
 structured_formats = {}
 settle = {kind = "hook", bound_s = 5}
 surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
-# Measured 2026-10-29: the T0 memory-layer host's fresh-install hash (RING0 §13 E4 port mask), equal on two director ports.
-fresh_install_hash = "78813ae97519864ac3154676751f1e415fba4d2f9e9225e20c8633dec9bec738"
+# UNMEASURED: T0 memory-layer host fresh-install hash, equal on two ports (RING0 §13 E4).
+fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
 machine_class = "light"
 benchmark_operator_runs = true

@@ -78,14 +78,14 @@ def test_t0_stub_disclosures(tmp_path, monkeypatch):
 
 def omega_properties():
     return {"omega." + key: value for key, value in {
-        "adapter": "benchmark-authored Hermes provider over omega-memory 1.5.20's documented Python API (store, query_structured, delete_memory); OMEGA's maintainers are invited to review it",
-        "writes": "omega.store as shipped: event type memory, dedup, supersession, 90-day TTL, auto-relate; the result shows the memory id and OMEGA's outcome word",
+        "adapter": "benchmark-authored Hermes provider over omega-memory 1.5.20's Python API: store, query_structured and delete_memory for the tools, type_stats at start, bridge.reset_memory at shutdown, and the embedding preload and backend checks; OMEGA's maintainers are invited to review it",
+        "writes": "omega.store as shipped: event type memory, Jaccard dedup within a session, supersession, 90-day TTL and auto-relate, which the adapter waits for after each write; the store's exact and canonical-hash dedup never match here, because they check the TTL against SQLite's real clock while the worker's clock is simulated; the result shows the memory id and OMEGA's outcome word",
         "reads": "query_structured as shipped: full content, 10 results by default, memory accesses recorded; OMEGA's query and MCP tool render markdown with 200-character previews by default",
         "query_expansion": "off: no LLM key; matches OMEGA without one",
         "reranker": "off: the shipped default would download the cross-encoder at first query; the benchmark runs offline with every model pinned",
-        "query_cache": "as shipped: a repeat of an identical query within 60 s (300 s at high confidence) of elapsed time can come from the cache, but every write, delete and non-empty read clears it",
-        "deferred_startup": "as shipped: integrity check, WAL checkpoint, and a backup of a non-empty store when the newest backup is over 24 h old; initialization waits for it, so a run's first start with memories makes a backup, which keeps them after a delete",
-        "ttl": "as shipped (90 days for memory events), on the worker's wall clock: nothing expires within a run",
+        "query_cache": "as shipped: a repeat of an identical query within 60 s (300 s at high confidence) of elapsed time can come from the cache, but every store, delete and non-empty read clears it",
+        "deferred_startup": "as shipped: integrity check, WAL checkpoint, and a backup of a non-empty store when no backup exists (the age check compares the simulated clock with real file times, so an existing backup never counts as stale); initialization waits for it, so a run's first start with memories makes a backup, which keeps them after a delete",
+        "ttl": "as shipped (90 days for memory events), on the worker's simulated clock: nothing expires within a run; OMEGA's dedup scope checks the TTL against SQLite's real clock instead (omega.writes)",
         "onnx_threads": "1",
         "telemetry": "off: ORT_DISABLE_TELEMETRY=1; onnxruntime 1.29.0 would otherwise upload usage events to Microsoft, and runs are offline",
         "forget": "omega.delete_memory as shipped; OMEGA's forgetting_log keeps a 200-character preview of each deleted memory",

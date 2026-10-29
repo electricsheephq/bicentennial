@@ -51,10 +51,19 @@ def provider(tmp_path, monkeypatch):
             self.db.execute("CREATE TABLE forgetting_log(preview TEXT)")
             self.thread = NS(name="omega-deferred-init", alive=True)
             self.thread.join = lambda: setattr(self.thread, "alive", False)
-            monkeypatch.setattr(threading, "enumerate", lambda: [self.thread, NS(name="unrelated")])
+            monkeypatch.setattr(threading, "enumerate",
+                                lambda: [self.thread, NS(name="unrelated"), *(r for r in self.relates if r.alive)])
 
         def store(self, content, **kwargs):
             assert kwargs == {"session_id": "s1"}  # inference/supersession retain defaults
+            self.events.append("store")
+            relate = NS(name="auto-relate", alive=True)
+
+            def join(timeout=None):
+                relate.alive = False
+                self.events.append(f"join {timeout}")
+            relate.join = join
+            self.relates.append(relate)
             row = self.db.execute("SELECT node_id FROM memories WHERE content=?", (content,)).fetchone()
             if row:
                 return f"Deduped → {row[0]}"
@@ -84,7 +93,7 @@ def provider(tmp_path, monkeypatch):
 
     api = embedding.api = Store()
     api.stats_calls, api.resets, api.reply, api.deleted, api.success = 0, 0, None, [], True
-    api.queries = []
+    api.queries, api.relates, api.events = [], [], []
     omega, bridge = ModuleType("omega"), ModuleType("omega.bridge")
     omega.embedding, omega.type_stats, omega.store = embedding, api.type_stats, api.store
     omega.query_structured, omega.delete_memory, bridge.reset_memory = api.query, api.delete_node, api.close
@@ -157,6 +166,14 @@ def test_store_forms(provider, reply, outcome):
     else:
         assert json.loads(p.handle_tool_call("omega_store", {"content": "synthetic"})) == {
             "id": None if outcome == "blocked" else 41, "outcome": outcome}
+
+
+def test_store_waits_for_auto_relate(provider):
+    p, home, _, embedding = provider
+    p.initialize("s1", hermes_home=home)
+    for content in ("first", "first", "second"):  # a dedup starts auto-relate too
+        p.handle_tool_call("omega_store", {"content": content})
+    assert embedding.api.events == ["store", "join 30"] * 3
 
 
 def test_availability_and_backend_refusal(provider, monkeypatch):
