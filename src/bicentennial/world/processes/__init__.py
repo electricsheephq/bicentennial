@@ -35,18 +35,29 @@ def pair(schedule, d) -> int:
 
 
 def token_value(db, schedule, process, unit_id, part, n, stem, *, paired=False) -> str:
-    """Mint STEM-dddddd, retrying only while the number is taken: some token's number, or one reserved
-    for a cancellation by a commitment's made token, so a cancel flip moves no other draw."""
+    """Mint STEM-dddddd, retrying taken numbers and token containment collisions.
+
+    Reserve each commitment's cancellation number and value in both twins, so a cancel flip moves
+    no other draw. With paired=True, check the made and cancellation values together.
+    """
     if type(stem) is not str or not STEM.fullmatch(stem):
         raise ValueError("token stem must match ^[A-Z]{2,12}$")
-    taken = {d for (v,) in db.execute("SELECT value FROM locked_token") for d in NUMBER.findall(v)}
-    taken |= {str(pair(schedule, int(d))) for (v,) in db.execute(
+    values = {v for (v,) in db.execute("SELECT value FROM locked_token")}
+    values |= {f"{v.rsplit('-', 1)[0]}-{pair(schedule, int(d))}" for (v,) in db.execute(
         "SELECT t.value FROM commitment c JOIN locked_token t ON t.fact_id = c.fact_id") for d in NUMBER.findall(v)}
+    taken = {d for v in values for d in NUMBER.findall(v)}
+    # No attempt can escape a token contained in the fixed prefix (for example, REQ-).
+    if any(v in f"{stem}-" for v in values):
+        raise ValueError("token stem contains a locked token")
     key, attempt = unit(schedule.life, process, unit_id), 0
-    while (str(d := uniform_int(schedule.seed, key, attempt, f"token:{part}:{n}", 100000, 999999)) in taken
-           or paired and (pair(schedule, d) == d or str(pair(schedule, d)) in taken)):
+    while True:
+        d = uniform_int(schedule.seed, key, attempt, f"token:{part}:{n}", 100000, 999999)
+        numbers = (d, pair(schedule, d)) if paired else (d,)
+        candidates = [f"{stem}-{number}" for number in numbers]
+        if (len(set(numbers)) == len(numbers) and not any(str(number) in taken for number in numbers)
+                and not any(a in b or b in a for a in candidates for b in values)):
+            return candidates[0]
         attempt += 1
-    return f"{stem}-{d}"
 
 
 def check_tokens(db) -> None:
