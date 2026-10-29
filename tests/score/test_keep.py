@@ -95,7 +95,7 @@ def test_tier_scores_rejects_unknown_tiers(can_cap):
     sizes = dict.fromkeys(TIERS, 0)
     with pytest.raises(ValueError, match="^unknown Keep tier$"):
         tier_scores({**dict.fromkeys(TIERS, 1), "unknown": 1},
-                    store_bytes={**sizes, "unknown": 0}, raw_bytes=100, can_cap=can_cap)
+                    store_bytes=sizes, raw_bytes=100, can_cap=can_cap)
     with pytest.raises(ValueError, match="^unknown Keep tier$"):
         tier_scores(dict.fromkeys(TIERS, 1), store_bytes={**sizes, "unknown": 0},
                     raw_bytes=100, can_cap=can_cap)
