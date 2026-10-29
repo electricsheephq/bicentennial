@@ -549,7 +549,7 @@ def regression_host(request, factory, tmp_path, monkeypatch):
         host.clock, host.sim_epoch_s = SimClock(root / "clock.json", BASE, 60), BASE
 
         def start():
-            host.schemas = [stub["schema"]("memory" if name == "hermes-native" else "fact_store")]
+            host.schemas = [stub["schema"](plugin_host.WRITE_ARGS[name][0])]
 
         def call(kind, **args):
             host._start()
@@ -566,6 +566,84 @@ def regression_host(request, factory, tmp_path, monkeypatch):
         monkeypatch.setattr(host, "_call", call)
         return host
     return make
+
+
+def stub_rows(host):
+    """The stub's rows, read from whichever declared surface holds its store (mem0-oss uses SANDBOX_HOME)."""
+    [store] = [d / "stub_store.json" for d, _ in host.surfaces() if (d / "stub_store.json").is_file()]
+    return json.loads(store.read_text())
+
+
+@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("clipped", [False, True])
+def test_forget_keeps_identical_unselected_owner(regression_host, monkeypatch, name, clipped):
+    host = regression_host(name)
+    text = "quartz " + "x" * 3993 if clipped else "quartz"
+    host.ingest(event(1, text + "a" if clipped else text))
+    host.ingest(event(2, text + "b" if clipped else text))
+    tool_calls, real = [], host._call
+
+    def call(kind, **args):
+        if kind == "tool":
+            tool_calls.append(args)
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", call)
+    host.forget(dict(event_ids=["e1"]))
+    assert host.settle(5)
+    rows = stub_rows(host)
+    assert [r["text"] for r in rows] == [text]
+    assert host.query(task("quartz"), 100) == answer([event(2, text)])
+    assert host.forget_ambiguous == 1
+    if name == "hermes-native":
+        assert tool_calls == []
+
+
+@pytest.mark.parametrize("name", NAMES[1:])
+@pytest.mark.parametrize("selected,remaining", [(["e1", "e3"], 1), (["e1"], 2)])
+def test_forget_identical_rows_once_per_text(regression_host, monkeypatch, name, selected, remaining):
+    host = regression_host(name)
+    for i in range(1, 4):
+        host.ingest(event(i))
+    searches, deletes, real = [], [], host._call
+
+    def call(kind, **args):
+        if kind == "tool":
+            (searches if "query" in args["arguments"] else deletes).append(args)
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", call)
+    host.forget(dict(event_ids=selected))
+    assert host.settle(5)
+    rows = stub_rows(host)
+    assert [r["seq"] for r in rows] == ([3] if remaining == 1 else [2, 3])
+    assert [r["text"] for r in rows] == ["quartz"] * remaining
+    assert len(searches) == 1 and len(deletes) == 3 - remaining
+    assert host.forget_ambiguous == remaining
+    assert host.query(task("quartz"), 100) == answer(
+        [event(i) for i in (3, 2, 1) if f"e{i}" not in selected])
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_query_cites_written_prefix(regression_host, name):
+    host = regression_host(name)
+    text = "quartz " * 600
+    host.ingest(event(text=text))
+    assert host.settle(5)
+    assert host.query(task("quartz"), 100) == answer([event(text=text[:4000])])
+    assert host.write_clipped == 1
+    assert host.events["e1"]["event"]["text"] == text
+
+
+def test_query_uses_written_maximal_text_and_order(regression_host, monkeypatch):
+    host = regression_host()
+    texts = ["quartz", "new quartz", "topaz"]
+    host.events = {f"e{i}": dict(event=event(i, text + " suffix"), written=text, session=1)
+                   for i, text in enumerate(texts, 1)}
+    monkeypatch.setattr(host, "_call", lambda *a, **kw: dict(
+        recall=json.dumps(dict(results=["topaz", "new quartz"])), prefetch=""))
+    assert host.query(task(), 100) == answer([event(3, "topaz"), event(2, "new quartz")])
+    assert all(r["event"]["text"].endswith(" suffix") for r in host.events.values())
 
 
 @pytest.mark.parametrize("restore_first", [False, True])

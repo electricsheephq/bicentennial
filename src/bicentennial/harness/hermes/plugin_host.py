@@ -289,8 +289,9 @@ class HermesMemoryHost(Adapter):
         self._blocks = tuple(t for t in (snap, corpus, pre) if t)
         cited = {}
         for entry in entries:
-            matches = [r["event"] for r in self.events.values() if r["event"]["text"]
-                       and r["event"]["t_sim"] <= now and r["event"]["text"] in entry]
+            matches = [dict(r["event"], text=r.get("written", r["event"]["text"]))
+                       for r in self.events.values() if r.get("written", r["event"]["text"])
+                       and r["event"]["t_sim"] <= now and r.get("written", r["event"]["text"]) in entry]
             cited.update((e["event_id"], e) for e in matches if not any(
                 e["text"] != other["text"] and e["text"] in other["text"] for other in matches))
         return answer(sorted(cited.values(), key=lambda e: (corpus.find(e["text"]), -e["t_sim"], e["event_id"])))
@@ -398,18 +399,30 @@ class HermesMemoryHost(Adapter):
                    if r["event"]["event_id"] in ids or r["event"].get("call_id") in ids]
         selected = {e["event_id"] for e in targets}
         written = {i: r["written"] for i, r in self.events.items()}
+        kept, seen = {}, set()
 
-        def owns(hit):
+        def owns(hit, row_id):
             exact = {i for i, text in written.items() if text == hit}
-            candidates = exact or {i for i, text in written.items() if text and (hit in text or text in hit)}
-            if not exact and candidates & selected and candidates - selected:
+            if exact:
+                if row_id in seen or not exact & selected:
+                    return False
+                seen.add(row_id)
+                if kept.get(hit, 0) < len(exact - selected):
+                    kept[hit] = kept.get(hit, 0) + 1
+                    self.forget_ambiguous += 1
+                    return False
+                return True
+            candidates = {i for i, text in written.items() if text and (hit in text or text in hit)}
+            if candidates & selected and candidates - selected:
                 self.forget_ambiguous += 1
-            return bool(exact & selected) if exact else bool(candidates) and candidates <= selected
+            return bool(candidates) and candidates <= selected
 
         search, args, query, listing, text_key, id_key, delete, fixed, key = FORGET[self.name]
-        for event in targets:
-            text = written[event["event_id"]]
+        for text in dict.fromkeys(written[event["event_id"]] for event in targets):
             if not text:
+                continue
+            if not search and any(value == text and i not in selected for i, value in written.items()):
+                self.forget_ambiguous += 1
                 continue
             values = [text]
             if search:
@@ -417,7 +430,7 @@ class HermesMemoryHost(Adapter):
                 try:
                     result = json.loads(raw)
                     values = [] if result.get("error") else [r[id_key] for r in result.get(listing, []) if isinstance(r.get(text_key), str)
-                              and r[text_key] and owns(r[text_key])]
+                              and r[text_key] and owns(r[text_key], r[id_key])]
                 except (ValueError, TypeError, KeyError, AttributeError):
                     values = []
             for value in values:
