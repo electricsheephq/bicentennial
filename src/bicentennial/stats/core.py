@@ -5,6 +5,7 @@ from fractions import Fraction
 from math import lcm
 
 from bicentennial.keyed import draw
+from bicentennial.stats import tcal
 
 type Score = Fraction | int
 type Values = Mapping[str, Score] | Sequence[Score]
@@ -147,12 +148,14 @@ def bootstrap_ci(
     Rademacher weights. This is a scalar headline CI; joint cell/control
     resampling for certification is outside this function's scope.
 
-    Sort B=draws replicates ascending. For q=(1-level)/2 and r=(1+level)/2,
-    the zero-based endpoint indices are max(0, ceil(B*q)-1) and
-    max(0, ceil(B*r)-1), respectively: inverse empirical CDF, no interpolation.
-    PREREG specifies the bootstrap, count and weights; issue #223 specifies
-    percentiles, and this function fixes their otherwise unspecified indices.
-    Require a positive integer draws and 0 < level < 1 (Fraction or int).
+    Sort B=draws replicates ascending. For n >= 2 lives (resampling units),
+    use the frozen two-sided 95% t-calibration of #240's ruling R1 and #247:
+    two = ppm(TWO_SIDED_PPM, n), capped at n = 200. The zero-based endpoint
+    indices are index(B, two) and index(B, 1_000_000 - two), the same order
+    statistics as certify._estimate, with no interpolation. Below two lives,
+    retain the inverse empirical CDF indices at (1-level)/2 and (1+level)/2;
+    every replicate for a single life is equal. Require a positive integer
+    draws and level = Fraction(95, 100); other levels are not calibrated.
 
     Draw unit ("stats", "bootstrap", life_id), attempt=zero-based replicate,
     name=name separates this stream from the sign-flip stream. Computation
@@ -164,6 +167,8 @@ def bootstrap_ci(
     level = _fraction(level)
     if not 0 < level < 1:
         raise ValueError("level must lie strictly between zero and one")
+    if level != Fraction(95, 100):
+        raise ValueError("only the 95% interval is calibrated (#247)")
     integers, scale = _scaled(items)
     n = len(integers)
     total = sum(integers)
@@ -175,11 +180,15 @@ def bootstrap_ci(
                            for unit, value in zip(units, deviations, strict=True))
         replicates.append(n * total + perturbation)
     replicates.sort()
-    indices = []
-    for quantile in ((1 - level) / 2, (1 + level) / 2):
-        rank = quantile * draws
-        ceiling = (rank.numerator + rank.denominator - 1) // rank.denominator
-        indices.append(max(0, ceiling - 1))
+    if n >= 2:
+        two = tcal.ppm(tcal.TWO_SIDED_PPM, n)
+        indices = [tcal.index(draws, two), tcal.index(draws, 1_000_000 - two)]
+    else:
+        indices = []
+        for quantile in ((1 - level) / 2, (1 + level) / 2):
+            rank = quantile * draws
+            ceiling = (rank.numerator + rank.denominator - 1) // rank.denominator
+            indices.append(max(0, ceiling - 1))
     denominator = n * n * scale
     return (Fraction(replicates[indices[0]], denominator),
             Fraction(replicates[indices[1]], denominator))
