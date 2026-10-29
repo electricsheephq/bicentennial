@@ -414,6 +414,7 @@ def _imported_files(path):
 def test_c8_covers_every_imported_module():
     # A module the simulation imports, directly or through another, can change its samples, so C-8 hashes it
     paths = set(run.c8_paths(ROOT))
+    assert {"src/bicentennial/ocsim/gaussian.py", "tests/ocsim/test_gaussian.py"} <= paths
     closure, todo = set(), [p for p in paths if p.startswith("src/")]
     while todo:
         path = todo.pop()
@@ -860,3 +861,33 @@ def test_margin_floor_clamp(tiny_inputs):
     assert model.interpolation(cell, 15) == 1.0
     with rejects("cell X: margin gives lambda outside [0, 1]"):
         model.interpolation(cell, 16)
+
+
+def test_gaussian_report_only(tiny_inputs, tables, tmp_path, monkeypatch):
+    inline_pool(monkeypatch, tables)
+    calls = []
+    def prediction(*args, **kwargs):
+        calls.append((args[3], args[4]))
+        return {"gaussian_ppm": [900_000, 950_000], "gaussian_se_p95": "1234/1000"}
+    monkeypatch.setattr(run.gaussian, "predict", prediction)
+    # A deterministic zero-certification run gives Wilson intervals disjoint from the stub.
+    monkeypatch.setattr(run, "evaluate", lambda ctx, rep, ids, **kw: {
+        c: fastcert.Decision("NOT_CERTIFIED", (False, False), (("X", Fraction(1)),),
+                            None, None, (("X", "ADMITTED"),)) for c in ids})
+    config = tiny_config(screen=False, variants=("main", "tau0"))
+    assert run.run(tiny_inputs, config, tmp_path / "report") == 0
+    results = json.loads((tmp_path / "report/results.json").read_bytes())
+    assert len(calls) == len(run.margin_grid(("X",))) * len(config.alternatives)
+    for data in results["points"][0]["alternatives"].values():
+        assert data["gaussian_se_p95"] == "1234/1000" and data["verdict"] == "FAIL"
+        for case, row in data["cases"].items():
+            eligible = case.split("|")[1:3] == ["base", "none"]
+            assert ("gaussian_ppm" in row) == ("gaussian_disjoint" in row) == eligible
+            if eligible:
+                assert row["gaussian_disjoint"] is True
+            expected = run._case_table({case: [0, 0, 0, 0, row["n"], 0, 0]},
+                                       ("X",), config.budgets())[case]
+            assert row["decision"] == expected["decision"]
+    for data in results["points"][0]["variants"]["tau0"].values():
+        assert "gaussian_se_p95" not in data
+        assert all(not any(k.startswith("gaussian") for k in row) for row in data["cases"].values())

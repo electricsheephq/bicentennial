@@ -8,7 +8,7 @@ from bicentennial.canon import canon
 
 NOT_PROVEN = (
     "Nothing here bounds real provider drift (P:43).",
-    "M2's fit to bar-2 data is untested (SPEC-A). The gate's outcome depends on bar-2 inputs that do not exist yet.",
+    "M2's fit to bar-2 data is untested (#245, choice 2). The gate's outcome depends on bar-2 inputs that do not exist yet.",
     "Exactness is proved for certify and tcal at #251's head only.",
     "The Image profile's powered size is not addressed (S-37).",
 )
@@ -42,12 +42,13 @@ def _row(case, data):
         percent(data["mcse_ppm"]),
         f"{percent(data['wilson_ppm'][0])}–{percent(data['wilson_ppm'][1])}",
         data["criterion"] or "reported", data["decision"],
+        "–" if "gaussian_ppm" not in data else "–".join(map(percent, data["gaussian_ppm"])),
     ))) + " |"
 
 
 def _table(cases):
-    return ["| Case | x/n | p̂ | MCSE | Wilson 95% | Bar | Decision |",
-            "|---|---:|---:|---:|---|---|---|",
+    return ["| Case | x/n | p̂ | MCSE | Wilson 95% | Bar | Decision | Gaussian (ideal) |",
+            "|---|---:|---:|---:|---|---|---|---|",
             *(_row(case, data) for case, data in cases)]
 
 
@@ -87,9 +88,23 @@ def render(manifest: dict, results: dict) -> str:
         for point, data in evaluated:
             lines += ["", f"### n_L={point['n_L']}, b={point['b']}: {data['verdict']}", "",
                       f"SE bound: {data['se_bound'] or 'null'}; "
-                      f"pooled SE bound: {data['se_bound_pooled'] or 'null'}.", "",
+                      f"pooled SE bound: {data['se_bound_pooled'] or 'null'}."
+                      + (f" Gaussian pooled p95: {data['gaussian_se_p95']}."
+                         if "gaussian_se_p95" in data else ""), "",
                       "Worst cases per criterion:", "", *_table(_worst(data["cases"])),
                       "", "Full case table:", "", *_table(sorted(data["cases"].items()))]
+    base = [(p, c, d) for p in results["points"] for a in p["alternatives"].values()
+            for c, d in a["cases"].items() if c.split("|")[1:3] == ["base", "none"]]
+    flagged = [(p, c) for p, c, d in base if d.get("gaussian_disjoint", False)]
+    missing = sorted({a for p in results["points"] for a, data in p["alternatives"].items()
+                      if "gaussian_se_p95" not in data})
+    lines += ["", "## Gaussian cross-check", "",
+              "The bracket is report-only and never changes a verdict (#245, decision 1).",
+              "Idealisations: ideal schedule, no drift, unclipped scores, and the "
+              "delta-approximated bundle variance.",
+              f"{len(flagged)} of {len(base)} drift-free base cases disjoint.",
+              *(f"- {c} at n_L={p['n_L']}, b={p['b']}" for p, c in flagged),
+              *( ["Alternatives with no bracket: " + ", ".join(missing) + "."] if missing else [])]
     lines += ["", "## Ladder status", "", "| n_L | b | Status | Pinned reserve | Swap reserve |",
               "|---:|---:|---|---:|---:|"]
     for point in results["points"]:

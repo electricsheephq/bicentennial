@@ -32,6 +32,7 @@ from bicentennial.ocsim import (
     drift,
     fastboard,
     fastcert,
+    gaussian,
     locate,
     model,
     reserve,
@@ -1065,6 +1066,19 @@ def _main_point(inputs, config, point, alternatives, out, hashes, diagnostics):
                 "se_bound": _half(bounds[a]), "se_bound_pooled": _half(pooled[a]),
                 "verdict": "SCREENED_OUT" if a in screened else "PASS" if passed else "FAIL",
                 "cases": cases}
+            predictions = {m.name: gaussian.predict(
+                inputs.params, point, inputs.alloc_by_b[b], dict(m.margins), a,
+                swaps=tuple(life.swap for life in inputs.lives[:n])) for m in grid.values()}
+            for case, row in cases.items():
+                _, kind, drift_name, margin = case.split("|")
+                prediction = predictions[margin]
+                if kind == "base" and drift_name == "none" and prediction is not None:
+                    lo, hi = prediction["gaussian_ppm"]
+                    row["gaussian_ppm"] = [lo, hi]
+                    row["gaussian_disjoint"] = hi < row["wilson_ppm"][0] or lo > row["wilson_ppm"][1]
+            if all(predictions[m] is not None for m in ("m0", "m10")):
+                result["alternatives"][a]["gaussian_se_p95"] = max(
+                    (predictions[m]["gaussian_se_p95"] for m in ("m0", "m10")), key=Fraction)
         for phase in phases:
             for key, value in phase["audits"].items():
                 diagnostics["audits"][key] += value
