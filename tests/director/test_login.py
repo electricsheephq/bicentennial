@@ -952,7 +952,7 @@ def test_scan_counts_each_unlistable_directory(home, tmp_path, monkeypatch, caps
             directory.chmod(0)
         code, result = scan_main(home, tree, monkeypatch, capsys)
         assert code == 1
-        assert result["unreadable"] >= len(blocked)
+        assert result["unreadable"] == len(blocked)
         assert result["files_scanned"] == 1 and result["hits"] == {}
     finally:
         for directory, mode in zip(blocked, modes, strict=True):
