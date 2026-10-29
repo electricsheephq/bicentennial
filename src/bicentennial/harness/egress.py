@@ -69,13 +69,18 @@ class Egress(threading.Thread):
             names = lsof_names(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
             non_loopback = {n for n in names if not loopback(n)}
             if non_loopback and pid not in self.commands:
-                self.commands[pid] = Path(_out(["ps", "-o", "comm=", "-p", str(pid)]).strip()).name
+                try:
+                    self.commands[pid] = Path(_out(["ps", "-o", "comm=", "-p", str(pid)]).strip()).name
+                except (OSError, subprocess.SubprocessError):
+                    pass  # diagnostic only: the endpoint is still recorded, and a later sample retries
             with self._lock:
                 self.samples, self.rss_peak_kib = self.samples + 1, max(self.rss_peak_kib, int(rss))
                 self.per_pid[str(pid)] = self.per_pid.get(str(pid), 0) + 1
                 self.seen.update(n for n in names if not loopback(n))
                 for name in non_loopback - sampled:
-                    first, comm, count = self.non_loopback_seen.get(name, (pid, self.commands[pid], 0))
+                    first, comm, count = self.non_loopback_seen.get(name, (pid, "", 0))
+                    if first == pid and not comm:
+                        comm = self.commands.get(pid, "")
                     self.non_loopback_seen[name] = (first, comm, count + 1)
                 sampled.update(non_loopback)
 

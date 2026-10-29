@@ -324,6 +324,33 @@ def test_sampler_non_loopback_detail(monkeypatch):
     assert commands == [["ps", "-o", "comm=", "-p", str(pid)] for pid in (40, 41)]
 
 
+
+def test_sampler_comm_failure_keeps_observation(monkeypatch):
+    # A failed command lookup is diagnostic only: the endpoint still counts, and a later sample fills the name.
+    sampler, fail = egress.Egress(), [True]
+
+    def output(argv):
+        if argv[:2] == ["ps", "-A"]:
+            return "40 1 40\n"
+        if argv[0] == "ps":
+            if argv[2] == "comm=":
+                if fail.pop() if fail else False:
+                    raise subprocess.TimeoutExpired(argv, 30)
+                return "/synthetic/worker\n"
+            return "8\n"
+        return ("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+                "worker 40 user 3u IPv4 0 0t0 TCP 192.0.2.1:443")
+
+    monkeypatch.setattr(egress, "_out", output)
+    sampler.add(40)
+    sampler.sample()
+    summary = sampler.summary()
+    assert (summary["samples"], summary["non_loopback"]) == (1, ["192.0.2.1:443"])
+    assert summary["non_loopback_seen"] == ["egress name=192.0.2.1:443 pid=40 comm= samples=1"]
+    sampler.sample()
+    assert sampler.summary()["non_loopback_seen"] == [
+        "egress name=192.0.2.1:443 pid=40 comm=worker samples=2"]
+
 def test_relative_checkout_is_absolute_before_spawn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(adapter, "verify_pin", lambda checkout, pin: "fake-pin")
