@@ -38,6 +38,28 @@ CHECKS = ("runs_complete", "exit_codes", "schema", "t0_packs", "run_status", "t0
           "t1_gate", "t1_baseline", "t1_identical", "wiped_fails", "isolation", "controls",
           "honeypot", "spend", "pins", "disclosures", "loop_time_measured")
 COMMON = ("card.json", "receipt.json", "junit.xml", "invariants.json", "controls.json")
+# schemas/junit.xsd: required attributes and (model, min, max, child occurrences).
+# None is an unbounded maximum. Pin this transcription to the XSD in the tests.
+JUNIT_ROOT = "testsuites"
+JUNIT_STRUCTURE = {
+    "testsuites": ((("errors", "xs:nonNegativeInteger"), ("failures", "xs:nonNegativeInteger"),
+                    ("name", "xs:string"), ("tests", "xs:nonNegativeInteger")),
+                   ("sequence", 1, 1, (("testsuite", 0, None),))),
+    "testsuite": ((("errors", "xs:nonNegativeInteger"), ("failures", "xs:nonNegativeInteger"),
+                   ("name", "xs:string"), ("skipped", "xs:nonNegativeInteger"),
+                   ("tests", "xs:nonNegativeInteger")),
+                  ("sequence", 1, 1, (("properties", 0, 1), ("testcase", 0, None)))),
+    "properties": ((), ("sequence", 1, 1, (("property", 1, None),))),
+    "property": ((("name", "xs:string"), ("value", "xs:string")), None),
+    "testcase": ((("classname", "xs:string"), ("name", "xs:string")),
+                 ("choice", 0, 1, (("failure", 1, 1), ("error", 1, 1), ("skipped", 1, 1)))),
+    "failure": ((("message", "xs:string"), ("type", "xs:string")), None),
+    "error": ((("message", "xs:string"), ("type", "xs:string")), None),
+    "skipped": ((("message", "xs:string"), ("type", "xs:string")), None),
+}
+# bicentennial.runner.t0._relations calls report.junit.junit_xml; the published
+# JUnit XSD is also the relations.xml contract, including an empty suite list.
+RELATIONS_STRUCTURE = JUNIT_STRUCTURE
 TOP = {"t0": ("pack", "cache", "adapter_invariants.json", "relations.json", "relations.xml",
               "refusal.json"), "t1": ("system", "wiped", "cache", "refusal.json")}
 LIMITS = ("These are unit outputs of the v0.1 kit, run on one machine with one pin set. "
@@ -186,6 +208,16 @@ def read_runs(root, systems=SYSTEMS):
     return result
 
 
+def verify_t0_packs(directory, pack_hash):
+    """Use the installer's read-only verifier before trusting its required pack set."""
+    from bicentennial.packs.install import verify
+
+    try:
+        verify(directory, pack_hash=pack_hash)
+    except (OSError, ValueError, TypeError):
+        raise InputError("t0_pack_hash_mismatch", "--t0-packs") from None
+
+
 def read_index(directory):
     try:
         _, index = read_file(directory / "index.json", "--t0-packs")
@@ -198,6 +230,56 @@ def read_index(directory):
            or any(c in ("", ".", "..") for c in p.split("/")) for p in packs):
         raise InputError("index", "--t0-packs")
     return tuple(sorted(packs))
+
+
+def xml_structure(root, structure):
+    """Return the first violated XSD rule, without an optional XML validator."""
+    if root is None or root.tag != JUNIT_ROOT:
+        return f"/:root={JUNIT_ROOT}"
+
+    def visit(node, path):
+        attributes, content = structure[node.tag]
+        for name, kind in attributes:
+            if name not in node.attrib:
+                return f"{path}/@{name}:required"
+            if kind == "xs:nonNegativeInteger":
+                value = re.sub(r"[ \t\r\n]+", " ", node.get(name)).strip(" ")
+                if (re.fullmatch(r"[+-]?[0-9]+", value) is None or
+                        (value.startswith("-") and any(c != "0" for c in value[1:]))):
+                    return f"{path}/@{name}:nonNegativeInteger"
+        extra = sorted(set(node.attrib) - {n for n, _ in attributes})
+        if extra:
+            return f"{path}/@{extra[0]}:unexpected"
+        if node.text and (content is None or node.text.strip(" \t\r\n")):
+            return f"{path}:text"
+        members = content[3] if content else ()
+        names = [n for n, _, _ in members]
+        counts, previous = dict.fromkeys(names, 0), 0
+        for child in node:
+            if child.tag not in counts:
+                return f"{path}/{child.tag}:unexpected"
+            position = names.index(child.tag)
+            if content[0] == "sequence" and position < previous:
+                return f"{path}/{child.tag}:order"
+            previous = position
+            counts[child.tag] += 1
+            rule = visit(child, f"{path}/{child.tag}[{counts[child.tag]}]")
+            if rule:
+                return rule
+            if (child.tail or "").strip(" \t\r\n"):
+                return f"{path}:text"
+        if content:
+            model, minimum, maximum, _ = content
+            if model == "choice":
+                if len(node) < minimum or (maximum is not None and len(node) > maximum):
+                    return f"{path}:choice_occurrences"
+            else:
+                for name, minimum, maximum in members:
+                    if counts[name] < minimum or (maximum is not None and counts[name] > maximum):
+                        return f"{path}/{name}:occurrences"
+        return None
+
+    return visit(root, "/" + JUNIT_ROOT)
 
 
 def properties(run, unit):
@@ -277,6 +359,15 @@ class Predicates:
                 self.invalid.add((r.where, rel))
 
         for r in self.runs:
+            for rel in sorted(r.files):
+                filename = Path(rel).name
+                if filename == "junit.xml" or (r.tier == "t0" and filename == "relations.xml"):
+                    structure = RELATIONS_STRUCTURE if filename == "relations.xml" else JUNIT_STRUCTURE
+                    rule = xml_structure(r.obj(rel), structure)
+                    if rule:
+                        code = "relations_structure" if filename == "relations.xml" else "junit_structure"
+                        failures.append((code, f"{r.where}/{rel}:{rule}"))
+                        self.invalid.add((r.where, rel))
             invariant_files = [f"{u}/invariants.json" for u in r.units]
             if r.tier == "t0":
                 invariant_files.append("adapter_invariants.json")
@@ -469,6 +560,7 @@ class Predicates:
 
 def evaluate(args, systems=SYSTEMS):
     """Evaluate all predicates. An empty systems tuple exercises real reference T0 output."""
+    verify_t0_packs(Path(args.t0_packs), args.t0_pack_hash)
     api = contracts()
     packs = read_index(Path(args.t0_packs))
     runs = read_runs(Path(args.runs), systems)
