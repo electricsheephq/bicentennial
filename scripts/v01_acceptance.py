@@ -24,7 +24,7 @@ CLAIM = "unit outputs of the v0.1 kit; not predictive of the full tier"
 SCHEMA = "bicentennial-v0.1-result/1"
 T1_DISCLOSURES = tuple("t1." + n for n in (
     "assistant_turns", "baselines", "corpus", "corpus_crash", "estimator", "fresh_install",
-    "isolation", "key_matching", "receipt", "terminal", "tool_search", "tuesday", "unsettled", "verdicts",
+    "isolation", "key_matching", "terminal", "tool_search", "tuesday", "unsettled", "verdicts",
     "verified_empty", "window"))
 PLUGIN_T1_DISCLOSURES = ("t1.a4", "t1.plugin_snapshot", "t1.reclassify", "t1.fresh_install_mask")
 WITNESSES = ("isolation.forwarded", "isolation.unknown_requests", "no_memory.gold_in_context")

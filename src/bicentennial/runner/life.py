@@ -111,6 +111,9 @@ class LifeRun:
     hooks: tuple = ()
     harness_record: dict = field(default_factory=dict)
     verified_empty: dict = field(default_factory=dict)
+    tokens_by_role: dict = field(default_factory=dict)
+    store_growth_bytes: int = 0
+    process_ids: tuple = ()
     _root: Path | None = field(default=None, repr=False)
 
     def cleanup(self):
@@ -155,6 +158,26 @@ def _cause(error):
 def _rows(root):
     path = root / "ledger.jsonl"
     return [json.loads(line) for line in path.read_bytes().split(b"\n")[:-1]] if path.exists() else []
+
+
+def _surface_bytes(surfaces):
+    return sum(p.stat().st_size for _, root in surfaces for p in sorted(root.rglob("*"))
+               if not p.is_symlink() and p.is_file())
+
+
+def _tokens(root, rows):
+    store, tokens = BlobStore(root / "blobs", Guard([])), {}
+    for row in rows:
+        if row.get("type") != "request":
+            continue
+        response = json.loads(store.get(row["resp"]))
+        usage = response.get("usage") or {}
+        for frame in response.get("sse", ()):
+            usage = frame.get("usage") or frame.get("response", {}).get("usage") or usage
+        before = tokens.get(row["role"], (0, 0))
+        tokens[row["role"]] = (before[0] + usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+                               before[1] + usage.get("output_tokens", usage.get("completion_tokens", 0)))
+    return tokens
 
 
 def _earlier(root, session):
@@ -242,6 +265,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
     evidence = LifeRun(arm, life["life"], branch, attempt, _root=root)
     sessions, transforms, adapter = [], [], None
     stopped, hooks, verified = None, (), {}
+    initial_bytes = None
     with closing(open_world(life_dir / f"world.{branch}.db", readonly=True)) as db:
         seed, genre = db.execute("SELECT seed, genre FROM meta").fetchone()
         if seed != life["seed"]:
@@ -314,6 +338,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             verified = dict(taken="before configuration", listing_sha256=sha256_canon(listing[0] if len(listing) == 1 else listing))
             if not empty:
                 raise HarnessFailed("not_empty")
+            initial_bytes = _surface_bytes(surfaces)
             expected = expected_state(genre, schedule)(db)
             unsettled, checkpoints = [], []
 
@@ -437,4 +462,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin, arm),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
-            egress=egress, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified)
+            egress=egress, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified,
+            tokens_by_role=_tokens(root / "run" / "ledger", rows), process_ids=tuple(adapter.pids),
+            store_growth_bytes=_surface_bytes(surfaces) - initial_bytes if initial_bytes is not None else 0)
