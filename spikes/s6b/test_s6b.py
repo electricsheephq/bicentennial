@@ -1555,7 +1555,7 @@ class HolderProtocol(unittest.TestCase):
 
     def _close_holders(self):
         for path in list(getattr(sd, "HOME_HOLDERS", {})):
-            if path.parent == self.tmp:
+            if path.parent == self.tmp.resolve():  # hold_home stores the resolved path
                 os.close(sd.HOME_HOLDERS.pop(path))  # tests only: production retains until process exit
 
     def login(self, **kw):
