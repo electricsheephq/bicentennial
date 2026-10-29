@@ -102,6 +102,13 @@ def test_pre_swap(board_case):
     )
 
 
+def test_each_item_takes_its_own_branch_status(board_case):
+    # pair-000 c2 is B0 OK and B1 SF, so (-1000, 1000) scores min(-1000, 0), not min(0, 1000).
+    items = {**board_case["items"], ("S", P0, "X", 2): ((-1000, 1000), (-1000, 1000))}
+    board = assemble(**{**board_case, "items": items}, units="pre_swap")
+    assert board.scores == {("X", P0): Fraction(-100)}
+
+
 def test_sf_item_rule():
     assert bundle_value(600, -1000, "SYSTEM_FAILURE", "OK") == -1000
     assert bundle_value(1000, 1000, "OK", "SYSTEM_FAILURE") == 0
