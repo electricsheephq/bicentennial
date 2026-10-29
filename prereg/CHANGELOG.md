@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-29: unbound sockets on macOS (#205)
+- **RING0 §13 E13:** from the next kit, the egress sampler ignores an lsof row on macOS only when its protocol is TCP or UDP and its name is exactly `*:*`, in both `non_loopback` and `non_loopback_seen`. Every other row counts as before, including ICMP `*:*`, wildcard binds with a port and connections with a non-loopback address on either side. Other platforms keep the existing rule. v0.1's frozen kit keeps its rule and reruns any run refused this way. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-29: adapter ingest round trips (#213)
 - **RING0 §13 E12:** adds `text_full_length` and `actor_stored`, declared actor skips, single-fault mutants and test-fixed control expectations. T0 plug-in runs and T1 corpus hosts disclose write clipping counts, declared limits and delivered fields through existing JUnit properties; cards and schemas do not change. Of the hashed files only `api/adapters/mutants.py` changes, so only the mutant adapters' T0 lock hash moves; the controls hash, the reference adapters' lock hashes and naive RAG's embedder hash do not, and packs built before this change still verify.
 - **DESIGN §6.9, ERRATA-v2.2 E13:** adds the Phase 1 API-mode rule: check the benchmark's adapter against a lossless API stand-in before the first block and refuse adapter ingest loss; disclose unsupported fields. Every other real-system conformance result is reported measured behaviour, never a refusal. No PREREG version change; PREREG-v0.4 remains frozen.
