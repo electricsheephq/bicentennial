@@ -190,7 +190,8 @@ class HermesAdapter:
                  checkout=None, plugin=None, kill_mode="boundary", worker_argv=None, gate_poll_s=60,
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
                  memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
-                 context_engine=None, plugins_enabled=(), extra_env=None, scripted: bool = True):
+                 context_engine=None, plugins_enabled=(), extra_env=None, scripted: bool = True,
+                 admission_deadline: float | None = None):
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -220,6 +221,7 @@ class HermesAdapter:
         self.entry, self.script, self.schedule, self.clock = entry, script, schedule, clock
         self.checkout, self.plugin, self.kill_mode, self.argv = checkout, plugin, kill_mode, list(worker_argv)
         self.gate_poll_s, self.before_spawn, self.harness_pin = gate_poll_s, before_spawn, harness_pin or {}
+        self.admission_deadline = admission_deadline  # absolute time.monotonic(), or an unbounded admission wait
         self.entrypoint = ENTRYPOINT if self.commit is not None else "test-double"
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
@@ -311,12 +313,18 @@ class HermesAdapter:
 
     def _gate(self, readings) -> None:
         """R15, before every spawn: wait while the busy marker refuses this machine class."""
+        deadline = getattr(self, "admission_deadline", None)  # also supports fakes that bind _gate without __init__
         while True:
             marker = read_marker()
             readings.append({"exit": marker.exit, "state": marker.state})
+            if deadline is not None and time.monotonic() >= deadline:
+                raise HarnessFailed("admission_deadline")
             if admit(marker, heavy=self.entry["machine_class"] == "heavy", roots=1).admitted:
                 return
-            time.sleep(self.gate_poll_s)
+            if deadline is None:
+                time.sleep(self.gate_poll_s)
+            else:
+                time.sleep(max(0, min(self.gate_poll_s, deadline - time.monotonic())))
 
     def _spawn_open(self, reason, sid, t) -> tuple[str, int, bool]:
         """before_spawn, a niced worker, then open: a new session (sid None) or a resume by id."""
