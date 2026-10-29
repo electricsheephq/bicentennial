@@ -36,6 +36,14 @@ MODULE_SPEC.loader.exec_module(s6)
 
 
 @pytest.fixture
+def mem0_unmeasured(monkeypatch):
+    # The registry has recorded Mem0's pins since d432ec7, so tests of the blocked path set it up.
+    measured = s6.registry.unmeasured
+    monkeypatch.setattr(s6.registry, "unmeasured", lambda entry: (
+        ["artifact.sha256"] if entry.get("name") == "mem0-oss" else measured(entry)))
+
+
+@pytest.fixture
 def offline_login(tmp_path, monkeypatch):
     token, lease = "offline-synthetic-access-token", "offline-lease"
     store = dict(tokens=dict(access_token=token))
@@ -329,7 +337,7 @@ def fake_replay(built, tmp_path, monkeypatch, offline_login):
                            root=tmp_path / "p06-hermes-native", login=offline_login)
 
 
-def test_mem0_cli_blocks_before_preflight_or_login(tmp_path, monkeypatch, capsys):
+def test_mem0_cli_blocks_before_preflight_or_login(tmp_path, monkeypatch, capsys, mem0_unmeasured):
     def forbidden(*args, **kwargs):
         pytest.fail("blocked Mem0 must not preflight, login or construct an adapter")
 
@@ -565,7 +573,8 @@ def responses_server(monkeypatch):
         thread.join()
 
 
-def test_fake_responses_worker_and_summary(built, tmp_path, responses_server, monkeypatch):
+def test_fake_responses_worker_and_summary(built, tmp_path, responses_server, monkeypatch,
+                                           mem0_unmeasured):
     base, bodies, outbound = responses_server
     monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     monkeypatch.setattr(adapter_module, "DRAIN_QUIET_S", 0.01)
@@ -617,7 +626,8 @@ def test_fake_responses_worker_and_summary(built, tmp_path, responses_server, mo
     assert obj["spend_microdollars"] == 0
 
 
-def test_run_cli_integrates_login_baseline_shutdown_and_summary(built, tmp_path, monkeypatch):
+def test_run_cli_integrates_login_baseline_shutdown_and_summary(built, tmp_path, monkeypatch,
+                                                                mem0_unmeasured):
     ready_preflight(monkeypatch)
     order = []
     login = SimpleNamespace(drain=lambda: [])
@@ -1257,7 +1267,7 @@ def test_initialisation_failures_record_attempt_and_drain_login(
 @pytest.mark.parametrize("drain_failure", [False, True])
 @pytest.mark.parametrize("scan_mode,code", [("clean", 4), ("hit", 1), ("unreadable", 1)])
 def test_initialisation_close_failure_is_scanned_and_refused(
-        built, tmp_path, monkeypatch, offline_login, scan_mode, code, drain_failure):
+        built, tmp_path, monkeypatch, offline_login, scan_mode, code, drain_failure, mem0_unmeasured):
     ready_preflight(monkeypatch)
     login = offline_login
     if drain_failure:
