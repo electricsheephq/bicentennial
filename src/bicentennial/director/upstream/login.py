@@ -443,9 +443,18 @@ def scan(login, paths, run=None) -> dict:
             raise Stop("lease_changed")
         if entry["pin"] != account_pin(store["tokens"]["access_token"]):
             raise Stop("account_changed")
+    paths = list(map(Path, paths))
+    for path in paths:
+        if not path.exists():
+            raise Stop("scan_path_missing")
     needles, files, hits, unreadable = login.learn_only(store), 0, {}, 0
-    for path in map(Path, paths):
-        for file in ([path] if path.is_file() else path.rglob("*")):
+    def walk_error(exc):
+        nonlocal unreadable
+        unreadable += 1
+    for path in paths:
+        candidates = ([path] if path.is_file() else
+                      (Path(root) / name for root, _, names in os.walk(path, onerror=walk_error) for name in names))
+        for file in candidates:
             if not file.is_file():
                 continue
             files += 1
