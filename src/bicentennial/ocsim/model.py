@@ -14,6 +14,7 @@ ARMS = ("F", "C", "S")
 SIMPSON_INTERVALS = 128
 BISECTION_STEPS = 64
 LOCATION_BOUND = 10.0
+BRACKET_TOL_MILLI = 0.01
 _NORMAL = NormalDist()
 
 
@@ -120,14 +121,20 @@ def solve_location(cell: CellModel, rho_t: float, target: float) -> float | str:
     is therefore monotone even if float rounding perturbs E, and it is
     bit-reproducible on one platform (R8: the platform is recorded).
     Accuracy is |E(theta_hat) - target| <= max slope * 20 * 2**-64, which is
-    negligible. Clamping at +/-10 only affects targets within about 1e-20
-    milli of an end.
+    negligible. A target the bracket misses by more than BRACKET_TOL_MILLI
+    raises instead of clamping. A smaller miss clamps to the bracket end as
+    before: for cuts within +/-5, E(-10) and E(10) are within Phi(-5) * (v_m - v_1)
+    and 2 * Phi(-5) * (v_m - v_1) <= 1.2e-3 milli of the end levels, a gap no
+    integer-milli score can show.
     """
     if len(cell.levels) == 1 or target >= cell.levels[-1]:
         return "high"
     if target <= cell.levels[0]:
         return "low"
     lo, hi = -LOCATION_BOUND, LOCATION_BOUND
+    if (expected_min(cell, rho_t, lo) - target > BRACKET_TOL_MILLI
+            or target - expected_min(cell, rho_t, hi) > BRACKET_TOL_MILLI):
+        raise ValueError("location bracket [-10, 10] does not enclose the target")
     for _ in range(BISECTION_STEPS):
         mid = (lo + hi) / 2
         if expected_min(cell, rho_t, mid) < target:
