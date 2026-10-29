@@ -17,6 +17,7 @@ from threading import Lock
 
 from bicentennial.director.core import Director
 from bicentennial.director.serve import serve, shutdown
+from bicentennial.gitenv import git_env
 from bicentennial.harness.egress import Egress
 from bicentennial.harness.hermes.config import (
     CONFIG_DEVIATIONS,
@@ -86,16 +87,19 @@ def verify_pin(checkout, pin) -> str:
     """pin: the lock's harness artifact {name, version, sha256}, never the system entry's (Amendment 1, A1). Raises
     PinMismatch unless HEAD's archive hashes to it and no tracked file is changed; -> the commit."""
     git, digest = ["git", "-C", str(checkout)], sha256()
+    env = git_env()
     with subprocess.Popen([*git, "archive", "--format=tar", "HEAD"], stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL) as proc:
+                          stderr=subprocess.DEVNULL, env=env) as proc:
         for chunk in iter(lambda: proc.stdout.read(1 << 20), b""):
             digest.update(chunk)
     if proc.returncode != 0 or digest.hexdigest() != pin["sha256"]:
         raise PinMismatch("the checkout's archive does not hash to the pinned artifact")
-    status = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True)
+    status = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"],
+                            capture_output=True, text=True, env=env)
     if status.returncode != 0 or status.stdout.strip():
         raise PinMismatch("the checkout has tracked changes")
-    return subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run([*git, "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True, env=env).stdout.strip()
 
 
 class _Worker:

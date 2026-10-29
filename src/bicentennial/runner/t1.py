@@ -12,6 +12,7 @@ from bicentennial.canon import canon, sha256_canon
 from bicentennial.controls.cache import ControlsTampered, code_sha256
 from bicentennial.director.compiler.check import Voids, check_compile
 from bicentennial.director.routes import RouteTable, route_table_hash
+from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import PinMismatch
 from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS, GateRefused
 from bicentennial.items import c7
@@ -194,7 +195,7 @@ def _boundaries(packs):
 def _commit():
     try:
         value = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
-            check=True, capture_output=True, text=True).stdout.strip()
+            check=True, capture_output=True, text=True, env=git_env()).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         raise T1Refused("benchmark_commit") from None
     if len(value) != 40 or any(c not in "0123456789abcdef" for c in value):
