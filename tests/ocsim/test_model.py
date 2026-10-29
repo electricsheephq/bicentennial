@@ -97,6 +97,27 @@ def test_location_ends_and_single_level(cell):
     assert expected_min(singleton, 0.3, -2) == 125.0
 
 
+@pytest.mark.parametrize("cut,end,reach", [
+    # E(10) = -1000 + 2000*Phi(-2)**2 is below 0; E(-10) = -1000 + 2000*Phi(2)**2 is above it.
+    (12.0, 10.0, -998.96486), (-12.0, -10.0, 910.03461)])
+def test_location_bracket_must_enclose_target(cut, end, reach):
+    cell = CellModel("X", (-1000, 1000), (cut,), -200, 600, 0, 0)
+    assert expected_min(cell, 0, end) == pytest.approx(reach, abs=1e-5, rel=0)
+    message = "location bracket [-10, 10] does not enclose the target"
+    with pytest.raises(ValueError, match=re.escape(message)) as exc:
+        solve_location(cell, 0, 0)
+    assert str(exc.value) == message
+
+
+def test_location_bracket_clamps_a_miss_no_score_can_see():
+    # E(10) = 1000 - 1000 * (1 - Phi(5)**2), about 1000 - 5.7e-4 at rho_t 0, so a target 1e-4 below
+    # the top lies outside the bracket by less than BRACKET_TOL_MILLI and clamps to the end, as before.
+    cell = CellModel("Y", (-1000, 0, 1000), (-5.0, 5.0), -200, 600, 0, 0)
+    target = 1000 - 1e-4
+    assert target - model.BRACKET_TOL_MILLI < expected_min(cell, 0, 10) < target
+    assert solve_location(cell, 0, target) == pytest.approx(10.0, abs=1e-9)
+
+
 def test_exact_margin(params):
     effects = life_effects(params, ("p",), "seed", 0)
     assert interpolation(params.cell("X"), 10) == 0.625
@@ -493,8 +514,10 @@ def test_frozen_numerics_and_bisection_steps(cell, monkeypatch):
 
     monkeypatch.setattr(model, "expected_min", identity)
     assert solve_location(cell, 0.3, 1.25) == 1.25
-    assert len(midpoints) == 64
-    assert midpoints[:5] == [0.0, 5.0, 2.5, 1.25, 0.625]
+    # The two bracket checks come first, then the 64 bisection midpoints.
+    assert midpoints[:2] == [-10.0, 10.0]
+    assert len(midpoints) == 2 + 64
+    assert midpoints[2:7] == [0.0, 5.0, 2.5, 1.25, 0.625]
     assert all(-10.0 <= value <= 10.0 for value in midpoints)
 
 
