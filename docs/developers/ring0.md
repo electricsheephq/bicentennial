@@ -231,7 +231,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `pin_mismatch` | Checkout does not match its pin. |
 | `SpendRefused` | Receipt has positive spend. |
 | `upstream_record` | Isolation audit found a forbidden upstream record or egress. |
-| `egress_unobserved` | The egress sampler stopped early, or a worker exited before its synchronous registration sample completed; such a start-up crash is otherwise an infrastructure failure, so observation can depend on timing. |
+| `egress_unobserved` | The egress sampler stopped early, or every sample of a registered worker failed before the worker was reaped. A worker that exits before its registration sample is still sampled (unreaped, with no sockets), so a start-up crash stays an infrastructure failure. |
 | `out_exists` | Output exists, including a symlink. |
 | `baseline_unreadable` | T1 baseline cannot be read. |
 | `baseline_invalid` | T1 baseline is malformed or noncanonical. |

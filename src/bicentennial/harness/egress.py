@@ -79,7 +79,7 @@ class Egress(threading.Thread):
         for pid in sorted(tree):
             rss = _out(["ps", "-o", "rss=", "-p", str(pid)]).strip()
             if not rss.isdigit():
-                continue  # exited: not a sample
+                continue  # reaped: not a sample (an exited but unreaped worker prints 0, and counts)
             endpoints = lsof_endpoints(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
             non_loopback = {n for protocol, n in endpoints if not loopback(n)
                             and not (PLATFORM == "darwin" and protocol in {"TCP", "UDP"} and n == "*:*")}
