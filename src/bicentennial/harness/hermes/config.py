@@ -9,6 +9,7 @@ from pathlib import Path
 
 from bicentennial.canon import canon
 from bicentennial.director.core import AUX_TASKS
+from bicentennial.director.roles import SUMMARISER_ALIAS
 
 PLACEHOLDER_KEY = "placeholder-not-a-key"
 T1_TOOLSETS = ("memory", "session_search", "todo")  # PREREG-v0-completion line 27
@@ -62,7 +63,7 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
     if not memory and (plugin is not None or plugin_config or context_engine is not None or plugins_enabled):
         raise ValueError("a memory plug-in or plugin_config requires memory enabled")
     base = f"http://127.0.0.1:{port}"
-    aux = {t: {"provider": "auto", "model": "bicentennial-summariser" if t == "compression"
+    aux = {t: {"provider": "auto", "model": SUMMARISER_ALIAS if t == "compression"
                else f"bicentennial-aux-{t}", "base_url": f"{base}/aux/{t}/v1", "api_key": PLACEHOLDER_KEY}
            for t in AUX_TASKS}
     # Deviation: on a loopback base URL the pin's compression check probes an Ollama-style /api/show, which the

@@ -115,6 +115,7 @@ Admission reasons are:
 | `licence_not_osi` | Licence outside the provisional OSI allow-list. |
 | `artifact_unpinned` | Version is not a release tag or digest is not 64 lowercase hex characters. |
 | `route_unroutable` | Own-model alias does not match `bicentennial-…`. |
+| `compaction_alias_mismatch` | Compaction route names an alias other than `bicentennial-summariser`, the one the director serves for compaction. |
 | `state_path_undeclared` | Unsafe surface path, or write tools/model routes without surfaces. |
 | `recall_placeholder` | Recall template has a placeholder other than `{prompt}`. |
 | `schema_invalid` | Schema validation fails without a more specific policy reason. |
