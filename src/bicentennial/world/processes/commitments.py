@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from bicentennial.keyed import choice, shuffle
 
 from ..db import insert_commitment
+from ..lineage import atomic
 from ..scale import TURNS
 from . import NUMBER, Unit, check_common, check_tokens, pair, slot, token_value
 
@@ -50,6 +51,11 @@ def _plan(w, c) -> tuple:
 
 
 def write_commitments(db, schedule, commitments, *, principal) -> None:
+    with atomic(db):
+        _write_commitments(db, schedule, commitments, principal=principal)
+
+
+def _write_commitments(db, schedule, commitments, *, principal) -> None:
     for c in (commitments := tuple(commitments)):
         if c.trigger not in TRIGGERS:
             raise ValueError("unknown trigger")
@@ -74,7 +80,7 @@ def write_commitments(db, schedule, commitments, *, principal) -> None:
         f_c, v_c = w.fact("made", 0, c.subject, c.predicate, c.stem,
                           value=token_value(db, schedule, "commitments", c.id, "made", 0, c.stem, paired=True))
         w.link(e_c, f_c, "assert", c.surfaces)
-        # the row reserves pair(v_c) for the cancellation before any other draw, cancelled or not
+        # The row reserves the cancellation's number and value before any other draw, cancelled or not.
         insert_commitment(db, fact_id=f_c, trigger_kind=c.trigger, window_open_t=t_open,
                           window_close_t=t_close, lures_json=lure_ids)
         if c.trigger != "time":
@@ -90,7 +96,7 @@ def write_commitments(db, schedule, commitments, *, principal) -> None:
             for j, (t, subject) in enumerate(zip(t_lures, c.lures, strict=True)):
                 e_l = w.event("lure", j, t, kind="notice", channel=c.notice_channel, actor=c.sender)
                 w.link(e_l, w.fact("lure", j, subject, c.cue_key, c.cue_stem)[0], "assert")
-        if c.cancelled:  # its number was reserved in both twins, so the flip moves no other token
+        if c.cancelled:  # its number and value were reserved in both twins, so no other token moves
             w.link(e_x := w.event("cancel", 0, t_x, kind="statement", channel=c.channel, actor=principal),
                    f_c, "retract")
             w.link(e_x, w.fact("cancel", 0, c.subject, c.predicate, c.stem, polarity="negate",

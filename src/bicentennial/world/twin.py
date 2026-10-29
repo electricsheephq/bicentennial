@@ -127,7 +127,7 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
                 raise ValueError
             values = [r["value"] for r in find("locked_token") if r != token]
             for n in range(8):
-                alternate = token_value(db, schedule, "twin", decisive_fact_id, "value", n, stem)
+                alternate = token_value(db, schedule, "twin", decisive_fact_id, "value", n, stem, containment=False)
                 try:
                     check_values([*values, alternate])
                     break
