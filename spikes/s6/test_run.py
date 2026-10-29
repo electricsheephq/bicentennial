@@ -325,7 +325,7 @@ def fake_replay(built, tmp_path, monkeypatch, offline_login):
     monkeypatch.setattr(s6, "initialise", lambda *a: dict(baseline=[0]))
     args = run_args(tmp_path)
     args[args.index("--life") + 1] = str(built[0])
-    return SimpleNamespace(args=args, adapter=adapter, holds=holds,
+    return SimpleNamespace(args=args, adapter=adapter, cred=cred, holds=holds,
                            root=tmp_path / "p06-hermes-native", login=offline_login)
 
 
@@ -1123,6 +1123,43 @@ def test_replay_operational_failure_keeps_hashed_egress(fake_replay):
     assert result["sessions_run"] == 1
     assert result["egress"] == dict(non_loopback=[s6.sha256(value.encode()).hexdigest() for value in destinations])
     assert destinations[0].encode() not in (run.root / "arm.json").read_bytes()
+    assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
+
+
+@pytest.mark.parametrize("phase", ["records", "holds", "state", "served_identities"])
+def test_post_loop_failure_keeps_hashed_egress(fake_replay, phase):
+    run = fake_replay
+    close = run.adapter.close
+    destination = "203.0.113.7:443"
+
+    def close_with_egress():
+        return dict(close(), non_loopback=[destination])
+
+    run.adapter.close = close_with_egress
+    target, name = {"records": (run.adapter, "records"),
+                    "holds": (run.holds, "at_boundary"),
+                    "state": (run.cred, "state"),
+                    "served_identities": (run.cred, "served_identities")}[phase]
+    original = getattr(target, name)
+    closed_calls = 0
+
+    def fail_after_close(*args, **kwargs):
+        nonlocal closed_calls
+        if run.adapter.closed:
+            closed_calls += 1
+            # The first state read is stop_reason(); the second follows hashing.
+            if phase != "state" or closed_calls == 2:
+                raise sqlite3.OperationalError("offline post-loop failure")
+        return original(*args, **kwargs)
+
+    setattr(target, name, fail_after_close)
+    assert s6.main(run.args) == 4
+    result = s6.read_json(run.root / "arm.json")
+    assert closed_calls == (2 if phase == "state" else 1)
+    assert result["stop_reason"] == "replay_failed:OperationalError"
+    assert result["sessions_run"] == 201
+    assert result["egress"] == dict(non_loopback=[s6.sha256(destination.encode()).hexdigest()])
+    assert destination.encode() not in (run.root / "arm.json").read_bytes()
     assert result["credential_scan"]["hits"] == {} and result["credential_scan"]["unreadable"] == 0
 
 

@@ -285,27 +285,37 @@ def run_arm(arm, adapter, script, starts, *, cred, holds, lock, cell=None, raw=N
                     out["egress"]["non_loopback"] = [sha256(v.encode()).hexdigest()
                                                        for v in out["egress"]["non_loopback"]]
                     _arm_write(root, out)
-    reason = reason or stop_reason(cred)
-    attempt_sessions = {attempt_id(lock, arm, LIFE_ID, "B0", s["index"], 0): s["index"]
-                        for s in script["sessions"]}
-    out["flagged_sessions"] = sorted({attempt_sessions[row["attempt_id"]] for row in adapter.records()
-        if row.get("attempt_id") in attempt_sessions and any(d.get("identity_changed")
-            for up in row.get("upstream", []) for d in up.get("diagnostics", []))})
-    final_pause = holds.at_boundary(previous)
-    if final_pause["reasons"]:
-        out["pauses"].append(dict(after_attempt=previous, **final_pause))
-    if "quota" in final_pause["reasons"]:
-        reason = reason or "quota_hold"
-    if monotonic() - began >= wall_s:
-        reason = reason or "arm_wall"
-    if out["egress"]["non_loopback"]:
-        reason = reason or "non_loopback"
-        out["egress"]["non_loopback"] = [sha256(v.encode()).hexdigest()
-                                           for v in out["egress"]["non_loopback"]]
-    out.update(status="stopped" if reason else "complete", stop_reason=reason,
-               state=cred.state(), served_identities=cred.served_identities(),
-               wall_ms=round((monotonic() - began) * 1000))
-    _arm_write(root, out)
+    egress_hashed = False
+    try:
+        reason = reason or stop_reason(cred)
+        attempt_sessions = {attempt_id(lock, arm, LIFE_ID, "B0", s["index"], 0): s["index"]
+                            for s in script["sessions"]}
+        out["flagged_sessions"] = sorted({attempt_sessions[row["attempt_id"]] for row in adapter.records()
+            if row.get("attempt_id") in attempt_sessions and any(d.get("identity_changed")
+                for up in row.get("upstream", []) for d in up.get("diagnostics", []))})
+        final_pause = holds.at_boundary(previous)
+        if final_pause["reasons"]:
+            out["pauses"].append(dict(after_attempt=previous, **final_pause))
+        if "quota" in final_pause["reasons"]:
+            reason = reason or "quota_hold"
+        if monotonic() - began >= wall_s:
+            reason = reason or "arm_wall"
+        if out["egress"]["non_loopback"]:
+            reason = reason or "non_loopback"
+            out["egress"]["non_loopback"] = [sha256(v.encode()).hexdigest()
+                                               for v in out["egress"]["non_loopback"]]
+        egress_hashed = True
+        out.update(status="stopped" if reason else "complete", stop_reason=reason,
+                   state=cred.state(), served_identities=cred.served_identities(),
+                   wall_ms=round((monotonic() - began) * 1000))
+        _arm_write(root, out)
+    except BaseException:
+        # Post-loop failures also need the close receipt, without hashing twice.
+        if not egress_hashed:
+            out["egress"]["non_loopback"] = [sha256(v.encode()).hexdigest()
+                                               for v in out["egress"]["non_loopback"]]
+        _arm_write(root, out)
+        raise
     return out
 
 
