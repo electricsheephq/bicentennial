@@ -1337,6 +1337,17 @@ def test_effect_final_user_entry_ends_at_known_following_part(wire, action, foll
 
 
 @pytest.mark.parametrize("wire", sorted(MODELS))
+def test_bounded_memory_block_keeps_label_paragraph(wire):
+    """Base cuts the memory block at a model-written date label and drops its later entries."""
+    snapshot = rendered_snapshot("Meeting notes\n\nCurrent date: 2026-10-29\n§\nsecond entry", "likes tea",
+                                 "Conversation started: x")
+    body = {"instructions": snapshot} if wire == "responses" else {
+        "messages": [{"role": "system", "content": snapshot}]}
+    assert ef.snapshot_entries(body, wire, "memory") == ["Meeting notes Current date: 2026-10-29", "second entry"]
+    assert ef.snapshot_entries(body, wire, "user") == ["likes tea"]  # the final block still ends at the label
+
+
+@pytest.mark.parametrize("wire", sorted(MODELS))
 @pytest.mark.parametrize("action", ["add", "remove"])
 @pytest.mark.parametrize("target", ["memory", "user"])
 def test_effect_final_entry_before_unknown_part_counts_for_present_and_absent(wire, action, target):

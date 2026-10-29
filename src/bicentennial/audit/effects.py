@@ -74,7 +74,8 @@ def entry_texts(text):
 
 def snapshot_entries(body, wire, target):
     """Read Hermes' rendered memory blocks, or a bare store supplied as a system/developer text part.
-    Known following parts end a block; only the final block's final entry may precede an unknown part."""
+    The next header ends a block (pinned Hermes joins the blocks directly, RING0 §13 E7); known following parts
+    end the final block; only the final block's final entry may precede an unknown part."""
     found = []
     for part in snapshot_parts(body, wire):
         headers = list(MEMORY_HEADER.finditer(part))
@@ -85,7 +86,8 @@ def snapshot_entries(body, wire, target):
             if header.group(1).startswith("USER") != (target == "user"):
                 continue
             end = headers[i + 1].start() if i + 1 < len(headers) else len(part)
-            content = FOLLOWING_PART.split(part[header.end():end].rstrip(), maxsplit=1)[0]
+            segment = part[header.end():end].rstrip()
+            content = segment if i + 1 < len(headers) else FOLLOWING_PART.split(segment, maxsplit=1)[0]
             found.extend(entry_texts(content))
             if i == len(headers) - 1:
                 # No trailer: pinned Hermes tools/memory_tool_store.py:638-644.
