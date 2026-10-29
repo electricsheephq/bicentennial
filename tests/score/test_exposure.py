@@ -406,6 +406,25 @@ def test_selected_attempt_isolates_history_and_probe(tmp_path, history_attempt, 
     assert verdict(report)["missing"] == ([] if selected_probe else [E])
 
 
+@pytest.mark.parametrize("spec", [record(TOKEN), record(status=503), record(role="aux")])
+def test_stale_mapped_attempt_refused(tmp_path, spec):
+    root = ledger(tmp_path, [spec])
+    with pytest.raises(ValueError, match="^stale attempt in session 1$"):
+        score([root], attempts={1: "att-stale"})
+
+
+@pytest.mark.parametrize("same_root", [True, False])
+@pytest.mark.parametrize("session", [1, 2])
+def test_off_by_one_mapped_attempt_refused(tmp_path, same_root, session):
+    first = ledger(tmp_path / "a", [record(TOKEN)])
+    second = ledger(first if same_root else tmp_path / "b", [
+        record(TOKEN, role="probe_main", cursor=(2, 1), subrole="tool_results")], attempt_id="att-2")
+    attempts = {1: "att-1", 2: "att-2"}
+    attempts[session] = "att-2" if session == 1 else "att-1"
+    with pytest.raises(ValueError, match=f"^stale attempt in session {session}$"):
+        score([first] if same_root else [first, second], attempts=attempts)
+
+
 @pytest.mark.parametrize("spec", [record(cursor=(2, 1)), record(cursor=(2, 1), status=503),
                                   record(cursor=(2, 1), role="aux")])
 @pytest.mark.parametrize("attempts", [{}, {1: "att-1"}])
@@ -424,6 +443,7 @@ def test_cursorless_requests_do_not_require_attempt_selection(tmp_path, attempts
     assert report["lock_hash"] == LOCK
     assert report["spans"][E]["present"] == []
     assert verdict(report)["in_context"] is None
+    assert score([root], attempts={1: "att-stale"}) == report
 
 
 @pytest.mark.parametrize("key", ["life", "branch", "system", "lock_hash"])
