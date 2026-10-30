@@ -3,6 +3,7 @@
 import math
 from fractions import Fraction
 from functools import cache
+from statistics import NormalDist
 
 from bicentennial.keyed import uniform_int
 from bicentennial.ocsim import locate, model
@@ -120,6 +121,22 @@ def statistics(sums, cells, lives, *, exact=False):
     return result
 
 
+def clipped_moments(base, sigma):
+    """Exact mean and variance of clip(base + sigma*Z, -1000, 1000)."""
+    if sigma == 0:
+        return max(-1000, min(1000, base)), 0.0
+    normal = NormalDist()
+    lower, upper = (-1000 - base) / sigma, (1000 - base) / sigma
+    below, above = normal.cdf(lower), 1 - normal.cdf(upper)
+    mass = 1 - below - above
+    density = normal.pdf(lower) - normal.pdf(upper)
+    mean = 1000 * (above - below) + base * mass + sigma * density
+    second = (1e6 * (below + above) + (base**2 + sigma**2) * mass
+              + 2 * base * sigma * density
+              + sigma**2 * (lower * normal.pdf(lower) - upper * normal.pdf(upper)))
+    return mean, max(0.0, second - mean**2)
+
+
 def model_values(params, design, *, rule=None, nodes=LIFE_NODES, shared=SHARED_NODES):
     """Integrate at the design; rule maps cells to (x_F, x_C, weight) rows."""
     solve, result = solver(params), {}
@@ -162,6 +179,9 @@ def model_values(params, design, *, rule=None, nodes=LIFE_NODES, shared=SHARED_N
                     for nf, nc, s in counts) / len(counts) if counts else 0
         result[("gate", "F+C", cell.cell)] = gate_second - (sum(means) / 2) ** 2 + noise
         result[("K", "F+C", cell.cell)] = cross
+        if rule is None:
+            for arm, base, sigma in (("F", cell.f0, cell.sigma_f), ("C", cell.c0, cell.sigma_c)):
+                result[("mean", arm, cell.cell)], result[("life", arm, cell.cell)] = clipped_moments(base, sigma)
     return result
 
 
@@ -296,7 +316,8 @@ def check(records, params, *, timing_cells=frozenset(), resamples=2000, datasets
 
 def card_lines(result):
     lines = ["## Fit check (bar-2 controls)",
-             "A flag blocks the PREREG-v1 freeze until an owner ruling on #245 (decision 2); it never changes a simulated verdict."]
+             "A flag blocks the PREREG-v1 freeze until an owner ruling on #245 (decision 2); it never changes a simulated verdict.",
+             "msw, gate and the cross-arm term use a 36-point Gauss–Hermite rule; on heavily clipped cells their model values carry quadrature error."]
     lines += [f"{f['family']}: {f['flag']}; mean z²={f['mean_z2']}/1000; calibrated threshold={f['threshold']}/1000; χ²(K, .95)/K={f['chi_reference']}/1000 (for reference); undefined calibration datasets={f['undefined']}" for f in result["families"]]
     lines += [f"{e['family']} {e['arm']} {e['cell']}: z={e['z']}/1000" for e in result["listed"]]
     if result["timing_cells"]:

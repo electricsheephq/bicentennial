@@ -78,20 +78,28 @@ def test_a_exact_and_validation():
 
 
 def test_b_expectations(capsys):
-    p = params()
-    d, points = design(p), rule(p)
+    p = replace(params(), rho_t=.5)
+    d = {(c.cell, str(i)): ((8, 16, 4), (16, 8, 4), (12, 24, 6), (24, 12, 6))[i % 4]
+         for c in p.cells for i in range(16)}
+    points, datasets = rule(p), 400
     expected = f.model_values(p, d, rule=points)
     samples = {k: [] for k in expected if k[0] != "K"}
     started = perf_counter()
-    for rep in range(300):
+    for rep in range(datasets):
         sums, _ = f.prepare(records(p, d, rep, points), {"B"})
         for k, v in f.statistics(sums, ("A", "B"), sorted({life for _, life in d})).items():
             samples[k].append(v)
+    elapsed = perf_counter() - started
+    assert elapsed < 30
+    errors = {}
     for k, vs in samples.items():
         se = stdev(vs) / math.sqrt(len(vs))
-        assert abs(mean(vs) - expected[k]) < 4 * se, (k, mean(vs), expected[k], se)
+        errors[k] = (mean(vs) - expected[k]) / se
+        with capsys.disabled():
+            print("EXPECTATION MC SE", k, errors[k], "mean/model/SE", mean(vs), expected[k], se)
+    assert max(map(abs, errors.values())) < 4, errors
     with capsys.disabled():
-        print("EXPECTATION seconds", perf_counter() - started)
+        print("EXPECTATION seconds", elapsed)
         ses = f.bootstrap(sums, ("A", "B"), sorted({life for _, life in d}), 2000)
         print("MINIMUM BOOTSTRAP SE", {family: min(v for k, v in ses.items() if k[0] == family) for family in f.FAMILIES})
         for c in p.cells:
@@ -104,15 +112,11 @@ def test_b_expectations(capsys):
                         residuals.append(abs(model.expected_min(c, p.rho_t, theta) - target))
             assert max(residuals) < f.locate.BOUND_MILLI
             print("LOCATION residual", c.cell, max(residuals))
-            k = ("gate", "F+C", c.cell)
-            print("M1 shift", c.cell, expected[("K", "F+C", c.cell)] / 60 / (stdev(samples[k]) / math.sqrt(300)))
-            frozen = f.model_values(replace(p, cells=tuple(replace(x, sigma_f=0, sigma_c=0) for x in p.cells)), d, rule=points)
-            for a in ("F", "C"):
-                k = ("msw", a, c.cell)
-                print("M2 shift", a, c.cell, (frozen[k] - expected[k]) / (stdev(samples[k]) / math.sqrt(300)))
 
 
 def clipped(mu, sd):
+    if sd == 0:
+        return max(-1000, min(1000, mu)), 0.0
     n = NormalDist()
     a, b = (-1000 - mu) / sd, (1000 - mu) / sd
     mass = n.cdf(b) - n.cdf(a)
@@ -121,12 +125,31 @@ def clipped(mu, sd):
     return m, second - m * m
 
 
+def test_bdoubleprime_exact_moments():
+    p = params()
+    cells = (*p.cells, *(replace(p.cells[0], cell=f"clip-{i}", f0=mu, c0=mu+100,
+                                sigma_f=sd, sigma_c=sd)
+                         for i, (mu, sd) in enumerate(((700, 450), (500, 800), (-800, 400), (1200, 0), (0, 0)))))
+    p = replace(p, cells=cells)
+    values = f.model_values(p, design(p))
+    points = {c.cell: [(x, p.rho_a*x + math.sqrt(1-p.rho_a**2)*u, w*v)
+                      for x, w in f.normal_rule(f.LIFE_NODES) for u, v in f.normal_rule(f.LIFE_NODES)] for c in p.cells}
+    discrete = f.model_values(p, design(p), rule=points)
+    assert all(values[k] == discrete[k] for k in values if k[0] in ("msw", "gate", "K"))
+    for c in p.cells:
+        for arm, mu, sd in (("F", c.f0, c.sigma_f), ("C", c.c0, c.sigma_c)):
+            for family, target in zip(("mean", "life"), clipped(mu, sd), strict=True):
+                assert values[(family, arm, c.cell)] == pytest.approx(target, rel=1e-9, abs=0)
+
+
 def test_bprime_quadrature(capsys):
     p = params()
     smooth = replace(p, cells=tuple(replace(c, sigma_f=40, sigma_c=50) for c in p.cells))
     life_pass, inner_pass = [], []
     for nodes in range(1, 13):
-        v = f.model_values(p, design(p), nodes=nodes)
+        points = {c.cell: [(x, p.rho_a*x + math.sqrt(1-p.rho_a**2)*u, w*v)
+                          for x, w in f.normal_rule(nodes) for u, v in f.normal_rule(nodes)] for c in p.cells}
+        v = f.model_values(p, design(p), rule=points)
         errors = [abs(v[(family, a, c.cell)] - target) / tolerance
                   for c in p.cells for a, mu, sd in (("F", c.f0, c.sigma_f), ("C", c.c0, c.sigma_c))
                   for family, target, tolerance in zip(("mean", "life"), clipped(mu, sd), (1, 1000), strict=True)]
@@ -198,6 +221,7 @@ def test_d_f_card_determinism():
     card = "\n".join(f.card_lines(result))
     assert "never changes a simulated verdict" in card and "for reference" in card
     assert "raw scores against the model's binned levels" in card
+    assert "msw, gate and the cross-arm term use a 36-point Gauss–Hermite rule; on heavily clipped cells their model values carry quadrature error." in card
     assert "src/bicentennial/ocsim/fitcheck.py" in run.c8_paths(Path(__file__).resolve().parents[2])
     single = check([r for r in rs if r.life == "0"])
     assert all(x["flag"] == "cannot check" for x in single["families"])
