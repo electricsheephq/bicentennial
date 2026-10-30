@@ -44,7 +44,7 @@ Spend: $0 on model calls for every Ring 0 run.
 Mem0 OSS completed both T0 runs and all three T1 runs (the base and two repeats), like Hermes native. Holographic's runs are described under its T1 line.
 
 **The reference adapter, `reference_store` (T0 only), is not a system under test.**
-- It is the kit's own minimal implementation of the adapter contract: a verbatim event store whose query returns one event, the newest with the most word overlap.
+- It is the kit's own minimal implementation of the adapter contract: a verbatim event store whose query returns the event with the most word overlap, the newest on a tie. When that event is a quote or a hedge, the query also returns the same actor's best-matching earlier assertion on the same words.
 - The kit builds its controls and fault mutants on it, uses it as the conformance reference, and uses it as the regression corpus's pass oracle.
 - Its row shows that the pipeline works end to end. Its item scores are not a baseline to compare systems against.
 
@@ -67,7 +67,7 @@ LCM-X, the benchmark's sponsor, is not run by the benchmark. Its own maintainers
   - The reason appears in the run's `adapter_invariants.json`, not in the pack's own `invariants.json`.
 - **A T1 gate** also checks conformance: the regression corpus of known-faulty stores, and the wiped control. It fails a restart-crossing bundle that scores below the system's own baseline card. The first run of a system reads CONFORMANCE_PASS; repeats read PASS.
 
-**Scores are the card's own aggregates**, per stage and track: each item pair's lower score (twin-bundle minima), averaged per life. Items come in two kinds:
+**Scores are the card's own aggregates**, per stage and track: a twinned item pair counts at its lower score (twin-bundle minima) and an item with no twin at its own score, averaged per life. Items come in two kinds:
 - **Action items** (stage "act") read:
   - PASS;
   - OMISSION, 0: nothing usable reached the agent;
@@ -253,7 +253,7 @@ These are measured behaviours under Ring 0's scripted conditions, with the evide
 3. **Everything else passes.** Drift, Keep and Recall all score 1000 at T0 and T1.
 
 ### The reference adapter (`reference_store`)
-- Its lower Keep, Recall and Wake scores follow from its one-event retrieval rule. In every miss the evidence was still stored, but another event was returned. The same packs' oracle and full-history controls score 1000.
+- Its lower Keep, Recall and Wake scores follow from its retrieval rule: one event, plus an earlier assertion only when that event is a quote or a hedge. In every miss the evidence was still stored, but another event was returned. The same packs' oracle and full-history controls score 1000.
 - Its gates pass, because T0 gates do not read item scores.
 - No test pins its item outcomes yet, so a scoring change could move this row unnoticed. The next kit pins them (#277).
 - One pack, `G2/Keep/keep-incidental@1/s3-d1-kill/1`, reads INV-VERB INCONCLUSIVE. Its fault-free twin failed both items, so the crash comparison had nothing informative to compare.
@@ -274,15 +274,16 @@ These are measured behaviours under Ring 0's scripted conditions, with the evide
 4. **T1 Keep, −1000: Mem0 sends another place's gate code.**
    - The T1 Keep item mentions Place 1's gate code once, in passing, in session 14. Three other places' codes come up elsewhere in the life.
    - At session 20 the item asks the agent to send Place 1's courier the entry details. On both twins the agent sent Place 3's code, which was said in session 2: FAIL_MEMORY. The wiped control refrains on both twins.
-   - **Why:** Mem0's recall and its prefetch each return at most 10 memories, ranked by similarity alone. The BM25 and entity boosts need packages that the locked install does not have.
+   - **Why:** Mem0's recall and its prefetch each return at most 10 memories, ranked by similarity alone. Its BM25 and entity boosts need fastembed and spaCy, which the plug-in does not declare, so the locked install (the plug-in's declared dependencies) has neither.
    - *Inferred, and reproduced offline* under Ring 0's similarity stand-in (E10): Place 3's statement ranks 4th, on shared words ("is", "place", "the"), while Place 1's ranks 14th, outside the 10 returned. The reproduction assumes that Mem0 stored each message's text verbatim, which was not checked.
+   - As in point 2, that order is the stand-in's, not Mem0's under a trained embedding model. So this −1000 shows what a 10-memory similarity cut does under the stand-in, not a ranking choice by Mem0.
    - **What reached the agent** is worked out from the scripted reader's choice rule, because T1 keeps no request bodies. The card's stage attribution, `retrieved`, says only that the code is somewhere in the retained store, and for Mem0 that store includes Hermes's own session files. So it does not show that the code was in Mem0's vector store. The next kit records which surface held it (#294).
    - **Other systems:** Hermes native fails this item the same way (Hermes native, point 3). Holographic passes it, but Place 3's code was in its context too. It passed because the correct option is listed first and the reader takes the first option present. So this item does not yet test choosing between look-alike values once both are in context (#293).
-   - What this points to: recall that ranks a stored value by what it is about, not by the common words it shares with the question.
+   - What this points to: rerunning this item with a trained embedding model (the live tiers, v0.2) before reading it as Mem0's ranking.
 5. **T1 Wake, 0: the open decision never reaches the agent.**
    - As at T0, the Wake item opens a session with a generic prompt, "Pick up where we left off in the repository.", that names nothing in the decision stated in session 3.
    - Both twins refrain: OMISSION, scored 0. The item carries a duty, so the card also counts each refrain as a harmful omission.
-   - Under the stand-in, the decision's statement ranks 180th of 181, and the 10 memories returned win on common words (*inferred*, reproduced offline as above).
+   - Under the stand-in, the decision's statement ranks 180th of 181, and the 10 memories returned win on common words (*inferred*, reproduced offline as above). As in point 2, that order is the stand-in's; what holds without it is that Mem0 has no path that surfaces an open decision without a matching query.
    - **Other systems:** Holographic fails the same way, and Hermes native passes both items. Hermes native's frozen `MEMORY.md` snapshot does not depend on the prompt, and it holds the early writes, this decision among them (Hermes native, point 3). That is *inferred*, not traced in its code.
    - What this points to: the same as point 2.
 6. **Everything else passes at T1.** Drift and Recall score 1000, and the regression corpus passes all 20. The wiped control fails, as it must.
@@ -302,7 +303,7 @@ These are measured behaviours under Ring 0's scripted conditions, with the evide
   - Hermes native's first run and first repeat agree, and its wiped control agrees in all three runs.
   - The wiped control ran under the same load in that repeat and still agreed, so load alone does not move every digest.
   - Why the system arm's digest moved is tracked in #71, and the kit's own acceptance check reports it. A diagnostic run with every path length matched reproduced base's and run1's cards exactly. Under v0.1's port mask, no assignment of run2's director ports reproduces run2's digest from the kept records. So the masking defect fixed in #283 does not explain the divergence: run2's stable content really differed (#71, issuecomment-6516846222).
-  - A diagnostic rerun under load that kept the ledgers found the cause (#71, issuecomment-6532245614). In one G2 session of the system arm, Hermes offered the same 21 tools with its 5 built-ins first and the environment server's 16 tools last; every other session offered the pin's sorted order. At the pin, a session waits at most 1.5 s for its MCP servers before it builds the agent, and a server that connects later has its tools appended. A loaded machine can start the environment server slower than that. #287's rule does not explain it. The fix (#300, RING0 §13 E19) makes Hermes wait up to 60 s. Run2's own ledgers were not kept, so this is the cause reproduced under load, not read from run2.
+  - A diagnostic rerun under load that kept the ledgers found the cause (#71, issuecomment-6532245614). In one G2 session of the system arm, Hermes offered the same 21 tools with its 5 built-ins first and the environment server's 16 tools last; every other session offered the pin's sorted order. At the pin, a session waits at most 1.5 s for its MCP servers before it builds the agent, and a server that connects later has its tools appended. In #300's regression, with every server started 4 s late, two of four sessions offered only the built-ins. A loaded machine can start the environment server slower than that. #287's rule does not explain it. The fix (#300, RING0 §13 E19) makes Hermes wait up to 60 s. Run2's own ledgers were not kept, so this is the cause reproduced under load, not read from run2.
   - T1 cards are therefore not byte-identical across repeats under load, even though no score or verdict changed.
 - **One attempt was refused and rerun (#205).**
   - Holographic's first T1 repeat refused its isolation check (`upstream_record`) after 8,611 s. The v0.1 kit records no detail, so the endpoint that tripped it is not known.
