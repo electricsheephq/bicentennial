@@ -1,0 +1,5 @@
+name: omega
+version: 1.5.20
+description: Benchmark-authored Hermes memory provider over omega-memory core
+author: Bicentennial benchmark
+license: Apache-2.0

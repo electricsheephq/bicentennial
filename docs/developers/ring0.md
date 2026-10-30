@@ -79,6 +79,7 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 | `--workers N` | Integer ≥ 1, default 1; results do not depend on it. |
 | `--hermes` | Pinned Hermes checkout for registry systems. |
 | `--plugin-source` | Pinned source for a plug-in system. |
+| `--model-cache` | Staged model directory. Give it exactly when the system's worker environment uses one (only `omega`); a missing or unneeded one refuses the run with `missing_input`. |
 | `--cache` | Optional control cache; default `<out>/cache`. |
 
 The Hermes-replay fallback ships in v0.2 ([RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata)). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
@@ -139,11 +140,21 @@ Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs 
 
 ## 7. Run T1 as a merge gate
 
-Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic` and `mem0-oss` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
+Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic`, `mem0-oss` and `omega` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
 
 A system with a dependency lock gets its own clone of the pinned Hermes checkout at the same commit, prepared with that checkout's own `uv sync --frozen --extra mcp`; install its dependencies with `uv pip install --python <copy>/.venv/bin/python --require-hashes -r systems/locks/<system>.txt`, then pass that copy as `--hermes` for that system only. The shared checkout stays as Hermes's lockfile plus the `mcp` extra make it. Prepare verifies applicable locked versions in the worker and records the lock digest and applicable count as `<tier>.plugin_deps`; every real-worker run records the canonical distribution list as `<tier>.worker_dists` and its digest and count as `<tier>.worker_dists_sha256` in JUnit.
 
 The normaliser reads the pinned Hermes untrusted-content fence around environment-tool results.
+
+**OMEGA prep.** Prepare the benchmark-authored adapter with `scripts/prepare_omega.py`, a model cache outside the repository,
+the pinned Hermes source, a dedicated Hermes copy, a plugin-source destination and
+the full commit A id. It stages four SHA-256-checked bge-small ONNX files at a pinned
+revision and prints the clone, frozen sync, hash-required core install and detached
+worktree commands. The cache must hold no symlinks. Pass that dedicated copy with
+`--hermes`, the detached checkout at A with `--plugin-source`, and the staged directory
+with `--model-cache` on every OMEGA T0/T1 run. The registry entry's comments name the adapter commit each pin was measured at. Review the adapter's
+[fidelity table](../../adapters/hermes-plugin-omega/README.md); `omega.adapter` and
+one `omega.*` property per row disclose these choices in T0 and T1 JUnit.
 
 The T1 adapter writes three scripted-tier settings:
 - `tools.tool_search.enabled: "off"`. By default the pin hides `session_search` and every plug-in and MCP tool behind its `tool_call` bridge, which would leave the scripted write and recall turns without their tools. With the bridge off, every offered tool is eager.
@@ -171,7 +182,7 @@ bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$P
 bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HOLOGRAPHIC_HERMES" --plugin-source "$PLUGIN_CHECKOUT" --baseline runs/ring0-t1-holographic-first/system/card.json --out runs/ring0-t1-holographic-next
 ```
 
-T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--cache`. Plug-ins require `--plugin-source`; cache defaults to `<out>/cache`.
+T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
 
 The gated arms are system and wiped-store positive control. The wiped gate must FAIL: if it passes, the system card is INVALID, exit 1. Wiped `uninformative` is not a pass. The cached no-memory floor appears as `controls.no_memory_floor` and the `no_memory` JUnit suite ([RING0 §§5–6](../../specs/ring0/RING0.md#5-verified-empty-and-the-wiped-store-control)).
 

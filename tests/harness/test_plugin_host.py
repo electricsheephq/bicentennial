@@ -71,7 +71,7 @@ def no_float(value):
 def plugin_repo(dest, name):
     """Only synthetic repositories are committed; the lane's checkout is never committed."""
     dest.mkdir()
-    target = dest / "integrations/hermes-plugin-mem0" if name == "mem0-oss" else dest
+    target = dest / TREES[name][1] if len(TREES[name]) > 1 else dest
     target.mkdir(parents=True, exist_ok=True)
     (target / "provider.py").write_text("# synthetic archive pin, not an installed provider\n")
     for args in (["init", "-q"], ["add", "."], ["-c", "user.name=test", "-c", "user.email=test@example.invalid",
@@ -91,7 +91,7 @@ def isolated(monkeypatch, request):
 
 
 @pytest.fixture
-def factory(tmp_path, monkeypatch):
+def factory(tmp_path, monkeypatch, git_checkouts):
     opened, checked, summaries = [], [], []
     counter = 0
     real = plugin_host.assert_niced
@@ -828,9 +828,12 @@ def test_native_live_worker_settle_zero(factory):
     ("hook", 0, False, [], False),
     ("none", 0, True, ["mem0-sync"], False),
 ])
-def test_single_drain_observation(kind, bound, drained, threads, expected):
+@pytest.mark.parametrize("system", ["mem0-oss", "omega"])
+def test_single_drain_observation(kind, bound, drained, threads, expected, system):
     host = HermesMemoryHost.__new__(HermesMemoryHost)
-    host.entry, host.name, host._worker = dict(settle=dict(kind=kind)), "mem0-oss", object()
+    host.entry, host.name, host._worker = dict(settle=dict(kind=kind)), system, object()
+    if system == "omega" and threads:
+        threads = ["auto-relate"]
     observed = []
 
     def call(name, **args):
@@ -841,6 +844,17 @@ def test_single_drain_observation(kind, bound, drained, threads, expected):
     assert host.settle(bound) is expected
     assert host.settled is expected
     assert observed == [("drain", dict(timeout_ms=200))]
+
+
+@pytest.mark.parametrize("thread", ["auto-relate", "omega-deferred-init"])
+def test_omega_settle_thread_ends(thread):
+    host = HermesMemoryHost.__new__(HermesMemoryHost)
+    host.entry, host.name, host._worker = dict(settle=dict(kind="hook")), "omega", object()
+    threads = [thread]
+    host._call = lambda *a, **kw: dict(drained=True, threads=threads)
+    assert host.settle(0) is False
+    threads.clear()
+    assert host.settle(5) is True
 
 
 def test_forget_waits_for_delayed_sync(factory):

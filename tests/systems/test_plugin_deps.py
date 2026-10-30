@@ -110,7 +110,7 @@ def prepared(tier, tmp_path, monkeypatch, system="mem0-oss", worker_argv=None):
 def test_placed_lock():
     data = (REPO / "systems/locks/mem0-oss.txt").read_bytes()
     assert hp.DEPENDENCIES == {"holographic": "systems/locks/holographic.txt",
-                               "mem0-oss": "systems/locks/mem0-oss.txt"}
+                               "mem0-oss": "systems/locks/mem0-oss.txt", "omega": "systems/locks/omega.txt"}
     hp.validate_dependencies(REPO)
     rows = hp.parse_dependencies(data)
     assert len(rows) == 33
@@ -125,6 +125,15 @@ def test_placed_holographic_lock():
     data = (REPO / "systems/locks/holographic.txt").read_bytes()
     assert hp.parse_dependencies(data) == [["numpy", "2.4.3", None], ["snowballstemmer", "3.1.1", None]]
     assert data.count(b"--hash=sha256:") >= 2
+
+
+def test_placed_omega_lock():
+    data = (REPO / hp.DEPENDENCIES["omega"]).read_bytes()
+    rows = hp.parse_dependencies(data)
+    assert len(rows) == 32 and data.count(b"--hash=sha256:") == 324
+    assert {n: v for n, v, _ in rows}.items() >= {
+        "omega-memory": "1.5.20", "onnxruntime": "1.29.0", "numpy": "2.4.3",
+        "tokenizers": "0.23.1", "huggingface-hub": "1.24.0"}.items()
 
 
 def test_parser_continuations_comments_and_hashes():

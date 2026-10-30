@@ -1,0 +1,17 @@
+name = "omega"
+licence = "Apache-2.0"
+harness = "hermes"
+# Adapter commit 2b4568766e43ea8062349b8e498b0bbf9d5e5ae0; archive recipe:
+# env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git archive --format=tar 2b4568766e43ea8062349b8e498b0bbf9d5e5ae0 adapters/hermes-plugin-omega | shasum -a 256
+artifact = {name = "hermes-plugin-omega", version = "1.5.20", sha256 = "56b40f46f6ce7d790be758f72aa7158be63a645e5a9b066d4c401db46d88240e"}
+write_tools = [{tool = "omega_store", actions = []}, {tool = "omega_delete", actions = []}]
+read_tools = ["omega_query"]
+recall = {tool = "omega_query", argument_template = {query = "{prompt}"}}
+own_model_routes = []
+structured_formats = {}
+settle = {kind = "hook", bound_s = 5}
+surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
+# Measured 2026-10-29 at adapter commit 2b4568766e43ea8062349b8e498b0bbf9d5e5ae0: the T0 memory-layer host's fresh-install hash (RING0 §13 E4 port mask), equal on two director ports.
+fresh_install_hash = "d4a0b3b0431fb1f558ea54ca76e6cf9a9a6896ad698290d2f870af5644f8bb0c"
+machine_class = "light"
+benchmark_operator_runs = true

@@ -60,6 +60,7 @@ LIFE = json.loads((ROOT / "spikes/s6a/micro_life.json").read_bytes())
 COMPILE = runpy.run_path(str(ROOT / "tests/contracts/test_run_contracts.py"))["compile_micro_life"]
 SCRIPT = COMPILE(dict(LIFE, sessions=LIFE["sessions"][:2], probes=[]))
 NAMES = tuple(PROVIDERS)
+ARCHIVED_NAMES = ("holographic", "mem0-oss")  # Existing synthetic worker models these two only.
 BASE, LOCK, NONCE = 1_600_000_000, "ab" * 32, "R13B_NONCE_ONLY_SESSION_ONE"
 ACTIONS = "add change end correct revert merge forget update remove alias rename delete_entity split rebuild_entities".split()
 SURFACE = {"root": "HERMES_HOME", "relative": ".", "volatile_paths": [".mcp-discovery.lock", "logs"]}
@@ -104,8 +105,14 @@ def test_entries_exact(name):
                  "properties": {"event": {"enum": ["ADD"]}, "id": string, "text": string}}}}},
         ]}
         expected["structured_formats"] = {"extraction": {"kind": "json", "schema": schema}}
+    if name == "omega":
+        expected.update(licence="Apache-2.0", artifact=dict(name="hermes-plugin-omega", version="1.5.20",
+            sha256=e["artifact"]["sha256"]), write_tools=[dict(tool=t, actions=[]) for t in ("omega_store", "omega_delete")],
+            read_tools=["omega_query"], recall=dict(tool="omega_query", argument_template={"query": "{prompt}"}),
+            fresh_install_hash=e["fresh_install_hash"], settle=dict(kind="hook", bound_s=5))  # CLI pins the unmeasured/measured phase.
     assert e == expected and check(e) == []
-    assert admit_system(e, operator="benchmark") is None
+    if name != "omega" or e["artifact"]["sha256"] != ZERO_HASH:
+        assert admit_system(e, operator="benchmark") is None
     unmeasured = deepcopy(e)
     unmeasured["artifact"]["sha256"] = unmeasured["fresh_install_hash"] = ZERO_HASH
     with pytest.raises(SystemRefused) as refused:
@@ -311,7 +318,8 @@ def test_install_ignores_git_location_variables(tmp_path, git_checkouts, monkeyp
 
 
 def test_mem0_archive_repeatable(tmp_path):
-    assert TREES == {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0")}
+    assert TREES == {"holographic": ("HEAD",), "mem0-oss": ("HEAD", "integrations/hermes-plugin-mem0"),
+                     "omega": ("HEAD", "adapters/hermes-plugin-omega")}
     repo, digest, _ = plugin_repo(tmp_path, "mem0-oss")
     time.sleep(1.1)
     archive = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", *TREES["mem0-oss"]],
@@ -350,7 +358,7 @@ def branches(schema, obj):
     assert matches == 1
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", ARCHIVED_NAMES)
 def test_two_sessions_wipe_and_digest(tmp_path, name, socket_guard):
     repo, digest, _ = plugin_repo(tmp_path, name)
     digests = []
@@ -422,7 +430,7 @@ def test_two_sessions_wipe_and_digest(tmp_path, name, socket_guard):
     assert socket_guard == []
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", ARCHIVED_NAMES)
 def test_install_refusals_and_config(tmp_path, name):
     repo, digest, tracked = plugin_repo(tmp_path, name)
     a, cell = make(tmp_path, "install", name, digest)
@@ -735,7 +743,18 @@ def test_end_observation_without_process_priority(tmp_path, monkeypatch, payload
         a.close()
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("thread", ["auto-relate", "omega-deferred-init"])
+def test_omega_settle_thread_ends(monkeypatch, thread):
+    cell = PluginCell.__new__(PluginCell)
+    cell.entry = entry("omega")
+    cell.adapter = SimpleNamespace(end_threads=(thread,), director=SimpleNamespace(control=lambda: {"inflight": 0}))
+    monkeypatch.setattr(hermes_plugin, "settle", wait)
+    assert not cell.settle().settled
+    cell.adapter.end_threads = ()
+    assert cell.settle().settled
+
+
+@pytest.mark.parametrize("name", ARCHIVED_NAMES)
 def test_fresh_install_hash_is_port_stable_and_direct(tmp_path, name):
     from bicentennial.sandbox.surfaces import install_hash
 
@@ -764,7 +783,7 @@ def test_fresh_install_hash_is_port_stable_and_direct(tmp_path, name):
             a.close()
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", ARCHIVED_NAMES)
 def test_plugin_wake_hashes_are_port_stable(tmp_path, monkeypatch, name):
     repo, digest, _ = plugin_repo(tmp_path, name)
     records, raw = [], []
