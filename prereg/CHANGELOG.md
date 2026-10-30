@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-30: Hermes waits for its MCP servers before it builds the agent (#71)
+- **RING0 §13 E19:** from the next kit, the Hermes adapter's config sets `mcp_discovery_timeout` to 60 s whenever it configures MCP servers (today only at T1), so a slow environment server's tools enter the agent's first tool snapshot in the pin's sorted order instead of being appended later or left out. The harness record lists it under `config_deviations`. v0.1's frozen kit keeps the pin's default. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-30: SQLite's clock follows the simulated clock (#270)
 - **RING0 §13 E18:** from the next kit, Python sqlite3's 'now' and CURRENT_* follow the simulated clock, with per-statement caching and disclosed trigger, trace-callback and schema limits. Kernel file times stay real and are disclosed per system; OMEGA's dedup TTL uses the simulated clock. v0.1's frozen kit keeps today's shim. No PREREG version change; PREREG-v0.4 remains frozen.
 

@@ -863,7 +863,11 @@ def test_adapter_env_hook_on_each_spawn(worlds, tmp_path, monkeypatch):
         assert cfg["platform_toolsets"]["acp"] == ["todo", "terminal", "envserver"]
         assert cfg["mcp_servers"]["envserver"]["args"][-1] == str(root / "clock.json")
         assert cfg["tools"] == {"tool_search": {"enabled": "off"}}
+        assert cfg["mcp_discovery_timeout"] == config.MCP_DISCOVERY_TIMEOUT_S
     assert reasons == [(22, "session_start"), (22, "kill")]
+    a.harness_pin, a.commit, a.entrypoint, a.active_memory_providers = {}, None, adapter.ENTRYPOINT, []
+    assert a.harness_record()["config_deviations"] == [*config.CONFIG_DEVIATIONS, *config.MCP_DEVIATIONS,
+                                                       *config.SCRIPTED_DEVIATIONS]
     assert [p.name for p in sorted((root / "env/22").iterdir())] == ["life-1", "life-2"]
 
 

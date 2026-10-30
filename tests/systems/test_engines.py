@@ -101,7 +101,8 @@ def make(tmp_path, entry, *, checkout=None, **kw):
 def test_config_engine_and_owned_keys():
     cfg = hermes_config(4321, "main", context_engine="e", plugins_enabled=("d",))
     assert cfg["context"] == {"engine": "e"} and cfg["plugins"] == {"enabled": ["d"]}
-    # Canonical bytes measured from 1dc7e4a for the existing argument combinations.
+    # Canonical bytes measured from 1dc7e4a for the existing argument combinations. The MCP case was re-measured
+    # when RING0 §13 E19 added mcp_discovery_timeout (#71); without that key its bytes are unchanged.
     goldens = [({}, "07c67908f77ab8ba698125be5a2b344d52b0d909d9419adfb8a9c2303da79e6a"),
         ({"plugin": "holographic"}, "6ad0309e7ec1495bfd850a4402248930d70eecd36d16ef34a6c1f5e2f5e20389"),
         ({"plugin": "mem0"}, "6f5ba59657108040e58a31bbdd318973fb3f8e677d6ccbbfc27c398195e07250"),
@@ -109,7 +110,7 @@ def test_config_engine_and_owned_keys():
         ({"window": 131072}, "9db70944fa384b3f3be3105b1318300285113a2ec9bfc011663b40deb8e39e34"),
         ({"toolsets": HERMES_TOOLSETS + ("envserver",), "memory": False,
           "mcp_servers": {"envserver": {"command": "python"}}},
-         "a548e66ae82c3a9251befab4d467dbb9925d90f02f48776921765cddafb23c00"),
+         "8a26166bb80197b1e3bdf44671e0cbb3c50752a5b13e8ae05f825a5cb8fc9f66"),
         ({"plugin_config": {"custom": {"offline": True}}},
          "09c0b12fde0c2fbd39cd068d30edbe75e4b936d0d55f05c3f9902ac723b0275b")]
     for kw, digest in goldens:
