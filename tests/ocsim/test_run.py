@@ -726,6 +726,33 @@ def test_sensitivities_without_runnable_variant(tiny_inputs, tables, tmp_path, m
     assert point["variants"] == {} and diagnostics["pauses"] == []
 
 
+def test_variant_skip_records(tiny_inputs, tmp_path, monkeypatch):
+    assert run.RunConfig(("LITERAL",), 1).variants == run.VARIANTS
+    config = tiny_config(variants=run.VARIANTS)
+    # Absent ends must be disclosed even when no point is selected.
+    monkeypatch.setattr(run, "_main_point", lambda *a: dict(n_L=2, b=5, status="SKIPPED",
+                        reserve=[0, 0], alternatives={}, variants={}))
+    assert run.run(tiny_inputs, config, tmp_path / "absent") == 0
+    manifest = json.loads((tmp_path / "absent/RESULT-MANIFEST.json").read_bytes())
+    assert manifest["run"]["skipped_variants"] == [
+        dict(variant=name, n_L=None, b=None, reason="absent_from_inputs")
+        for name in ("inputs_high", "inputs_low")]
+    point = dict(n_L=2, b=5, reserve=[0, 0], alternatives={"LITERAL": {
+                 "se_bound": None, "se_bound_pooled": None}}, variants={})
+    diagnostics = {"pauses": [], "phases": {}}
+    run._sensitivities(tiny_inputs, config, point, tmp_path, {}, diagnostics)
+    names = ("reserve0", "tau0", "no_system_passovers")
+    assert diagnostics["skipped_variants"] == [dict(variant=name, n_L=2, b=5, reason="no_literal_bound") for name in names]
+    point["alternatives"]["LITERAL"].update(se_bound="1/2", se_bound_pooled="1/2")
+    def capacity(*args):
+        raise ValueError("synthetic capacity")
+    monkeypatch.setattr(run.reserve, "capacity", capacity)
+    diagnostics.pop("skipped_variants")
+    run._sensitivities(tiny_inputs, config, point, tmp_path, {}, diagnostics)
+    assert diagnostics["skipped_variants"] == [dict(variant=name, n_L=2, b=5, reason="reserve_capacity") for name in names]
+    assert point["variants"] == {}
+
+
 def test_missing_bound_skip_and_capacity(tiny_inputs, tables, tmp_path, monkeypatch):
     inline_pool(monkeypatch, tables)
 

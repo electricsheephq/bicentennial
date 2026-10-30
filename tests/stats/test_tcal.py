@@ -18,6 +18,10 @@ def test_table_shape_and_order():
     assert all(a <= b for a, b in zip(one, one[1:], strict=False))
     assert all(a <= b for a, b in zip(two, two[1:], strict=False))
     assert all(t <= o for o, t in zip(one, two, strict=True))
+    eighty = tcal.EIGHTY_PCT_PPM
+    assert len(eighty) == 199 and all(type(v) is int and 0 <= v < 100_000 for v in eighty)
+    assert list(eighty) == sorted(eighty)
+    assert all(e >= o for e, o in zip(eighty, one, strict=True))
 
 
 @pytest.mark.parametrize("table,units,expected", [
@@ -28,17 +32,20 @@ def test_table_shape_and_order():
     (tcal.ONE_SIDED_PPM, 2, 0),
     (tcal.ONE_SIDED_PPM, 3, 174),
     (tcal.ONE_SIDED_PPM, 200, 48_791),
+    (tcal.EIGHTY_PCT_PPM, 2, 7), (tcal.EIGHTY_PCT_PPM, 5, 43248),
+    (tcal.EIGHTY_PCT_PPM, 16, 83092), (tcal.EIGHTY_PCT_PPM, 31, 91418),
+    (tcal.EIGHTY_PCT_PPM, 121, 97832),
 ])
 def test_table_literal_values(table, units, expected):
     assert tcal.ppm(table, units) == expected
 
 
-@pytest.mark.parametrize("table", [tcal.ONE_SIDED_PPM, tcal.TWO_SIDED_PPM])
+@pytest.mark.parametrize("table", [tcal.ONE_SIDED_PPM, tcal.TWO_SIDED_PPM, tcal.EIGHTY_PCT_PPM])
 def test_ppm_caps_at_200(table):
     assert tcal.ppm(table, 250) == tcal.ppm(table, 200)
 
 
-@pytest.mark.parametrize("table", [tcal.ONE_SIDED_PPM, tcal.TWO_SIDED_PPM])
+@pytest.mark.parametrize("table", [tcal.ONE_SIDED_PPM, tcal.TWO_SIDED_PPM, tcal.EIGHTY_PCT_PPM])
 @pytest.mark.parametrize("units", [-1, 0, 1])
 def test_ppm_below_two_units(table, units):
     assert tcal.ppm(table, units) == 0
@@ -51,6 +58,7 @@ def test_ppm_below_two_units(table, units):
     (4, 250_001, 1),  # Just above an integer rank must round upward.
     (1, 17_294, 0),
     (1, 982_706, 0),
+    (1000, 83092, 83),
 ])
 def test_index_inverse_empirical_cdf(draws, quantile, expected):
     assert tcal.index(draws, quantile) == expected

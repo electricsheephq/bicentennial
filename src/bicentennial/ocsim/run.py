@@ -117,7 +117,7 @@ test_constants.__test__ = False
 class RunConfig:
     alternatives: tuple[str, ...]
     workers: int
-    variants: tuple[str, ...] = ("main", "reserve0", "tau0", "no_system_passovers")
+    variants: tuple[str, ...] = VARIANTS
     ladder: tuple[tuple[int, int], ...] = LADDER
     screen: bool = True
     resume: bool = False
@@ -1119,6 +1119,9 @@ def _sensitivities(inputs, config, point_result, out, hashes, diagnostics):
         bound = None if literal["se_bound"] is None else Fraction(literal["se_bound"])
         pooled_bound = None if literal["se_bound_pooled"] is None else Fraction(literal["se_bound_pooled"])
     if bound is None:
+        diagnostics.setdefault("skipped_variants", []).extend(
+            {"variant": variant, "n_L": point[0], "b": point[1], "reason": "no_literal_bound"}
+            for variant in variants)
         return
     for variant in variants:
         pool = _Pool(inputs, config, point, variant, diagnostics["pauses"], diagnostics["phases"])
@@ -1128,6 +1131,8 @@ def _sensitivities(inputs, config, point_result, out, hashes, diagnostics):
                 reserves = ((0, 0) if variant == "reserve0" else tuple(point_result["reserve"]))
                 reserve.capacity(inputs.lanes, reserves)
             except ValueError:
+                diagnostics.setdefault("skipped_variants", []).append(
+                    {"variant": variant, "n_L": point[0], "b": point[1], "reason": "reserve_capacity"})
                 continue
             phase = _phase(pool, "sensitivity", 0, config.budgets()["R_SENS"],
                            case_ids(("LITERAL",), inputs.required, reported=False),
@@ -1212,6 +1217,12 @@ def run(inputs: RunInputs, config: RunConfig, out: Path) -> int:
             (out / name).unlink(missing_ok=True)
         print(str(exc), file=sys.stderr)
         return 4
+    skipped = diagnostics.setdefault("skipped_variants", [])
+    skipped.extend({"variant": variant, "n_L": None, "b": None, "reason": "absent_from_inputs"}
+                   for variant in config.variants if variant.startswith("inputs_")
+                   and variant not in inputs.sensitivity_params)
+    skipped.sort(key=lambda row: (row["variant"], row["n_L"] is not None, row["n_L"] or 0,
+                                 row["b"] is not None, row["b"] or 0))
     manifest = {
         "schema": "bicentennial.ocsim.result/v1",
         "claim_class": "planning smoke, not the gate" if inputs.planning else
@@ -1229,7 +1240,7 @@ def run(inputs: RunInputs, config: RunConfig, out: Path) -> int:
                       "extra_chains": "not modelled: under-count disclosed",
                       "missing": card.EXTRA_CHAINS},
         "run": {"phases": diagnostics["phases"], "pauses": list(diagnostics["pauses"]),
-                "workers": config.workers},
+                "workers": config.workers, "skipped_variants": skipped},
         "machine": {"platform": platform.platform(), "machine": platform.machine(),
                     "python_version": platform.python_version(), "cpu_count": os.cpu_count(),
                     "class": config.machine_class}, "not_proven": list(card.NOT_PROVEN),

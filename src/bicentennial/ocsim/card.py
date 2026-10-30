@@ -9,7 +9,7 @@ from bicentennial.canon import canon
 NOT_PROVEN = (
     "Nothing here bounds real provider drift (P:43).",
     "M2's fit to bar-2 data is untested (#245, choice 2). The gate's outcome depends on bar-2 inputs that do not exist yet.",
-    "Exactness is proved for certify and tcal at #251's head only.",
+    "Exactness is proved for certify and for tcal's α = .05 and .025 tables at #251's head only; tcal's α = .10 table was checked against a 50-digit recomputation that reproduces the other two exactly, and against an independent closed-form check.",
     "The Image profile's powered size is not addressed (S-37).",
 )
 EXTRA_CHAINS = [
@@ -119,6 +119,12 @@ def render(manifest: dict, results: dict) -> str:
             lines += ["", f"### {variant}, n_L={point['n_L']}, b={point['b']}", ""]
             for data in alternatives_data.values():
                 lines += _table(sorted(data["cases"].items()))
+    for skipped in manifest["run"]["skipped_variants"]:
+        point = (" (all points)" if skipped["n_L"] is None else
+                 f", n_L={skipped['n_L']}, b={skipped['b']}")
+        lines.append(f"- Skipped: {skipped['variant']}{point}: {skipped['reason']}")
+    if any(name.startswith("inputs_") for point in results["points"] for name in point["variants"]):
+        lines.append("inputs_low and inputs_high are the ends of an 80% life-bootstrap interval (expanded percentile, #245 C5). At 16 lives, such an interval covers variance components only about 71-72% (percentile) or 74-75% (expanded), as measured on a one-way normal model.")
     lines += ["", "## Occupancy and limits", "", manifest["occupancy"]["extra_chains"],
               "", *(f"- {text}" for text in manifest["occupancy"]["missing"]), "",
               "The reserve is an average-load rule, not a timed model of probe-only work.",

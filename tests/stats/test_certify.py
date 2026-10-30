@@ -9,6 +9,7 @@ from statistics import NormalDist
 import pytest
 
 from bicentennial.stats import certify as module
+from bicentennial.stats import tcal
 from bicentennial.stats.certify import (
     REASON_LABELS,
     Board,
@@ -186,6 +187,11 @@ def test_calibration_table_shape(table, limit):
     (module._TWO_SIDED_PPM, 24, 2.068658),
     (module._TWO_SIDED_PPM, 48, 2.011741),
     (module._TWO_SIDED_PPM, 100, 1.984217),
+    (tcal.EIGHTY_PCT_PPM, 2, 3.077684),
+    (tcal.EIGHTY_PCT_PPM, 5, 1.533206),
+    (tcal.EIGHTY_PCT_PPM, 16, 1.340606),
+    (tcal.EIGHTY_PCT_PPM, 31, 1.310415),
+    (tcal.EIGHTY_PCT_PPM, 121, 1.288646),
 ])
 def test_calibration_table_published_t_quantiles(table, n, t):
     expected = round(10**6 * NormalDist().cdf(-t * sqrt(n / (n - 1))))
