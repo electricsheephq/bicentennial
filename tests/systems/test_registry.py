@@ -11,6 +11,7 @@ from bicentennial.contracts.run import validate
 from bicentennial.contracts.surfaces import tree_hash
 from bicentennial.director.roles import SUMMARISER_ALIAS
 from bicentennial.systems import SystemRefused, admit_system, check, load
+from bicentennial.systems import hermes_plugin as hp
 from bicentennial.systems.__main__ import main
 from bicentennial.systems.registry import PROVISIONAL_OSI_LICENCES, REGISTRY, ZERO_HASH
 
@@ -236,3 +237,73 @@ def test_cli_unreadable_entry_continues_without_traceback(tmp_path, capsys):
     assert capsys.readouterr().out.splitlines() == [
         "entry: REFUSED entry_unreadable", "no-memory: ok",
     ]
+
+
+def test_shipped_telemetry_policy_from_other_directory(tmp_path, monkeypatch):
+    assert hp.TELEMETRY_SWITCHES == {"onnxruntime": ("ORT_DISABLE_TELEMETRY", "1")}
+    monkeypatch.chdir(tmp_path)
+    assert all(check(load(path)) == [] for path in REGISTRY.glob("*.toml"))
+
+
+@pytest.mark.parametrize("value", [None, "0", 1])
+def test_telemetry_switch_exact_value(monkeypatch, capsys, value):
+    monkeypatch.setitem(hp.WORKER_ENV, "omega", {} if value is None else {"ORT_DISABLE_TELEMETRY": value})
+    entry = measured() | {"name": "omega"}
+    reason = "telemetry_switch_missing:onnxruntime:ORT_DISABLE_TELEMETRY=1"
+    assert check(entry) == [reason]
+    with pytest.raises(SystemRefused) as error:
+        admit_system(entry, operator="other")
+    assert error.value.reasons == (reason,)
+    assert main(["check", str(REGISTRY / "omega.toml")]) == 1
+    assert capsys.readouterr().out == f"omega: REFUSED {reason}\n"
+
+
+@pytest.mark.parametrize("text, refused", [
+    ("ONNXRuntime==1.0", True),
+    ("  onnxruntime==1.0 ; python_version < '0' \\\n    --hash=sha256:" + "a" * 64, True),
+    ("onnx_runtime==1.0", False),
+    ("\n # onnxruntime==1.0\n --hash=sha256:onnxruntime==1.0\nonnxruntime>=1\nxonnxruntime==1", False),
+])
+def test_telemetry_lock_pins(tmp_path, monkeypatch, text, refused):
+    path = tmp_path / "lock.txt"
+    path.write_text(text)
+    monkeypatch.setitem(hp.DEPENDENCIES, "omega", path)
+    monkeypatch.delitem(hp.WORKER_ENV, "omega")
+    assert check(measured() | {"name": "omega"}) == (
+        ["telemetry_switch_missing:onnxruntime:ORT_DISABLE_TELEMETRY=1"] if refused else [])
+
+
+def test_telemetry_lock_unreadable(tmp_path, monkeypatch):
+    monkeypatch.setitem(hp.DEPENDENCIES, "omega", tmp_path / "missing.txt")
+    monkeypatch.setitem(hp.WORKER_ENV, "omega", {})
+    assert check(measured() | {"name": "omega"}) == ["telemetry_lock_unreadable"]
+
+
+@pytest.mark.parametrize("name", [None, 1, [], {}])
+def test_telemetry_invalid_name_keeps_schema_fallback(name):
+    assert check(measured() | {"name": name}) == ["schema_invalid"]
+
+
+def test_telemetry_reasons_sorted_after_recall(tmp_path, monkeypatch):
+    path = tmp_path / "lock.txt"
+    path.write_text("zzz==1\nonnxruntime==1\naaa==1\nonnxruntime==1\n")
+    monkeypatch.setitem(hp.DEPENDENCIES, "omega", path)
+    monkeypatch.setattr(hp, "TELEMETRY_SWITCHES", dict.fromkeys(
+        ("zzz", "onnxruntime", "aaa"), ("ORT_DISABLE_TELEMETRY", "1")))
+    monkeypatch.setitem(hp.WORKER_ENV, "omega", {})
+    entry = measured() | {"name": "omega", "extra": True}
+    entry["recall"]["argument_template"] = {"query": "{gold}"}
+    assert check(entry) == ["recall_placeholder", *("telemetry_switch_missing:" + package + ":ORT_DISABLE_TELEMETRY=1"
+        for package in ("aaa", "onnxruntime", "zzz"))]
+
+
+def test_telemetry_switch_keys_are_normalised():
+    # check() matches PEP 503 names from the lock, so a key in another form would never match.
+    assert all(hp.normalise(package) == package for package in hp.TELEMETRY_SWITCHES)
+
+
+def test_telemetry_guide_rows():
+    text = (ROOT / "docs/developers/ring0.md").read_text()
+    for reason in ("telemetry_switch_missing:<package>:<switch>=<value>", "telemetry_lock_unreadable"):
+        row = next(line for line in text.splitlines() if line.startswith(f"| `{reason}` |"))
+        assert all(value in row for value in ("onnxruntime", "ORT_DISABLE_TELEMETRY=1", "#266"))
