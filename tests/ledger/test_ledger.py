@@ -128,6 +128,53 @@ def test_port_collision_preserves_director_ids_and_body_digests():
     assert digests[0] == digests[1]
 
 
+@pytest.mark.parametrize("text", ["1700055467", "GATE-155467", "55467000",
+                                 "1700055467 GATE-155467 55467000"])
+def test_port_mask_is_independent_of_unrelated_numbers(text):
+    body = {"text": text, "references": {text: text}}
+    values = [dict(RUN_VALUES, director_port=port) for port in ("55467", "61234")]
+    assert apply_masks(body, values[0]) == apply_masks(body, values[1]) == body
+    records = [request(path=f"/v1/{text}")]
+    assert stable_digest(records, values[0]) == stable_digest(records, values[1])
+
+
+def test_whole_ports_are_masked_but_json_numbers_are_preserved():
+    values = dict(RUN_VALUES, director_port="55467")
+    body = {"text": '127.0.0.1:55467 localhost:55467 http://127.0.0.1:55467/v1 '
+                    '"port": "55467" bare 55467 end',
+            "port": "55467", "number": 55467, "55467": "key"}
+    assert apply_masks(body, values) == {
+        "text": '127.0.0.1:{DIRECTOR_PORT} localhost:{DIRECTOR_PORT} '
+                'http://127.0.0.1:{DIRECTOR_PORT}/v1 "port": "{DIRECTOR_PORT}" '
+                'bare {DIRECTOR_PORT} end',
+        "port": "{DIRECTOR_PORT}", "number": 55467, "{DIRECTOR_PORT}": "key"}
+    # ASCII digits alone define the boundary, even next to letters or Unicode digits.
+    assert apply_masks("a55467z ９55467９", values) == "a{DIRECTOR_PORT}z ９{DIRECTOR_PORT}９"
+    assert apply_masks("５５４６７0", dict(values, director_port="５５４６７")) == "{DIRECTOR_PORT}0"
+    # Hex letters let the port boundary match, so director-id precedence must protect it.
+    cid = "bcw-abcd55467abcdef0"
+    assert apply_masks({cid: cid}, values) == {cid: cid}
+
+
+def test_sandbox_root_keeps_bare_matches_next_to_digits():
+    root = RUN_VALUES["sandbox_root"]
+    assert apply_masks(f"1{root}2", RUN_VALUES) == "1{SANDBOX_ROOT}2"
+
+
+@pytest.mark.parametrize("filename", ["config.yaml", "mem0.json"])
+def test_fresh_install_port_mask_preserves_number_collisions(monkeypatch, filename):
+    from bicentennial.sandbox import surfaces
+
+    raw = b"127.0.0.1:55467000 1700055467 GATE-155467 http://127.0.0.1:55467/v1"
+    masked = b"127.0.0.1:55467000 1700055467 GATE-155467 http://127.0.0.1:{DIRECTOR_PORT}/v1"
+    # Supply synthetic file bytes and listing; exercise E4 without installing a surface.
+    monkeypatch.setattr(surfaces, "tree_listing", lambda *_: [{"kind": "file", "path": filename}])
+    monkeypatch.setattr(Path, "read_bytes", lambda _: raw)
+    monkeypatch.setattr(surfaces, "tree_hash", lambda rows: rows)
+    assert surfaces.install_hash("/sandbox/install", [], 55467) == [
+        {"kind": "file", "path": filename, "size": len(masked), "sha256": sha256(masked).hexdigest()}]
+
+
 def snapshot(root):
     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None
             for p in root.rglob("*")}
