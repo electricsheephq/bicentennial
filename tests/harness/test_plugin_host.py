@@ -1037,7 +1037,7 @@ def test_holographic_sqlite_dates_live(tmp_path):
         responder=ScriptedResponder(entry), clock=SimClock(root / "clock.json", BASE, 60),
         root=root, scratch=tmp_path, life="t0-pack", branch="B0", run="live-dates", lock_hash=LOCK)
     try:
-        host.ingest(event(text="Amber flute token ZEPHYR9284"))
+        host.ingest(event(text="The amber flute rests in the blue cabinet"))
         assert host.settle(5)
         with sqlite3.connect(host.paths["hermes_home"] / "memory_store.db") as connection:
             fact_id, created, updated = connection.execute('select fact_id, created_at, updated_at from facts').fetchone()
@@ -1047,7 +1047,7 @@ def test_holographic_sqlite_dates_live(tmp_path):
             host._stop()
             host.clock.set_session(BASE + 86400)
             host._call("ingest", n=3, text="resume fact", write={"name": "fact_store", "arguments": {
-                "action": "change", "fact_id": fact_id, "content": "Amber flute token ZEPHYR9284 resumed"}})
+                "action": "change", "fact_id": fact_id, "content": "The amber flute rests in the green cabinet"}})
             assert host.settle(5)
             assert connection.execute('select updated_at from facts where fact_id=?', (fact_id,)).fetchone()[0] == datetime.fromtimestamp(BASE + 86400, timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     finally:

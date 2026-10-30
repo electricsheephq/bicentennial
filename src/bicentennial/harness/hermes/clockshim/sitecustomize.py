@@ -17,12 +17,14 @@ Patched (wall-clock readers only):
 Deliberately NOT patched: time.monotonic, time.perf_counter, time.process_time and
 asyncio loop time. They measure durations, never dates, and timeouts depend on them.
 
-SQLite 'now' through sqlite3.connect and sqlite3.dbapi2.connect follows the clock,
-floored to UTC milliseconds, with one instant per traced statement.
+SQLite 'now' and the 'subsec'/'subsecond' time-values through sqlite3.connect and
+sqlite3.dbapi2.connect follow the clock, floored to UTC milliseconds and marked as
+UTC like SQLite's own 'now', with one instant per traced statement.
 Unreachable: SQLite opened outside Python's sqlite3 (C/Rust, apsw), direct
 sqlite3.Connection construction, kernel file times (disclosed per system), and C
 code or children reading the OS clock directly. Trigger trace events reset the
-instant; a trigger can read later than its statement if the clock moves. Replacing
+instant; a trigger can read later than its statement if the clock moves. Another
+statement run on the same connection while one is open also resets it. Replacing
 the trace callback makes reads per call. Non-deterministic overrides are refused
 in generated columns, expression indexes and partial-index WHERE clauses, even
 without 'now'; trusted_schema=OFF also refuses them in triggers, views and DEFAULTs.
@@ -148,7 +150,7 @@ def _install_sqlite(clock):
             if cached[0] is None or traced() is None:
                 ms = math.floor(clock.now() * 1000)
                 cached[0] = (_RealDatetime.fromtimestamp(ms // 1000, _dt_mod.timezone.utc)
-                             .strftime("%Y-%m-%d %H:%M:%S") + f".{ms % 1000:03d}")
+                             .strftime("%Y-%m-%d %H:%M:%S") + f".{ms % 1000:03d}Z")
             return cached[0]
 
         def function(name):
@@ -164,8 +166,13 @@ def _install_sqlite(clock):
                         if index == len(values) and (name != "strftime" or values):
                             values.append(instant())
                         elif index < len(values) and isinstance(values[index], (str, bytes)):
-                            if values[index].lower() in ("now", b"now"):
+                            word = values[index].lower()
+                            if word in ("now", b"now"):
                                 values[index] = instant()
+                            elif word in ("subsec", "subsecond", b"subsec", b"subsecond"):
+                                # SQLite reads these as 'now' plus the subsec modifier.
+                                values[index:index + 1] = ([instant()] if name == "timediff"
+                                                           else [instant(), "subsec"])
                 with lock:
                     return delegate.execute(f"SELECT {target}({','.join('?' for _ in values)})", values).fetchone()[0]
             return call

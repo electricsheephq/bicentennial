@@ -166,6 +166,49 @@ print(json.dumps([c.execute(q).fetchone() for q in queries]))
     assert json.loads(actual.stdout) == json.loads(expected.stdout)
 
 
+@pytest.mark.parametrize("tz", ["UTC", "Asia/Kolkata", "America/New_York"])
+def test_sqlite_now_keeps_builtin_utc_semantics(tmp_path, tz):
+    """'now' and 'subsec' relate to modifiers as SQLite's own 'now' does, in any zone (#270 review)."""
+    clock = SimClock(tmp_path / "clock.json", int(SIM), 60)
+    clock.path.write_text(json.dumps(json.loads(clock.path.read_bytes()) | {"sim_start": SIM + 0.1239}))
+    code = '''import sqlite3, json
+c = sqlite3.connect(':memory:')
+v = sqlite3.sqlite_version_info
+checks = ["datetime('now','utc') = datetime('now')",
+          "datetime('now','localtime','utc') = datetime('now')",
+          "datetime('now','utc','localtime') = datetime('now','localtime')",
+          "datetime('now','+1 day','utc') = datetime('now','+1 day')",
+          "datetime('now','start of day','utc') = datetime('now','start of day')",
+          "julianday('now','utc') = julianday('now')",
+          "strftime('%s','now','utc') = strftime('%s','now')",
+          "strftime('%Y-%m-%d %H:%M:%f','now','utc') = strftime('%Y-%m-%d %H:%M:%f','now')"]
+absolute = ["datetime('now','utc')"]
+if v >= (3, 38):
+    checks += ["unixepoch('now','utc') = unixepoch('now')"]
+if v >= (3, 42):
+    checks += ["datetime('subsec') = datetime('now','subsec')",
+               "datetime('SubSecond') = datetime('now','subsec')",
+               "datetime(x'737562736563') = datetime('now','subsec')",
+               "datetime('subsec','utc') = datetime('now','subsec')",
+               "julianday('subsec') = julianday('now')",
+               "unixepoch('subsec') = unixepoch('now','subsec')",
+               "strftime('%Y-%m-%d %H:%M:%f','subsec') = strftime('%Y-%m-%d %H:%M:%f','now')"]
+    absolute += ["datetime('subsec')", "unixepoch('SUBSECOND')"]
+if v >= (3, 43):
+    checks += ["timediff('subsec','2000-01-01') = timediff('now','2000-01-01')"]
+print(json.dumps([[c.execute('SELECT ' + q).fetchone()[0] for q in checks],
+                  [c.execute('SELECT ' + q).fetchone()[0] for q in absolute], list(v)]))
+'''
+    actual, expected = _py(code, clock.path, {"TZ": tz}), _py(code, "", {"TZ": tz})
+    assert actual.returncode == expected.returncode == 0, actual.stderr + expected.stderr
+    relations, values, version = json.loads(actual.stdout)
+    assert relations == json.loads(expected.stdout)[0]
+    assert all(relations), relations  # each relation holds on SQLite's own 'now' here
+    assert values[0] == "2025-03-03 09:00:00"
+    if tuple(version) >= (3, 42):
+        assert values[1:] == ["2025-03-03 09:00:00.123", 1740992400.123]
+
+
 def test_sqlite_connections_binding_and_default(tmp_path):
     clock = SimClock(tmp_path / "clock.json", int(SIM), 60)
     result = _py('''import sqlite3, datetime as d
