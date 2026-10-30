@@ -2,7 +2,6 @@
 
 import json
 import shutil
-import time
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -39,6 +38,7 @@ from bicentennial.harness.hermes.adapter import (
     HarnessFailed,
     HermesAdapter,
     PinMismatch,
+    _now,
 )
 from bicentennial.harness.hermes.config import HERMES_TOOLSETS
 from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
@@ -72,7 +72,6 @@ from bicentennial.world.schedule import build_schedule
 from bicentennial.world.targeted import expected_state
 
 ARMS = ("system", "wiped", "no_memory")
-_now = time.monotonic
 STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
