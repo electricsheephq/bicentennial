@@ -52,6 +52,7 @@ from bicentennial.runner.lock import lock_hash
 from bicentennial.runner.t0 import SYSTEM_CAUSES
 from bicentennial.runner.t1 import REPO, T1Refused, run_arms
 from bicentennial.runtime.clock import SimClock
+from bicentennial.sandbox import fixedroot
 from bicentennial.score.aggregate import reduce
 from bicentennial.systems.controls import (
     WIPED_LABEL,
@@ -213,7 +214,7 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
     results = []
     for case in sorted(cases, key=lambda c: c.case_id):
         for attempt in range(3):
-            unit = Path(work) / case.case_id / f"a{attempt}"
+            unit = Path(work)
             unit.mkdir(parents=True)
             held, hosts = [], []
             result = run_case(case, CorpusFactory(ctx, arm, case, unit, held, hosts, host),
@@ -276,13 +277,13 @@ def _masked(records, values):
                  **{k: r[k] for k in sorted(digests) if k in r}) for r in records]
 
 
-def _provisional(run, arm, wiped_store, *, base, out):
+def _provisional(run, arm, wiped_store, *, base, out, sandbox):
     a = run.arms[arm]
     finals = _finals(a)
     assert all(f.run_values or not f.records for f in finals)
     ledger = [r for f in finals if f.run_values for r in _masked(f.records, f.run_values)]
     values = next((f.run_values for f in finals if f.run_values),
-                  dict(sandbox_root=str(out), director_port="0"))
+                  dict(sandbox_root=str(sandbox / "t1" / "B0" / "run"), director_port="0"))
     return assemble(tier="T1", mode="hermes", system_entry=run.ctx.entry,
         run_status="BLOCKED" if any(i["failure_class"] == "BLOCKED" for i in a.outcomes.values())
         else "COMPLETE", pins=run.ctx.pins, ledger_records=ledger, run_values=values,
@@ -334,10 +335,12 @@ def _invariants(run, arm):
     return [v.to_obj() for v in run.arms[arm].verdicts]
 
 
-def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=(), delivery=()):
+def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=(), delivery=(),
+           sandbox_slot=0):
     a, name = run.arms[arm], run.ctx.entry["name"]
     extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
         *stub_disclosures(run.ctx.entry, "t1"), *delivery,
+        ("t1.sandbox_slot", str(sandbox_slot)),
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
         ("t1.transforms", canon(list(a.transforms)).decode()),
         ("t1.reclassified", canon(sorted({i for u in a.units for i in u.reclassified})).decode()),
@@ -372,8 +375,9 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
     return junit_xml(suites)
 
 
-def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, start, publication):
-    run = run_arms(ctx, scratch=out / "work")
+def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, start, publication,
+             sandbox, sandbox_slot):
+    run = run_arms(ctx, scratch=sandbox / "t1")
     rows = []
     runs = list(_runs(run, tuple(sorted(run.arms))))
     t0._check_egress([(f.records, f.egress) for f in runs], T1Refused)
@@ -386,22 +390,22 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
     measurements = {arm: [] for arm in GATED}
     delivery = {arm: WriteDelivery() for arm in GATED}
     try:
-        results = {arm: corpus(ctx, arm, cases, catalogue=catalogue, work=out / "corpus-work" / arm,
+        results = {arm: corpus(ctx, arm, cases, catalogue=catalogue, work=sandbox / "corpus",
             host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm],
             delivery=delivery[arm], measurements=measurements[arm]) for arm in GATED}
     finally:
-        if (out / "corpus-work").exists():
-            shutil.rmtree(out / "corpus-work")
+        if (sandbox / "corpus").exists():
+            shutil.rmtree(sandbox / "corpus")
     for arm in GATED:
         rows.extend(corpus_rows[arm])
     base = _controls(ctx, Path(cache) if cache is not None else out / "cache")
     corpus_objs = {arm: [r.to_obj() for r in results[arm]] for arm in GATED}
-    wiped = _provisional(run, "wiped", "FAIL", base=base, out=out)
+    wiped = _provisional(run, "wiped", "FAIL", base=base, out=out, sandbox=sandbox)
     w = t1_gate(wiped, baseline, corpus_objs["wiped"], invariants=_invariants(run, "wiped"),
                 crossing=run.crossing, arm="wiped")
     store = "uninformative" if w.verdict == "BLOCKED" else control_status(
         w.verdict, run.arms["system"].recall)
-    system = _provisional(run, "system", store, base=base, out=out)
+    system = _provisional(run, "system", store, base=base, out=out, sandbox=sandbox)
     s = t1_gate(system, baseline, corpus_objs["system"], invariants=_invariants(run, "system"),
                 crossing=run.crossing)
     hits = sum(a.honeypot_hits for a in run.arms.values())
@@ -424,7 +428,8 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
             for f in _finals(run.arms["no_memory"]) for r in f.results.values()))))
     junit = {arm: _junit(run, arm, cards[arm], s if arm == "system" else w,
         vs if arm == "system" else vw, cases, results[arm], fm, hits, witnesses,
-        wiped_blocked=w.blocked, delivery=delivery[arm].properties("t1")) for arm in GATED}
+        wiped_blocked=w.blocked, delivery=delivery[arm].properties("t1"),
+        sandbox_slot=sandbox_slot) for arm in GATED}
     for arm in GATED:
         if receipts[arm]["spend_micro_usd"] > 0:
             raise SpendRefused(receipts[arm]["spend_micro_usd"])
@@ -444,7 +449,8 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
 
 
 def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
-           plugin_source=None, model_cache=None, cache=None, entry=None, worker_argv=None, corpus_host=None) -> int:
+           plugin_source=None, model_cache=None, cache=None, entry=None, worker_argv=None, corpus_host=None,
+           sandbox_slot=0) -> int:
     """Run the two-life comparison, returning the Ring 0 exit code."""
     created, published, publication = False, False, None
     try:
@@ -472,8 +478,11 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
             out.mkdir(parents=True)
             created = True
             publication = t0._Publication(out)
-            code = _execute(ctx, out=out, packs_dir=packs_dir, pack_hash=pack_hash, baseline=data,
-                            cache=cache, corpus_host=corpus_host, start=start, publication=publication)
+            fixedroot.validate_slot(sandbox_slot, T1Refused)
+            with fixedroot.lease(sandbox_slot, T1Refused) as sandbox:
+                code = _execute(ctx, out=out, packs_dir=packs_dir, pack_hash=pack_hash, baseline=data,
+                    cache=cache, corpus_host=corpus_host, start=start, publication=publication,
+                    sandbox=sandbox, sandbox_slot=sandbox_slot)
             published = True
             return code
         except (*t1.REFUSALS, BaselineMismatch, SpendRefused) as error:

@@ -146,6 +146,8 @@ Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs 
 
 ## 7. Run T1 as a merge gate
 
+From the next kit, Hermes units run under `/private/tmp/bicentennial-<slot>` on macOS and `/tmp/bicentennial-<slot>` elsewhere, with `--sandbox-slot N` defaulting to 0 (0–9). A whole-run exclusive lease sweeps stale contents on acquire and run contents on exit, keeping `.lock`; workers inherit the lease. T1 life roots are `<base>/t1/<branch>/run`, compile roots `<base>/t1/check/<life>/check-<branch>-<k>`, and corpus hosts `<base>/corpus/hosts/h<n>`. Registry T0 hosts use `<base>/t0` with pack id, branch and attempt retained. These scratch paths are independent of `--out`, arm, system and worker index. Compile checks alone retain life, and T0 alone retains attempt. Cards, receipts, ledgers and refusals remain under `--out`. v0.1's frozen kit is unchanged ([RING0 E20](../../specs/ring0/RING0.md#13-v01-errata)).
+
 Set `HERMES_CHECKOUT` to a clean git checkout of the release pinned in `systems/registry/hermes-native.toml`, whose `.venv` must include Hermes's `mcp` extra, prepared from the checkout's own lockfile with `uv sync --frozen --extra mcp`. T1's G2 environment tools reach Hermes over MCP. The pin hashes the source checkout only, so the extra does not change it. Set `PLUGIN_CHECKOUT` to the plug-in's pinned source when needed. These are source checkouts you prepare separately. The shipped `hermes-native`, `holographic`, `mem0-oss` and `omega` entries carry measured pins; an entry that still holds a zero pin is refused with `unmeasured:` before any run (section 6).
 
 A system with a dependency lock gets its own clone of the pinned Hermes checkout at the same commit, prepared with that checkout's own `uv sync --frozen --extra mcp`; install its dependencies with `uv pip install --python <copy>/.venv/bin/python --require-hashes -r systems/locks/<system>.txt`, then pass that copy as `--hermes` for that system only. The shared checkout stays as Hermes's lockfile plus the `mcp` extra make it. Prepare verifies applicable locked versions in the worker and records the lock digest and applicable count as `<tier>.plugin_deps`; every real-worker run records the canonical distribution list as `<tier>.worker_dists` and its digest and count as `<tier>.worker_dists_sha256` in JUnit.
@@ -243,6 +245,9 @@ Exit-3 codes and causes, including registry reasons above:
 | `visible_canary` | Canary found in agent-visible input. |
 | `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
 | `scratch_exists` | T1 arm scratch path already exists. |
+| `sandbox_slot` | Slot is not an integer from 0 to 9; exit 3. |
+| `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
+| `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
 | `check_compile` | Script compilation check failed. The runner writes a per-branch summary to stderr. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `lock_mismatch` | Current run lock differs from expected lock. |
@@ -270,6 +275,8 @@ Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. C
 `stage_attribution`, the reader's `failing_stage`, is stored, retained, retrieved, used or unknown. The reader uses whatever is present, so "used" never fails at Ring 0 ([RING0 §1](../../specs/ring0/RING0.md#1-the-scripted-reader)). Remember, Survive and Act are reported separately; never sum them.
 
 ## 10. Reading the outputs
+
+Also inspect `t0.sandbox_slot` for registry T0 runs (reference runs disclose no slot), and `t1.sandbox_slot` for T1. The value is the selected slot, default 0; it is a run property outside the frozen disclosure tuple.
 
 T0 writes `<out>/<pack relpath>/{card.json, receipt.json, junit.xml, invariants.json, controls.json}` plus `<out>/adapter_invariants.json`, `relations.json`, `relations.xml` and optional `cache/`. Relations never change the exit code. T1 writes `<out>/{system,wiped}/{card.json, receipt.json, junit.xml, invariants.json, corpus.json, controls.json}`.
 

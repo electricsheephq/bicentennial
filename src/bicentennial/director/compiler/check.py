@@ -100,7 +100,6 @@ def _compare(adapter, calls):
 def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None):
     """Execute each check session in a fresh home and compare its durable tool-result receipts."""
     import sqlite3
-    import tempfile
     from pathlib import Path
 
     from bicentennial.director.routes import RouteTable
@@ -171,8 +170,9 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
             else:
                 raise ValueError("unknown genre")
             result = branches[branch] = dict(sessions=0, calls=0, mismatches=[])
-            for session, calls, instant, cadence, seed, end_hash in jobs:
-                root = Path(tempfile.mkdtemp(prefix=f"check-{branch}-", dir=scratch))
+            for k, (session, calls, instant, cadence, seed, end_hash) in enumerate(jobs):
+                root = scratch / f"check-{branch}-{k}"
+                root.mkdir(parents=True)
                 if genre == "G1":
                     materialize(db, schedule, branch=branch, boundary=start_boundary(schedule, session["index"]),
                                 root=root / "workspace")

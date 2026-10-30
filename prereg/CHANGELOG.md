@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-31: fixed sandbox roots (#282)
+- **RING0 §13 E20:** from the next kit, every Hermes unit runs below a fixed per-slot base, exclusively leased for the run and inherited by workers. T0/T1 accept and disclose `--sandbox-slot`; the mask is unchanged. v0.1's frozen kit keeps its layout; next-kit baselines are rebuilt. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-30: Hermes waits for its MCP servers before it builds the agent (#71)
 - **RING0 §13 E19:** from the next kit, the Hermes adapter's config sets `mcp_discovery_timeout` to 60 s whenever it configures MCP servers (today only at T1), so a slow environment server's tools enter the agent's first tool snapshot in the pin's sorted order instead of being appended later or left out. The harness record lists it under `config_deviations`. v0.1's frozen kit keeps the pin's default. No PREREG version change; PREREG-v0.4 remains frozen.
 
