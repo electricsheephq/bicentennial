@@ -125,7 +125,7 @@ Everything in `card.json` is written by `canon.canon`, with no floats.
 
 **Volatile** fields are in `receipt.json`: wall times, latency, load, the busy-marker readings, token counts, spend, store growth in bytes, process ids, ports and temporary paths.
 
-**The stable projection** of a ledger record keeps its role, served kind, cursor position and the sha256 of its canonical request and response bodies. Before that hash is taken, these values are masked:
+**The stable projection** of a ledger record keeps its role, served kind, cursor position and the sha256 of its canonical request and response bodies, with the record's other stable fields; from the next kit, a record outside the cursor leaves out `sim_now` (§13 E17). Before that hash is taken, these values are masked:
 - Hermes session ids;
 - random ids anywhere in body text: every lower-case hyphenated UUID becomes `{UUID}`. Hosts and systems mint these, so they differ on every run. Examples are a Hermes session id that the compressor writes into a summary or that `session_search` returns, and a memory store's record ids in a recall result;
 - tool-call ids that the harness generated;
