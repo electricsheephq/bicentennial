@@ -29,6 +29,13 @@ CONFIG_DEVIATIONS = ("model.context_length", "auxiliary.compression.context_leng
 # (agent/turn_recovery.py interruptible_backoff_sleep), so a failed main call would stall until the turn timeout.
 SCRIPTED_DEVIATIONS = ("tools.tool_search.enabled", "agent.api_max_retries", "agent.auto_recovery_cycles")
 _SCRIPTED_AGENT = {"api_max_retries": 1, "auto_recovery_cycles": 0}
+# Written whenever MCP servers are configured (#71). The pin waits at most mcp_discovery_timeout (1.5 s by default)
+# for discovery before it builds the agent, which snapshots its tools once; a server that connects later has its
+# tools appended after the ones already offered (acp_adapter/session.py 557-567, hermes_cli/mcp_startup.py
+# 154-175 and 260-271, tools/mcp_tool_agent.py 98-150). A slow environment-server start therefore changed one
+# session's tool order. The join returns when discovery completes, so the bound only waits for a slow start.
+MCP_DEVIATIONS = ("mcp_discovery_timeout",)
+MCP_DISCOVERY_TIMEOUT_S = 60
 # Hermes d923a5e: hermes_cli/fallback_config.py:get_fallback_chain, agent/auxiliary_client.py route readers,
 # and hermes_cli/config_providers.py:get_compatible_custom_providers (named providers and endpoint/key settings).
 # Same pin: agent/curator.py:_resolve_review_runtime reads legacy curator.auxiliary;
@@ -90,6 +97,7 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
         cfg["platform_toolsets"] = {"acp": [t for t in toolsets if t not in ("memory", "session_search")]}
     if mcp_servers is not None:
         cfg["mcp_servers"] = deepcopy(mcp_servers)
+        cfg["mcp_discovery_timeout"] = MCP_DISCOVERY_TIMEOUT_S
     if window is not None:
         cfg["compression"]["threshold_tokens"] = window
         cfg["model"]["context_length"] = cfg["auxiliary"]["compression"]["context_length"] = 4 * window
@@ -99,7 +107,7 @@ def hermes_config(port: int, alias: str, *, plugin: str | None = None, plugin_co
 
 def _merge_plugin(target, settings):
     for key, value in settings.items():
-        if key in {"temperature", "top_p", "top_k", "mcp_servers"}:
+        if key in {"temperature", "top_p", "top_k", "mcp_servers", "mcp_discovery_timeout"}:
             raise ValueError("plugin_config touches adapter-owned protocol settings")
         if key in target and not (isinstance(target[key], dict) and isinstance(value, dict)):
             raise ValueError("plugin_config touches an adapter-owned key")

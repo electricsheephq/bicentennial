@@ -152,6 +152,18 @@ def test_layout_refusals(tmp_path, monkeypatch):
         layout(tmp_path / "elsewhere", tmp_path / "run")
 
 
+def test_mcp_servers_get_the_discovery_bound():
+    # #71: the pin waits 1.5 s for MCP discovery by default and appends a late server's tools after the built-ins
+    assert (config.MCP_DEVIATIONS, config.MCP_DISCOVERY_TIMEOUT_S) == (("mcp_discovery_timeout",), 60)
+    servers = {"envserver": {"command": "python"}}
+    cfg = hermes_config(4321, "main", toolsets=config.HERMES_TOOLSETS + ("envserver",), mcp_servers=servers)
+    assert cfg["mcp_discovery_timeout"] == 60 and type(cfg["mcp_discovery_timeout"]) is int
+    assert "mcp_discovery_timeout" not in hermes_config(4321, "main")
+    with pytest.raises(ValueError, match="protocol settings"):
+        hermes_config(4321, "main", plugin="holographic", plugin_config={"mcp_discovery_timeout": 1},
+                      mcp_servers=servers)
+
+
 def test_custom_toolsets_keep_actions_without_memory():
     from bicentennial.harness.hermes.config import HERMES_TOOLSETS
 
