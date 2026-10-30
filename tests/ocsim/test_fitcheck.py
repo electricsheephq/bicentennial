@@ -81,7 +81,7 @@ def test_b_expectations(capsys):
     p = replace(params(), rho_t=.5)
     d = {(c.cell, str(i)): ((8, 16, 4), (16, 8, 4), (12, 24, 6), (24, 12, 6))[i % 4]
          for c in p.cells for i in range(16)}
-    points, datasets = rule(p), 400
+    points, datasets = rule(p), 2000
     expected = f.model_values(p, d, rule=points)
     samples = {k: [] for k in expected if k[0] != "K"}
     started = perf_counter()
