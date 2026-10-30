@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 docs, 2026-10-30: v0.1's maintenance kit (#29, #302)
+- **RING0 §13 E13, E15, E17, E19:** v0.1's maintenance kit (`maint/v0.1`, #302) carries these four errata for v0.1's second official run, and their closing sentences now say so. §13's opening names them. No rule changes on main; E12, E14, E16 and E18 stay next-kit errata. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-30: Hermes waits for its MCP servers before it builds the agent (#71)
 - **RING0 §13 E19:** from the next kit, the Hermes adapter's config sets `mcp_discovery_timeout` to 60 s whenever it configures MCP servers (today only at T1), so a slow environment server's tools enter the agent's first tool snapshot in the pin's sorted order instead of being appended later or left out. The harness record lists it under `config_deviations`. v0.1's frozen kit keeps the pin's default. No PREREG version change; PREREG-v0.4 remains frozen.
 
