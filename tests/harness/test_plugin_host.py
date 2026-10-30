@@ -1019,6 +1019,41 @@ def test_live(factory, name, capsys):
     assert canon(results[0][0]) == canon(results[1][0])
 
 
+def test_holographic_sqlite_dates_live(tmp_path):
+    import sqlite3
+    from datetime import datetime, timezone
+
+    checkout, source = os.environ.get("BICENTENNIAL_HERMES"), os.environ.get("BICENTENNIAL_HOLOGRAPHIC")
+    if not checkout or not source:
+        pytest.skip("BICENTENNIAL_HERMES and BICENTENNIAL_HOLOGRAPHIC required")
+    entry = load(REGISTRY / "holographic.toml")
+    routes = deepcopy(ROUTES)
+    for route in routes["routes"]:
+        route["system"] = "holographic"
+    root = tmp_path / "live"
+    root.mkdir()
+    host = HermesMemoryHost(entry, checkout=Path(checkout), plugin_source=Path(source),
+        harness_pin=load(REGISTRY / "hermes-native.toml")["artifact"], route_table=RouteTable.load(routes),
+        responder=ScriptedResponder(entry), clock=SimClock(root / "clock.json", BASE, 60),
+        root=root, scratch=tmp_path, life="t0-pack", branch="B0", run="live-dates", lock_hash=LOCK)
+    try:
+        host.ingest(event(text="Amber flute token ZEPHYR9284"))
+        assert host.settle(5)
+        with sqlite3.connect(host.paths["hermes_home"] / "memory_store.db") as connection:
+            fact_id, created, updated = connection.execute('select fact_id, created_at, updated_at from facts').fetchone()
+            expected = datetime.fromtimestamp(BASE + 1, timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            assert created == updated == expected
+            host._call("ingest", n=2, text="end fact", write={"name": "fact_store", "arguments": {"action": "end", "fact_id": fact_id}})
+            host._stop()
+            host.clock.set_session(BASE + 86400)
+            host._call("ingest", n=3, text="resume fact", write={"name": "fact_store", "arguments": {
+                "action": "change", "fact_id": fact_id, "content": "Amber flute token ZEPHYR9284 resumed"}})
+            assert host.settle(5)
+            assert connection.execute('select updated_at from facts where fact_id=?', (fact_id,)).fetchone()[0] == datetime.fromtimestamp(BASE + 86400, timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    finally:
+        host.close()
+
+
 def test_native_session_start_snapshot_live(factory):
     checkout = os.environ.get("BICENTENNIAL_HERMES")
     if not checkout:

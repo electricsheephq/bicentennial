@@ -127,9 +127,118 @@ def test_unreadable_clock_refuses_wall_time(tmp_path):
 def test_unset_clock_is_inert():
     env = {k: v for k, v in os.environ.items() if k != "BICENTENNIAL_CLOCK_FILE"}
     env["PYTHONPATH"] = str(SHIM_DIR)
-    r = subprocess.run([CHILD_PYTHON, "-c", "import time; print(abs(time.time() - %r) < 30)" % time.time()],
+    r = subprocess.run([CHILD_PYTHON, "-c", "import sys, time; assert 'sqlite3' not in sys.modules; "
+                       "import sqlite3; assert sqlite3.connect.__module__ == '_sqlite3'; "
+                       "print(abs(time.time() - %r) < 30)" % time.time()],
                        env=env, capture_output=True, text=True, check=False, timeout=60)
     assert r.stdout.strip() == "True"
+
+
+def test_sqlite_builtins_and_now(tmp_path):
+    clock = SimClock(tmp_path / "clock.json", int(SIM), 60)
+    code = '''import sqlite3, json
+c = sqlite3.connect(':memory:')
+queries = ['SELECT CURRENT_TIMESTAMP, CURRENT_DATE, CURRENT_TIME', 'SELECT strftime()']
+for name in ('date', 'time', 'datetime', 'julianday', 'strftime', 'unixepoch'):
+    if name == 'unixepoch' and sqlite3.sqlite_version_info < (3, 38): continue
+    prefix = "'%Y-%m-%d %H:%M:%f'," if name == 'strftime' else ''
+    queries.append(f"SELECT {name}({prefix.rstrip(',')})")
+    for value in ("'now'", "'NOW'", "'nOw'", "x'6e6f77'", "'2001-02-03'", '2451545', 'NULL', "'invalid'"):
+        for modifier in ('', ",'+1 day'", ",'start of month'", ",'localtime'", ",'subsec'"):
+            queries.append(f'SELECT {name}({prefix}{value}{modifier})')
+    queries.append(f"SELECT {name}({prefix}1234567890,'unixepoch')")
+queries += ["SELECT strftime('%s')", "SELECT strftime('%Y-%m-%d %H:%M:%f','now')"]
+if sqlite3.sqlite_version_info >= (3, 43):
+    queries += ["SELECT timediff('now','2000-01-01')", "SELECT timediff('2000-01-01',x'6e6f77')",
+                "SELECT timediff('NOW','now')", "SELECT timediff('2001-01-01','2000-01-01')"]
+REPLACE
+print(json.dumps([c.execute(q).fetchone() for q in queries]))
+'''
+    replace = "queries = [q.replace('CURRENT_TIMESTAMP', \"datetime('now')\").replace('CURRENT_DATE', \"date('now')\").replace('CURRENT_TIME', \"time('now')\") for q in queries]\n"
+    replace += "queries = [q.replace(\"'now'\", \"'2025-03-03 09:00:00.123'\").replace(\"'NOW'\", \"'2025-03-03 09:00:00.123'\").replace(\"'nOw'\", \"'2025-03-03 09:00:00.123'\").replace(\"x'6e6f77'\", \"'2025-03-03 09:00:00.123'\") for q in queries]\n"
+    # Omitted time-values need an explicit instant in the unshimmed reference.
+    replace += "queries = [q.replace('()', \"('2025-03-03 09:00:00.123')\") if q != 'SELECT strftime()' else q for q in queries]\n"
+    replace += "queries = [q.replace(\"strftime('%s')\", \"strftime('%s','2025-03-03 09:00:00.123')\").replace(\"strftime('%Y-%m-%d %H:%M:%f')\", \"strftime('%Y-%m-%d %H:%M:%f','2025-03-03 09:00:00.123')\") for q in queries]"
+    state = json.loads(clock.path.read_bytes()) | {"sim_start": SIM + 0.1239}
+    clock.path.write_text(json.dumps(state))
+    actual, expected = _py(code.replace('REPLACE', ''), clock.path), _py(code.replace('REPLACE', replace), '')
+    assert actual.returncode == expected.returncode == 0, actual.stderr + expected.stderr
+    assert json.loads(actual.stdout) == json.loads(expected.stdout)
+
+
+def test_sqlite_connections_binding_and_default(tmp_path):
+    clock = SimClock(tmp_path / "clock.json", int(SIM), 60)
+    result = _py('''import sqlite3, datetime as d
+class Custom(sqlite3.Connection): pass
+for connect in (sqlite3.connect, sqlite3.dbapi2.connect):
+    c = connect('file:clock?mode=memory&cache=shared', uri=True, factory=Custom, detect_types=sqlite3.PARSE_COLNAMES)
+    assert isinstance(c, Custom)
+    assert isinstance(c.execute('select ? as "d [date]"', (d.date.today(),)).fetchone()[0], d.date)
+    assert c.execute('select ?', (d.datetime.now(),)).fetchone()[0] == '2025-03-03 09:00:00'
+    c.execute('create table t (created_at DEFAULT CURRENT_TIMESTAMP)')
+    c.execute('insert into t default values')
+    assert c.execute('select * from t').fetchone()[0] == '2025-03-03 09:00:00', sqlite3.sqlite_version
+    c.close()
+''', clock.path, {"TZ": "UTC"})
+    assert result.returncode == 0, result.stderr
+
+
+def test_sqlite_statement_ticks_triggers_and_trace_replacement(tmp_path):
+    clock = SimClock(tmp_path / "clock.json", int(SIM), 60)
+    result = _py('''import sqlite3, json, os
+c = sqlite3.connect(':memory:')
+def tick():
+    p = os.environ['BICENTENNIAL_CLOCK_FILE']
+    with open(p) as f: state = json.load(f)
+    state['sim_start'] += 60
+    with open(p + '.new', 'w') as f: json.dump(state, f)
+    os.replace(p + '.new', p)
+    return 0
+c.create_function('tick', 0, tick)
+c.executescript('create table t (created_at DEFAULT CURRENT_TIMESTAMP); create table log (stamp);')
+c.execute('insert into t default values')
+sql = "select strftime('%s','now'), tick(), strftime('%s','now') from (select 1 union all select 2)"
+rows = c.execute(sql).fetchall()
+assert rows[0][0] == rows[0][2] == rows[1][0] == rows[1][2]
+assert c.execute("select round((julianday('now') - julianday(created_at))*86400) from t").fetchone()[0] == 120
+assert int(c.execute(sql).fetchone()[0]) == int(rows[0][0]) + 120  # cached statement re-executed
+c.execute('delete from t')
+c.executemany("insert into t values (strftime('%s','now') + tick())", [(), ()])
+stamps = [int(r[0]) for r in c.execute('select * from t')]
+assert stamps[1] - stamps[0] == 60
+c.executescript("insert into log values(strftime('%s','now')); select tick(); insert into log values(strftime('%s','now'));")
+stamps = [int(r[0]) for r in c.execute('select * from log')]
+assert stamps[1] - stamps[0] == 60
+c.executescript("delete from t; delete from log; create trigger tr after insert on t begin insert into log values(CURRENT_TIMESTAMP); end;")
+c.execute('insert into t values (CURRENT_TIMESTAMP)')
+assert c.execute('select * from t').fetchone() == c.execute('select * from log').fetchone()
+c.executescript("drop trigger tr; create trigger tr after insert on t begin select tick(); insert into log values(CURRENT_TIMESTAMP); end;")
+c.execute('insert into t values (CURRENT_TIMESTAMP)')
+outer = c.execute('select * from t order by rowid desc').fetchone()[0]
+inner = c.execute('select * from log order by rowid desc').fetchone()[0]
+assert inner > outer, (outer, inner)  # trigger trace reset: the disclosed later instant
+c.set_trace_callback(lambda sql: None)
+row = c.execute(sql).fetchone()
+assert int(row[2]) - int(row[0]) == 60  # replacing trace makes reads per call
+''', clock.path)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("available", [(), ("unixepoch", "timediff")])
+def test_sqlite_optional_registration(tmp_path, available):
+    result = _py(f'''import sqlite3, sitecustomize as shim
+records = []
+class Connection(sqlite3.Connection):
+    def create_function(self, name, arity, function, **kw): records.append((name, arity, kw))
+sqlite3.connect = lambda *a, **kw: Connection(*a, **kw)
+shim._sqlite_probe = lambda connection: {available!r}
+shim._install_sqlite(shim._Clock({str(SimClock(tmp_path / 'clock.json', int(SIM), 60).path)!r}))
+c = sqlite3.connect(':memory:')
+assert {{n for n, _, _ in records}} & {{'unixepoch', 'timediff'}} == set({available!r})
+assert all(not kw for _, _, kw in records)
+assert ('timediff', 2, {{}}) in records if 'timediff' in {available!r} else True
+''', tmp_path / "clock.json")
+    assert result.returncode == 0, result.stderr
 
 
 def test_two_scheduled_sessions(tmp_path):

@@ -17,8 +17,15 @@ Patched (wall-clock readers only):
 Deliberately NOT patched: time.monotonic, time.perf_counter, time.process_time and
 asyncio loop time. They measure durations, never dates, and timeouts depend on them.
 
-Unreachable from Python (see REPORT.md): SQLite 'now', kernel file times, and any C
-code or child process that reads the OS clock directly.
+SQLite 'now' through sqlite3.connect and sqlite3.dbapi2.connect follows the clock,
+floored to UTC milliseconds, with one instant per traced statement.
+Unreachable: SQLite opened outside Python's sqlite3 (C/Rust, apsw), direct
+sqlite3.Connection construction, kernel file times (disclosed per system), and C
+code or children reading the OS clock directly. Trigger trace events reset the
+instant; a trigger can read later than its statement if the clock moves. Replacing
+the trace callback makes reads per call. Non-deterministic overrides are refused
+in generated columns, expression indexes and partial-index WHERE clauses, even
+without 'now'; trusted_schema=OFF also refuses them in triggers, views and DEFAULTs.
 
 With BICENTENNIAL_CLOCK_FILE unset the shim does nothing. With it set but unreadable the
 process exits with code 70 rather than silently running on wall time.
@@ -102,6 +109,74 @@ class _Unbound:
 
     def __repr__(self):
         return f"<simulated time.{self.__name__}>"
+
+
+def _sqlite_probe(connection):
+    names = []
+    for name, args in (("unixepoch", "0"), ("timediff", "0,0")):
+        try:
+            connection.execute(f"SELECT {name}({args})").fetchone()
+        except Exception:  # sqlite3 is imported only after the datetime patch
+            continue
+        names.append(name)
+    return names
+
+
+def _install_sqlite(clock):
+    import math
+    import sqlite3
+    import threading
+    import weakref
+
+    real_connect = sqlite3.connect
+    delegate = real_connect(":memory:", check_same_thread=False)
+    lock = threading.Lock()
+    optional = _sqlite_probe(delegate)
+
+    def connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        cached = [None]
+
+        def trace(_statement):
+            cached[0] = None
+
+        connection.set_trace_callback(trace)
+        # Only SQLite owns trace: replacement releases it, disabling the cache.
+        traced = weakref.ref(trace)
+
+        def instant():
+            if cached[0] is None or traced() is None:
+                ms = math.floor(clock.now() * 1000)
+                cached[0] = (_RealDatetime.fromtimestamp(ms // 1000, _dt_mod.timezone.utc)
+                             .strftime("%Y-%m-%d %H:%M:%S") + f".{ms % 1000:03d}")
+            return cached[0]
+
+        def function(name):
+            def call(*values):
+                values = list(values)
+                target = name.removeprefix("current_")
+                if name.startswith("current_"):
+                    target = {"timestamp": "datetime"}.get(target, target)
+                    values = [instant()]
+                else:
+                    indices = range(2) if name == "timediff" else [int(name == "strftime")]
+                    for index in indices:
+                        if index == len(values) and (name != "strftime" or values):
+                            values.append(instant())
+                        elif index < len(values) and isinstance(values[index], (str, bytes)):
+                            if values[index].lower() in ("now", b"now"):
+                                values[index] = instant()
+                with lock:
+                    return delegate.execute(f"SELECT {target}({','.join('?' for _ in values)})", values).fetchone()[0]
+            return call
+
+        for name in ("date", "time", "datetime", "julianday", "strftime", *optional,
+                     "current_timestamp", "current_date", "current_time"):
+            arity = 0 if name.startswith("current_") else 2 if name == "timediff" else -1
+            connection.create_function(name, arity, function(name))
+        return connection
+
+    sqlite3.connect = sqlite3.dbapi2.connect = connect
 
 
 def _install(clock):
@@ -188,6 +263,7 @@ def _install(clock):
         cls.__module__ = "datetime"
     _dt_mod.date = SimDate
     _dt_mod.datetime = SimDatetime
+    _install_sqlite(clock)
 
 
 def _main():
