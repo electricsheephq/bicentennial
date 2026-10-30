@@ -1,14 +1,17 @@
 """Build binding OC base documents from locked, synthetic-testable sources.
 
-Stage a deliberately refuses the five rules assigned to later stages. No
+Stage b deliberately refuses the two rules assigned to stage c. No
 schema loader or contract validator runs here; the history checks are frozen
 below and covered by C-8, together with the token estimator.
 """
 
+import io
 import json
 import os
 import re
 import subprocess
+import tarfile
+import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from hashlib import sha256
@@ -16,10 +19,20 @@ from pathlib import Path
 
 from bicentennial.canon import canon
 from bicentennial.ocsim import inputs, run
+from bicentennial.world import scale
 from bicentennial.world.tokens import estimate_tokens
 
 ROSTER = "prereg/roster/full-tier.json"
 C12 = "prereg/completion/C-12.json"
+C11 = "prereg/completion/C-11.json"
+C1 = "prereg/completion/C-1.json"
+C2 = "prereg/completion/C-2.json"
+DRY = "prereg/ocsim/dry-set.json"
+RENDER_CODE = ("src/bicentennial", "tiers", "specs/ring0", "schemas")
+STAGE_B = ("#245 issuecomment-6522316290", "#245 issuecomment-6522904866",
+           "#245 issuecomment-6524597333")
+FIELD_ARTIFACTS = {"rows": (ROSTER,), "required": (C12,), "lanes": (C11, C1, C2),
+                   "lives": (DRY,), "alloc_by_b": (DRY, C12)}
 BASE_FIELDS = ("required", "alloc_by_b", "checkpoints", "lives", "rows", "lanes",
                "passover", "control_failure", "probe_only", "n_lives_floor", "planning")
 RESERVED = frozenset(("S", "F", "C", "RAG", "CEIL", "anchor", "no_memory", "oracle_evidence"))
@@ -81,6 +94,40 @@ def _json(raw, name):
 def marker_id(root, commit):
     """C-14 has no binding machine-readable declaration yet."""
     raise ValueError("pending:C-14")
+
+
+def _git_env():
+    return {k: v for k, v in os.environ.items()
+            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+
+
+def _git(context, *args, reason):
+    try:
+        return subprocess.run(("git", "-C", str(context.root), *args),
+                              capture_output=True, check=False, env=_git_env())
+    except OSError as error:
+        raise ValueError(reason) from error
+
+
+def c8_check(context):
+    """Compare committed C-8 closures using today's path policy for both."""
+    hashes = {}
+    for name, commit in (("analysis", context.get("bar2")["run_lock"]["analysis_commit"]),
+                         ("head", "HEAD")):
+        listing = _git(context, "ls-tree", "-r", "--name-only", commit, "--",
+                       *run._C8_FIXED, *run._C8_DIRS, reason="c8:git")
+        _need(listing.returncode == 0, "c8:git")
+        paths = [p for p in listing.stdout.decode().splitlines()
+                 if "__pycache__" not in Path(p).parts and not p.endswith(".pyc")]
+        _need(set(run._C8_FIXED) <= set(paths), "c8:bar2_mismatch")
+        archive = _git(context, "archive", "--format=tar", commit, "--", *paths, reason="c8:git")
+        _need(archive.returncode == 0, "c8:git")
+        with tempfile.TemporaryDirectory() as directory:
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                tar.extractall(directory, filter="data")
+            hashes[name] = run.c8_hash(Path(directory))
+    context.provenance["c8"] = hashes
+    _need(hashes["analysis"] == hashes["head"], "c8:bar2_mismatch")
 
 
 def _session(record, index, where):
@@ -151,15 +198,31 @@ def _chain(chain, n, where, life, items):
             _need(iid not in listed, f"bar2:item_twice:{where}")
             listed.add(iid)
             _need(iid not in items or items[iid]["life"] == life, f"bar2:item_life:{where}")
+    if stop is not None:
+        for session in chain["sessions"]:
+            if stop["kind"] == "replay":
+                after = (session["index"] > stop["session"] if session["kind"] == "replay"
+                         else session["checkpoint"] >= stop["session"])
+            else:
+                after = (session["index"] > stop["checkpoint"] if session["kind"] == "replay"
+                         else session["index"] > stop["session"])
+            _need(not after, f"bar2:after_stop:{where}")
 
 
 def _bar2(data, history, roster):
     _shape(data, ("run_lock", "arms", "items"), "bar2:shape:root")
     lock = data["run_lock"]
-    _shape(lock, ("benchmark_commit", "generator_version", "history_sha256", "status", "account_pool"),
+    _shape(lock, ("benchmark_commit", "analysis_commit", "generator_version", "generator_versions",
+                  "history_sha256", "status", "account_pool"),
            "bar2:shape:run_lock")
     _need(_hex(lock["benchmark_commit"], 40) and _hex(lock["history_sha256"], 64)
           and isinstance(lock["generator_version"], str), "bar2:shape:run_lock")
+    versions = lock["generator_versions"]
+    _need(_hex(lock["analysis_commit"], 40) and isinstance(versions, dict) and bool(versions)
+          and all(isinstance(k, str) and bool(k) and isinstance(v, str) and bool(v) and "+" not in v
+                  for k, v in versions.items())
+          and "+".join(sorted(set(versions.values()))) == lock["generator_version"],
+          "bar2:shape:run_lock")
     pool = lock["account_pool"]
     _need(_strings(pool) and bool(pool) and pool == sorted(set(pool))
           and all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", v) for v in pool),
@@ -256,18 +319,24 @@ class _Context:
         return self.values[name]
 
     def artifact(self, path):
+        if path not in (ROSTER, C12, C11, C1, C2, DRY):
+            raise AssertionError(f"unknown artifact: {path}")
+        if path in self.values:
+            return self.values[path]
         _need(_hex(self.commit, 40), f"source_missing:{path}")
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
         try:
             result = subprocess.run(("git", "-C", str(self.root), "show", f"{self.commit}:{path}"),
-                                    capture_output=True, check=False, env=env)
+                                    capture_output=True, check=False, env=_git_env())
         except OSError as error:
             raise ValueError(f"source_missing:{path}") from error
         _need(result.returncode == 0, f"source_missing:{path}")
         raw = result.stdout
         data = _json(raw, path)
         _need(isinstance(data, dict), f"source_shape:{path}")
+        if path in (C1, C2):
+            keys = ("pinned_model",) if path == C1 else ("swap_model", "effort")
+            _need(isinstance(data.get("status"), str)
+                  and all(isinstance(data.get(k), str) for k in keys), f"source_shape:{path}")
         _need(data.get("status") == "binding", f"source_provisional:{path}")
         if path == ROSTER:
             _shape(data, ("status", "systems"), f"source_shape:{path}")
@@ -279,11 +348,26 @@ class _Context:
                       and type(system["lcmx"]) is bool, f"source_shape:{path}")
                 ids.append(system["id"])
             _need(len(ids) == len(set(ids)), f"source_shape:{path}")
-        else:
+        elif path == C12:
             _shape(data, ("status", "profile", "required"), f"source_shape:{path}")
             _need(data["profile"] == "Text" and _strings(data["required"]), f"source_shape:{path}")
+        elif path == C11:
+            reason = f"source_shape:{path}"
+            _shape(data, ("status", "lanes"), reason)
+            lanes = data["lanes"]
+            _need(isinstance(lanes, dict) and {"pinned", "swap"} <= lanes.keys()
+                  and not lanes.keys() - {"pinned", "swap", "replication"}, reason)
+            for entry in lanes.values():
+                _shape(entry, ("model", "concurrency", "rate_per_min", "accounts"), reason)
+                _need(isinstance(entry["model"], str) and _integer(entry["accounts"], 1)
+                      and all(entry[k] is None or _integer(entry[k], 1)
+                              for k in ("concurrency", "rate_per_min"))
+                      and any(entry[k] is not None for k in ("concurrency", "rate_per_min")), reason)
+        elif path == DRY:
+            _dry_shape(data)
         self.provenance["artifacts"].append({"path": path, "commit": self.commit,
                                              "sha256": sha256(raw).hexdigest()})
+        self.values[path] = data
         return data
 
 
@@ -410,6 +494,144 @@ def _required(context):
     return cells
 
 
+def runner_cap(context, lane):
+    raise ValueError("pending:bar-2 runner")
+
+
+def _lanes(context):
+    lanes = context.artifact(C11)["lanes"]
+    pinned, swap = context.artifact(C1), context.artifact(C2)
+    _need(lanes["pinned"]["model"] == pinned["pinned_model"]
+          and lanes["swap"]["model"] == swap["swap_model"]
+          and lanes["pinned"]["model"] != lanes["swap"]["model"], "lanes:c11_route")
+    if "replication" in lanes:
+        context.provenance["lanes_not_drawn"] = lanes["replication"]
+    result = []
+    for name in ("pinned", "swap"):
+        lane = lanes[name]
+        _need(lane["concurrency"] is not None, "pending:B-15 rate-only concurrency")
+        entry = {"name": name, "concurrency": lane["concurrency"], "accounts": lane["accounts"],
+                 "runner_cap": runner_cap(context, lane)}
+        if lane["rate_per_min"] is not None:
+            entry["rate_per_min"] = lane["rate_per_min"]
+        result.append(entry)
+    return result
+
+
+def alloc_total(b):
+    return (3 * b + 4) // 5
+
+
+def _alloc(context):
+    cells = _required(context)
+    _need(bool(cells), "required:not_sorted_unique")
+    checkpoints = _checkpoints(context)
+    result, disclosure = {}, {}
+    for b in (150, 200, 250, 300):
+        q, r = divmod(alloc_total(b), len(cells))
+        order = sorted(cells, key=lambda cell, b=b: sha256(canon(["ocsim-alloc", b, cell])).hexdigest())
+        totals = {cell: q + (i < r) for i, cell in enumerate(order)}
+        counts, cursor = {}, 0
+        for cell in order:
+            whole, extra = divmod(totals[cell], len(checkpoints))
+            for checkpoint in checkpoints:
+                counts[cell, checkpoint] = whole
+            for _ in range(extra):
+                counts[cell, checkpoints[cursor % len(checkpoints)]] += 1
+                cursor += 1
+        result[str(b)] = [[cell, checkpoint, counts[cell, checkpoint]]
+                          for cell in cells for checkpoint in checkpoints]
+        disclosure[str(b)] = {"cells": totals, "checkpoints": {
+            str(checkpoint): sum(counts[cell, checkpoint] for cell in cells)
+            for checkpoint in checkpoints}}
+    # Each budget keys its own cell order and extras, so b=300 need not cover a smaller budget's pair.
+    need = {}
+    for rows in result.values():
+        for cell, checkpoint, n in rows:
+            need[cell, checkpoint] = max(need.get((cell, checkpoint), 0), n)
+    for life in context.artifact(DRY)["lives"]:
+        bundles = {(cell, checkpoint): n for cell, checkpoint, n in life["bundles"]}
+        _need(all(bundles.get(pair, 0) >= n for pair, n in need.items()), "alloc_by_b:dry_below")
+    context.provenance["alloc"] = disclosure
+    return result
+
+
+def _dry_shape(data):
+    reason = "lives:dry_shape"
+    _shape(data, ("status", "lives"), reason)
+    _need(isinstance(data["lives"], list), reason)
+    for life in data["lives"]:
+        _shape(life, ("i", "life", "genre", "seed", "generator_version", "render_commit",
+                      "fork", "branches", "bundles"), reason)
+        _need(_integer(life["i"]) and isinstance(life["life"], str)
+              and isinstance(life["genre"], str) and _integer(life["seed"])
+              and isinstance(life["generator_version"], str)
+              and _hex(life["render_commit"], 40) and _integer(life["fork"], 1), reason)
+        _shape(life["branches"], ("B0", "B1"), reason)
+        for branch in life["branches"].values():
+            _shape(branch, ("est_tokens", "probe_points", "probe_tokens", "swap", "content_sha256"), reason)
+            for key, minimum in (("est_tokens", 1), ("probe_points", 1), ("probe_tokens", 0), ("swap", 1)):
+                _need(isinstance(branch[key], list)
+                      and all(_integer(v, minimum) for v in branch[key]), reason)
+            _need(isinstance(branch["content_sha256"], list)
+                  and all(_hex(v, 64) for v in branch["content_sha256"]), reason)
+        _need(isinstance(life["bundles"], list), reason)
+        seen = set()
+        for bundle in life["bundles"]:
+            _need(isinstance(bundle, list) and len(bundle) == 3
+                  and isinstance(bundle[0], str) and _integer(bundle[1], 1)
+                  and _integer(bundle[2]), reason)
+            pair = tuple(bundle[:2])
+            _need(pair not in seen, reason)
+            seen.add(pair)
+
+
+def _render_check(context, commit):
+    ancestor = _git(context, "merge-base", "--is-ancestor", commit, context.commit, reason="lives:git")
+    _need(ancestor.returncode in (0, 1), "lives:git")
+    _need(ancestor.returncode == 0, "lives:render_commit")
+    diff = _git(context, "diff", "--quiet", commit, context.commit, "--", *RENDER_CODE, reason="lives:git")
+    _need(diff.returncode in (0, 1), "lives:git")
+    _need(diff.returncode == 0, "lives:render_code")
+
+
+def _lives(context):
+    full = scale.named("full")
+    assert list(full.checkpoints) == _checkpoints(context)
+    records = context.artifact(DRY)["lives"]
+    _need(len(records) == 48, "lives:dry_identity")
+    versions = context.get("bar2")["run_lock"]["generator_versions"]
+    result, checked = [], set()
+    for i, life in enumerate(records):
+        genre = "G1" if i % 2 == 0 else "G2"
+        seed = int.from_bytes(sha256(canon(["ocsim-dry", i])).digest()[:8], "big") >> 1
+        _need(life["i"] == i and life["life"] == f"ocsim-dry-{i:03d}"
+              and life["genre"] == genre and life["seed"] == seed, "lives:dry_identity")
+        _need(life["generator_version"] == versions.get(genre), "lives:generator_version")
+        if life["render_commit"] not in checked:
+            _render_check(context, life["render_commit"])
+            checked.add(life["render_commit"])
+        b0, b1 = (life["branches"][b] for b in ("B0", "B1"))
+        _need(b0["swap"] == b1["swap"], "lives:swap_differs")
+        _need(b0["swap"] == [full.swap], "lives:swap")
+        for branch in (b0, b1):
+            _need(len(branch["est_tokens"]) == full.sessions
+                  and len(branch["probe_tokens"]) == len(full.checkpoints)
+                  and len(branch["content_sha256"]) == full.checkpoints[0], "lives:dry_shape")
+            _need(branch["probe_points"] == list(full.checkpoints), "lives:probe_points")
+        fork = life["fork"]
+        _need(fork <= full.checkpoints[0], "lives:fork_late")
+        differences = [j for j, (a, b) in enumerate(zip(b0["content_sha256"], b1["content_sha256"], strict=True), 1)
+                       if a != b]
+        _need(bool(differences), "lives:no_fork")
+        _need(fork == differences[0], "lives:fork_mismatch")
+        result.append({"life": life["life"], "b0_tokens": b0["est_tokens"],
+                       "b1_tokens": b1["est_tokens"][fork - 1:], "fork": fork, "swap": full.swap,
+                       "b0_probe_tokens": b0["probe_tokens"], "b1_probe_tokens": b1["probe_tokens"]})
+    context.provenance["swaps"] = {life["life"]: life["swap"] for life in result}
+    return result
+
+
 def _planning(context):
     return False
 
@@ -433,10 +655,10 @@ RULES = {
         ("rows", "B-1", ("PREREG l.40,435,452,566,718", "B-2"), _rows),
         ("passover", "B-3", ("PREREG l.40,441", CLARIFICATION), _passover_rule),
         ("control_failure", "B-4", ("PREREG l.549,777",), _control_rule),
-        ("lanes", "B-5", ("PREREG l.26,716",), _pending("B-5")),
-        ("alloc_by_b", "B-6", ("PREREG l.418",), _pending("B-6")),
+        ("lanes", "B-5, B-15, B-16", ("PREREG l.26,716", *STAGE_B), _lanes),
+        ("alloc_by_b", "B-6", ("PREREG l.418", *STAGE_B), _alloc),
         ("checkpoints", "B-7", ("PREREG l.418",), _checkpoints),
-        ("lives", "B-7", ("PREREG l.431,734,795",), _pending("B-7")),
+        ("lives", "B-7, B-17, B-17a, B-17b, B-18, B-19", ("PREREG l.431,734,795", *STAGE_B), _lives),
         ("probe_only", "B-8", ("PREREG l.453,759", CLARIFICATION), _pending("B-8")),
         ("n_lives_floor", "B-9", ("PREREG l.491,498,503",), _pending("B-9")),
         ("required", "B-10", ("PREREG l.27",), _required),
@@ -454,9 +676,19 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
             _need(field in RULES, "rule_missing")
             rule = RULES[field]
             document[field] = rule.function(context)
-            context.provenance[field] = {"rule": rule.rule, "sources": list(rule.sources)}
+            paths = FIELD_ARTIFACTS.get(field, ())
+            context.provenance[field] = {"rule": rule.rule, "sources": list(rule.sources),
+                                         "artifacts": [a for a in context.provenance["artifacts"]
+                                                       if a["path"] in paths]}
+        except AssertionError:
+            raise
         except Exception as error:
             refusals.append((field, str(error)))
+    if context.global_reason is None and "bar2" not in context.errors:
+        try:
+            c8_check(context)
+        except Exception as error:
+            refusals.append(("C-8", str(error)))
     if refusals:
         raise BaseRefused(refusals)
     excluded = {s["id"] for s in context.get("roster")["systems"] if s["lcmx"]}
