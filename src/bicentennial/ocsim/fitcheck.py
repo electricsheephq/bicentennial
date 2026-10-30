@@ -191,7 +191,7 @@ def family_stat(zs):
 
 
 def evaluate(sums, design, values, resamples, unit=UNIT):
-    cells, lives = sorted({k for k, _ in design}), sorted({l for _, l in design})
+    cells, lives = sorted({k for k, _ in design}), sorted({life for _, life in design})
     observed = statistics(sums, cells, lives, exact=True)
     ses = bootstrap(sums, cells, lives, resamples, unit)
     zs = {key: (float(value - values[key]) / ses[key]
@@ -202,7 +202,7 @@ def evaluate(sums, design, values, resamples, unit=UNIT):
 
 def simulate(params, design, rep, *, prefix="cal", rule=None):
     """Sample sufficient sums using the model's exact bundle stream."""
-    lives = sorted({l for _, l in design})
+    lives = sorted({life for _, life in design})
     names = {life: f"{prefix}-{i}" for i, life in enumerate(lives)}
     effects = model.life_effects(params, list(names.values()), SEED, rep)
     solve, sums = solver(params), {}

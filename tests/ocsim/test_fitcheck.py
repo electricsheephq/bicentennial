@@ -40,7 +40,7 @@ def design(p, lives=16, bundles=30):
 
 
 def records(p, d, rep=0, points=None):
-    names = sorted({l for _, l in d})
+    names = sorted({life for _, life in d})
     effects = model.life_effects(p, names, f.SEED, rep)
     out, solve = [], f.solver(p)
     for (cell_id, life), (nf, nc, shared) in sorted(d.items()):
@@ -85,14 +85,14 @@ def test_b_expectations(capsys):
     started = perf_counter()
     for rep in range(300):
         sums, _ = f.prepare(records(p, d, rep, points), {"B"})
-        for k, v in f.statistics(sums, ("A", "B"), sorted({l for _, l in d})).items():
+        for k, v in f.statistics(sums, ("A", "B"), sorted({life for _, life in d})).items():
             samples[k].append(v)
     for k, vs in samples.items():
         se = stdev(vs) / math.sqrt(len(vs))
         assert abs(mean(vs) - expected[k]) < 4 * se, (k, mean(vs), expected[k], se)
     with capsys.disabled():
         print("EXPECTATION seconds", perf_counter() - started)
-        ses = f.bootstrap(sums, ("A", "B"), sorted({l for _, l in d}), 2000)
+        ses = f.bootstrap(sums, ("A", "B"), sorted({life for _, life in d}), 2000)
         print("MINIMUM BOOTSTRAP SE", {family: min(v for k, v in ses.items() if k[0] == family) for family in f.FAMILIES})
         for c in p.cells:
             residuals = []
