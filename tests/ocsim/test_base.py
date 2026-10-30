@@ -17,16 +17,39 @@ from bicentennial.ocsim import base, inputs, run
 from .test_inputs import REQUIRED, sample
 
 ROOT = Path(__file__).resolve().parents[2]
-PENDING = {"lanes": "B-5", "alloc_by_b": "B-6", "lives": "B-7",
-           "probe_only": "B-8", "n_lives_floor": "B-9"}
+PENDING = {"probe_only": "B-8", "n_lives_floor": "B-9"}
+REAL_C8 = base.c8_check
+REAL_CAP = base.runner_cap
+
+
+def dry_set(commit, cells):
+    lives = []
+    for i in range(48):
+        fork = 1 + i % 20
+        branches = {}
+        for branch in ("B0", "B1"):
+            branches[branch] = dict(est_tokens=[j + i + 1 for j in range(200)],
+                                    probe_points=[20, 60, 120, 200], probe_tokens=[0, 2, 3, 4], swap=[150],
+                                    content_sha256=[sha256(canon([i, j, branch if j >= fork else "shared"])).hexdigest()
+                                                    for j in range(1, 21)])
+        lives.append(dict(i=i, life=f"ocsim-dry-{i:03d}", genre="G1" if i % 2 == 0 else "G2",
+                          seed=int.from_bytes(sha256(canon(["ocsim-dry", i])).digest()[:8], "big") >> 1,
+                          generator_version="synthetic-v1", render_commit=commit, fork=fork,
+                          branches=branches, bundles=[[c, k, 180] for c in cells for k in (20, 60, 120, 200)]))
+    return {"status": "binding", "lives": lives}
 
 
 class Fake:
-    def __init__(self, root, monkeypatch, n=3, marker=True):
+    def __init__(self, root, monkeypatch, n=3, marker=True, extra_files=()):
         self.root, self.monkeypatch = root, monkeypatch
         self.roster = {"status": "binding", "systems": [
             {"id": "alpha", "lcmx": True}, {"id": "beta", "lcmx": False}]}
         self.c12 = {"status": "binding", "profile": "Text", "required": list(REQUIRED)}
+        self.c11 = {"status": "binding", "lanes": {
+            "pinned": dict(model="synthetic-pinned", concurrency=3, rate_per_min=None, accounts=2),
+            "swap": dict(model="synthetic-swap", concurrency=2, rate_per_min=30, accounts=1)}}
+        self.c1 = dict(status="binding", pinned_model="synthetic-pinned", extra="ignored")
+        self.c2 = dict(status="binding", swap_model="synthetic-swap", effort="synthetic", extra="ignored")
         self.history = {"generator_version": "synthetic-v1", "lives": {}}
         for i in range(n):
             self.history["lives"][f"life-{i}"] = {branch: [dict(
@@ -36,6 +59,8 @@ class Fake:
                 for j in range(1, 5)] for branch in ("B0", "B1")}
         self.controls = sample(lives=n)[0]
         self.data = {"run_lock": {"benchmark_commit": "0" * 40, "generator_version": "synthetic-v1",
+                                  "analysis_commit": "0" * 40,
+                                  "generator_versions": dict(G1="synthetic-v1", G2="synthetic-v1"),
                                   "history_sha256": "0" * 64, "status": "complete",
                                   "account_pool": ["synthetic-account"]}, "arms": {}, "items": {}}
         for arm, rate in (("alpha", 2), ("beta", 4), *((("marker", 6),) if marker else ())):
@@ -58,10 +83,23 @@ class Fake:
         self.stop("beta", "life-1", "B0", "K100", "probe", 5, 2, "BLOCKED")
         self.block("no_memory", self.controls["A"]["no_memory"]["items"][0]["item_id"])
         monkeypatch.setattr(base, "marker_id", lambda root, commit: "marker")
+        monkeypatch.setattr(base, "runner_cap", lambda context, lane: 4)
+        monkeypatch.setattr(base, "c8_check", lambda context: None)
+        for path in extra_files:
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / path).read_bytes())
+        self.commit()
+        self.data["run_lock"]["analysis_commit"] = self.data["run_lock"]["benchmark_commit"]
+        self.dry = dry_set(self.data["run_lock"]["benchmark_commit"], REQUIRED)
         self.commit()
 
     def commit(self):
-        for path, data in ((base.ROSTER, self.roster), (base.C12, self.c12)):
+        artifacts = [(base.ROSTER, self.roster), (base.C12, self.c12),
+                     (base.C11, self.c11), (base.C1, self.c1), (base.C2, self.c2)]
+        if hasattr(self, "dry"):
+            artifacts.append((base.DRY, self.dry))
+        for path, data in artifacts:
             target = self.root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(canon(data) + b"\n")
@@ -75,8 +113,13 @@ class Fake:
         return self.data["arms"][arm]["lives"][life][branch][keep]
 
     def stop(self, arm, life, branch, keep, kind, session, checkpoint, failure):
-        self.chain(arm, life, branch, keep)["stopped"] = dict(
+        chain = self.chain(arm, life, branch, keep)
+        chain["stopped"] = dict(
             kind=kind, session=session, checkpoint=checkpoint, label="synthetic-stop", **{"class": failure})
+        chain["sessions"] = [s for s in chain["sessions"] if (
+            (s["index"] <= session if s["kind"] == "replay" else s["checkpoint"] < session)
+            if kind == "replay" else
+            (s["index"] <= checkpoint if s["kind"] == "replay" else s["index"] <= session))]
 
     def clear_stops(self):
         for value in self.data["arms"].values():
@@ -163,20 +206,24 @@ def test_complete(fake):
                             "sha256": sha256((fake.root / artifact["path"]).read_bytes()).hexdigest()}
     assert provenance["pending_disclosures"] == [
         "B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records"]
+    paths = {"rows": {base.ROSTER}, "required": {base.C12}, "lanes": {base.C11, base.C1, base.C2},
+             "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY}}
     for field, rule in base.RULES.items():
-        assert provenance[field] == {"rule": rule.rule, "sources": list(rule.sources)}
+        assert provenance[field] == {"rule": rule.rule, "sources": list(rule.sources),
+                                     "artifacts": [a for a in provenance["artifacts"]
+                                                   if a["path"] in paths.get(field, set())]}
 
 
 def test_round_trip(tmp_path, monkeypatch):
     fixture = Fake(tmp_path, monkeypatch, n=6)
     fixture.controls = sample()[0]
-    planning = json.loads((ROOT / "tests/fixtures/ocsim/planning.json").read_bytes())
-    planning["alloc_by_b"] = {str(b): [[c, k, 1] for c in REQUIRED for k in planning["checkpoints"]]
-                              for b in sorted({b for _, b in run.LADDER})}
-    for field in PENDING:
-        def value(context, field=field):
-            return planning[field]
-        monkeypatch.setitem(base.RULES, field, replace(base.RULES[field], function=value))
+    def probe_only(context):
+        return dict(rates={}, anchor_tokens=[[f"ocsim-dry-{i:03d}", 1] for i in range(48)],
+                    tokens=[[arm, f"ocsim-dry-{i:03d}", branch, k, 1]
+                            for arm in ("C", "F") for i in range(48)
+                            for branch in ("B0", "B1") for k in (20, 60, 120, 200)])
+    monkeypatch.setitem(base.RULES, "probe_only", replace(base.RULES["probe_only"], function=probe_only))
+    monkeypatch.setitem(base.RULES, "n_lives_floor", replace(base.RULES["n_lives_floor"], function=lambda context: 1))
     monkeypatch.setattr(run, "c8_dirty", lambda root: False)
     built = fixture.build()
     merged = inputs.build(canon(sample()[0]), built, root=ROOT, resamples=3)
@@ -232,11 +279,40 @@ def test_round_trip(tmp_path, monkeypatch):
     ("duplicate-controls", "control_failure", "controls:container: duplicate key A"),
     ("raised-rule", "planning", "synthetic rule failure"),
     ("git-failure", "rows", f"source_missing:{base.ROSTER}"),
+    ("b-route", "lanes", "lanes:c11_route"),
+    ("b-route-equal", "lanes", "lanes:c11_route"),
+    ("b-rate-only", "lanes", "pending:B-15 rate-only concurrency"),
+    ("b-runner", "lanes", "pending:bar-2 runner"),
+    ("b-lock-analysis", "rows", "bar2:shape:run_lock"),
+    ("b-lock-versions", "rows", "bar2:shape:run_lock"),
+    ("b-lock-join", "rows", "bar2:shape:run_lock"),
+    ("b-below", "alloc_by_b", "alloc_by_b:dry_below"),
+    *[(f"b-{case}", "lives", f"lives:{reason}") for case, reason in (
+        ("identity", "dry_identity"), ("seed", "dry_identity"), ("genre", "dry_identity"),
+        ("order", "dry_identity"), ("count", "dry_identity"), ("version", "generator_version"),
+        ("swapped-versions", "generator_version"), ("tokens", "dry_shape"), ("probe-tokens", "dry_shape"),
+        ("hashes", "dry_shape"), ("render-shape", "dry_shape"), ("fork-shape", "dry_shape"),
+        ("bundle-shape", "dry_shape"), ("dry-keys", "dry_shape"), ("probes", "probe_points"),
+        ("swap-diff", "swap_differs"), ("swap", "swap"), ("late", "fork_late"),
+        ("no-fork", "no_fork"), ("fork", "fork_mismatch"), ("render-unknown", "git"),
+        ("render-unrelated", "render_commit"),
+        *((f"render-{path}", "render_code") for path in ("src/bicentennial/items", "tiers", "specs/ring0", "schemas"))
+    )],
+    *[(f"b-{kind}-{path}", "lanes" if path != base.DRY else "lives",
+       f"{path}:{reason}" if kind == "json" else f"{reason}:{path}")
+      for path in (base.C11, base.C1, base.C2, base.DRY)
+      for kind, reason in (("missing", "source_missing"), ("provisional", "source_provisional"),
+                           ("json", "invalid_json"), ("shape", "source_shape"))
+      if not (kind == "shape" and path == base.DRY)],
+    *[(f"b-after-{kind}", "rows", "bar2:after_stop:alpha/life-0/B0/K100")
+      for kind in ("replay", "checkpoint", "probe", "probe-replay")],
 ])
 def test_refusals(fake, monkeypatch, case, field, reason):
     chain = fake.chain()
     session, probe = chain["sessions"][0], chain["sessions"][-1]
     item = fake.data["items"][probe["items"][0]]
+    if case.startswith("b-"):
+        stage_b_refusal(fake, monkeypatch, case[2:])
     if case.startswith("reserved-"):
         monkeypatch.setattr(base, "marker_id", lambda root, commit: case.removeprefix("reserved-"))
     if case == "marker-pending":
@@ -476,6 +552,8 @@ def test_neutrality_rename_permute(fake):
         provenance = document["base_provenance"]
         provenance.pop("containers")
         provenance.pop("artifacts")
+        for field in base.RULES:
+            provenance[field].pop("artifacts")
         return document
 
     expected = comparable(fake.document())
@@ -501,3 +579,208 @@ def test_neutrality_empty_without_lcmx(fake):
     assert disclosure["without_lcmx"]["passover"] is None
     assert disclosure["without_lcmx"]["fallback_row_rate"] is None
     assert disclosure["all"]["fallback_row_rate"] == "2/1"
+
+
+def stage_b_refusal(fake, monkeypatch, case):
+    life = fake.dry["lives"][0]
+    b0, b1 = (life["branches"][b] for b in ("B0", "B1"))
+    if case == "route":
+        fake.c2["swap_model"] = "synthetic-wrong"
+    if case == "route-equal":
+        fake.c11["lanes"]["swap"]["model"] = fake.c2["swap_model"] = fake.c1["pinned_model"]
+    if case == "rate-only":
+        fake.c11["lanes"]["swap"]["concurrency"] = None
+    if case == "runner":
+        monkeypatch.setattr(base, "runner_cap", REAL_CAP)
+    if case.startswith("lock-"):
+        key, value = {"lock-analysis": ("analysis_commit", "invalid"),
+                      "lock-versions": ("generator_versions", {"G1": "bad+version"}),
+                      "lock-join": ("generator_versions", {"G1": "other"})}[case]
+        fake.data["run_lock"][key] = value
+    changes = {"identity": ("life", "wrong-id"), "seed": ("seed", life["seed"] + 1),
+               "genre": ("genre", "G2"), "version": ("generator_version", "other"),
+               "render-shape": ("render_commit", "bad"), "fork-shape": ("fork", 0),
+               "late": ("fork", 21), "fork": ("fork", 2)}
+    if case in changes:
+        key, value = changes[case]
+        life[key] = value
+    if case == "order":
+        fake.dry["lives"].reverse()
+    if case == "count":
+        fake.dry["lives"].pop()
+    if case == "swapped-versions":
+        fake.data["run_lock"]["generator_versions"] = dict(G1="synthetic-v2", G2="synthetic-v1")
+        fake.data["run_lock"]["generator_version"] = fake.history["generator_version"] = "synthetic-v1+synthetic-v2"
+    if case == "below":
+        life["bundles"] = []
+    if case == "bundle-shape":
+        life["bundles"].append(deepcopy(life["bundles"][0]))
+    if case == "dry-keys":
+        life["extra"] = 1
+    if case in ("tokens", "probe-tokens", "hashes"):
+        b0[{"tokens": "est_tokens", "probe-tokens": "probe_tokens", "hashes": "content_sha256"}[case]].pop()
+    if case == "probes":
+        b0["probe_points"] = [20, 60, 120, 199]
+    if case in ("swap-diff", "swap"):
+        b1["swap"] = [149]
+        if case == "swap":
+            b0["swap"] = [149]
+    if case == "no-fork":
+        b1["content_sha256"] = b0["content_sha256"][:]
+    if case == "render-unknown":
+        life["render_commit"] = "f" * 40
+    if case == "render-unrelated":
+        benchmark = fake.data["run_lock"]["benchmark_commit"]
+        assert run._git(fake.root, "checkout", "--orphan", "synthetic-unrelated") is not None
+        fake.commit()
+        life["render_commit"] = fake.data["run_lock"]["benchmark_commit"]
+        assert run._git(fake.root, "checkout", "--detach", benchmark) is not None
+    if case.startswith("render-") and case[7:] in ("src/bicentennial/items", "tiers", "specs/ring0", "schemas"):
+        target = fake.root / case[7:] / "synthetic.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed code\n")
+    for kind in ("missing", "provisional", "shape", "json"):
+        prefix = kind + "-"
+        if case.startswith(prefix):
+            path = case.removeprefix(prefix)
+            data = {base.C11: fake.c11, base.C1: fake.c1, base.C2: fake.c2, base.DRY: fake.dry}[path]
+            if kind == "provisional":
+                data["status"] = "provisional"
+            if kind == "shape":
+                data.pop("lanes" if path == base.C11 else "pinned_model" if path == base.C1 else "effort")
+            if kind in ("missing", "json"):
+                fake.commit()
+                if kind == "missing":
+                    (fake.root / path).unlink()
+                else:
+                    (fake.root / path).write_bytes(b"{invalid")
+                assert run._git(fake.root, "add", path) is not None
+                assert run._git(fake.root, "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
+                                "-c", "commit.gpgsign=false", "commit", "-m", "synthetic missing") is not None
+                fake.data["run_lock"]["benchmark_commit"] = run._git(fake.root, "rev-parse", "HEAD")
+                return
+    if case.startswith("after-"):
+        chain = fake.chain()
+        replay, probe = deepcopy(chain["sessions"][3]), deepcopy(chain["sessions"][-1])
+        kind = "replay" if case in ("after-replay", "after-checkpoint") else "probe"
+        if kind == "probe":
+            chain["sessions"][-1]["checkpoint"] = 3
+        fake.stop("alpha", "life-0", "B0", "K100", kind, 3 if kind == "replay" else 5,
+                  None if kind == "replay" else 3, "SYSTEM_FAILURE")
+        if case in ("after-replay", "after-probe-replay"):
+            chain["sessions"].append(replay)
+        else:
+            probe.update(checkpoint=3, index=6)
+            iid = "synthetic-later-probe"
+            fake.data["items"][iid] = deepcopy(fake.data["items"][probe["items"][0]])
+            probe["items"] = [iid]
+            chain["sessions"].append(probe)
+    fake.commit()
+
+
+def test_lanes(fake):
+    replication = dict(model="synthetic-replication", concurrency=None, rate_per_min=10, accounts=3)
+    fake.c11["lanes"]["replication"] = replication
+    fake.commit()
+    document = fake.document()
+    assert document["lanes"] == [dict(name="pinned", concurrency=3, accounts=2, runner_cap=4),
+                                 dict(name="swap", concurrency=2, accounts=1, rate_per_min=30, runner_cap=4)]
+    assert document["base_provenance"]["lanes_not_drawn"] == replication
+
+
+def test_allocation(fake):
+    cells = [f"synthetic-cell-{i:02d}" for i in range(14)]
+    fake.c12["required"] = cells
+    fake.dry = dry_set(fake.dry["lives"][0]["render_commit"], cells)
+    fake.commit()
+    document = fake.document()
+    expected = sorted(cells, key=lambda cell: sha256(canon(["ocsim-alloc", 150, cell])).hexdigest())[:6]
+    assert set(expected) != set(cells[:6])
+    for b, rows in document["alloc_by_b"].items():
+        assert [(c, k) for c, k, _ in rows] == [(c, k) for c in cells for k in (20, 60, 120, 200)]
+        assert sum(n for _, _, n in rows) == {"150": 90, "200": 120, "250": 150, "300": 180}[b]
+    rows = document["alloc_by_b"]["150"]
+    totals = {c: sum(n for cell, _, n in rows if cell == c) for c in cells}
+    assert totals == {c: 7 if c in expected else 6 for c in cells}
+    assert [sum(n for _, checkpoint, n in rows if checkpoint == k) for k in (20, 60, 120, 200)] == [23, 23, 22, 22]
+    assert document["base_provenance"]["alloc"]["150"] == dict(
+        cells=totals, checkpoints={"20": 23, "60": 23, "120": 22, "200": 22})
+    assert [base.alloc_total(b) for b in (150, 200, 250, 300, 151)] == [90, 120, 150, 180, 91]
+
+
+def test_lives(fake):
+    document = fake.document()
+    assert len(document["lives"]) == 48
+    for source, life in zip(fake.dry["lives"], document["lives"], strict=True):
+        assert life == dict(life=source["life"], fork=source["fork"], swap=150,
+                            b0_tokens=source["branches"]["B0"]["est_tokens"],
+                            b1_tokens=source["branches"]["B1"]["est_tokens"][source["fork"] - 1:],
+                            b0_probe_tokens=[0, 2, 3, 4], b1_probe_tokens=[0, 2, 3, 4])
+    assert document["base_provenance"]["swaps"] == {f"ocsim-dry-{i:03d}": 150 for i in range(48)}
+
+
+@pytest.mark.parametrize("case,reason", [("same", None), ("changed", "c8:bar2_mismatch"),
+                                        ("missing", "c8:bar2_mismatch"), ("unknown", "c8:git"),
+                                        ("git-failure", "c8:git")])
+def test_c8(tmp_path, monkeypatch, case, reason):
+    fake = Fake(tmp_path, monkeypatch, extra_files=run.c8_paths(ROOT))
+    allow_pending(monkeypatch)
+    monkeypatch.setattr(base, "c8_check", REAL_C8)
+    if case in ("changed", "missing"):
+        target = fake.root / "src/bicentennial/world/scale.py"
+        if case == "changed":
+            target.write_bytes(target.read_bytes() + b"\n# synthetic change\n")
+        else:
+            target.unlink()
+        benchmark = fake.data["run_lock"]["benchmark_commit"]
+        fake.commit()
+        fake.data["run_lock"]["benchmark_commit"] = benchmark
+    if case == "unknown":
+        fake.data["run_lock"]["analysis_commit"] = "f" * 40
+    if case == "git-failure":
+        original = subprocess.run
+        def fail_listing(args, **kwargs):
+            if "ls-tree" in args:
+                raise OSError("synthetic git failure")
+            return original(args, **kwargs)
+        monkeypatch.setattr(base.subprocess, "run", fail_listing)
+    if case == "same":
+        original = subprocess.run
+        calls = []
+        def sanitized(*args, **kwargs):
+            calls.append(kwargs["env"])
+            return original(*args, **kwargs)
+        for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+            monkeypatch.setenv(key, "synthetic-invalid")
+        monkeypatch.setattr(base.subprocess, "run", sanitized)
+    if reason:
+        with pytest.raises(base.BaseRefused) as error:
+            fake.build()
+        assert error.value.refusals == (("C-8", reason),)
+    else:
+        hashes = fake.document()["base_provenance"]["c8"]
+        assert hashes["analysis"] == hashes["head"] == run.c8_hash(fake.root)
+        assert calls and all(not set(env) & {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
+                             for env in calls)
+
+
+def test_render_outside_and_after_stop(fake):
+    target = fake.root / "outside.txt"
+    target.write_text("outside code\n")
+    fake.commit()
+    fake.stop("alpha", "life-0", "B0", "K100", "replay", 3, None, "SYSTEM_FAILURE")
+    assert any(s["kind"] == "probe" and s["checkpoint"] == 2 for s in fake.chain()["sessions"])
+    assert fake.document()["lives"]
+
+
+def test_rule_sources_and_programming_errors(fake, monkeypatch):
+    for field in ("lanes", "alloc_by_b", "lives"):
+        assert set(base.STAGE_B) <= set(base.RULES[field].sources)
+    assert all(name in base.RULES["lives"].rule for name in ("B-7", "B-17", "B-17a", "B-17b", "B-18", "B-19"))
+    assert {"src/bicentennial/world/scale.py", "tests/world/test_schedule.py"} <= set(run._C8_FIXED)
+    context = base._Context(canon(fake.data), canon(fake.controls), canon(fake.history), fake.root)
+    with pytest.raises(AssertionError, match="unknown artifact"):
+        context.artifact("synthetic-unknown.json")
+    monkeypatch.setattr(base, "_checkpoints", lambda context: [1])
+    with pytest.raises(AssertionError):
+        fake.build()
