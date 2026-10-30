@@ -38,7 +38,13 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
 ]:
     """Validate every cell, then return required-cell records and timing cells."""
     _require(required == tuple(sorted(set(required))), "required", "must be sorted and unique")
-    data = json.loads(records)
+    def unique_keys(pairs):
+        value = {}
+        for key, item in pairs:
+            _require(key not in value, "container", f"duplicate key {key}")
+            value[key] = item
+        return value
+    data = json.loads(records, object_pairs_hook=unique_keys)
     _require(isinstance(data, dict) and data.keys() == {"A", "A_prime", "branches"},
              "A/A_prime no_memory/oracle_evidence container", "unknown or missing run/key")
     branches, tracks, indexed, identities, result = data["branches"], {}, {}, {}, []
@@ -49,9 +55,18 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
         _require(isinstance(data[name], dict) and data[name].keys() == ARMS.keys(),
                  name, "unknown or missing arm")
         for arm, label in ARMS.items():
-            where, items, bundles, members = f"{name} {arm}", {}, {}, set()
+            where, items, bundles, members = f"{name} {arm}", {}, {}, {}
             output = data[name][arm]
-            for item in output["items"]:
+            _require(isinstance(output, dict) and isinstance(output.get("items"), list)
+                     and isinstance(output.get("bundles"), list)
+                     and isinstance(output.get("singleton_lives"), dict), where, "malformed arm")
+            for index, item in enumerate(output["items"]):
+                iid = item.get("item_id") if isinstance(item, dict) else None
+                at = f"{where} item {iid if isinstance(iid, str) else f'#{index}'}"
+                _require(isinstance(item, dict) and {"item_id", "cell_id", "stage", "track",
+                         "failure_class", "score_milli"} <= item.keys()
+                         and isinstance(iid, str) and isinstance(item["cell_id"], str),
+                         at, "malformed item")
                 iid, cell = item["item_id"], item["cell_id"]
                 at = f"{where} item {iid}"
                 _require(iid not in items, at, "duplicate item")
@@ -61,17 +76,27 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
                 _require((score is None) == (failure in NONRESULTS), at, "non-result score")
                 _require(failure not in ("SYSTEM_FAILURE", "FAIL_TASK") or score == 0,
                          at, "system/task failure must score 0")
-                _require(cell not in tracks or tracks[cell] == item["track"], at, "conflicting tracks")
+                _require(name == "A_prime" or cell not in tracks or tracks[cell] == item["track"],
+                         at, "conflicting tracks")
                 tracks[cell] = item["track"]
                 if name == "A_prime":
                     _require(iid in indexed[("A", arm)][0], at, "A′ item missing from A")
                 items[iid] = item
-            for bundle in output["bundles"]:
+            for index, bundle in enumerate(output["bundles"]):
+                bid = bundle.get("bundle_id") if isinstance(bundle, dict) else None
+                at = f"{where} bundle {bid if isinstance(bid, str) else f'#{index}'}"
+                _require(isinstance(bundle, dict) and {"bundle_id", "cell_id", "life", "items"}
+                         <= bundle.keys() and all(isinstance(bundle[k], str)
+                                                  for k in ("bundle_id", "cell_id", "life"))
+                         and isinstance(bundle["items"], list)
+                         and all(isinstance(i, str) for i in bundle["items"]), at, "malformed bundle")
                 bid, cell = bundle["bundle_id"], bundle["cell_id"]
                 at, ids = f"{where} bundle {bid}", bundle["items"]
                 _require(bid not in bundles, at, "duplicate bundle")
                 _require(len(ids) == 2 and len(set(ids)) == 2, at, "need two items")
                 for iid in ids:
+                    _require(iid not in members, f"{where} item {iid}",
+                             f"item in two bundles: {members.get(iid)} and {bid}")
                     _require(iid in items and items[iid]["cell_id"] == cell,
                              f"{at} item {iid}", "missing item or conflicting cell")
                     _require(iid in branches, f"{at} item {iid}", "missing branch")
@@ -83,7 +108,7 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
                 _require(bid not in identities or identities[bid] == identity,
                          at, "conflicting bundle identity across arms/runs")
                 identities[bid] = bundles[bid] = identity
-                members.update(ids)
+                members.update((iid, bid) for iid in ids)
                 oriented = sorted(ids, key=lambda i: branches[i])
                 if cell in required:
                     result.append(variance_inputs.ControlRecord(
@@ -94,8 +119,24 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
                     if item["cell_id"] in required:
                         _require(iid not in output["singleton_lives"] and iid in members
                                  and item["stage"] == "act", f"{where} item {iid}",
-                                 "required cell must be twin-only act")
+                                 "required cell must be twin-only act"
+                                 + ("; bad singleton" if iid in output["singleton_lives"] else ""))
+            else:
+                for iid, item in items.items():
+                    for key in ("cell_id", "track", "stage"):
+                        _require(item[key] == indexed[("A", arm)][0][iid][key],
+                                 f"{where} item {iid}",
+                                 f"A′ item differs from A: {key}"
+                                 + (" (conflicting tracks)" if key == "track" else ""))
+                    _require(item["cell_id"] not in required or iid in members,
+                             f"{where} item {iid}", "A′ required-cell item outside every A′ bundle")
+            for iid, life in output["singleton_lives"].items():
+                _require(iid in items and iid not in members and isinstance(life, str),
+                         f"{where} item {iid}", "bad singleton")
             indexed[(name, arm)] = items, bundles
+    for iid in branches:
+        _require(any(iid in items for items, _ in indexed.values()),
+                 f"A/A_prime no_memory/oracle_evidence item {iid}", "branch for an item in no arm")
     for cell in required:
         lives = [{r.life for r in result if r.run == "A" and r.arm == arm and r.cell == cell
                   and r.b0 is not None and r.b1 is not None} for arm in ("F", "C")]
