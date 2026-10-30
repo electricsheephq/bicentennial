@@ -86,7 +86,9 @@ def stable_digest(records: list[dict], run_values: dict[str, str]) -> str:
     # The sha256 fields already cover masked bodies; masking them again would let a run value
     # (the port, say) that happens to occur inside a hex digest rewrite it.
     digests = {k for k in stable if _SCHEMA["properties"][k].get("pattern") == "^[0-9a-f]{64}$"}
-    projected = [dict(apply_masks({k: v for k, v in rec.items() if k in stable - digests}, run_values),
+    # Outside the cursor, sim_now depends on background request arrival timing (#287).
+    projected = [dict(apply_masks({k: v for k, v in rec.items() if k in stable - digests
+                                  and (k != "sim_now" or rec["cursor"] is not None)}, run_values),
                       **{k: rec[k] for k in digests if k in rec})
                  for rec in records if rec.get("type") == "request"]
 

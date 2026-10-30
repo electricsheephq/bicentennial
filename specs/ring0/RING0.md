@@ -329,6 +329,8 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 
 - **E16. T1 receipts record session timings (#267)** (§4). From the next kit, T1 receipts carry `timings`: per run, the adapter pin check, egress pid sample count and sampler time; per completed session, wall time, gates, egress lock wait, worker spawn and import, open, turns, drains, resumes, shutdown hook, close, finish and G1 workspace rebuild. These values are volatile. A respawn's gate wait, spawn and open appear in their own fields and also in `resume`; `import` is part of `spawn`; `spawn` includes a registration sample, which `egress_sample_ms` also counts. Corpus hosts' pin checks are not timed. Cards and every other receipt value are unchanged. v0.1's frozen kit writes no timings.
 
+- **E17. Arrival time outside the cursor is not part of the masked ledger digest (#287)** (§4). Outside the cursor, the director stamps `sim_now` with the scheduled time of the latest turn the request quotes or, if it quotes none, the clock's reading on arrival. Whether such a request quotes a turn, and when it arrives, depend on thread timing, so a plug-in's or the harness's background requests can reach the director on either side of a clock step. From the next kit, the masked ledger digest leaves out `sim_now` on request records without a cursor; the record keeps it. At T0 no request has a cursor, so no T0 request's `sim_now` enters the digest. Records with a cursor, request and reply digests, and every other field still count as before, so a background request whose content differs still changes the digest. Reply `created` fields were already masked. v0.1's frozen kit keeps the old projection, and its published digests are unchanged.
+
 ## References
 
 - PREREG-v0.4:
