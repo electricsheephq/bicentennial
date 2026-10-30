@@ -52,8 +52,8 @@ Mem0 OSS completed both T0 runs and all three T1 runs (the base and two repeats)
 
 | Control | Where | What it shows |
 |---|---|---|
-| No-memory floor | T0: cached per pack. T1: a probe-only Hermes arm with memory off | What an agent gets with nothing stored. At T1 it is used only to check the wiped control; the card shows it as null. |
-| Oracle evidence and full history | T0: cached per pack | The ceiling: the evidence handed over directly. |
+| No-memory floor | Cached per pack, at T0 and T1. T1 also runs a probe-only Hermes arm with memory off | What an agent gets with nothing stored. At T1 the probe-only arm is used only to check the wiped control. |
+| Oracle evidence and full history | Cached per pack, at T0 and T1 | The ceiling: the evidence handed over directly. Full history is bounded by the context window; at T1 no item fits it. |
 | Wiped-store control | T1: one per system | The same system with its store wiped before each probe. It **must fail**, and it did in every run. |
 | Naive RAG | — | Not run in v0.1. |
 
@@ -85,19 +85,21 @@ An invariant reads INCONCLUSIVE when the kit cannot settle it. For example, the 
 ## Per-track results
 Each system's first repeat (run1) is shown. Its other runs have the same scores, item verdicts, invariants and regression-corpus results (see "How repeatable the runs were"). A T0 row averages, rounded down, the aggregates of the pack cards that have that stage and track ("(mean)"; Cards counts them). T1 has one card per arm, and the wiped control must fail.
 
+Each table also carries the four baselines (RING0 §6, PREREG §2), aggregated like its score. At T0 they are the pack cards' cached controls: the no-memory floor scores 0, and the oracle-evidence and full-history ceilings score 1000, on every pack. A T1 card keeps a control's value only for a pack with one track, so the T1 cards show null; the T1 rows give the two T1 packs' cached controls instead. Full history has no result at T1: it is bounded by the context window, and no T1 item's history fits (0 of 9 items in G1, 0 of 8 in G2). Naive RAG is not run in v0.1.
+
 ### reference_store
 
 **T0:** 86 cards; gates PASS 86.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 42 | 1000 (mean) | PASS 84 |
-| act | Keep | 17 | 411 (mean) | FAIL_MEMORY 6, OMISSION 8, PASS 20 |
-| act | Wake | 6 | 333 (mean) | OMISSION 8, PASS 4 |
-| remember | Drift | 6 | 1000 (mean) | correct 6 |
-| remember | Recall | 12 | 666 (mean) | correct 10, wrong 2 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 2 | 1000 (mean) | correct 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 42 | 1000 (mean) | PASS 84 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Keep | 17 | 411 (mean) | FAIL_MEMORY 6, OMISSION 8, PASS 20 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Wake | 6 | 333 (mean) | OMISSION 8, PASS 4 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Drift | 6 | 1000 (mean) | correct 6 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Recall | 12 | 666 (mean) | correct 10, wrong 2 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET PASS
 Pack invariants: INV-FORGET NOT_EXERCISED 75, INV-FORGET PASS 11, INV-NEW NOT_EXERCISED 79, INV-NEW PASS 7, INV-PAIR NOT_EXERCISED 86, INV-VERB INCONCLUSIVE 1, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 6
 
@@ -105,114 +107,114 @@ Pack invariants: INV-FORGET NOT_EXERCISED 75, INV-FORGET PASS 11, INV-NEW NOT_EX
 
 **T0:** 86 cards; gates FAIL 86.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 42 | 571 (mean) | FAIL_MEMORY 8, OMISSION 18, PASS 58 |
-| act | Keep | 17 | 1000 (mean) | PASS 34 |
-| act | Wake | 6 | 1000 (mean) | PASS 12 |
-| remember | Drift | 6 | 1000 (mean) | correct 6 |
-| remember | Recall | 12 | 916 (mean) | correct 11, unknown 1 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 2 | 1000 (mean) | correct 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 42 | 571 (mean) | FAIL_MEMORY 8, OMISSION 18, PASS 58 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Keep | 17 | 1000 (mean) | PASS 34 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Wake | 6 | 1000 (mean) | PASS 12 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Drift | 6 | 1000 (mean) | correct 6 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Recall | 12 | 916 (mean) | correct 11, unknown 1 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET FAIL
 Pack invariants: INV-FORGET FAIL 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EXERCISED 58, INV-NEW PASS 28, INV-PAIR NOT_EXERCISED 86, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 7
 
 **T1, system arm:** 1 card; gates PASS 1.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 1 | 1000 | PASS 10 |
-| act | Keep | 1 | -1000 | FAIL_MEMORY 2 |
-| act | Wake | 1 | 1000 | PASS 2 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 1 | 500 | correct 1, unknown 1 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 1 | 1000 | PASS 10 | 0 | 1000 | no result | not run in v0.1 |
+| act | Keep | 1 | -1000 | FAIL_MEMORY 2 | 0 | 1000 | no result | not run in v0.1 |
+| act | Wake | 1 | 1000 | PASS 2 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Recall | 1 | 500 | correct 1, unknown 1 | 0 | 1000 | no result | not run in v0.1 |
 Regression corpus: PASS 20
 
 **T1, wiped arm:** 1 card; gates FAIL 1.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 1 | 0 | OMISSION 9, PASS 1 |
-| act | Keep | 1 | 0 | OMISSION 2 |
-| act | Wake | 1 | 0 | OMISSION 2 |
-| survive | Drift | 1 | 0 | unknown 1 |
-| survive | Recall | 1 | 0 | unknown 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 1 | 0 | OMISSION 9, PASS 1 | 0 | 1000 | no result | not run in v0.1 |
+| act | Keep | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Drift | 1 | 0 | unknown 1 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Recall | 1 | 0 | unknown 2 | 0 | 1000 | no result | not run in v0.1 |
 Regression corpus: FAIL 20
 
 ### Holographic
 
 **T0:** 86 cards; gates PASS 86.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 42 | 1000 (mean) | PASS 84 |
-| act | Keep | 17 | 1000 (mean) | PASS 34 |
-| act | Wake | 6 | 0 (mean) | OMISSION 12 |
-| remember | Drift | 6 | 1000 (mean) | correct 6 |
-| remember | Recall | 12 | 1000 (mean) | correct 12 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 2 | 1000 (mean) | correct 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 42 | 1000 (mean) | PASS 84 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Keep | 17 | 1000 (mean) | PASS 34 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Wake | 6 | 0 (mean) | OMISSION 12 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Drift | 6 | 1000 (mean) | correct 6 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Recall | 12 | 1000 (mean) | correct 12 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET INCONCLUSIVE
 Pack invariants: INV-FORGET INCONCLUSIVE 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EXERCISED 58, INV-NEW PASS 28, INV-PAIR NOT_EXERCISED 86, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 7
 
 **T1, system arm:** 1 card; gates PASS 1.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 1 | 1000 | PASS 10 |
-| act | Keep | 1 | 1000 | PASS 2 |
-| act | Wake | 1 | 0 | OMISSION 2 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 1 | 1000 | correct 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 1 | 1000 | PASS 10 | 0 | 1000 | no result | not run in v0.1 |
+| act | Keep | 1 | 1000 | PASS 2 | 0 | 1000 | no result | not run in v0.1 |
+| act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Recall | 1 | 1000 | correct 2 | 0 | 1000 | no result | not run in v0.1 |
 Regression corpus: PASS 20
 
 **T1, wiped arm:** 1 card; gates FAIL 1.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 1 | 0 | OMISSION 9, PASS 1 |
-| act | Keep | 1 | 0 | OMISSION 2 |
-| act | Wake | 1 | 0 | OMISSION 2 |
-| survive | Drift | 1 | 0 | unknown 1 |
-| survive | Recall | 1 | 0 | unknown 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 1 | 0 | OMISSION 9, PASS 1 | 0 | 1000 | no result | not run in v0.1 |
+| act | Keep | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Drift | 1 | 0 | unknown 1 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Recall | 1 | 0 | unknown 2 | 0 | 1000 | no result | not run in v0.1 |
 Regression corpus: FAIL 20
 
 ### Mem0 OSS
 
 **T0:** 86 cards; gates FAIL 86.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 42 | 1000 (mean) | PASS 84 |
-| act | Keep | 17 | 1000 (mean) | PASS 34 |
-| act | Wake | 6 | 166 (mean) | OMISSION 10, PASS 2 |
-| remember | Drift | 6 | 1000 (mean) | correct 6 |
-| remember | Recall | 12 | 1000 (mean) | correct 12 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 2 | 1000 (mean) | correct 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 42 | 1000 (mean) | PASS 84 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Keep | 17 | 1000 (mean) | PASS 34 | 0 | 1000 | 1000 | not run in v0.1 |
+| act | Wake | 6 | 166 (mean) | OMISSION 10, PASS 2 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Drift | 6 | 1000 (mean) | correct 6 | 0 | 1000 | 1000 | not run in v0.1 |
+| remember | Recall | 12 | 1000 (mean) | correct 12 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
+| survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET FAIL
 Pack invariants: INV-FORGET FAIL 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EXERCISED 58, INV-NEW PASS 28, INV-PAIR NOT_EXERCISED 86, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 7
 
 **T1, system arm:** 1 card; gates PASS 1.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 1 | 1000 | PASS 10 |
-| act | Keep | 1 | -1000 | FAIL_MEMORY 2 |
-| act | Wake | 1 | 0 | OMISSION 2 |
-| survive | Drift | 1 | 1000 | correct 1 |
-| survive | Recall | 1 | 1000 | correct 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 1 | 1000 | PASS 10 | 0 | 1000 | no result | not run in v0.1 |
+| act | Keep | 1 | -1000 | FAIL_MEMORY 2 | 0 | 1000 | no result | not run in v0.1 |
+| act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Recall | 1 | 1000 | correct 2 | 0 | 1000 | no result | not run in v0.1 |
 Regression corpus: PASS 20
 
 **T1, wiped arm:** 1 card; gates FAIL 1.
 
-| Stage | Track | Cards | Score (milli) | Items |
-|---|---|---|---|---|
-| act | Drift | 1 | 0 | OMISSION 9, PASS 1 |
-| act | Keep | 1 | 0 | OMISSION 2 |
-| act | Wake | 1 | 0 | OMISSION 2 |
-| survive | Drift | 1 | 0 | unknown 1 |
-| survive | Recall | 1 | 0 | unknown 2 |
+| Stage | Track | Cards | Score (milli) | Items | No memory | Oracle evidence | Full history | Naive RAG |
+|---|---|---|---|---|---|---|---|---|
+| act | Drift | 1 | 0 | OMISSION 9, PASS 1 | 0 | 1000 | no result | not run in v0.1 |
+| act | Keep | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Drift | 1 | 0 | unknown 1 | 0 | 1000 | no result | not run in v0.1 |
+| survive | Recall | 1 | 0 | unknown 2 | 0 | 1000 | no result | not run in v0.1 |
 Regression corpus: FAIL 20
 
 ## What each system's results point to
@@ -288,7 +290,7 @@ These are measured behaviours under Ring 0's scripted conditions, with the evide
    - What this points to: the same as point 2.
 6. **Everything else passes at T1.** Drift and Recall score 1000, and the regression corpus passes all 20. The wiped control fails, as it must.
 
-**To rerun one T0 pack:** `bicentennial t0 --system <system> --packs <installed T0 tier directory> --pack pack/<pack path> --pack-hash <T0 pack hash> --out <empty directory>`, with `PYTHONHASHSEED=0` and the pins in `RESULT-MANIFEST.json`. Repeat `--pack` to rerun several packs.
+**To rerun one T0 pack:** `bicentennial t0 --system <system> --packs <installed T0 tier directory> --pack pack/<pack path> --pack-hash <T0 pack hash> --out <new path>`, with `PYTHONHASHSEED=0`. For the three systems under test, add `--hermes <Hermes checkout>`, and for Holographic and Mem0 also `--plugin-source <plug-in checkout>`, at the pins in `RESULT-MANIFEST.json`. `--out` must not exist yet: the kit refuses an existing directory, even an empty one (`out_exists`). Repeat `--pack` to rerun several packs.
 
 ## How repeatable the runs were
 - **T0:** reference_store's, hermes-native's and Holographic's two runs are byte-identical in every card, invariant, control, JUnit, adapter-invariant and relations file. Only the receipts differ, and only in volatile fields: load, ports, process ids, temporary paths and wall times.
