@@ -79,6 +79,7 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 | `--workers N` | Integer ≥ 1, default 1; results do not depend on it. |
 | `--hermes` | Pinned Hermes checkout for registry systems. |
 | `--plugin-source` | Pinned source for a plug-in system. |
+| `--model-cache` | Staged model directory. Give it exactly when the system's worker environment uses one (only `omega`); a missing or unneeded one refuses the run with `missing_input`. |
 | `--cache` | Optional control cache; default `<out>/cache`. |
 
 The Hermes-replay fallback ships in v0.2 ([RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata)). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
@@ -181,7 +182,7 @@ bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$P
 bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HOLOGRAPHIC_HERMES" --plugin-source "$PLUGIN_CHECKOUT" --baseline runs/ring0-t1-holographic-first/system/card.json --out runs/ring0-t1-holographic-next
 ```
 
-T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--cache`. Plug-ins require `--plugin-source`; cache defaults to `<out>/cache`.
+T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
 
 The gated arms are system and wiped-store positive control. The wiped gate must FAIL: if it passes, the system card is INVALID, exit 1. Wiped `uninformative` is not a pass. The cached no-memory floor appears as `controls.no_memory_floor` and the `no_memory` JUnit suite ([RING0 §§5–6](../../specs/ring0/RING0.md#5-verified-empty-and-the-wiped-store-control)).
 

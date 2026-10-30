@@ -735,7 +735,8 @@ def test_constants():
     assert accept.T1_DISCLOSURES == tuple(n for n, _ in compare.DISCLOSURES)
     assert accept.PLUGIN_T1_DISCLOSURES == tuple(n for n, _ in compare.PLUGIN_DISCLOSURES)
     assert accept.WIPED_LABEL == controls.WIPED_LABEL
-    assert accept.PLUGINS == tuple(sorted(set(PROVIDERS) & set(accept.SYSTEMS)))
+    assert accept.PLUGINS == ("holographic", "mem0-oss")  # the v0.1 set; later plug-ins stay outside it
+    assert set(accept.PLUGINS) <= set(PROVIDERS)
     schema = json.loads((ROOT / "schemas/card_ring0.schema.json").read_bytes())
     assert schema["properties"]["labels"]["properties"]["signal"]["enum"] == [accept.SIGNAL]
     parsed = ast.parse(Path(compare.__file__).read_text())
