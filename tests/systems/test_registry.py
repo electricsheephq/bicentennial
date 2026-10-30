@@ -297,6 +297,11 @@ def test_telemetry_reasons_sorted_after_recall(tmp_path, monkeypatch):
         for package in ("aaa", "onnxruntime", "zzz"))]
 
 
+def test_telemetry_switch_keys_are_normalised():
+    # check() matches PEP 503 names from the lock, so a key in another form would never match.
+    assert all(hp.normalise(package) == package for package in hp.TELEMETRY_SWITCHES)
+
+
 def test_telemetry_guide_rows():
     text = (ROOT / "docs/developers/ring0.md").read_text()
     for reason in ("telemetry_switch_missing:<package>:<switch>=<value>", "telemetry_lock_unreadable"):
