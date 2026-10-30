@@ -81,6 +81,36 @@ def test_location_round_trip(cell, theta):
     assert abs(solve_location(cell, 0.3, target) - theta) < 1e-9
 
 
+@pytest.mark.parametrize("levels,cuts", [((-1000, 0, 1000), (-0.5, 0.5)),
+    ((-1000, -250, 0, 125, 375, 625, 875, 1000), (-1.5, -1, -0.5, 0, 0.5, 1, 1.5))])
+@pytest.mark.parametrize("rho", [-0.5, 0.3, 0.98])
+def test_interior_target_inversion(levels, cuts, rho):
+    from bicentennial.ocsim import locate
+    cell = CellModel("X", levels, cuts, -200, 600, 0, 0)
+    table = locate.build_table(cell, rho)
+    for target in (-400, 0, 283.3, 950):
+        assert abs(expected_min(cell, rho, solve_location(cell, rho, target)) - target) <= 1e-6
+        assert abs(expected_min(cell, rho, locate.locate(table, cell, target)) - target) <= (
+            table.bound_milli + table.max_correction)
+
+
+def test_interior_no_noise_sampler(cell, monkeypatch):
+    params = LatentParams((cell,), 0, 0, 1, 0)
+    margin, count = Fraction(25, 3), 4000
+    targets = expected_units(params, life_effects(params, ("p",), "interior", 0), {"X": margin})
+    draws = iter(v for i in range(count) for v in
+                 (0, NormalDist().inv_cdf((i + 0.5) / count), 0,
+                  NormalDist().inv_cdf((i + 0.5) / count), 0,
+                  NormalDist().inv_cdf((i + 0.5) / count), 0))
+    monkeypatch.setattr(model, "_normal", lambda rng: next(draws))
+    scores = cell_scores(sample_bundles(params, {(*k, 20): v for k, v in targets.items()},
+        {("X", 20): count}, ("p",), "interior", 0))
+    s = {arm: scores[arm, "p", "X"] for arm in ARMS}
+    for arm in ARMS:
+        assert abs(s[arm] - targets[arm, "p", "X"] / 10) <= 2000 / (2 * count) / 10
+    assert abs(s["S"] - (s["F"] + s["C"]) / 2 - margin) <= 2000 / count / 10
+
+
 def test_location_monotone(cell):
     locations = [solve_location(cell, 0.3, t) for t in (-900, -500, -100, 0, 400, 900)]
     assert locations == sorted(locations)

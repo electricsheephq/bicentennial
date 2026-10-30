@@ -710,18 +710,36 @@ def _isolation_detail(records, egress):
     return tuple(sorted(detail))
 
 
-def _audit(factories):
+def _unobserved_detail(egress):
+    if egress.get("alive_at_stop", True) and not egress.get("unsampled"):
+        return ()
+    return tuple(sorted([f"egress sampler alive_at_stop={str(egress.get('alive_at_stop', True)).lower()}",
+        *(f"egress failed_samples type={k} count={v}" for k, v in egress.get("failed_samples", {}).items()),
+        *egress.get("unsampled", ())]))
+
+
+def _check_egress(evidence, T0Refused=T0Refused):
+    """Check all available isolation evidence before refusing incomplete observation."""
+    for rows, egress in evidence:
+        if egress.get("non_loopback", []) or _isolation_detail(rows, {}):
+            raise T0Refused("upstream_record", detail=_isolation_detail(rows, egress))
+    for _, egress in evidence:
+        if detail := _unobserved_detail(egress):
+            raise T0Refused("egress_unobserved", detail=detail)
+
+
+def _audit(factories, evidence=None):
     """Read closed hosts while their ledgers and response blobs still exist."""
     records, texts, tokens, runtime, markers, pids, ports, paths = [], [], {}, {}, [], [], [], []
     hosts = [h for f in factories for h in f.hosts]
+    if evidence is None:
+        evidence = {id(h): (h.records(), h.egress.summary()) for h in hosts}
+    _check_egress(list(evidence.values()))
+    failed_samples = {}
     for host in hosts:
-        rows = host.records()
-        egress = host.egress.summary()
-        if (egress["non_loopback"] or any(
-                r.get("served_by") not in (None, "scripted") or any(
-                    (a.get("served_by") != "scripted" and "error" not in a) or a.get("diagnostics")
-                    for a in r.get("upstream", ())) for r in rows)):
-            raise T0Refused("upstream_record", detail=_isolation_detail(rows, egress))
+        rows, egress = evidence[id(host)]
+        for name, count in egress.get("failed_samples", {}).items():
+            failed_samples[name] = failed_samples.get(name, 0) + count
         records.extend(rows)
         store = BlobStore(host.paths["root"] / "ledger/blobs", Guard([]))
         for row in rows:
@@ -742,6 +760,7 @@ def _audit(factories):
         ports.append(host.server.port)
         paths.extend(str(p) for p in host.paths.values())
     return dict(records=records, texts=texts, tokens=tokens, runtime=runtime, markers=markers,
+                failed_samples=failed_samples,
                 pids=pids, ports=ports, paths=paths, growth=sum(h.growth for h in hosts),
                 run_values=dict(hosts[0].director.run_values) if hosts else None)
 
@@ -795,6 +814,7 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         busy_marker_readings=[busy(marker), *audit["markers"]], tokens_by_role=audit["tokens"],
         runtime_by_role=audit["runtime"], spend_micro_usd=0, store_growth_bytes=audit["growth"],
         process_ids=audit["pids"], ports=audit["ports"], temporary_paths=audit["paths"],
+        egress_failed_samples=audit["failed_samples"],
         raw_body_digest=raw_body_digest(receipt_records))
     return dict(card=card, receipt=receipt, junit=junit, suites=suites, invariants=canon(verdicts),
                 controls=canon(controls), code=1 if gate in ("INVALID", "FAIL") else
@@ -908,9 +928,11 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                                       if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
                 verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
                                            baseline_infra=baseline_infra, session_wakes=real)
-                audit = _audit(made)
+                evidence = {id(h): (h.records(), h.egress.summary()) for f in factories for h in f.hosts}
+                _check_egress(list(evidence.values()))
+                audit = _audit(made, evidence)
                 # Audit every auxiliary host too; only the selected drive enters its card digest.
-                auxiliary = _audit([f for f in factories if f not in made])
+                auxiliary = _audit([f for f in factories if f not in made], evidence)
                 audit["texts"] += auxiliary["texts"] + invariant_audit["texts"]
                 audit["receipt_records"] = list(audit["records"])
                 for extra in [auxiliary, *([invariant_audit] if pack is first else [])]:
@@ -918,6 +940,8 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                     for field in ("markers", "pids", "ports", "paths"):
                         audit[field].extend(extra[field])
                     audit["growth"] += extra["growth"]
+                    for name, count in extra["failed_samples"].items():
+                        audit["failed_samples"][name] = audit["failed_samples"].get(name, 0) + count
                     for role, values in sorted(extra["tokens"].items()):
                         before = audit["tokens"].get(role, (0, 0))
                         audit["tokens"][role] = tuple(a + b for a, b in zip(before, values, strict=True))

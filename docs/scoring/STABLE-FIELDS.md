@@ -152,6 +152,7 @@ with no repeated key; the validator rejects any other order.
 | `receipt.ports` | volatile | RING0 §4 |
 | `receipt.temporary_paths` | volatile | RING0 §4 |
 | `receipt.raw_body_digest` | volatile | RING0 §4 |
+| `receipt.egress_failed_samples` | volatile | RING0 §4; RING0 §13 E14 |
 | `receipt.tokens_by_role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
 | `receipt.tokens_by_role[].role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
 | `receipt.tokens_by_role[].input` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |

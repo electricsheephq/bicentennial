@@ -219,23 +219,22 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
             result = run_case(case, CorpusFactory(ctx, arm, case, unit, held, hosts, host),
                 root=unit / "life", catalogue=catalogue, bound_s=ctx.entry["settle"]["bound_s"],
                 infra=INFRA)
+            evidence = {id(h): (h.records(), h.egress.summary()) for h in hosts
+                        if hasattr(h, "records") and hasattr(h, "egress")}
+            t0._check_egress(list(evidence.values()), T1Refused)
             for h in hosts:
                 if gates is not None:
                     gates.extend(getattr(h, "gate", ()))
-                if hasattr(h, "records") and hasattr(h, "egress"):
-                    rows = h.records()
-                    egress = h.egress.summary()
-                    if not _isolated(rows, egress):
-                        raise T1Refused("upstream_record", detail=t0._isolation_detail(rows, egress))
-                    if audit is not None:
-                        audit.extend(rows)
+            if audit is not None:
+                for rows, _ in evidence.values():
+                    audit.extend(rows)
             if held:
                 raise held[0]
             if delivery is not None:
                 delivery.add(hosts)
             if measurements is not None:
                 measured = [h for h in hosts if hasattr(h, "paths")]
-                measurements.append(t0._audit([SimpleNamespace(hosts=measured)]))
+                measurements.append(t0._audit([SimpleNamespace(hosts=measured)], evidence))
             shutil.rmtree(unit)
             if result.status != "INFRA_FAILURE":
                 break
@@ -296,10 +295,13 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corp
     # The arm's corpus hosts ran inside this run's wall time, so their requests and busy readings count.
     rows = [r for f in runs for r in f.records] + list(corpus_rows)
     runtime = {}
-    evidence = [dict(tokens=f.tokens_by_role, growth=f.store_growth_bytes, pids=f.process_ids)
+    evidence = [dict(tokens=f.tokens_by_role, growth=f.store_growth_bytes, pids=f.process_ids,
+                     failed_samples=f.egress.get("failed_samples", {}))
                 for f in runs] + list(corpus_measurements)
-    tokens = {}
+    tokens, failed_samples = {}, {}
     for measured in evidence:
+        for name, count in measured.get("failed_samples", {}).items():
+            failed_samples[name] = failed_samples.get(name, 0) + count
         for role, usage in measured["tokens"].items():
             before = tokens.get(role, (0, 0))
             tokens[role] = (before[0] + usage[0], before[1] + usage[1])
@@ -314,6 +316,7 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corp
         tokens_by_role=tokens, runtime_by_role=runtime, spend_micro_usd=0,
         store_growth_bytes=sum(m["growth"] for m in evidence),
         process_ids=[p for m in evidence for p in m["pids"]],
+        egress_failed_samples=failed_samples,
         ports=[int(r.run_values["director_port"]) for r in runs if r.run_values] + [
             p for m in corpus_measurements for p in m["ports"]],
         temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values] + [
@@ -366,9 +369,9 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
 def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, start, publication):
     run = run_arms(ctx, scratch=out / "work")
     rows = []
-    for f in _runs(run, tuple(sorted(run.arms))):
-        if not _isolated(f.records, f.egress):
-            raise T1Refused("upstream_record", detail=t0._isolation_detail(f.records, f.egress))
+    runs = list(_runs(run, tuple(sorted(run.arms))))
+    t0._check_egress([(f.records, f.egress) for f in runs], T1Refused)
+    for f in runs:
         rows.extend(f.records)
     cases = load_corpus(CORPUS_PATH)
     catalogue = load_catalogue(REPO / CATALOGUE[0], c7_path=REPO / CATALOGUE[1],

@@ -43,14 +43,19 @@ class Egress(threading.Thread):
         self.interval_s, self.pids, self.per_pid, self.seen = interval_s, set(), {}, set()
         self.samples = self.rss_peak_kib = 0
         self.commands, self.non_loopback_seen = {}, {}
+        self.registered, self.failed_samples, self.alive_at_stop = set(), {}, False
+        self.names = {}
         self._lock, self._halt = threading.Lock(), threading.Event()
         # Held while sampling: a forked child keeps the parent's open files, and their flocks, until it execs, so
         # the adapter holds this while the director reopens its ledger
         self.forking = threading.Lock()
 
-    def add(self, pid: int) -> None:
+    def add(self, pid: int, name: str = "") -> None:
         with self._lock:
             self.pids.add(pid)
+            self.registered.add(pid)
+            self.names[pid] = name
+        self._sample()
 
     def discard(self, pid: int) -> None:
         with self._lock:
@@ -74,7 +79,7 @@ class Egress(threading.Thread):
         for pid in sorted(tree):
             rss = _out(["ps", "-o", "rss=", "-p", str(pid)]).strip()
             if not rss.isdigit():
-                continue  # exited: not a sample
+                continue  # reaped: not a sample (an exited but unreaped worker prints 0, and counts)
             endpoints = lsof_endpoints(_out(["lsof", "-a", "-i", "-P", "-n", "-p", str(pid)]))
             non_loopback = {n for protocol, n in endpoints if not loopback(n)
                             and not (PLATFORM == "darwin" and protocol in {"TCP", "UDP"} and n == "*:*")}
@@ -96,23 +101,33 @@ class Egress(threading.Thread):
                     self.non_loopback_seen[name] = (first, comm, count + 1)
                 sampled.update(non_loopback)
 
+    def _sample(self) -> None:
+        try:
+            with self.forking:
+                self.sample()
+        except Exception as exc:
+            with self._lock:
+                name = type(exc).__name__
+                self.failed_samples[name] = self.failed_samples.get(name, 0) + 1
+
     def run(self) -> None:
         while not self._halt.is_set():
-            try:
-                with self.forking:
-                    self.sample()
-            except (OSError, subprocess.SubprocessError):
-                pass  # lsof absent or stuck: no sample is counted, so an unsampled pid stays visible
+            self._sample()
             self._halt.wait(self.interval_s)
 
     def stop(self) -> None:
+        self.alive_at_stop = self.is_alive()
         self._halt.set()
         if self.is_alive():
             self.join()
+        self._sample()
 
     def summary(self) -> dict:
         with self._lock:
-            return {"samples": self.samples, "per_pid_samples": dict(self.per_pid),
+            return {"alive_at_stop": self.alive_at_stop, "failed_samples": dict(self.failed_samples),
+                    "unsampled": sorted(f"egress unsampled pid={p} log={self.names.get(p, '')}"
+                                        for p in self.registered if str(p) not in self.per_pid),
+                    "samples": self.samples, "per_pid_samples": dict(self.per_pid),
                     "non_loopback": sorted(self.seen), "rss_peak_kib": self.rss_peak_kib,
                     "non_loopback_seen": sorted(f"egress name={n} pid={pid} comm={comm} samples={count}"
                         for n, (pid, comm, count) in self.non_loopback_seen.items())}
