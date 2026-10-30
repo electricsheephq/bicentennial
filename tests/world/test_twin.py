@@ -352,7 +352,8 @@ with tempfile.TemporaryDirectory() as directory:
 
 
 def test_purity():
-    tree = ast.parse(Path(twin.__file__).read_text())
+    tree = ast.parse(Path(twin.__file__).read_text() + "\n" +
+                     Path(twin.__file__).with_name("fulltwin.py").read_text())
     forbidden = {"random", "time", "socket", "ssl", "http", "urllib", "subprocess", "bicentennial.sandbox", "bicentennial.director", "spikes"}
     for node in ast.walk(tree):
         names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module] if isinstance(node, ast.ImportFrom) else []

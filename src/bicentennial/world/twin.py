@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bicentennial.canon import canon
+from bicentennial.items.bindings import compile_bound
 from bicentennial.items.bundle import Compiled, compile_life
 from bicentennial.items.compile import compile_branch
 from bicentennial.items.protocol import TWIN_TYPES
@@ -350,7 +351,8 @@ def apply(db, flips, path) -> sqlite3.Connection:
         raise ValueError("invalid twin world") from None
 
 
-def twin_life(db0, schedule, templates, *, world_path, out_dir, principal_id, expected_state, bank=None) -> TwinLife:
+def twin_life(db0, schedule, templates, *, world_path, out_dir, principal_id, expected_state,
+              bank=None, bindings=None) -> TwinLife:
     """Compile both worlds, prove their independence and stream diff, then publish branches."""
     world_path, out_dir = Path(world_path), Path(out_dir)
     files = [out_dir / f"{name}.{branch}.{suffix}" for branch in ("B0", "B1")
@@ -358,8 +360,14 @@ def twin_life(db0, schedule, templates, *, world_path, out_dir, principal_id, ex
     if world_path.exists() or any(path.exists() for path in files):
         raise ValueError("existing twin output")
     templates, state0 = tuple(templates), expected_state(db0)
+    bindings = None if bindings is None else tuple(bindings)
     pre = cut(db0, schedule, branch="B0", principal_id=principal_id, expected_state=state0, bank=bank)
-    flips = plan(db0, schedule, compile_branch(db0, schedule, pre, templates), principal_id=principal_id)
+
+    def compile_one(db, c):
+        return (compile_branch(db, schedule, c, templates) if bindings is None else
+                compile_bound(db, schedule, c, templates, bindings))
+
+    flips = plan(db0, schedule, compile_one(db0, pre), principal_id=principal_id)
     db1 = None
     try:
         db1 = apply(db0, flips, world_path)
@@ -367,7 +375,7 @@ def twin_life(db0, schedule, templates, *, world_path, out_dir, principal_id, ex
         cuts = tuple(cut(db, schedule, branch=branch, principal_id=principal_id, expected_state=state,
                          bank=bank, exclude_tokens=excluded) for db, branch, state in
                      ((db0, "B0", state0), (db1, "B1", expected_state(db1))))
-        branches = tuple(compile_branch(db, schedule, c, templates) for db, c in zip((db0, db1), cuts, strict=True))
+        branches = tuple(compile_one(db, c) for db, c in zip((db0, db1), cuts, strict=True))
         compiled = compile_life(*branches)
         guards, ids = {}, {}
         for db, branch in zip((db0, db1), branches, strict=True):
