@@ -55,7 +55,9 @@ def apply_masks(obj, run_values: dict[str, str]):
     # with the port's digits is masked whole. Pattern targets have no groups of their own.
     pattern = re.compile(r"(?P<director_id>bcw-[0-9a-f]{16})|" + "|".join(
         [f"(?P<p{i}>{e['target']})" for i, e in enumerate(patterns)]
-        + [re.escape(v) for v in sorted(replacements, key=lambda v: (-len(v), v))]))
+        + [r"(?<![0-9])" + re.escape(v) + r"(?![0-9])"
+           if re.fullmatch(r"[0-9]+", v) else re.escape(v)
+           for v in sorted(replacements, key=lambda v: (-len(v), v))]))
 
     def substitute(m):
         if m.lastgroup == "director_id":
