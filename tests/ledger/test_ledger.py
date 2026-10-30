@@ -428,6 +428,50 @@ def test_stable_digest_real_fixture_ledgers(tmp_path):
     assert digest == stable_digest(a + [{"type": "lifecycle", "t": 999}], RUN_VALUES)
 
 
+def test_stable_digest_all_cursors_matches_base():
+    records = [request(cursor=cursor, sim_now=1000 + 720 * i, lock_hash=LOCK,
+                       attempt_id="attempt-a", write_calls=i,
+                       write_turn_failed="", write_turn_readback=True)
+               for i, cursor in enumerate(({"session": 10, "turn": 1}, {"session": 2, "turn": 10},
+                                           {"session": 2, "turn": 2}, {"session": 1, "turn": 1}))]
+    # Captured with b752670's projection; every request has a cursor.
+    assert stable_digest(records, RUN_VALUES) == "a35aeece91d85e7fc7752e5599461826a9a43a2adbd4a2a032acbe4f658b5e3d"
+
+
+def test_stable_digest_cursorless_sim_now_is_omitted():
+    records = [request(cursor=None, sim_now=1000)]
+    shifted = [dict(records[0], sim_now=1720)]
+    original = copy.deepcopy(records)
+    assert stable_digest(records, RUN_VALUES) == stable_digest(shifted, RUN_VALUES)
+    assert records == original
+
+
+def test_stable_digest_cursor_sim_now_counts():
+    records = [request(cursor={"session": 1, "turn": 1}, sim_now=1000)]
+    shifted = [dict(records[0], sim_now=1720)]
+    assert stable_digest(records, RUN_VALUES) != stable_digest(shifted, RUN_VALUES)
+
+
+@pytest.mark.parametrize("field,value", [("req_masked_sha256", "b" * 64),
+                                        ("resp_masked_sha256", "c" * 64), ("status", 201)])
+def test_stable_digest_cursorless_content_counts(field, value):
+    records = [request(cursor=None, sim_now=1000)]
+    changed = [dict(records[0], **{field: value})]
+    assert stable_digest(records, RUN_VALUES) != stable_digest(changed, RUN_VALUES)
+
+
+def test_stable_digest_mem0_shaped_clock_steps():
+    records = [request(cursor=None, role="embeddings", subrole="embedding",
+                       path="/mem0/v1/embeddings", sim_now=10000 + 720 * i,
+                       req_masked_sha256=f"{i + 1:064x}") for i in range(7)]
+    shifted = [dict(rec, sim_now=rec["sim_now"] + step)
+               for rec, step in zip(records, (720, -720, 0, 720, -720, 720, 0), strict=True)]
+    digest = stable_digest(records, RUN_VALUES)
+    assert digest == stable_digest(list(reversed(shifted)), RUN_VALUES)
+    shifted[0]["req_masked_sha256"] = "f" * 64
+    assert digest != stable_digest(shifted, RUN_VALUES)
+
+
 def test_stable_projection_and_numeric_cursor_order(tmp_path):
     writer = ledger(tmp_path)
     try:
@@ -438,6 +482,7 @@ def test_stable_projection_and_numeric_cursor_order(tmp_path):
         writer.close()
     props = json.loads((ROOT.parent / "schemas/ledger-record.schema.json").read_bytes())["properties"]
     projected = [{k: v for k, v in r.items() if props[k]["x-stability"] == "stable"} for r in records]
+    del projected[1]["sim_now"]  # This request is outside the cursor (RING0 §13 E17).
     expected = [projected[i] for i in (1, 3, 2, 0)]
     assert stable_digest(records, RUN_VALUES) == sha256(canon(expected)).hexdigest()
     assert stable_digest([], RUN_VALUES) == sha256(canon([])).hexdigest()
