@@ -18,8 +18,8 @@ Deliberately NOT patched: time.monotonic, time.perf_counter, time.process_time a
 asyncio loop time. They measure durations, never dates, and timeouts depend on them.
 
 SQLite 'now' and the 'subsec'/'subsecond' time-values through sqlite3.connect and
-sqlite3.dbapi2.connect follow the clock, floored to UTC milliseconds and marked as
-UTC like SQLite's own 'now', with one instant per traced statement.
+sqlite3.dbapi2.connect follow the clock, floored to UTC milliseconds in the form SQLite's
+own 'now' takes on that version (marked UTC from 3.46), with one instant per traced statement.
 Unreachable: SQLite opened outside Python's sqlite3 (C/Rust, apsw), direct
 sqlite3.Connection construction, kernel file times (disclosed per system), and C
 code or children reading the OS clock directly. Trigger trace events reset the
@@ -134,6 +134,9 @@ def _install_sqlite(clock):
     delegate = real_connect(":memory:", check_same_thread=False)
     lock = threading.Lock()
     optional = _sqlite_probe(delegate)
+    # From 3.46 SQLite treats its own 'now' as UTC (utc/localtime become no-ops on it); a 'Z'
+    # gives the instant the same standing. Earlier versions treat 'now' like a plain string.
+    suffix = "Z" if sqlite3.sqlite_version_info >= (3, 46) else ""
 
     def connect(*args, **kwargs):
         connection = real_connect(*args, **kwargs)
@@ -150,7 +153,7 @@ def _install_sqlite(clock):
             if cached[0] is None or traced() is None:
                 ms = math.floor(clock.now() * 1000)
                 cached[0] = (_RealDatetime.fromtimestamp(ms // 1000, _dt_mod.timezone.utc)
-                             .strftime("%Y-%m-%d %H:%M:%S") + f".{ms % 1000:03d}Z")
+                             .strftime("%Y-%m-%d %H:%M:%S") + f".{ms % 1000:03d}{suffix}")
             return cached[0]
 
         def function(name):
