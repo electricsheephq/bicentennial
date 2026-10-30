@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-30: SQLite's clock follows the simulated clock (#270)
+- **RING0 §13 E18:** from the next kit, Python sqlite3's 'now' and CURRENT_* follow the simulated clock, with per-statement caching and disclosed trigger, trace-callback and schema limits. Kernel file times stay real and are disclosed per system; OMEGA's dedup TTL uses the simulated clock. v0.1's frozen kit keeps today's shim. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-30: arrival time outside the cursor leaves the masked ledger digest (#287)
 - **RING0 §13 E17:** from the next kit, the masked ledger digest leaves out `sim_now` on request records without a cursor, where the stamp depends on arrival timing; the raw record keeps it. At T0 this covers every request. Records with a cursor, request and reply digests, every other field and the existing reply `created` mask keep their rules. v0.1's frozen kit keeps the old projection and its published digests are unchanged. No PREREG version change; PREREG-v0.4 remains frozen.
 

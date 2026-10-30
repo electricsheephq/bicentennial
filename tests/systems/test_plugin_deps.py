@@ -274,11 +274,27 @@ def test_native_dists_normalised_deduplicated(tmp_path, monkeypatch, tier):
     props = dict(prepared(tier, tmp_path, monkeypatch, system="hermes-native"))
     encoded = b'[["demo-pkg","1"],["z-pkg","2"]]'
     assert props == {tier + ".worker_dists": encoded.decode(),
-        tier + ".worker_dists_sha256": f"sha256:{sha256(encoded).hexdigest()} n=2"}
+        tier + ".worker_dists_sha256": f"sha256:{sha256(encoded).hexdigest()} n=2",
+        tier + ".file_time_sites": canon(hp.FILE_TIME_SITES["hermes"]).decode()}
     assert len(calls) == 1
     argv, kwargs = calls[0]
     assert argv[:3] == [str(tmp_path / ".venv/bin/python"), "-I", "-c"]
     assert kwargs == dict(env={}, timeout=60, input="[]", capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("tier", ["t0", "t1"])
+@pytest.mark.parametrize("system", ["hermes-native", "holographic", "mem0-oss", "omega"])
+def test_file_time_sites(tmp_path, monkeypatch, tier, system):
+    fake_worker(tmp_path)
+    monkeypatch.setattr(hp, "DEPENDENCIES", {})
+    monkeypatch.setattr(hp, "WORKER_ENV", {})
+    module = t0 if tier == "t0" else t1
+    monkeypatch.setattr(module, "prepare_cache", lambda *a: (None, None))
+    props = dict(prepared(tier, tmp_path, monkeypatch, system=system))
+    expected = hp.FILE_TIME_SITES["hermes"] + hp.FILE_TIME_SITES.get(system, ())
+    assert json.loads(props[tier + ".file_time_sites"]) == list(expected)
+    monkeypatch.setattr(hp, "FILE_TIME_SITES", {})
+    assert tier + ".file_time_sites" not in dict(prepared(tier, tmp_path, monkeypatch, system=system))
 
 
 @pytest.mark.parametrize("tier", ["t0", "t1"])
