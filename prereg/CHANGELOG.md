@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 contract change, 2026-10-30: the port mask matches whole numbers only (#278)
-- **RING0 §4, §13 E15:** ASCII-digit run values match only where no ASCII digit is adjacent, keeping unrelated numbers independent of the run's director port. Sandbox-root matches and director-id and pattern precedence stay unchanged; the E4 fresh-install mask keeps its file and address scope. Masked output and digests are unchanged wherever no collision occurred. Determinism fix for #71. No PREREG version change; PREREG-v0.4 remains frozen.
+- **RING0 §4, §13 E15:** from the next kit, ASCII-digit run values match only where no ASCII digit is adjacent, keeping unrelated numbers independent of the run's director port. Sandbox-root matches and director-id and pattern precedence stay unchanged; the E4 fresh-install mask keeps its file and address scope. Masked output and digests are unchanged wherever no collision occurred. The masks schema's run-value description says the same. Determinism fix for #71. v0.1's frozen kit keeps its rule. No PREREG version change; PREREG-v0.4 remains frozen.
 
 ## Ring 0 contract change, 2026-10-29: egress observation must complete (#264)
 - **RING0 §13 E14:** from the next kit, a dead sampler or a registered pid with no completed sample refuses `egress_unobserved`; `upstream_record` wins across available hosts and runs. Registration samples synchronously before ready; unsampled detail names each pid and stderr log. Failed samples are counted by exception type, never refused, and `stop()` samples once after joining. v0.1's frozen kit keeps its rule. No PREREG version change; PREREG-v0.4 remains frozen.
