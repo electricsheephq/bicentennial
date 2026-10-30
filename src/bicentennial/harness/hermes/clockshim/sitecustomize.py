@@ -134,8 +134,8 @@ def _install_sqlite(clock):
     delegate = real_connect(":memory:", check_same_thread=False)
     lock = threading.Lock()
     optional = _sqlite_probe(delegate)
-    # From 3.46 SQLite treats its own 'now' as UTC (utc/localtime become no-ops on it); a 'Z'
-    # gives the instant the same standing. Earlier versions treat 'now' like a plain string.
+    # From 3.46 SQLite knows its own 'now' is UTC (utc is a no-op on it; localtime still converts it);
+    # a 'Z' gives the instant the same standing. Earlier versions treat 'now' like a plain string.
     suffix = "Z" if sqlite3.sqlite_version_info >= (3, 46) else ""
 
     def connect(*args, **kwargs):
@@ -165,6 +165,7 @@ def _install_sqlite(clock):
                     values = [instant()]
                 else:
                     indices = range(2) if name == "timediff" else [int(name == "strftime")]
+                    subsec = False
                     for index in indices:
                         if index == len(values) and (name != "strftime" or values):
                             values.append(instant())
@@ -173,9 +174,12 @@ def _install_sqlite(clock):
                             if word in ("now", b"now"):
                                 values[index] = instant()
                             elif word in ("subsec", "subsecond", b"subsec", b"subsecond"):
-                                # SQLite reads these as 'now' plus the subsec modifier.
-                                values[index:index + 1] = ([instant()] if name == "timediff"
-                                                           else [instant(), "subsec"])
+                                # SQLite reads these as 'now' plus the subsec modifier. It goes last:
+                                # 'auto', 'julianday' and 'unixepoch' must follow the time-value.
+                                values[index] = instant()
+                                subsec = name != "timediff"
+                    if subsec:
+                        values.append("subsec")
                 with lock:
                     return delegate.execute(f"SELECT {target}({','.join('?' for _ in values)})", values).fetchone()[0]
             return call
