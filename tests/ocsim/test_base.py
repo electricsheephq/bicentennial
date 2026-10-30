@@ -708,6 +708,30 @@ def test_allocation(fake):
     assert [base.alloc_total(b) for b in (150, 200, 250, 300, 151)] == [90, 120, 150, 180, 91]
 
 
+def test_allocation_dry_cover_every_budget(fake):
+    # b=250 gives (cell-05, 20) 4 bundles and b=300 gives it 3, so b=300's counts alone fall short.
+    cells = [f"cell-{i:02d}" for i in range(12)]
+    commit = fake.dry["lives"][0]["render_commit"]
+    fake.c12["required"] = cells
+    fake.dry = dry_set(commit, cells)
+    fake.commit()
+    alloc = {b: {(c, k): n for c, k, n in rows} for b, rows in fake.document()["alloc_by_b"].items()}
+    assert alloc["250"]["cell-05", 20] == 4 and alloc["300"]["cell-05", 20] == 3
+    need = {pair: max(counts[pair] for counts in alloc.values()) for pair in alloc["300"]}
+    for counts, refused in ((alloc["300"], True), (need, False)):
+        fake.dry = dry_set(commit, cells)
+        for life in fake.dry["lives"]:
+            life["bundles"] = [[c, k, n] for (c, k), n in counts.items()]
+        fake.commit()
+        if refused:
+            with pytest.raises(base.BaseRefused) as error:
+                fake.build()
+            assert ("alloc_by_b", "alloc_by_b:dry_below") in error.value.refusals
+        else:
+            assert fake.document()["alloc_by_b"]["250"] == [[c, k, alloc["250"][c, k]] for c in cells
+                                                           for k in (20, 60, 120, 200)]
+
+
 def test_lives(fake):
     document = fake.document()
     assert len(document["lives"]) == 48

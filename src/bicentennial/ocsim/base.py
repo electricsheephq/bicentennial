@@ -544,10 +544,14 @@ def _alloc(context):
         disclosure[str(b)] = {"cells": totals, "checkpoints": {
             str(checkpoint): sum(counts[cell, checkpoint] for cell in cells)
             for checkpoint in checkpoints}}
+    # Each budget keys its own cell order and extras, so b=300 need not cover a smaller budget's pair.
+    need = {}
+    for rows in result.values():
+        for cell, checkpoint, n in rows:
+            need[cell, checkpoint] = max(need.get((cell, checkpoint), 0), n)
     for life in context.artifact(DRY)["lives"]:
         bundles = {(cell, checkpoint): n for cell, checkpoint, n in life["bundles"]}
-        _need(all(bundles.get((cell, checkpoint), 0) >= n
-                  for cell, checkpoint, n in result["300"]), "alloc_by_b:dry_below")
+        _need(all(bundles.get(pair, 0) >= n for pair, n in need.items()), "alloc_by_b:dry_below")
     context.provenance["alloc"] = disclosure
     return result
 
