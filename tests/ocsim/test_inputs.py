@@ -1,6 +1,7 @@
 """Synthetic bar-2 pipeline acceptance and mutation witnesses."""
 
 import json
+import os
 import platform
 import random
 from copy import deepcopy
@@ -12,7 +13,8 @@ import pytest
 
 from bicentennial.canon import canon
 from bicentennial.contracts.bundle import NONRESULTS
-from bicentennial.ocsim import inputs, locate, model, run
+from bicentennial.ocsim import fitcheck, gaussian, inputs, locate, model, run
+from bicentennial.stats import tcal
 from bicentennial.stats import variance_inputs as vi
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,7 +74,7 @@ def default():
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(run, "c8_dirty", lambda root: False)
         records, base = b"\n" + canon(sample()[0]) + b" \n", base_bytes()
-        document = inputs.build(records, base, root=ROOT)
+        document = inputs.build(records, base, root=ROOT, resamples=3)
     return records, base, document
 
 
@@ -235,7 +237,7 @@ def test_container_refusals(case):
     if case in ("prime_stage", "prime_track", "prime_cell"):
         original = next(i for i in arm["items"] if i["item_id"] == "unused-singleton")
         key = case.removeprefix("prime_") + ("_id" if case == "prime_cell" else "")
-        prime["items"].append(dict(original, **{key: "different"}))
+        prime["items"].append(dict(original, **{key: {"stage": "survive", "track": "Drift"}.get(key, "different")}))
         where, message = "A_prime no_memory item unused-singleton", f"A′ item differs from A: {key}"
     if case == "prime_unbundled":
         prime["bundles"].pop(0)
@@ -254,12 +256,12 @@ def test_container_refusals(case):
 
 def test_coverage_valid_in_both_arms():
     data, _ = sample()
-    arm = data["A"]["oracle_evidence"]
-    ids = {b["items"][0] for b in arm["bundles"] if b["cell_id"] == "action" and b["life"] in
-           {"life-2", "life-3", "life-4", "life-5"}}
-    for item in arm["items"]:
-        if item["item_id"] in ids:
-            item.update(failure_class="BLOCKED", score_milli=None)
+    for name, lives in (("no_memory", {"life-0", "life-1"}), ("oracle_evidence", {"life-4", "life-5"})):
+        arm = data["A"][name]
+        ids = {b["items"][0] for b in arm["bundles"] if b["cell_id"] == "action" and b["life"] in lives}
+        for item in arm["items"]:
+            if item["item_id"] in ids:
+                item.update(failure_class="BLOCKED", score_milli=None)
     with pytest.raises(ValueError, match="coverage action: 2 lives; need at least 4"):
         inputs.load(canon(data), REQUIRED)
 
@@ -271,7 +273,7 @@ def test_coverage(lives, monkeypatch):
     monkeypatch.setattr(vi, "estimate", unexpected)
     if lives == 3:
         with pytest.raises(ValueError, match="coverage action: 3 lives; need at least 4"):
-            inputs.build(canon(sample(lives=lives)[0]), base_bytes(), root=ROOT)
+            inputs.build(canon(sample(lives=lives)[0]), base_bytes(), root=ROOT, resamples=3)
     else:
         assert inputs.load(canon(sample(lives=lives)[0]), REQUIRED)[0]
 
@@ -284,7 +286,7 @@ def test_orientation(default):
             data["branches"][iid] = "B1" if data["branches"][iid] == "B0" else "B0"
     original = json.loads(document)["params"]
     assert -1 < float.fromhex(original["rho_t"]) < 1
-    changed = json.loads(inputs.build(canon(data), base, root=ROOT))["params"]
+    changed = json.loads(inputs.build(canon(data), base, root=ROOT, resamples=3))["params"]
     assert changed != original and changed["rho_t"] != original["rho_t"]
 
 
@@ -294,12 +296,14 @@ def test_round_trip_flags_timing(default):
     rows, timing = inputs.load(records, REQUIRED)
     moments = vi.estimate(rows, timing_cells=timing)
     params, flags = vi.to_latent(moments)
-    assert moments.flags and parsed.latent_flags == tuple(sorted(set(moments.flags) | set(flags)))
-    assert json.loads(document)["latent_flags"] == sorted(set(moments.flags) | set(flags))
-    assert parsed.params == params and parsed.sensitivity_params == {}
+    assert moments.flags and set(moments.flags) | set(flags) <= set(parsed.latent_flags)
+    assert json.loads(document)["latent_flags"] == sorted(set(parsed.latent_flags))
+    assert parsed.params == params and set(parsed.sensitivity_params) == {"inputs_low", "inputs_high"}
     assert parsed.c8_hash == run.c8_hash(ROOT)
     assert tuple(len(c.levels) for c in params.cells) == (3, 8)
-    assert json.loads(document)["provenance"] == {
+    provenance = json.loads(document)["provenance"]
+    assert provenance.pop("inputs_bootstrap")["failed"] == 0
+    assert provenance == {
         "records_sha256": sha256(records).hexdigest(), "base_sha256": sha256(base).hexdigest(),
         "platform": platform.platform(), "python": platform.python_version()}
 
@@ -315,7 +319,7 @@ def test_determinism_filter(default, kind):
                 rng.shuffle(arm["items"])
                 rng.shuffle(arm["bundles"])
     source = records if kind == "repeat" else canon(data)
-    actual = inputs.build(source, base, root=ROOT)
+    actual = inputs.build(source, base, root=ROOT, resamples=3)
     if kind == "repeat":
         assert actual == document
     left, right = json.loads(actual), json.loads(document)
@@ -351,7 +355,7 @@ def test_build_refusals(default, monkeypatch, case):
         original = run._parse_inputs
         monkeypatch.setattr(run, "_parse_inputs", lambda *a, **k: replace(original(*a, **k), params=replace(params, rho_t=1.0)))
     with pytest.raises(ValueError, match=message):
-        inputs.build(records, base, root=ROOT)
+        inputs.build(records, base, root=ROOT, resamples=3)
 
 
 def test_build_check_arguments(default, monkeypatch):
@@ -367,9 +371,10 @@ def test_build_check_arguments(default, monkeypatch):
         return original_margin(cell, value)
     monkeypatch.setattr(locate, "build_table", table)
     monkeypatch.setattr(model, "interpolation", margin)
-    assert inputs.build(records, base, root=ROOT) == document
+    assert inputs.build(records, base, root=ROOT, resamples=3) == document
     assert params.rho_t != 0.0
-    assert tables == [(cell, params.rho_t) for cell in params.cells]
+    ends = run._parse_inputs(document, root=ROOT).sensitivity_params
+    assert tables == [(cell, p.rho_t) for p in (params, ends["inputs_low"], ends["inputs_high"]) for cell in p.cells]
     assert set(margins) == {(cell, value) for config in run.margin_grid(REQUIRED)
                             for cell, value in config.margins}
 
@@ -378,7 +383,8 @@ def test_c8():
     assert {"src/bicentennial/ocsim/inputs.py", "tests/ocsim/test_inputs.py"} <= set(run.c8_paths(ROOT))
 
 
-def test_main(default, tmp_path, capsys):
+def test_main(default, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(inputs, "RESAMPLES", 3)
     records, base, document = default
     paths = [tmp_path / name for name in ("records", "base", "out")]
     paths[0].write_bytes(records)
@@ -391,3 +397,237 @@ def test_main(default, tmp_path, capsys):
     with pytest.raises(ValueError, match="output already exists"):
         inputs.main(argv)
     assert paths[2].read_bytes() == document
+
+
+@pytest.mark.parametrize("key,value", [("failure_class", "PASS"), ("failure_class", 5),
+                         ("failure_class", "FAIL_TASK "), ("track", "tuesday"), ("stage", "acting")])
+def test_enum_refusals(key, value):
+    data, _ = sample()
+    data["A"]["no_memory"]["items"][0].update({key: value, "score_milli": 1000})
+    with pytest.raises(ValueError, match="A no_memory item .*: malformed item"):
+        inputs.load(canon(data), REQUIRED)
+
+
+def test_enum_copies():
+    props = json.loads((ROOT / "schemas/card_ring0.schema.json").read_bytes())["properties"]["items"]["items"]["properties"]
+    for key, values in (("failure_class", inputs.FAILURE_CLASSES), ("track", inputs.TRACKS), ("stage", inputs.STAGES)):
+        assert list(values) == props[key]["enum"]
+
+
+@pytest.mark.parametrize("case", ["track_A", "missing_A", "missing_prime", "changed_life", "bundled_in_A"])
+def test_track_singleton_followups(case):
+    data, _ = sample(extra=True)
+    arm, prime = data["A"]["no_memory"], data["A_prime"]["no_memory"]
+    where, message = "A no_memory item", "missing singleton"
+    if case == "track_A":
+        data["A"]["oracle_evidence"]["items"][-1]["track"] = "Drift"
+        where, message = "A oracle_evidence item", "conflicting tracks"
+    elif case == "missing_A":
+        arm["singleton_lives"].clear()
+    elif case in ("changed_life", "missing_prime"):
+        prime["items"].append(deepcopy(arm["items"][-1]))
+        if case == "changed_life":
+            prime["singleton_lives"]["unused-singleton"] = "other-life"
+        where = "A_prime no_memory item"
+        if case == "changed_life":
+            message = "A′ singleton differs from A"
+    else:
+        bundle = next(b for b in prime["bundles"] if b["cell_id"] == "unused")
+        prime["bundles"].remove(bundle)
+        prime["singleton_lives"].update((iid, bundle["life"]) for iid in bundle["items"])
+        where, message = "A_prime no_memory item", "A′ singleton differs from A"
+    with pytest.raises(ValueError) as error:
+        inputs.load(canon(data), REQUIRED)
+    assert str(error.value).startswith(where) and message in str(error.value)
+
+
+def bootstrap_context(default, resamples=3):
+    records, _, document = default
+    rows, timing = inputs.load(records, REQUIRED)
+    lives = tuple(sorted({row.life for row in rows}))
+    return inputs._Context({life: tuple(row for row in rows if row.life == life) for life in lives},
+                           fitcheck.draws(lives, resamples, inputs.UNIT), timing, REQUIRED,
+                           run._parse_inputs(document, root=ROOT).alloc_by_b[150], {c: 0 for c in REQUIRED})
+
+
+def test_relabelling_and_g(default, monkeypatch):
+    context = bootstrap_context(default)
+    context = replace(context, draws=(("life-0", "life-0", "life-1", "life-2", "life-3", "life-4"),))
+    hand = [replace(row, life=f"boot-{j:03d}", bundle=f"{row.bundle}#{j}")
+            for j, life in enumerate(context.draws[0]) for row in context.rows[life]]
+    expected = vi.estimate(hand, timing_cells=context.timing)
+    original = vi.estimate
+    def estimate(rows, **kwargs):
+        assert tuple(rows) == tuple(hand)
+        actual = original(rows, **kwargs)
+        assert actual == expected
+        return actual
+    monkeypatch.setattr(vi, "estimate", estimate)
+    r, status, g, params, flags = inputs._resample(context, 0)
+    assert status == "ok" and r == 0
+    assert (params, tuple(sorted(set(flags)))) == (vi.to_latent(expected)[0], flags)
+    _, covariance = gaussian.moments(params, context.alloc, context.margins)
+    assert g == max(covariance[k][k] for k in range(len(params.cells)))
+
+
+def test_bootstrap_unit(default):
+    assert inputs.UNIT == ("ocsim", "inputs-bootstrap")
+    assert inputs.UNIT != fitcheck.UNIT
+    assert all(inputs.UNIT != ("ocsim", f"fitcheck-calibration-{d}") for d in range(200))
+    for name, cell in (("normal", "action"), ("rule", "timing")):
+        assert inputs.UNIT not in (("ocsim", "fitcheck-rule", name, cell),
+                                   ("ocsim", "life", name), ("ocsim", "bundles", name, cell, 0))
+    lives = tuple(bootstrap_context(default).rows)
+    assert fitcheck.draws(lives, 50, inputs.UNIT) != fitcheck.draws(lives, 50, fitcheck.UNIT)
+
+
+@pytest.mark.parametrize("failed", [0, 2, 4, 5])
+def test_ends(failed):
+    # Equal g on both sides of each selected rank witnesses tie direction at both ends.
+    successes = [(r, "ok", float(r // 2), None, ()) for r in range(50 - failed)]
+    results = list(reversed(successes)) + [(r, "raised", None, None, ()) for r in range(50 - failed, 50)]
+    low, high = inputs._ends(results, 16, 50)
+    assert tcal.index(50, 83092) == 4
+    if failed > 4:
+        assert low is high is None
+    else:
+        assert low == successes[4 - failed] and high == successes[45]
+
+
+@pytest.mark.parametrize("kind", ["raised", "arithmetic", "validator", "cells", "rho_exact", "rho_band", "rho_ok", "g_raise", "g_inf", "bug"])
+def test_resample_failure_kinds(default, monkeypatch, kind):
+    context = bootstrap_context(default)
+    params = run._parse_inputs(default[2], root=ROOT).params
+    def raises(error):
+        raise error("synthetic")
+    original = vi.to_latent
+    monkeypatch.setattr(vi, "to_latent", lambda _: (params, ("twin_default",)))
+    if kind in ("raised", "arithmetic", "bug"):
+        error = {"raised": ValueError, "arithmetic": ArithmeticError, "bug": TypeError}[kind]
+        monkeypatch.setattr(vi, "estimate", lambda *a, **k: raises(error))
+    if kind == "validator":
+        monkeypatch.setattr(vi, "to_latent", lambda _: (replace(params, sigma_d2=2), ()))
+    if kind == "cells":
+        context = replace(context, rows={life: tuple(row for row in rows if row.cell == "action")
+                                        for life, rows in context.rows.items()})
+        monkeypatch.setattr(vi, "to_latent", original)
+    if kind.startswith("rho_"):
+        params = replace(params, sigma_d2=0.0, rho_t=-1 + {"rho_exact": 0, "rho_band": 1e-7, "rho_ok": 1e-5}[kind])
+    monkeypatch.setattr(gaussian, "moments", lambda *a: ([], [[1.0, 0.0], [0.0, float("inf") if kind == "g_inf" else 2.0]]))
+    if kind == "g_raise":
+        monkeypatch.setattr(gaussian, "moments", lambda *a: raises(ValueError))
+    if kind == "bug":
+        with pytest.raises(TypeError):
+            inputs._resample(context, 0)
+    else:
+        expected = {"arithmetic": "raised", "validator": "raised", "rho_exact": "rho_t", "rho_band": "rho_t", "rho_ok": "ok", "g_raise": "g", "g_inf": "g"}.get(kind, kind)
+        assert inputs._resample(context, 0)[1] == expected
+
+
+def test_bootstrap_flags_and_refusal(default, monkeypatch):
+    records, base, _ = default
+    successes = [inputs._resample(bootstrap_context(default), r) for r in range(3)]
+    assert all(row[1] == "ok" for row in successes)
+    results = [(r, "g" if r < 3 else "ok", float(r), successes[r % 3][3],
+                ("twin_default",) if r < 3 else successes[r % 3][4]) for r in range(50)]
+    monkeypatch.setattr(inputs, "_resample", lambda context, r: results[r])
+    document = json.loads(inputs.build(records, base, root=ROOT, workers=1, resamples=50))
+    assert document["sensitivity_params"] == {}
+    flags = document["latent_flags"]
+    assert "inputs_bootstrap_ends_refused" in flags and "inputs_bootstrap_failed=3/50" in flags
+    assert "inputs_bootstrap_failed:g=3/50" in flags
+    union = set().union(*(set(row[4]) for row in results))
+    expected = {f"inputs_bootstrap:{flag}={sum(flag in row[4] for row in results if row[1] == 'ok')}/50"
+                for flag in union if any(flag in row[4] for row in results if row[1] == "ok")}
+    assert {flag for flag in flags if flag.startswith("inputs_bootstrap:")} == expected
+    proof = document["provenance"]["inputs_bootstrap"]
+    assert proof == dict(resamples=50, unit=list(inputs.UNIT), seed=fitcheck.SEED, level_ppm=52966,
+                        index=2, failed=3, low_resample=None, high_resample=None, low_g=None, high_g=None)
+    assert "inputs_bootstrap_failed=0/3" in json.loads(default[2])["latent_flags"]
+
+
+@pytest.mark.parametrize("flag", ["inputs_bootstrap:unknown=1/3", "inputs_bootstrap:twin_default=1/4",
+                         "inputs_bootstrap_failed:other=1/3", "inputs_bootstrap:twin_default=01/3"])
+def test_bootstrap_flag_vocabulary(flag):
+    inputs._check_flags(["inputs_bootstrap:anova_undefined:F:cell-000=1/3"], 3)
+    with pytest.raises(ValueError, match="unknown flag"):
+        inputs._check_flags([flag], 3)
+
+
+def test_zero_allocation(default, monkeypatch):
+    records, base, _ = default
+    base = json.loads(base)
+    base["alloc_by_b"]["150"] = [[cell, ckpt, 0 if cell == "action" else n]
+                                  for cell, ckpt, n in base["alloc_by_b"]["150"]]
+    monkeypatch.setattr(inputs, "_resample", lambda *a: pytest.fail("resampled before allocation check"))
+    with pytest.raises(ValueError, match="alloc: zero count for cell action"):
+        inputs.build(records, canon(base), root=ROOT, resamples=3)
+
+
+@pytest.mark.parametrize("end", ["inputs_low", "inputs_high"])
+def test_end_prerun(default, monkeypatch, end):
+    records, base, document = default
+    params = replace(run._parse_inputs(document, root=ROOT).params, rho_t=0.123, sigma_d2=0.0)
+    row = (0, "ok", 1.0, params, ())
+    other = inputs._resample(bootstrap_context(default), 0)
+    monkeypatch.setattr(inputs, "_ends", lambda *a: (row, other) if end == "inputs_low" else (other, row))
+    original = locate.build_table
+    def table(cell, rho):
+        if rho == 0.123:
+            raise ValueError("end table refusal")
+        return original(cell, rho)
+    monkeypatch.setattr(locate, "build_table", table)
+    with pytest.raises(ValueError, match=end + " cell action margin table"):
+        inputs.build(records, base, root=ROOT, workers=1, resamples=3)
+
+
+def test_real_ends(default):
+    parsed = run._parse_inputs(default[2], root=ROOT)
+    proof = json.loads(default[2])["provenance"]["inputs_bootstrap"]
+    assert proof["failed"] == 0 and proof["level_ppm"] == 52966 and proof["index"] == 0
+    assert set(parsed.sensitivity_params) == {"inputs_low", "inputs_high"}
+    context = bootstrap_context(default)
+    for name in ("low", "high"):
+        r, status, g, params, _ = inputs._resample(context, proof[name + "_resample"])
+        assert status == "ok" and proof[name + "_g"] == g.hex()
+        hand = [replace(row, life=f"boot-{j:03d}", bundle=f"{row.bundle}#{j}")
+                for j, life in enumerate(context.draws[r]) for row in context.rows[life]]
+        assert parsed.sensitivity_params["inputs_" + name] == params == vi.to_latent(vi.estimate(hand, timing_cells=context.timing))[0]
+        assert tuple(c.cell for c in params.cells) == REQUIRED
+
+
+@pytest.mark.skipif((os.cpu_count() or 1) < 2, reason="needs two workers")
+def test_bootstrap_workers(default):
+    records, base, document = default
+    assert json.loads(document)["provenance"]["inputs_bootstrap"]["failed"] == 0
+    assert inputs.build(records, base, root=ROOT, workers=2, resamples=3) == document
+
+
+@pytest.mark.skipif((os.cpu_count() or 1) < 2, reason="needs two workers")
+def test_bootstrap_reverse_completion_and_cli(default, monkeypatch, tmp_path):
+    records, base, document = default
+    class Future:
+        def __init__(self, value): self.value = value
+        def result(self): return self.value
+    class Executor:
+        def __init__(self, *, max_workers, mp_context):
+            assert max_workers == 2 and mp_context.get_start_method() == "spawn"
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def submit(self, fn, *args): return Future(fn(*args))
+    monkeypatch.setattr(inputs, "ProcessPoolExecutor", Executor)
+    monkeypatch.setattr(inputs, "as_completed", lambda futures: reversed(futures))
+    assert inputs.build(records, base, root=ROOT, workers=2, resamples=3) == document
+    paths = [tmp_path / name for name in ("records", "base", "out")]
+    paths[0].write_bytes(records)
+    paths[1].write_bytes(base)
+    monkeypatch.setattr(inputs, "RESAMPLES", 3)
+    argv = [part for name, path in zip(("records", "base", "out"), paths, strict=True) for part in ("--" + name, str(path))]
+    inputs.main(argv + ["--workers", "2"])
+    assert paths[2].read_bytes() == document
+    paths[2].unlink()
+    with pytest.raises(ValueError, match="workers must be an int"):
+        inputs.main(argv + ["--workers", "0"])
+    with pytest.raises(SystemExit) as error:
+        inputs.main(argv + ["--workers", "x"])
+    assert error.value.code == 2

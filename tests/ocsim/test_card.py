@@ -37,11 +37,26 @@ def payload():
                 "occupancy": {"reserves": [[1, 0]],
                               "extra_chains": "not modelled: under-count disclosed",
                               "missing": card.EXTRA_CHAINS},
-                "run": {"phases": {"phase0": {"wall_s": 1, "cpu_s": 1}}, "pauses": [], "workers": 1},
+                "run": {"phases": {"phase0": {"wall_s": 1, "cpu_s": 1}}, "pauses": [], "workers": 1, "skipped_variants": []},
                 "machine": {"platform": "synthetic", "machine": "synthetic", "python_version": "3.14.9",
                             "cpu_count": 4, "class": "synthetic test machine"},
                 "not_proven": list(card.NOT_PROVEN)}
     return results, manifest
+
+
+def test_skips_and_bootstrap_disclosure(payload):
+    results, manifest = payload
+    manifest["run"]["skipped_variants"] = [
+        dict(variant="inputs_high", n_L=None, b=None, reason="absent_from_inputs"),
+        dict(variant="tau0", n_L=24, b=150, reason="no_literal_bound"),
+        dict(variant="reserve0", n_L=24, b=150, reason="reserve_capacity")]
+    text = card.render(manifest, results)
+    assert "- Skipped: inputs_high (all points): absent_from_inputs" in text
+    for name, reason in (("tau0", "no_literal_bound"), ("reserve0", "reserve_capacity")):
+        assert f"- Skipped: {name}, n_L=24, b=150: {reason}" in text
+    assert "80% life-bootstrap" not in text
+    results["points"][0]["variants"]["inputs_low"] = {}
+    assert "inputs_low and inputs_high are the ends of an 80% life-bootstrap interval (expanded percentile, #245 C5). At 16 lives, such an interval covers variance components only about 71-72% (percentile) or 74-75% (expanded), as measured on a one-way normal model." in card.render(manifest, results)
 
 
 def test_full_manifest_canon_and_writer(payload, tmp_path):
@@ -82,7 +97,7 @@ def test_markdown_contents_order_and_portability(payload):
                "The raw-archive marker"]
     not_proven = ("Nothing here bounds real provider drift (P:43).",
                   "M2's fit to bar-2 data is untested (#245, choice 2). The gate's outcome depends on bar-2 inputs that do not exist yet.",
-                  "Exactness is proved for certify and tcal at #251's head only.",
+                  "Exactness is proved for certify and for tcal's α = .05 and .025 tables at #251's head only; tcal's α = .10 table was checked against a 50-digit recomputation that reproduces the other two exactly, and against an independent closed-form check.",
                   "The Image profile's powered size is not addressed (S-37).")
     assert card.EXTRA_CHAINS == missing and card.NOT_PROVEN == not_proven
     assert all(value in text for value in (*missing, *not_proven,

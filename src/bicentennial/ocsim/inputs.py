@@ -9,17 +9,28 @@ and have no A′. Extra ARM keys, including reports, are ignored.
 
 import argparse
 import json
+import math
+import multiprocessing
+import os
 import platform
 import re
-from dataclasses import asdict
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 
 from bicentennial.canon import canon
-from bicentennial.ocsim import locate, model, run
-from bicentennial.stats import variance_inputs
+from bicentennial.ocsim import fitcheck, gaussian, locate, model, run
+from bicentennial.stats import tcal, variance_inputs
 
 NONRESULTS = ("BLOCKED", "N/A_EXPOSURE", "N/A_CLOCK")
+FAILURE_CLASSES = (None, "FAIL_TASK", "SYSTEM_FAILURE", *NONRESULTS)
+TRACKS = ("Wake", "Drift", "Tuesday", "Rachael", "Keep", "Recall", "Faults")
+STAGES = ("remember", "survive", "act")
+UNIT = ("ocsim", "inputs-bootstrap")
+RESAMPLES = 1000
+FAILURES = ("raised", "cells", "rho_t", "g")
 FLAGS = frozenset((
     "twin_undefined", "fc_undefined", "aa_undefined", "rho_x_undefined",
     "rho_x_clamped", "rho_a_undefined", "rho_a_clamped", "icc_undefined",
@@ -48,6 +59,7 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
     _require(isinstance(data, dict) and data.keys() == {"A", "A_prime", "branches"},
              "A/A_prime no_memory/oracle_evidence container", "unknown or missing run/key")
     branches, tracks, indexed, identities, result = data["branches"], {}, {}, {}, []
+    singletons = {}
     _require(isinstance(branches, dict), "branches", "must be an object")
     for iid, branch in branches.items():
         _require(branch in ("B0", "B1"), f"A/A_prime no_memory/oracle_evidence {iid}", "bad branch")
@@ -65,7 +77,9 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
                 at = f"{where} item {iid if isinstance(iid, str) else f'#{index}'}"
                 _require(isinstance(item, dict) and {"item_id", "cell_id", "stage", "track",
                          "failure_class", "score_milli"} <= item.keys()
-                         and isinstance(iid, str) and isinstance(item["cell_id"], str),
+                         and isinstance(iid, str) and isinstance(item["cell_id"], str)
+                         and item["failure_class"] in FAILURE_CLASSES
+                         and item["track"] in TRACKS and item["stage"] in STAGES,
                          at, "malformed item")
                 iid, cell = item["item_id"], item["cell_id"]
                 at = f"{where} item {iid}"
@@ -133,6 +147,14 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
             for iid, life in output["singleton_lives"].items():
                 _require(iid in items and iid not in members and isinstance(life, str),
                          f"{where} item {iid}", "bad singleton")
+            for iid in items.keys() - members.keys():
+                _require(iid in output["singleton_lives"], f"{where} item {iid}", "missing singleton")
+            if name == "A_prime":
+                for iid, life in output["singleton_lives"].items():
+                    _require(singletons[arm].get(iid) == life, f"{where} item {iid}",
+                             "A′ singleton differs from A")
+            else:
+                singletons[arm] = output["singleton_lives"]
             indexed[(name, arm)] = items, bundles
     for iid in branches:
         _require(any(iid in items for items, _ in indexed.values()),
@@ -146,8 +168,91 @@ def load(records: bytes, required: tuple[str, ...]) -> tuple[
             frozenset(cell for cell, track in tracks.items() if track == "Tuesday"))
 
 
-def build(records: bytes, base: bytes, *, root: Path) -> bytes:
-    """Merge point estimates into a complete, reader-validated C9.1 document."""
+@dataclass(frozen=True)
+class _Context:
+    rows: dict
+    draws: tuple
+    timing: frozenset
+    required: tuple
+    alloc: dict
+    margins: dict
+
+
+def _resample(context, r):
+    rows = [replace(row, life=f"boot-{j:03d}", bundle=f"{row.bundle}#{j}")
+            for j, life in enumerate(context.draws[r]) for row in context.rows[life]]
+    flags, params = (), None
+    try:
+        moments = variance_inputs.estimate(rows, timing_cells=context.timing)
+        params, latent = variance_inputs.to_latent(moments)
+        flags = tuple(sorted(set(moments.flags) | set(latent)))
+    except (ValueError, ArithmeticError):
+        return r, "raised", None, params, flags
+    if tuple(c.cell for c in params.cells) != context.required:
+        return r, "cells", None, params, flags
+    if params.rho_t <= -1 + 1e-6:
+        return r, "rho_t", None, params, flags
+    try:
+        _, covariance = gaussian.moments(params, context.alloc, context.margins)
+        g = max(covariance[k][k] for k in range(len(params.cells)))
+        if not math.isfinite(g):
+            raise ValueError("non-finite g")
+    except (ValueError, ArithmeticError):
+        return r, "g", None, params, flags
+    return r, "ok", g, params, flags
+
+
+def _resample_range(context, start, stop):
+    return [_resample(context, r) for r in range(start, stop)]
+
+
+def _ends(results, n, resamples):
+    successes = sorted((row for row in results if row[1] == "ok"), key=lambda row: (row[2], row[0]))
+    i = tcal.index(resamples, tcal.ppm(tcal.EIGHTY_PCT_PPM, n))
+    failed = resamples - len(successes)
+    if failed > i:
+        return None, None
+    return successes[i - failed], successes[resamples - 1 - i]
+
+
+def _check_flags(flags, resamples):
+    def known(flag):
+        return flag in FLAGS or re.fullmatch(r"anova_undefined:(F|C):.+|no_aa:(F|C)", flag)
+    for flag in flags:
+        valid = known(flag) or flag == "inputs_bootstrap_ends_refused"
+        for prefix in ("inputs_bootstrap:", "inputs_bootstrap_failed:", "inputs_bootstrap_failed="):
+            if not flag.startswith(prefix):
+                continue
+            inner, _, count = flag.removeprefix(prefix).rpartition("=")
+            total = prefix == "inputs_bootstrap_failed="
+            if total:
+                count = flag.removeprefix(prefix)
+            pattern = r"(0|[1-9][0-9]*)/([1-9][0-9]*)" if total else r"([1-9][0-9]*)/([1-9][0-9]*)"
+            match = re.fullmatch(pattern, count)
+            valid = bool(match and int(match[2]) == resamples and int(match[1]) <= resamples
+                         and (total or (known(inner) if prefix == "inputs_bootstrap:" else inner in FAILURES)))
+        _require(valid, "latent_flags", f"unknown flag {flag}")
+
+
+def _precheck(params, required, end=""):
+    for cell in params.cells:
+        try:
+            locate.build_table(cell, params.rho_t)
+        except Exception as error:
+            raise ValueError(f"{end}cell {cell.cell} margin table: {error}") from error
+        for config in run.margin_grid(required):
+            margin = dict(config.margins)[cell.cell]
+            try:
+                model.interpolation(cell, margin)
+            except Exception as error:
+                raise ValueError(f"{end}cell {cell.cell} margin {margin}: {error}") from error
+
+
+def build(records: bytes, base: bytes, *, root: Path, workers=1, resamples=RESAMPLES) -> bytes:
+    """Merge point estimates and life-bootstrap ends into a validated C9.1 document."""
+    _require(type(workers) is int and 1 <= workers <= (os.cpu_count() or 1),
+             "workers", "workers must be an int in [1, cpu_count]")
+    _require(type(resamples) is int and resamples > 0, "resamples", "must be a positive int")
     document = json.loads(base)
     required = tuple(document["required"])
     rows, timing = load(records, required)
@@ -156,24 +261,54 @@ def build(records: bytes, base: bytes, *, root: Path) -> bytes:
     params, latent_flags = variance_inputs.to_latent(moments)
     _require(tuple(c.cell for c in params.cells) == required, "latent cells", "must equal required")
     flags = sorted(set(moments.flags) | set(latent_flags))
-    for flag in flags:
-        _require(flag in FLAGS or re.fullmatch(r"anova_undefined:(F|C):.+|no_aa:(F|C)", flag),
-                 "latent_flags", f"unknown flag {flag}")
-    for cell in params.cells:
-        try:
-            locate.build_table(cell, params.rho_t)
-        except Exception as error:
-            raise ValueError(f"cell {cell.cell} margin table: {error}") from error
-        for config in run.margin_grid(required):
-            margin = dict(config.margins)[cell.cell]
-            try:
-                model.interpolation(cell, margin)
-            except Exception as error:
-                raise ValueError(f"cell {cell.cell} margin {margin}: {error}") from error
+    _check_flags(flags, resamples)
+    _precheck(params, required)
     document.update(params=run._encode(asdict(params)), latent_flags=flags, sensitivity_params={},
                     provenance={"platform": platform.platform(), "python": platform.python_version(),
                                 "records_sha256": sha256(records).hexdigest(),
                                 "base_sha256": sha256(base).hexdigest()}, c8_hash=run.c8_hash(root))
+    parsed = run._parse_inputs(canon(document), root=root)
+    alloc = parsed.alloc_by_b[run.LADDER[0][1]]
+    for cell in required:
+        _require(sum(v for (k, _), v in alloc.items() if k == cell) > 0,
+                 "alloc", f"zero count for cell {cell}")
+    lives = tuple(sorted({row.life for row in rows}))
+    context = _Context({life: tuple(row for row in rows if row.life == life) for life in lives},
+                       fitcheck.draws(lives, resamples, UNIT), timing, required, alloc,
+                       dict(run.margin_grid(required)[0].margins))
+    if workers == 1:
+        results = _resample_range(context, 0, resamples)
+    else:
+        results = []
+        width = (resamples + workers - 1) // workers
+        with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+            futures = [pool.submit(_resample_range, context, start, min(start + width, resamples))
+                       for start in range(0, resamples, width)]
+            for future in as_completed(futures):
+                results.extend(future.result())
+        results.sort(key=lambda row: row[0])
+    failed = Counter(row[1] for row in results if row[1] != "ok")
+    counts = Counter(flag for row in results if row[1] == "ok" for flag in set(row[4]))
+    flags += [f"inputs_bootstrap:{flag}={c}/{resamples}" for flag, c in counts.items()]
+    flags += [f"inputs_bootstrap_failed:{kind}={c}/{resamples}" for kind, c in failed.items()]
+    flags += [f"inputs_bootstrap_failed={sum(failed.values())}/{resamples}"]
+    low, high = _ends(results, len(lives), resamples)
+    if low is None:
+        flags.append("inputs_bootstrap_ends_refused")
+    else:
+        for name, end in (("inputs_low", low), ("inputs_high", high)):
+            _precheck(end[3], required, name + " ")
+            document["sensitivity_params"][name] = run._encode(asdict(end[3]))
+    _check_flags(flags, resamples)
+    document["latent_flags"] = sorted(set(flags))
+    document["provenance"]["inputs_bootstrap"] = {
+        "resamples": resamples, "unit": list(UNIT), "seed": fitcheck.SEED,
+        "level_ppm": tcal.ppm(tcal.EIGHTY_PCT_PPM, len(lives)),
+        "index": tcal.index(resamples, tcal.ppm(tcal.EIGHTY_PCT_PPM, len(lives))),
+        "failed": sum(failed.values()), "low_resample": None if low is None else low[0],
+        "high_resample": None if high is None else high[0],
+        "low_g": None if low is None else float.hex(low[2]),
+        "high_g": None if high is None else float.hex(high[2])}
     encoded = canon(document)
     _require(run._parse_inputs(encoded, root=root).params == params, "round trip", "params changed")
     return encoded
@@ -183,10 +318,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("records", "base", "out"):
         parser.add_argument(f"--{name}", required=True, type=Path)
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args(argv)
     _require(not args.out.exists(), str(args.out), "output already exists")
     data = build(args.records.read_bytes(), args.base.read_bytes(),
-                 root=Path(__file__).resolve().parents[3])
+                 root=Path(__file__).resolve().parents[3], workers=args.workers, resamples=RESAMPLES)
     with args.out.open("xb") as target:
         target.write(data)
     print(f"{args.out} {sha256(data).hexdigest()}")
