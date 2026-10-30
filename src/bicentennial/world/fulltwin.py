@@ -132,7 +132,13 @@ def _world(genre, life, seed, directory):
             path.unlink(missing_ok=True)
             raise
     elif genre == "G2":
-        base = build_base(path, seed=seed_text(seed), life=life, scale=scale)
+        existed = path.exists()
+        try:
+            base = build_base(path, seed=seed_text(seed), life=life, scale=scale)
+        except BaseException:
+            if not existed:  # build_base reserved the file before a writer failed
+                path.unlink(missing_ok=True)
+            raise
         db, principal = base.db, base.people.principal
         if base.schedule.to_json() != schedule.to_json():
             db.close()

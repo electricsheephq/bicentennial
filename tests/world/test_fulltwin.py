@@ -79,10 +79,19 @@ def test_failed_world_leaves_no_world(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="^composition$"):
         full._world("G2", "full-g2", 2, tmp_path)
     assert not (tmp_path / "world.B0.db").exists()
+    def failing(path, **kwargs):
+        Path(path).open("xb").close()
+        raise RuntimeError("synthetic writer failure")
+
+    monkeypatch.setattr(full, "build_base", failing)
+    with pytest.raises(RuntimeError, match="^synthetic writer failure$"):
+        full._world("G2", "full-g2", 2, tmp_path)
+    assert not (tmp_path / "world.B0.db").exists()
     (tmp_path / "world.B0.db").write_bytes(b"kept")
-    with pytest.raises(FileExistsError):
-        full._world("G1", "full-g1", 1, tmp_path)
-    assert (tmp_path / "world.B0.db").read_bytes() == b"kept"
+    for genre, life, seed in (("G1", "full-g1", 1), ("G2", "full-g2", 2)):
+        with pytest.raises(FileExistsError):
+            full._world(genre, life, seed, tmp_path)
+        assert (tmp_path / "world.B0.db").read_bytes() == b"kept"
 
 
 def test_hostability_boundary():
