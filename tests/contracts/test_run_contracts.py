@@ -66,6 +66,84 @@ def test_additional_properties_schema():
             validate("receipt", receipt)
 
 
+ENTRY_KEYS = ("arm", "life", "branch", "attempt", "pin_check_ms",
+              "egress_pid_samples", "egress_sample_ms", "sessions")
+SESSION_KEYS = ("session", "kind", "wall", "gate", "egress_wait", "spawn", "import",
+                "open", "turn", "drain", "resume", "shutdown_hook", "close", "finish", "workspace")
+NULLABLE = {"egress_pid_samples", "egress_sample_ms", "wall", "shutdown_hook",
+            "close", "finish", "workspace"}
+ARRAYS = {"gate", "egress_wait", "spawn", "import", "open", "turn", "drain", "resume"}
+
+
+def timing_receipt():
+    receipt = fixture("receipt")
+    session = dict.fromkeys(SESSION_KEYS, 0)
+    session.update(kind="replay", **{k: [0] for k in ARRAYS})
+    entry = dict.fromkeys(ENTRY_KEYS, 0)
+    entry.update(arm="system", life="life", branch="B0", sessions=[session])
+    receipt["timings"] = [entry]
+    validate("receipt", receipt)
+    return receipt
+
+
+@pytest.mark.parametrize("level,key", [*(("entry", k) for k in ENTRY_KEYS),
+                                         *(("session", k) for k in SESSION_KEYS)])
+def test_timing_fields_required_and_closed(level, key):
+    receipt = timing_receipt()
+    entry = receipt["timings"][0]
+    target = entry if level == "entry" else entry["sessions"][0]
+    old = target.pop(key)
+    with pytest.raises(ValueError):
+        validate("receipt", receipt)
+    target[key] = old
+    target["extra"] = 0
+    with pytest.raises(ValueError):
+        validate("receipt", receipt)
+
+
+@pytest.mark.parametrize("level,key", [*(("entry", k) for k in ENTRY_KEYS if k not in {"sessions", "arm", "life", "branch"}),
+                                         *(("session", k) for k in SESSION_KEYS if k not in {"kind", "session"} or k == "session")])
+def test_timing_value_types_and_bounds(level, key):
+    receipt = timing_receipt()
+    row = receipt["timings"][0]
+    target = row if level == "entry" else row["sessions"][0]
+    old = target[key]
+    if key in NULLABLE:
+        target[key] = None
+        validate("receipt", receipt)
+    else:
+        target[key] = None
+        with pytest.raises(ValueError):
+            validate("receipt", receipt)
+    for bad in (-1, True):
+        target[key] = [bad] if key in ARRAYS else bad
+        with pytest.raises(ValueError):
+            validate("receipt", receipt)
+    target[key] = old
+
+
+@pytest.mark.parametrize("level,key", [("entry", k) for k in ("arm", "life", "branch")] + [("session", "kind")])
+def test_timing_names_nonempty(level, key):
+    for bad in ("", None):
+        receipt = timing_receipt()
+        row = receipt["timings"][0]
+        (row if level == "entry" else row["sessions"][0])[key] = bad
+        with pytest.raises(ValueError):
+            validate("receipt", receipt)
+
+
+def test_timing_import_nullable_item_and_receipt_required():
+    receipt = timing_receipt()
+    receipt["timings"][0]["sessions"][0]["import"] = [None, 0]
+    validate("receipt", receipt)
+    receipt["timings"][0]["sessions"] = None
+    with pytest.raises(ValueError):
+        validate("receipt", receipt)
+    del receipt["timings"]
+    with pytest.raises(ValueError):
+        validate("receipt", receipt)
+
+
 def test_micro_life_converts_to_canonical_script(tmp_path):
     source = json.loads((ROOT / "spikes/s6a/micro_life.json").read_bytes())
     script = compile_micro_life(source)

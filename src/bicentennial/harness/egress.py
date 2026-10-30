@@ -6,10 +6,12 @@ On macOS, TCP and UDP rows named exactly `*:*` are unbound sockets and are ignor
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 LOOPBACK = frozenset(("127.0.0.1", "[::1]", "localhost"))
 PLATFORM = sys.platform
+_now = time.monotonic
 
 
 def hosts(name: str) -> list[str]:
@@ -42,6 +44,7 @@ class Egress(threading.Thread):
         super().__init__(name="egress", daemon=True)
         self.interval_s, self.pids, self.per_pid, self.seen = interval_s, set(), {}, set()
         self.samples = self.rss_peak_kib = 0
+        self.sample_ms = 0
         self.commands, self.non_loopback_seen = {}, {}
         self.registered, self.failed_samples, self.alive_at_stop = set(), {}, False
         self.names = {}
@@ -62,6 +65,15 @@ class Egress(threading.Thread):
             self.pids.discard(pid)
 
     def sample(self) -> None:
+        m = _now()
+        try:
+            self._probe()
+        finally:
+            elapsed = int((_now() - m) * 1000)
+            with self._lock:
+                self.sample_ms += elapsed
+
+    def _probe(self) -> None:
         with self._lock:
             tree, todo = set(self.pids), list(self.pids)
         children = {}
@@ -127,7 +139,7 @@ class Egress(threading.Thread):
             return {"alive_at_stop": self.alive_at_stop, "failed_samples": dict(self.failed_samples),
                     "unsampled": sorted(f"egress unsampled pid={p} log={self.names.get(p, '')}"
                                         for p in self.registered if str(p) not in self.per_pid),
-                    "samples": self.samples, "per_pid_samples": dict(self.per_pid),
+                    "samples": self.samples, "per_pid_samples": dict(self.per_pid), "sample_ms": self.sample_ms,
                     "non_loopback": sorted(self.seen), "rss_peak_kib": self.rss_peak_kib,
                     "non_loopback_seen": sorted(f"egress name={n} pid={pid} comm={comm} samples={count}"
                         for n, (pid, comm, count) in self.non_loopback_seen.items())}

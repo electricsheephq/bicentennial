@@ -153,6 +153,30 @@ with no repeated key; the validator rejects any other order.
 | `receipt.temporary_paths` | volatile | RING0 §4 |
 | `receipt.raw_body_digest` | volatile | RING0 §4 |
 | `receipt.egress_failed_samples` | volatile | RING0 §4; RING0 §13 E14 |
+| `receipt.timings` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].arm` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].life` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].branch` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].attempt` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].pin_check_ms` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].egress_pid_samples` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].egress_sample_ms` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].session` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].kind` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].wall` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].gate` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].egress_wait` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].spawn` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].import` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].open` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].turn` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].drain` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].resume` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].shutdown_hook` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].close` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].finish` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
+| `receipt.timings[].sessions[].workspace` | volatile | RING0 §4; RING0 §13 E16; order: `arm`, `life`, `branch`, `attempt` |
 | `receipt.tokens_by_role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
 | `receipt.tokens_by_role[].role` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |
 | `receipt.tokens_by_role[].input` | volatile | RING0 §4; PREREG §10 (by role); order: `role` |

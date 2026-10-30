@@ -299,6 +299,43 @@ def test_sampler_recovers_any_exception(monkeypatch, errors):
         t0._audit([SimpleNamespace(hosts=[SimpleNamespace(records=list, egress=sampler)])])
 
 
+def test_sampler_time_excludes_forking_wait_and_counts_raise(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(egress, "_now", lambda: clock[0])
+    sampler = egress.Egress()
+    sampler.pids.add(40)
+
+    class Forking:
+        def __enter__(self):
+            clock[0] += 1
+
+        def __exit__(self, *args):
+            return False
+
+    sampler.forking = Forking()
+    fail = [False]
+
+    def output(argv):
+        clock[0] += 0.125
+        if argv[0] == "lsof" and fail[0]:
+            raise OSError("synthetic")
+        if argv[:2] == ["ps", "-A"]:
+            return "40 1 40\n"
+        return "8\n" if argv[0] == "ps" else "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+
+    monkeypatch.setattr(egress, "_out", output)
+    sampler._sample()
+    assert sampler.summary()["sample_ms"] == 375
+    fail[0] = True
+    with pytest.raises(OSError):
+        sampler.sample()
+    assert sampler.summary()["sample_ms"] == 750
+    assert sampler.summary()["failed_samples"] == {}
+    sampler._sample()
+    assert sampler.summary()["sample_ms"] == 1125
+    assert sampler.summary()["failed_samples"] == {"OSError": 1}
+
+
 @pytest.mark.parametrize("discard", [False, True])
 def test_stop_samples_late_pid_and_remembers_discard(monkeypatch, discard):
     sampler, done = egress.Egress(interval_s=100), Event()
@@ -373,6 +410,7 @@ def test_sampler_keeps_orphaned_group_members(monkeypatch):
 
 
 def test_sampler_non_loopback_detail(monkeypatch):
+    monkeypatch.setattr(egress, "_now", lambda: 0.0)
     sampler, commands = egress.Egress(), []
     assert sampler.summary()["non_loopback_seen"] == []
 
@@ -393,7 +431,7 @@ def test_sampler_non_loopback_detail(monkeypatch):
     sampler.add(40)
     sampler.add(42)
     sampler.sample()
-    assert sampler.summary() == dict(samples=5, per_pid_samples={"40": 3, "42": 2}, rss_peak_kib=8,
+    assert sampler.summary() == dict(samples=5, per_pid_samples={"40": 3, "42": 2}, rss_peak_kib=8, sample_ms=0,
         alive_at_stop=False, failed_samples={}, unsampled=[],
         non_loopback=["*:5353", "192.0.2.1:443"], non_loopback_seen=[
             "egress name=*:5353 pid=40 comm=worker 40 samples=3",
@@ -413,6 +451,7 @@ def test_sampler_non_loopback_detail(monkeypatch):
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
 def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
+    monkeypatch.setattr(egress, "_now", lambda: 0.0)
     sampler, commands = egress.Egress(), []
     rows = ["TCP *:* (CLOSED)", "UDP *:*", "ICMP *:*", "UDP *:5353", "TCP *:8080 (LISTEN)",
             "TCP 10.0.0.1:50000->192.0.2.1:443 (ESTABLISHED)",
@@ -438,7 +477,7 @@ def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
     alone = egress.Egress()
     alone.add(40)
     unbound = [] if platform == "darwin" else ["*:*"]
-    assert alone.summary() == dict(samples=1, per_pid_samples={"40": 1}, rss_peak_kib=8, non_loopback=unbound,
+    assert alone.summary() == dict(samples=1, per_pid_samples={"40": 1}, rss_peak_kib=8, non_loopback=unbound, sample_ms=0,
         alive_at_stop=False, failed_samples={}, unsampled=[],
         non_loopback_seen=[f"egress name={name} pid=40 comm=worker40 samples=1" for name in unbound])
     assert commands == ([] if platform == "darwin" else [40])
@@ -449,7 +488,7 @@ def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
     names = ["*:*", "*:5353", "*:8080", "10.0.0.1:50000->192.0.2.1:443",
              "127.0.0.1:50000->192.0.2.2:443", "192.0.2.3:50000->127.0.0.1:443"]
     first = 41 if platform == "darwin" else 40
-    assert sampler.summary() == dict(samples=5, per_pid_samples={"40": 3, "41": 2}, rss_peak_kib=8,
+    assert sampler.summary() == dict(samples=5, per_pid_samples={"40": 3, "41": 2}, rss_peak_kib=8, sample_ms=0,
         alive_at_stop=False, failed_samples={}, unsampled=[],
         non_loopback=names, non_loopback_seen=[
             f"egress name={name} pid={first if name == '*:*' else 41} "
@@ -503,6 +542,161 @@ def test_relative_checkout_is_absolute_before_spawn(tmp_path, monkeypatch):
         a.close()
     assert seen == [str(tmp_path / "checkout" / ".venv" / "bin" / "python")]
     assert a.checkout == (tmp_path / "checkout").resolve()
+
+
+@pytest.mark.parametrize("hook", [False, True])
+@pytest.mark.parametrize("restart", [False, True])
+def test_session_timing_boundaries_without_worker(tmp_path, monkeypatch, hook, restart):
+    clock = [0.0]
+    monkeypatch.setattr(adapter, "_now", lambda: clock[0])
+
+    def advance(seconds):
+        clock[0] += seconds
+
+    class Forking:
+        def __enter__(self):
+            advance(0.125)
+
+        def __exit__(self, *args):
+            return False
+
+    a = object.__new__(adapter.HermesAdapter)
+    a.script = {"sessions": [{"index": 1, "kind": "replay",
+                               "turns": [{"n": 1, "user": "u", "assistant": "a"}]}]}
+    a.schedule = SimpleNamespace(at=lambda *args: [{"kind": "restart"}] if restart else [])
+    a.paths = {"root": tmp_path, "home": tmp_path, "hermes_home": tmp_path}
+    a.entry = {"surfaces": []}
+    a.entrypoint, a.volatile, a.active_memory_providers = "test-double", [], []
+    a.kill_mode = "boundary"
+    a.egress = SimpleNamespace(forking=Forking())
+    a.director = SimpleNamespace(route={"alias": "main"},
+        start_session=lambda *args: advance(0.5),
+        control=lambda: {"write_failures": 0, "stopped": False, "inflight": 0})
+    a._gate = lambda readings: (advance(0.125), readings.append({"exit": 0, "state": "idle"}))
+
+    def spawn(reason, sid, timings):
+        advance(0.25)  # untimed before_spawn hook
+        advance(0.125)
+        timings["spawn"].append(125)
+        timings["import"].append(None)
+        advance(0.125)
+        timings["open"].append(125)
+        return "sid", 1, False
+
+    a._spawn_open = spawn
+    a._worker = SimpleNamespace(call=lambda **kw: (advance(0.125),
+        {"ok": True, "final": "a", "history": 1})[1])
+    a._drain = lambda: (advance(0.125), 125)[1]
+    a._end = lambda: (advance(0.125), ())[1]
+    a.records = lambda: []
+    a.before_shutdown = (lambda: advance(0.125)) if hook else None
+    monkeypatch.setattr(adapter, "surface_hash", lambda *args: (advance(0.125), "digest")[1])
+    result = a.run_session(1, sim_t_s=0, lock_hash="hash", attempt_id="attempt")
+    t = result.timings_ms
+    assert result.surface_hash == "digest"
+    assert t["gate"] == t["spawn"] == t["open"] == [125] * (2 if restart else 1)
+    assert t["egress_wait"] == t["turn"] == [125]
+    assert t["drain"] == [125, 125] and t["import"] == [None] * (2 if restart else 1)
+    assert t["shutdown_hook"] == (125 if hook else None)
+    assert t["close"] == t["finish"] == 125 and t["resume"] == ([625] if restart else [])
+    assert t["wall"] == 750 + (375 if restart else 0) + sum(
+        t[k] for k in ("close", "finish", "shutdown_hook") if t[k] is not None) + sum(
+        sum(t[k]) for k in ("gate", "egress_wait", "spawn", "open", "turn", "drain"))
+
+
+@pytest.mark.parametrize("imports", [(4321, 1234), (None, None)])
+def test_spawn_import_follows_each_worker(tmp_path, monkeypatch, imports):
+    clock = [0.0]
+    monkeypatch.setattr(adapter, "_now", lambda: clock[0])
+    monkeypatch.setattr(adapter, "validate_paths", lambda paths: None)
+    monkeypatch.setattr(adapter, "hermes_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr(adapter, "write_config", lambda *args: None)
+    monkeypatch.setattr(adapter, "worker_env", lambda *args: {})
+    monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
+    a = object.__new__(adapter.HermesAdapter)
+    a.before_spawn, a._wiped, a.env_server = None, False, None
+    a.toolsets, a.plugin_config, a.plugins_enabled = (), {}, ()
+    a.plugin = a.window = a.context_engine = a.checkout = a.extra_env = None
+    a.memory, a.scripted, a._session_index = True, True, 1
+    a.paths = {"hermes_home": tmp_path, "workspace": tmp_path, "logs": tmp_path}
+    a.server, a.clock, a.argv, a.egress = SimpleNamespace(port=1), SimpleNamespace(path=tmp_path), [], None
+    a.pids, a._alias, a.active_memory_providers = [], "main", []
+    pending = list(imports)
+
+    class Worker:
+        def __init__(self, *args):
+            self.proc = SimpleNamespace(pid=40 + len(a.pids))
+            self.t_import_ms = pending.pop(0)
+            clock[0] += 0.125
+
+        def call(self, **op):
+            clock[0] += 0.125
+            return {"ok": True, "session_id": "sid", "history": 1}
+
+    monkeypatch.setattr(adapter, "_Worker", Worker)
+    t = {"spawn": [], "open": [], "import": []}
+    a._spawn_open("session_start", None, t)
+    a._spawn_open("restart", "sid", t)
+    assert t == {"spawn": [125, 125], "open": [125, 125], "import": list(imports)}
+
+
+@pytest.mark.parametrize("import_ms", [4321, None])
+def test_worker_stores_only_startup_import_without_process(tmp_path, monkeypatch, import_ms):
+    real_call = adapter._Worker.call
+
+    def call(self, **op):
+        reply = real_call(self, **op)
+        if not op and import_ms is not None:
+            reply["t_import_ms"] = import_ms
+        return reply
+
+    def popen(*args, **kwargs):
+        read_in, write_in = os.pipe()
+        read_out, write_out = os.pipe()
+        os.write(write_out, b'{"ready":true}\n')
+        os.close(write_out)
+        handles.append(read_in)
+        return SimpleNamespace(stdin=os.fdopen(write_in, "wb"), stdout=os.fdopen(read_out, "rb"), pid=42)
+
+    handles = []
+    monkeypatch.setattr(adapter._Worker, "call", call)
+    monkeypatch.setattr(adapter.subprocess, "Popen", popen)
+    worker = adapter._Worker([], {}, tmp_path, tmp_path / "stderr")
+    try:
+        assert worker.t_import_ms == import_ms
+    finally:
+        worker.proc.stdin.close()
+        worker.proc.stdout.close()
+        for fd in handles:
+            os.close(fd)
+
+
+def test_pin_timer_excludes_config_and_skips_worker_override(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(adapter, "_now", lambda: clock[0])
+    real_config = adapter.hermes_config
+
+    def config(*args, **kwargs):
+        clock[0] += 1
+        return real_config(*args, **kwargs)
+
+    def pin(*args):
+        clock[0] += 0.125
+        return "fake-pin"
+
+    def serve(director, port):
+        director.run_values["director_port"] = "1234"
+        return SimpleNamespace(port=1234)
+
+    monkeypatch.setattr(adapter, "hermes_config", config)
+    monkeypatch.setattr(adapter, "verify_pin", pin)
+    monkeypatch.setattr(adapter, "serve", serve)
+    monkeypatch.setattr(adapter, "Egress", lambda: SimpleNamespace(start=lambda: None))
+    pinned = make(tmp_path, "pinned-time", faults=[], checkout=tmp_path,
+                  worker_argv=None)
+    overridden = make(tmp_path, "override-time", faults=[])
+    assert pinned.pin_check_ms == 125
+    assert overridden.pin_check_ms == 0
 
 
 @pytest.mark.parametrize("dirname", ["tmp", "workspace", "home", "hermes-home"])

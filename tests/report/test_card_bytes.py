@@ -52,6 +52,12 @@ def example(name):
     return json.loads((ROOT / "tests/fixtures/scoring/contracts.json").read_bytes())["contracts"][name]
 
 
+def test_timing_receipt_prose_is_documented():
+    assert "per-session timings (T1 only)" in (ROOT / "docs/developers/ring0.md").read_text()
+    assert "E16. T1 receipts record session timings" in (ROOT / "specs/ring0/RING0.md").read_text()
+    assert "RING0 §13 E16" in (ROOT / "prereg/CHANGELOG.md").read_text()
+
+
 def fixture():
     return json.loads((ROOT / "tests/fixtures/aggregate/two_lives.json").read_bytes())
 
@@ -340,11 +346,12 @@ def test_receipt_helpers_and_sorting():
     before = copy.deepcopy(args)
     receipt = build_receipt(**args)
     assert receipt["egress_failed_samples"] == {}
+    assert receipt["timings"] == []
     old = example("receipt")
     clean = build_receipt(**{k: v for k, v in old.items() if k not in
         {"canary", "tokens", "latency_summary", "tokens_by_role", "runtime_by_role"}},
         tokens_by_role={"replay_main": (10, 5)}, runtime_by_role={"replay_main": 100})
-    assert clean == dict(old, egress_failed_samples={})
+    assert clean == dict(old, egress_failed_samples={}, timings=[])
     for bad in (None, {"ValueError": -1}, {"ValueError": "1"}):
         changed = dict(receipt, egress_failed_samples=bad)
         if bad is None:

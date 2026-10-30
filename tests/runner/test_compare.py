@@ -751,11 +751,40 @@ def test_receipt_counts_corpus(synth):
     assert receipt["raw_body_digest"] != base["raw_body_digest"]
 
 
+def test_receipt_timing_pool_order_and_missing_egress(synth):
+    arms = {}
+    expected = []
+    for arm, source in synth.arms.items():
+        units = []
+        for unit in source.units:
+            runs = []
+            for n, f in enumerate(unit.runs):
+                if arm in ("system", "no_memory") and n == 0:
+                    timed = replace(f, timings={"pin_check_ms": 125, "sessions": []},
+                                    egress={"samples": 7, "per_pid_samples": {"1": 3},
+                                            "sample_ms": 125} if arm == "system" else {})
+                    runs.append(timed)
+                    expected.append(dict(arm=timed.arm, life=timed.life, branch=timed.branch,
+                        attempt=timed.attempt, pin_check_ms=125,
+                        egress_pid_samples=7 if arm == "system" else None,
+                        egress_sample_ms=125 if arm == "system" else None, sessions=[]))
+                else:
+                    runs.append(replace(f, timings=None))
+            units.append(replace(unit, runs=tuple(runs)))
+        arms[arm] = replace(source, units=tuple(units))
+    run = replace(synth, arms=arms)
+    receipt = compare._receipt(run, "system", "COMPLETE", 0, 10)
+    assert receipt["timings"] == sorted(expected, key=lambda row: (
+        row["arm"], row["life"], row["branch"], row["attempt"]))
+    assert {row["arm"] for row in receipt["timings"]} == {"system", "no_memory"}
+
+
 def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch, cases):
     arms = {}
     for n, (arm, value) in enumerate(synth.arms.items(), 1):
         units = [replace(u, runs=tuple(replace(f, tokens_by_role={"probe_main": (n, 2 * n)},
-            store_growth_bytes=n * 10, process_ids=(100 + n,), egress={"failed_samples": {"ValueError": n}})
+            store_growth_bytes=n * 10, process_ids=(100 + n,), egress={"failed_samples": {"ValueError": n}},
+            timings={"pin_check_ms": 0, "sessions": []})
             for f in u.runs)) for u in value.units]
         arms[arm] = replace(value, units=tuple(units))
     run = replace(synth, arms=arms)
@@ -815,6 +844,7 @@ def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch,
     for arm in compare.GATED:
         receipt = read(out, arm, "receipt.json")
         pooled = compare._runs(run, ("system", "no_memory") if arm == "system" else ("wiped",))
+        assert len(receipt["timings"]) == len(pooled)
         count = 4 * len(cases)
         factor = 1 if arm == "system" else 2
         assert len(hosts[arm]) == count

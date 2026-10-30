@@ -292,6 +292,11 @@ def _provisional(run, arm, wiped_store, *, base, out):
 
 def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corpus_measurements=()):
     runs = _runs(run, (arm, "no_memory") if arm == "system" else (arm,))
+    timings = [dict(arm=f.arm, life=f.life, branch=f.branch, attempt=f.attempt,
+                    pin_check_ms=f.timings["pin_check_ms"], egress_pid_samples=f.egress.get("samples"),
+                    egress_sample_ms=f.egress.get("sample_ms"), sessions=f.timings["sessions"])
+               for f in runs if f.timings is not None]
+    timings.sort(key=lambda row: (row["arm"], row["life"], row["branch"], row["attempt"]))
     # The arm's corpus hosts ran inside this run's wall time, so their requests and busy readings count.
     rows = [r for f in runs for r in f.records] + list(corpus_rows)
     runtime = {}
@@ -317,6 +322,7 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corp
         store_growth_bytes=sum(m["growth"] for m in evidence),
         process_ids=[p for m in evidence for p in m["pids"]],
         egress_failed_samples=failed_samples,
+        timings=timings,
         ports=[int(r.run_values["director_port"]) for r in runs if r.run_values] + [
             p for m in corpus_measurements for p in m["ports"]],
         temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values] + [

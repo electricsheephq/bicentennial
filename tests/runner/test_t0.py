@@ -1088,6 +1088,7 @@ def test_baseline_fault_verdict(installed, tmp_path, monkeypatch, baseline_cause
     assert card["gate_verdict"] == ("FAIL" if selected_failure else "BLOCKED" if blocked else "PASS")
     receipt = json.loads((out / pack.rel / "receipt.json").read_bytes())
     validate("receipt", receipt)
+    assert receipt["timings"] == []
     assert receipt["run_status"] == card["run_status"]
     if not selected_failure:
         assert all(i["failure_class"] not in ("SYSTEM_FAILURE", "BLOCKED") for i in card["items"])

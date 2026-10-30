@@ -39,6 +39,7 @@ ENTRYPOINT = "acp_adapter.session.SessionManager in process (S6a fallback)"
 WORKER = Path(__file__).resolve().with_name("worker.py")
 DRAIN_QUIET_S, DRAIN_CAP_S, EXIT_TIMEOUT_S = 3.0, 240.0, 300
 STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 3600, 300
+_now = time.monotonic
 
 
 class PinMismatch(RuntimeError):
@@ -74,7 +75,7 @@ class SessionResult:
 
 
 def _ms(t0: float) -> int:
-    return int((time.monotonic() - t0) * 1000)
+    return int((_now() - t0) * 1000)
 
 
 def _group_survivors(pgid) -> list[int]:
@@ -116,7 +117,9 @@ class _Worker:
         try:
             if self.egress is not None:
                 self.egress.add(self.proc.pid, Path(log).name)
-            if not (self.call() or {}).get("ready"):
+            ready = self.call() or {}
+            self.t_import_ms = ready.get("t_import_ms")
+            if not ready.get("ready"):
                 raise HarnessFailed("worker_start")
         except BaseException:
             self.kill()
@@ -217,10 +220,13 @@ class HermesAdapter:
         self.plugin_config, self.active_memory_providers = deepcopy(plugin_config or {}), []
         checkout = Path(checkout).resolve() if checkout is not None else None
         self.commit = None
+        self.pin_check_ms = 0
         if worker_argv is None:
             if checkout is None or harness_pin is None:
                 raise ValueError("a pinned checkout and its harness pin are required")
+            m = _now()
             self.commit = verify_pin(checkout, harness_pin)
+            self.pin_check_ms = _ms(m)
             worker_argv = [str(Path(checkout) / ".venv" / "bin" / "python"), str(WORKER)]
         self.entry, self.script, self.schedule, self.clock = entry, script, schedule, clock
         self.checkout, self.plugin, self.kill_mode, self.argv = checkout, plugin, kill_mode, list(worker_argv)
@@ -242,15 +248,21 @@ class HermesAdapter:
         self.egress.start()
 
     def run_session(self, index, *, sim_t_s, lock_hash, attempt_id, resume_session_id=None) -> SessionResult:
+        wall = _now()
         self._session_index = index
         session, d = next(s for s in self.script["sessions"] if s["index"] == index), self.director
         gate, restarts, finals, compaction, self._wiped = [], [], [], False, False
         self.end_threads = None
-        t = {"spawn": [], "open": [], "turn": [], "drain": [], "resume": []}
+        t = {k: [] for k in ("spawn", "import", "open", "turn", "drain", "resume", "gate", "egress_wait")}
+        t["shutdown_hook"] = None
         failures = None
         try:
+            m = _now()
             self._gate(gate)
+            t["gate"].append(_ms(m))
+            m = _now()
             with self.egress.forking:  # no sampler fork may hold the ledger's flock while it is reopened
+                t["egress_wait"].append(_ms(m))
                 d.start_session(index, sim_t_s, lock_hash, attempt_id, self.paths["root"] / "ledger")
             self._alias = d.route["alias"]  # a swap reaches Hermes's config at session start (RING0 §6)
             sid, history, _ = self._spawn_open("session_start", resume_session_id, t)
@@ -258,7 +270,7 @@ class HermesAdapter:
             for turn in session["turns"]:
                 n, faults = turn["n"], self.schedule.at(index, turn["n"])
                 held = self.kill_mode == "held" and any(f["kind"] == "kill" for f in faults)
-                self._held, t0 = (index, n) if held else None, time.monotonic()
+                self._held, t0 = (index, n) if held else None, _now()
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
                 t["drain"].append(self._drain())
@@ -280,8 +292,10 @@ class HermesAdapter:
                     if held and not killed:
                         raise HarnessFailed("held_kill_missed")
                     self._worker.kill() if f["kind"] == "kill" else self._end()  # restart: a clean end
-                    t0, mode = time.monotonic(), "clean" if f["kind"] == "restart" else self.kill_mode
+                    t0, mode = _now(), "clean" if f["kind"] == "restart" else self.kill_mode
+                    m = _now()
                     self._gate(gate)
+                    t["gate"].append(_ms(m))
                     new_sid, after, wiped = self._spawn_open(f["kind"], sid, t)
                     if wiped:  # a control wipe on this wake: a fresh session, no history check (A2)
                         sid = new_sid
@@ -293,8 +307,10 @@ class HermesAdapter:
                     t["resume"].append(_ms(t0))
             t["drain"].append(self._drain())
             if self.before_shutdown is not None:
+                m = _now()
                 self.before_shutdown()
-            t0 = time.monotonic()
+                t["shutdown_hook"] = _ms(m)
+            t0 = _now()
             end_threads = self._end()
             self.end_threads = end_threads
             c = d.control()
@@ -316,12 +332,16 @@ class HermesAdapter:
             raise
         finally:
             self._held = None
+        m = _now()
         from bicentennial.systems.hermes_plugin import checkpoint_sqlite
         roots = {"HERMES_HOME": self.paths["hermes_home"], "SANDBOX_HOME": self.paths["home"]}
         checkpoint_sqlite(roots[s["root"]] / s["relative"] for s in self.entry["surfaces"])
         summarised = sum(r.get("role") == "summariser" and r.get("attempt_id") == attempt_id for r in self.records())
+        digest = surface_hash(self.paths["hermes_home"], self.volatile)
+        t["finish"] = _ms(m)
+        t["wall"] = _ms(wall)
         return SessionResult(index, session["kind"], sid, self.entrypoint, turns_ok, matched, tuple(restarts),
-                             compaction, summarised, surface_hash(self.paths["hermes_home"], self.volatile),
+                             compaction, summarised, digest,
                              tuple(gate), t, tuple(finals), "control_wipe" if self._wiped else None,
                              tuple(self.active_memory_providers), end_threads)
 
@@ -356,14 +376,15 @@ class HermesAdapter:
                                                             context_engine=self.context_engine,
                                                             plugins_enabled=self.plugins_enabled,
                                                             scripted=self.scripted))
-        t0 = time.monotonic()
+        t0 = _now()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress)
         self.pids.append(self._worker.proc.pid)  # recorded before the check, as the memory host does
         assert_niced(self.pids[-1])
         t["spawn"].append(_ms(t0))
-        t0 = time.monotonic()
+        t.setdefault("import", []).append(getattr(self._worker, "t_import_ms", None))
+        t0 = _now()
         out = self._worker.call(op="open", session_id=sid, cwd=str(self.paths["workspace"]))
         if out is None or not out.get("ok") or (sid is not None and out.get("session_id") != sid):
             raise HarnessFailed("open_failed" if sid is None else "resume_failed")
@@ -389,12 +410,12 @@ class HermesAdapter:
 
     def _drain(self) -> int:
         """Wait for DRAIN_QUIET_S with nothing in flight (background titles and reviews), as replay.py 169-180."""
-        t0, calm = time.monotonic(), None
+        t0, m0, calm = time.monotonic(), _now(), None
         while time.monotonic() - t0 < DRAIN_CAP_S:
             if self.director.control()["inflight"] == 0:
                 calm = calm or time.monotonic()
                 if time.monotonic() - calm >= DRAIN_QUIET_S:
-                    return _ms(t0)
+                    return _ms(m0)
             else:
                 calm = None
             time.sleep(min(0.5, DRAIN_QUIET_S / 4))

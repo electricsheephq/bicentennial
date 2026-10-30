@@ -265,6 +265,69 @@ def completed_sessions(monkeypatch):
     monkeypatch.setattr(adapter.HermesAdapter, "run_session", run_session)
 
 
+def offline_life_adapter(monkeypatch):
+    def serve(director, port):
+        director.run_values["director_port"] = "1234"
+        return SimpleNamespace(port=1234)
+
+    monkeypatch.setattr(adapter, "serve", serve)
+    monkeypatch.setattr(adapter, "shutdown", lambda server: None)
+    monkeypatch.setattr(adapter, "Egress", lambda: SimpleNamespace(
+        start=lambda: None, stop=lambda: None,
+        summary=lambda: {"samples": 0, "sample_ms": 0, "failed_samples": {}, "non_loopback": []}))
+
+
+def test_workspace_timing_tracks_each_rebuild(lives, tmp_path, monkeypatch, completed_sessions):
+    offline_life_adapter(monkeypatch)
+    clock, calls = [0.0], []
+    monkeypatch.setattr(runner, "_now", lambda: clock[0])
+    real = runner.materialize
+
+    def materialize(*args, **kwargs):
+        result = real(*args, **kwargs)
+        clock[0] += 0.125 * (len(calls) + 1)
+        calls.append(125 * (len(calls) + 1))
+        return result
+
+    gate = SessionGate(build_lock(**json.loads((ROOT / "tests/fixtures/run/contracts.json").read_bytes())["contracts"]["lock"]))
+    start = gate.start_session
+
+    def start_session(*args):
+        clock[0] += 0.5
+        return start(*args)
+
+    monkeypatch.setattr(gate, "start_session", start_session)
+    monkeypatch.setattr(runner, "materialize", materialize)
+    result = drive(lives["t1-g1", "B0"], tmp_path, gate=gate)
+    measured = [s["workspace"] for s in result.timings["sessions"] if s["workspace"] is not None]
+    assert len(measured) >= 2 and measured == calls[:len(measured)]
+    assert any(s["workspace"] is None for s in result.timings["sessions"])
+    assert all(s["gate"] == [] and s["wall"] is None for s in result.timings["sessions"])
+    assert result.timings["pin_check_ms"] == 0
+
+
+def test_failed_session_is_not_carried_and_no_adapter_has_no_timings(
+        lives, tmp_path, monkeypatch, completed_sessions):
+    offline_life_adapter(monkeypatch)
+    original = adapter.HermesAdapter.run_session
+
+    def second_raises(self, index, **kwargs):
+        if index == 2:
+            raise HarnessFailed("turn_failed")
+        return original(self, index, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", second_raises)
+    result = drive(lives["t1-g1", "B0"], tmp_path / "failed")
+    assert [s["session"] for s in result.timings["sessions"]] == [1]
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("synthetic constructor failure")
+
+    monkeypatch.setattr(runner, "HermesAdapter", broken)
+    absent = drive(lives["t1-g1", "B0"], tmp_path / "absent")
+    assert absent.timings is None
+
+
 @pytest.mark.parametrize("arm", ["system", "wiped"])
 @pytest.mark.parametrize("other_failure", [False, True])
 def test_audit_effect_gaps_by_arm(lives, tmp_path, monkeypatch, completed_sessions, arm, other_failure):

@@ -327,6 +327,8 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 
 - **E15. The port mask matches whole numbers only (#278)** (§4). A bare director-port match could rewrite part of an unrelated number, making masked output and digests depend on the port a run drew. From the next kit, run values made only of ASCII digits match only with no adjacent ASCII digit: `(?<![0-9])<escaped value>(?![0-9])`. Other run values, including the sandbox root, keep bare matches; director-id and pattern precedence stay unchanged. The fresh-install mask (§13 E4) uses the same boundary within its existing file and loopback-address scope; there it changes nothing, since its pattern already required the address before the port and no digit after it. Masked output and digests are unchanged wherever no collision occurred. It was found while diagnosing #71; whether it explains #71's divergence is recorded there. v0.1's frozen kit keeps the bare match, and its published masked digests used it.
 
+- **E16. T1 receipts record session timings (#267)** (§4). From the next kit, T1 receipts carry `timings`: per run, the adapter pin check, egress pid sample count and sampler time; per completed session, wall time, gates, egress lock wait, worker spawn and import, open, turns, drains, resumes, shutdown hook, close, finish and G1 workspace rebuild. These values are volatile. A respawn's gate wait, spawn and open appear in their own fields and also in `resume`; `import` is part of `spawn`; `spawn` includes a registration sample, which `egress_sample_ms` also counts. Corpus hosts' pin checks are not timed. Cards and every other receipt value are unchanged. v0.1's frozen kit writes no timings.
+
 ## References
 
 - PREREG-v0.4:

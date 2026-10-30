@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import time
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -71,6 +72,7 @@ from bicentennial.world.schedule import build_schedule
 from bicentennial.world.targeted import expected_state
 
 ARMS = ("system", "wiped", "no_memory")
+_now = time.monotonic
 STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
@@ -114,6 +116,7 @@ class LifeRun:
     tokens_by_role: dict = field(default_factory=dict)
     store_growth_bytes: int = 0
     process_ids: tuple = ()
+    timings: dict | None = None
     _root: Path | None = field(default=None, repr=False)
 
     def cleanup(self):
@@ -264,6 +267,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
     root.mkdir(parents=True, exist_ok=True)
     evidence = LifeRun(arm, life["life"], branch, attempt, _root=root)
     sessions, transforms, adapter = [], [], None
+    workspace_ms = {}
     stopped, hooks, verified = None, (), {}
     initial_bytes = None
     with closing(open_world(life_dir / f"world.{branch}.db", readonly=True)) as db:
@@ -354,11 +358,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 try:
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
                     if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
+                        m = _now()
                         shutil.rmtree(paths["workspace"])
                         boundary = end_boundary(schedule, probe.checkpoint) if probe else start_boundary(schedule, index)
                         materialize(db, schedule, branch=branch, boundary=boundary, root=paths["workspace"])
                         if probe and workspace_hash(paths["workspace"]) != expected[probe.checkpoint]["repo_tree_hash"]:
                             raise HarnessFailed("workspace_state")
+                        workspace_ms[index] = int((_now() - m) * 1000)
                     instant = probe.sim_t_s if probe else schedule.sessions[index - 1].turn_t[0] - TURN_S
                     clock.set_session(instant, step_s=STEP_S if probe else TURN_S)
                     with ExitStack() as stack:
@@ -457,11 +463,17 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
         ids, requests = _pair_inputs(root / "run" / "ledger", rows, kill, genre)
+        timings = {"pin_check_ms": adapter.pin_check_ms, "sessions": [{
+            "session": s.session, "kind": s.kind, "workspace": workspace_ms.get(s.session),
+            **{k: s.timings_ms.get(k, []) for k in (
+                "gate", "egress_wait", "spawn", "import", "open", "turn", "drain", "resume")},
+            **{k: s.timings_ms.get(k) for k in ("wall", "shutdown_hook", "close", "finish")},
+        } for s in sessions]}
         return replace(evidence, results=dict(sorted(responder.results().items())), transforms=tuple(sorted(transforms)),
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
             post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin, arm),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
-            egress=egress, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified,
+            egress=egress, timings=timings, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified,
             tokens_by_role=_tokens(root / "run" / "ledger", rows), process_ids=tuple(adapter.pids),
             store_growth_bytes=_surface_bytes(surfaces) - initial_bytes if initial_bytes is not None else 0)
