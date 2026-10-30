@@ -47,6 +47,44 @@ def test_budget_shape_before_world(budget, monkeypatch, tmp_path):
     assert not (tmp_path / "out").exists()
 
 
+def test_refused_budget_leaves_no_world(monkeypatch, tmp_path):
+    # A structurally valid but unmet budget must not block a corrected retry in the same directory.
+    def world(genre, life, seed, directory):
+        (Path(directory) / "world.B0.db").open("xb").close()
+        return SimpleNamespace(close=lambda: None), None, None
+
+    monkeypatch.setattr(full, "_world", world)
+    monkeypatch.setattr(full, "_compiler", lambda *args: None)
+    monkeypatch.setattr(full, "candidates", lambda genre: [])
+    for _ in range(2):
+        with pytest.raises(ValueError, match="^budget:DRIFT-CUR@20:0/1$"):
+            full.build("G1", "test", 1, [["DRIFT-CUR", 20, 1]], tmp_path / "out")
+        assert not (tmp_path / "out" / "world.B0.db").exists()
+
+
+def test_failed_world_leaves_no_world(monkeypatch, tmp_path):
+    def broken(db, schedule):
+        raise RuntimeError("synthetic")
+
+    def mismatched(path, **kwargs):
+        Path(path).open("xb").close()
+        return SimpleNamespace(db=SimpleNamespace(close=lambda: None), people=SimpleNamespace(principal="p"),
+                               schedule=SimpleNamespace(to_json=lambda: None))
+
+    monkeypatch.setattr(full, "build_g1", broken)
+    monkeypatch.setattr(full, "build_base", mismatched)
+    with pytest.raises(RuntimeError, match="^synthetic$"):
+        full._world("G1", "full-g1", 1, tmp_path)
+    assert not (tmp_path / "world.B0.db").exists()
+    with pytest.raises(ValueError, match="^composition$"):
+        full._world("G2", "full-g2", 2, tmp_path)
+    assert not (tmp_path / "world.B0.db").exists()
+    (tmp_path / "world.B0.db").write_bytes(b"kept")
+    with pytest.raises(FileExistsError):
+        full._world("G1", "full-g1", 1, tmp_path)
+    assert (tmp_path / "world.B0.db").read_bytes() == b"kept"
+
+
 def test_hostability_boundary():
     table = [candidate()]
     with pytest.raises(ValueError, match="^budget:DRIFT-CUR@20:0/1$"):

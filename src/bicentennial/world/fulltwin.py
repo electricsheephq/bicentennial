@@ -129,12 +129,14 @@ def _world(genre, life, seed, directory):
             db.commit()
         except BaseException:
             db.close()
+            path.unlink(missing_ok=True)
             raise
     elif genre == "G2":
         base = build_base(path, seed=seed_text(seed), life=life, scale=scale)
         db, principal = base.db, base.people.principal
         if base.schedule.to_json() != schedule.to_json():
             db.close()
+            path.unlink(missing_ok=True)
             raise ValueError("composition")
     else:
         raise ValueError("genre")
@@ -170,8 +172,12 @@ def build(genre, life, seed, budget, out_dir) -> FullTwin:
         twin = twin_life(db, schedule, G1 if genre == "G1" else G2, bindings=bindings,
                          world_path=out_dir / "world.B1.db", out_dir=out_dir / "branches",
                          principal_id=principal, expected_state=expected_state(genre, schedule))
-    finally:
+    except BaseException:
+        # This call reserved world.B0.db, so a refused or failed build leaves no partial world.
         db.close()
+        (out_dir / "world.B0.db").unlink(missing_ok=True)
+        raise
+    db.close()
     (out_dir / "bindings.json").write_bytes(canon([asdict(b) for b in sorted(
         bindings, key=lambda b: (b.template_id, b.fields, b.checkpoint))]) + b"\n")
     records = {r["item_id"]: r for r in twin.compiled.records}
@@ -189,9 +195,13 @@ def capacity(genre, life, seed, work_dir):
     db, schedule, principal = _world(genre, life, seed, work_dir)
     try:
         compile_one = _compiler(db, schedule, principal, genre)
-        return {(cell, checkpoint): len({c.fixture for c in table
-                if c.template.cell_id == cell and accepts(c.binding(checkpoint), compile_one)})
-                for cell in sorted({c.template.cell_id for c in table})
-                for checkpoint in schedule.scale.checkpoints}
-    finally:
+        result = {(cell, checkpoint): len({c.fixture for c in table
+                  if c.template.cell_id == cell and accepts(c.binding(checkpoint), compile_one)})
+                  for cell in sorted({c.template.cell_id for c in table})
+                  for checkpoint in schedule.scale.checkpoints}
+    except BaseException:
         db.close()
+        (Path(work_dir) / "world.B0.db").unlink(missing_ok=True)
+        raise
+    db.close()
+    return result
