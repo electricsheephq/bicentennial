@@ -191,6 +191,8 @@ if v >= (3, 42):
                "datetime('subsec','utc') = datetime('now','subsec')",
                "datetime('subsec','auto') = datetime('now','subsec')",
                "unixepoch('subsec','auto') = unixepoch('now','subsec')",
+               "datetime('subsec','localtime','utc') = datetime('now','localtime','utc')",
+               "unixepoch('subsec','localtime','utc') = unixepoch('now','localtime','utc')",
                "julianday('subsec') = julianday('now')",
                "unixepoch('subsec') = unixepoch('now','subsec')",
                "strftime('%Y-%m-%d %H:%M:%f','subsec') = strftime('%Y-%m-%d %H:%M:%f','now')"]
@@ -204,7 +206,7 @@ print(json.dumps([[c.execute('SELECT ' + q).fetchone()[0] for q in checks],
     assert actual.returncode == expected.returncode == 0, actual.stderr + expected.stderr
     relations, values, version = json.loads(actual.stdout)
     assert relations == json.loads(expected.stdout)[0]
-    if tuple(version) >= (3, 46):  # 'utc' and 'localtime' became no-ops on 'now' in 3.46
+    if tuple(version) >= (3, 46):  # 'utc' became a no-op on 'now' in 3.46; 'localtime' still converts
         assert all(relations), relations
         assert values[0] == "2025-03-03 09:00:00"
     if tuple(version) >= (3, 42):

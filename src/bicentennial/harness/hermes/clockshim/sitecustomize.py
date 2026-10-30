@@ -165,7 +165,7 @@ def _install_sqlite(clock):
                     values = [instant()]
                 else:
                     indices = range(2) if name == "timediff" else [int(name == "strftime")]
-                    subsec = False
+                    subsec = None
                     for index in indices:
                         if index == len(values) and (name != "strftime" or values):
                             values.append(instant())
@@ -174,12 +174,17 @@ def _install_sqlite(clock):
                             if word in ("now", b"now"):
                                 values[index] = instant()
                             elif word in ("subsec", "subsecond", b"subsec", b"subsecond"):
-                                # SQLite reads these as 'now' plus the subsec modifier. It goes last:
-                                # 'auto', 'julianday' and 'unixepoch' must follow the time-value.
+                                # SQLite reads these as 'now' and turns subsec on before any modifier runs,
+                                # so a converting 'utc' clears it: the modifier goes after the time-value.
                                 values[index] = instant()
-                                subsec = name != "timediff"
-                    if subsec:
-                        values.append("subsec")
+                                subsec = None if name == "timediff" else index + 1
+                    if subsec is not None:
+                        # 'auto', 'julianday' and 'unixepoch' must stay the first modifier.
+                        first = values[subsec] if subsec < len(values) else None
+                        if isinstance(first, (str, bytes)) and first.lower() in (
+                                "auto", "julianday", "unixepoch", b"auto", b"julianday", b"unixepoch"):
+                            subsec += 1
+                        values.insert(subsec, "subsec")
                 with lock:
                     return delegate.execute(f"SELECT {target}({','.join('?' for _ in values)})", values).fetchone()[0]
             return call
