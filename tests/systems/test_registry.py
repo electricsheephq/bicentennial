@@ -249,7 +249,7 @@ def test_shipped_telemetry_policy_from_other_directory(tmp_path, monkeypatch):
 def test_telemetry_switch_exact_value(monkeypatch, capsys, value):
     monkeypatch.setitem(hp.WORKER_ENV, "omega", {} if value is None else {"ORT_DISABLE_TELEMETRY": value})
     entry = measured() | {"name": "omega"}
-    reason = "telemetry_switch_missing:onnxruntime"
+    reason = "telemetry_switch_missing:onnxruntime:ORT_DISABLE_TELEMETRY=1"
     assert check(entry) == [reason]
     with pytest.raises(SystemRefused) as error:
         admit_system(entry, operator="other")
@@ -270,7 +270,7 @@ def test_telemetry_lock_pins(tmp_path, monkeypatch, text, refused):
     monkeypatch.setitem(hp.DEPENDENCIES, "omega", path)
     monkeypatch.delitem(hp.WORKER_ENV, "omega")
     assert check(measured() | {"name": "omega"}) == (
-        ["telemetry_switch_missing:onnxruntime"] if refused else [])
+        ["telemetry_switch_missing:onnxruntime:ORT_DISABLE_TELEMETRY=1"] if refused else [])
 
 
 def test_telemetry_lock_unreadable(tmp_path, monkeypatch):
@@ -293,12 +293,12 @@ def test_telemetry_reasons_sorted_after_recall(tmp_path, monkeypatch):
     monkeypatch.setitem(hp.WORKER_ENV, "omega", {})
     entry = measured() | {"name": "omega", "extra": True}
     entry["recall"]["argument_template"] = {"query": "{gold}"}
-    assert check(entry) == ["recall_placeholder", *("telemetry_switch_missing:" + package
+    assert check(entry) == ["recall_placeholder", *("telemetry_switch_missing:" + package + ":ORT_DISABLE_TELEMETRY=1"
         for package in ("aaa", "onnxruntime", "zzz"))]
 
 
 def test_telemetry_guide_rows():
     text = (ROOT / "docs/developers/ring0.md").read_text()
-    for reason in ("telemetry_switch_missing:<package>", "telemetry_lock_unreadable"):
+    for reason in ("telemetry_switch_missing:<package>:<switch>=<value>", "telemetry_lock_unreadable"):
         row = next(line for line in text.splitlines() if line.startswith(f"| `{reason}` |"))
         assert all(value in row for value in ("onnxruntime", "ORT_DISABLE_TELEMETRY=1", "#266"))

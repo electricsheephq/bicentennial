@@ -115,7 +115,7 @@ def check(entry) -> list[str]:
                     pins.add(normalise(pin[1]))
             for package, (switch, value) in sorted(TELEMETRY_SWITCHES.items()):
                 if package in pins and WORKER_ENV.get(name, {}).get(switch) != value:
-                    reasons.append("telemetry_switch_missing:" + package)
+                    reasons.append("telemetry_switch_missing:" + package + ":" + switch + "=" + value)
     try:
         validate("system", entry)
     except ValueError:
