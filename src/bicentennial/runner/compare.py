@@ -213,7 +213,7 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
     """Retry corpus infrastructure faults, retaining isolation and receipt evidence before cleanup."""
     results = []
     for case in sorted(cases, key=lambda c: c.case_id):
-        for attempt in range(3):
+        for _attempt in range(3):
             unit = Path(work)
             unit.mkdir(parents=True)
             held, hosts = [], []

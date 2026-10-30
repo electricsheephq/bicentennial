@@ -139,10 +139,12 @@ def test_slot_validation_before_execution(synth, installed, tmp_path, monkeypatc
     # T0 uses a reference preparation and must still validate without taking a lease.
     if runner == "t0":
         monkeypatch.setattr(t0, "_preflight", lambda **kw: ())
-        invoke = lambda out: t0.run_t0(system="reference", packs=[], packs_dir="unused",
-            pack_hash="unused", out=out, sandbox_slot=10)
+        def invoke(out):
+            return t0.run_t0(system="reference", packs=[], packs_dir="unused",
+                             pack_hash="unused", out=out, sandbox_slot=10)
     else:
-        invoke = lambda out: acceptance.invoke(installed, out, sandbox_slot=10)
+        def invoke(out):
+            return acceptance.invoke(installed, out, sandbox_slot=10)
     out = tmp_path / runner
     assert invoke(out) == 3
     assert json.loads((out / "refusal.json").read_bytes())["code"] == "sandbox_slot"
