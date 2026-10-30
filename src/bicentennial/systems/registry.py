@@ -56,6 +56,13 @@ def check(entry) -> list[str]:
     """Return ordered, deduplicated policy refusals, or schema_invalid as fallback."""
     if not isinstance(entry, dict):
         return ["schema_invalid"]
+    from bicentennial.systems.hermes_plugin import (
+        DEPENDENCIES,
+        TELEMETRY_SWITCHES,
+        WORKER_ENV,
+        normalise,
+    )
+
     reasons = []
     artifact = entry.get("artifact")
     artifact = artifact if isinstance(artifact, dict) else {}
@@ -90,6 +97,25 @@ def check(entry) -> list[str]:
     recall = entry.get("recall")
     if isinstance(recall, dict) and _placeholder(recall.get("argument_template")):
         reasons.append("recall_placeholder")
+    name = entry.get("name")
+    lock = DEPENDENCIES.get(name) if isinstance(name, str) else None
+    if lock is not None:
+        try:
+            text = (REGISTRY.parents[1] / lock).read_text()
+        except (OSError, UnicodeError):
+            reasons.append("telemetry_lock_unreadable")
+        else:
+            pins = set()
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith(("#", "--hash")):
+                    continue
+                pin = re.match(r"([A-Za-z0-9][A-Za-z0-9._-]*)==[^\s;\\]+", line)
+                if pin:
+                    pins.add(normalise(pin[1]))
+            for package, (switch, value) in sorted(TELEMETRY_SWITCHES.items()):
+                if package in pins and WORKER_ENV.get(name, {}).get(switch) != value:
+                    reasons.append("telemetry_switch_missing:" + package)
     try:
         validate("system", entry)
     except ValueError:

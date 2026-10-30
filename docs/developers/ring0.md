@@ -123,6 +123,8 @@ Admission reasons are:
 | `compaction_alias_mismatch` | Compaction route names an alias other than `bicentennial-summariser`, the one the director serves for compaction. |
 | `state_path_undeclared` | Unsafe surface path, or write tools/model routes without surfaces. |
 | `recall_placeholder` | Recall template has a placeholder other than `{prompt}`. |
+| `telemetry_switch_missing:<package>` | Dependency lock pins a known default-telemetry package without its exact worker switch: `onnxruntime` requires `ORT_DISABLE_TELEMETRY=1` ([#266](https://github.com/electricsheephq/bicentennial/issues/266#issuecomment-6496219375)). |
+| `telemetry_lock_unreadable` | Dependency lock cannot be read to check known telemetry switches, including `onnxruntime`'s `ORT_DISABLE_TELEMETRY=1` ([#266](https://github.com/electricsheephq/bicentennial/issues/266#issuecomment-6496219375)). |
 | `schema_invalid` | Schema validation fails without a more specific policy reason. |
 | `benchmark_operator_forbidden` | Benchmark operator requests an entry forbidding its runs. |
 | `unmeasured:artifact.sha256` | Artifact hash is the all-zero placeholder. |
