@@ -1,4 +1,5 @@
-"""Read v0.1 output trees and publish deterministic acceptance evidence."""
+"""Read v0.1 output trees and publish deterministic acceptance evidence.
+Checks output of its own checkout's kit; v0.1 output is checked at kit commit db9c0c5."""
 
 import argparse
 import hashlib

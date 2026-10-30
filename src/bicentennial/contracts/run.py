@@ -83,6 +83,9 @@ def _check(schema, value, path="$"):
             raise ValueError(f"{path}: missing={sorted(missing)}, extra={sorted(extra)}")
         for key in value.keys() & props.keys():
             _check(props[key], value[key], f"{path}[{json.dumps(key)}]")
+        if isinstance(schema.get("additionalProperties"), dict):
+            for key in extra:
+                _check(schema["additionalProperties"], value[key], f"{path}[{json.dumps(key)}]")
     if isinstance(value, list) and "items" in schema:
         for index, child in enumerate(value):
             _check(schema["items"], child, f"{path}[{index}]")

@@ -115,7 +115,7 @@ class _Worker:
         os.set_blocking(self.proc.stdin.fileno(), False)
         try:
             if self.egress is not None:
-                self.egress.add(self.proc.pid)
+                self.egress.add(self.proc.pid, Path(log).name)
             if not (self.call() or {}).get("ready"):
                 raise HarnessFailed("worker_start")
         except BaseException:

@@ -266,6 +266,92 @@ def test_protocol_deadline_includes_partial_lines(workers, phase):
     assert time.monotonic() - t0 < 1.8
 
 
+@pytest.mark.parametrize("errors", [(UnicodeDecodeError("utf8", b"x", 0, 1, "synthetic"), ValueError()),
+                                   (OSError(), subprocess.SubprocessError())])
+def test_sampler_recovers_any_exception(monkeypatch, errors):
+    from bicentennial.runner import t0
+
+    sampler, done = egress.Egress(interval_s=0.001), Event()
+    pending, sample = list(errors), sampler.sample
+
+    def output(argv):
+        if argv[0] == "lsof":
+            return "header\nworker 40 user 3u IPv4 0 0t0 TCP 192.0.2.1:443"
+        return "8" if argv[2] == "rss=" else ""
+
+    def flaky():
+        if pending:
+            raise pending.pop(0)
+        sample()
+        done.set()
+
+    monkeypatch.setattr(egress, "_out", output)
+    monkeypatch.setattr(sampler, "sample", flaky)
+    sampler.add(40)
+    sampler.start()
+    try:
+        assert done.wait(2) and sampler.is_alive()
+    finally:
+        sampler.stop()
+    assert sampler.summary()["failed_samples"] == {type(e).__name__: 1 for e in errors}
+    assert sampler.summary()["non_loopback"] == ["192.0.2.1:443"]
+    with pytest.raises(t0.T0Refused, match="upstream_record"):
+        t0._audit([SimpleNamespace(hosts=[SimpleNamespace(records=list, egress=sampler)])])
+
+
+@pytest.mark.parametrize("discard", [False, True])
+def test_stop_samples_late_pid_and_remembers_discard(monkeypatch, discard):
+    sampler, done = egress.Egress(interval_s=100), Event()
+    sample = sampler.sample
+    monkeypatch.setattr(sampler, "sample", lambda: (sample(), done.set()))
+    sampler.start()
+    try:
+        assert done.wait(2)
+        sampler.add(40)
+        if discard:
+            sampler.discard(40)
+    finally:
+        sampler.stop()
+    summary = sampler.summary()
+    assert summary["alive_at_stop"] and summary["failed_samples"] == {}
+    assert summary["per_pid_samples"] == {"40": 1 if discard else 2}
+    assert summary["unsampled"] == []
+
+
+@pytest.mark.parametrize("name", ["", "worker-3.stderr", "host-2.stderr"])
+def test_registration_gone_pid_names_worker(monkeypatch, tmp_path, name):
+    from bicentennial.runner import t0
+
+    sampler = egress.Egress()
+    monkeypatch.setattr(egress, "_out", lambda argv: "")  # already gone at registration
+    if name:
+        proc = SimpleNamespace(pid=40, returncode=0, stdin=SimpleNamespace(fileno=lambda: 0))
+        monkeypatch.setattr(adapter.subprocess, "Popen", lambda *a, **kw: proc)
+        monkeypatch.setattr(adapter.os, "set_blocking", lambda *a: None)
+        monkeypatch.setattr(adapter._Worker, "call", lambda self: {"ready": True})
+        adapter._Worker([], {}, tmp_path, tmp_path / name, sampler).kill()
+    else:
+        sampler.add(40)
+        sampler.discard(40)
+    assert sampler.summary()["unsampled"] == [f"egress unsampled pid=40 log={name}"]
+    sampler.alive_at_stop = True
+    with pytest.raises(t0.T0Refused, match="egress_unobserved"):
+        t0._audit([SimpleNamespace(hosts=[SimpleNamespace(records=list, egress=sampler)])])
+
+
+def test_sampler_death_outside_sample(monkeypatch):
+    sampler = egress.Egress()
+    monkeypatch.setattr("threading.excepthook", lambda args: None)
+    monkeypatch.setattr(sampler._halt, "wait", lambda seconds: (_ for _ in ()).throw(ValueError()))
+    sampler.start()
+    sampler.join(2)
+    assert not sampler.is_alive()
+    monkeypatch.setattr(sampler, "sample", lambda: (_ for _ in ()).throw(ValueError()))
+    sampler.stop()
+    assert sampler.summary()["alive_at_stop"] is False
+    assert sampler.summary()["failed_samples"] == {"ValueError": 1}
+
+
 def test_sampler_keeps_orphaned_group_members(monkeypatch):
     sampler, sampled = egress.Egress(), []
 
@@ -280,7 +366,6 @@ def test_sampler_keeps_orphaned_group_members(monkeypatch):
 
     monkeypatch.setattr(egress, "_out", output)
     sampler.add(40)  # registered workers are session/group leaders
-    sampler.sample()
     assert sampled == [41]
     sampler.discard(40)
     sampler.sample()
@@ -308,19 +393,20 @@ def test_sampler_non_loopback_detail(monkeypatch):
     sampler.add(40)
     sampler.add(42)
     sampler.sample()
-    assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "42": 1}, rss_peak_kib=8,
+    assert sampler.summary() == dict(samples=5, per_pid_samples={"40": 3, "42": 2}, rss_peak_kib=8,
+        alive_at_stop=False, failed_samples={}, unsampled=[],
         non_loopback=["*:5353", "192.0.2.1:443"], non_loopback_seen=[
-            "egress name=*:5353 pid=40 comm=worker 40 samples=1",
-            "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=1"])
+            "egress name=*:5353 pid=40 comm=worker 40 samples=3",
+            "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=3"])
     sampler.discard(40)
     sampler.add(41)
     sampler.sample()
     assert sampler.summary()["non_loopback_seen"] == [
-        "egress name=*:5353 pid=40 comm=worker 40 samples=2",
-        "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=2"]
+        "egress name=*:5353 pid=40 comm=worker 40 samples=5",
+        "egress name=192.0.2.1:443 pid=40 comm=worker 40 samples=5"]
     sampler.add(40)
     sampler.sample()
-    assert all(row.endswith("samples=3") for row in sampler.summary()["non_loopback_seen"])
+    assert all(row.endswith("samples=7") for row in sampler.summary()["non_loopback_seen"])
     assert commands == [["ps", "-o", "comm=", "-p", str(pid)] for pid in (40, 41)]
 
 
@@ -351,9 +437,9 @@ def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
     # Pid 40 holds only unbound TCP and UDP sockets, so on macOS it has no endpoint and no command lookup
     alone = egress.Egress()
     alone.add(40)
-    alone.sample()
     unbound = [] if platform == "darwin" else ["*:*"]
     assert alone.summary() == dict(samples=1, per_pid_samples={"40": 1}, rss_peak_kib=8, non_loopback=unbound,
+        alive_at_stop=False, failed_samples={}, unsampled=[],
         non_loopback_seen=[f"egress name={name} pid=40 comm=worker40 samples=1" for name in unbound])
     assert commands == ([] if platform == "darwin" else [40])
     commands.clear()
@@ -363,10 +449,11 @@ def test_sampler_unbound_sockets_platform_scope(monkeypatch, platform):
     names = ["*:*", "*:5353", "*:8080", "10.0.0.1:50000->192.0.2.1:443",
              "127.0.0.1:50000->192.0.2.2:443", "192.0.2.3:50000->127.0.0.1:443"]
     first = 41 if platform == "darwin" else 40
-    assert sampler.summary() == dict(samples=2, per_pid_samples={"40": 1, "41": 1}, rss_peak_kib=8,
+    assert sampler.summary() == dict(samples=5, per_pid_samples={"40": 3, "41": 2}, rss_peak_kib=8,
+        alive_at_stop=False, failed_samples={}, unsampled=[],
         non_loopback=names, non_loopback_seen=[
             f"egress name={name} pid={first if name == '*:*' else 41} "
-            f"comm=worker{first if name == '*:*' else 41} samples=1" for name in names])
+            f"comm=worker{first if name == '*:*' else 41} samples={3 if name == '*:*' and platform == 'linux' else 2}" for name in names])
     assert commands == ([41] if platform == "darwin" else [40, 41])
 
 
@@ -391,7 +478,6 @@ def test_sampler_comm_failure_keeps_observation(monkeypatch, failure):
 
     monkeypatch.setattr(egress, "_out", output)
     sampler.add(40)
-    sampler.sample()
     summary = sampler.summary()
     assert (summary["samples"], summary["non_loopback"]) == (1, ["192.0.2.1:443"])
     assert summary["non_loopback_seen"] == ["egress name=192.0.2.1:443 pid=40 comm= samples=1"]
