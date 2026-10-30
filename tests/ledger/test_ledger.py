@@ -128,6 +128,53 @@ def test_port_collision_preserves_director_ids_and_body_digests():
     assert digests[0] == digests[1]
 
 
+@pytest.mark.parametrize("text", ["1700055467", "GATE-155467", "55467000",
+                                 "1700055467 GATE-155467 55467000"])
+def test_port_mask_is_independent_of_unrelated_numbers(text):
+    body = {"text": text, "references": {text: text}}
+    values = [dict(RUN_VALUES, director_port=port) for port in ("55467", "61234")]
+    assert apply_masks(body, values[0]) == apply_masks(body, values[1]) == body
+    records = [request(path=f"/v1/{text}")]
+    assert stable_digest(records, values[0]) == stable_digest(records, values[1])
+
+
+def test_whole_ports_are_masked_but_json_numbers_are_preserved():
+    values = dict(RUN_VALUES, director_port="55467")
+    body = {"text": '127.0.0.1:55467 localhost:55467 http://127.0.0.1:55467/v1 '
+                    '"port": "55467" bare 55467 end',
+            "port": "55467", "number": 55467, "55467": "key"}
+    assert apply_masks(body, values) == {
+        "text": '127.0.0.1:{DIRECTOR_PORT} localhost:{DIRECTOR_PORT} '
+                'http://127.0.0.1:{DIRECTOR_PORT}/v1 "port": "{DIRECTOR_PORT}" '
+                'bare {DIRECTOR_PORT} end',
+        "port": "{DIRECTOR_PORT}", "number": 55467, "{DIRECTOR_PORT}": "key"}
+    # ASCII digits alone define the boundary, even next to letters or Unicode digits.
+    assert apply_masks("a55467z ９55467９", values) == "a{DIRECTOR_PORT}z ９{DIRECTOR_PORT}９"
+    assert apply_masks("５５４６７0", dict(values, director_port="５５４６７")) == "{DIRECTOR_PORT}0"
+    # Hex letters let the port boundary match, so director-id precedence must protect it.
+    cid = "bcw-abcd55467abcdef0"
+    assert apply_masks({cid: cid}, values) == {cid: cid}
+
+
+def test_sandbox_root_keeps_bare_matches_next_to_digits():
+    root = RUN_VALUES["sandbox_root"]
+    assert apply_masks(f"1{root}2", RUN_VALUES) == "1{SANDBOX_ROOT}2"
+
+
+@pytest.mark.parametrize("filename", ["config.yaml", "mem0.json"])
+def test_fresh_install_port_mask_preserves_number_collisions(monkeypatch, filename):
+    from bicentennial.sandbox import surfaces
+
+    raw = b"127.0.0.1:55467000 1700055467 GATE-155467 http://127.0.0.1:55467/v1"
+    masked = b"127.0.0.1:55467000 1700055467 GATE-155467 http://127.0.0.1:{DIRECTOR_PORT}/v1"
+    # Supply synthetic file bytes and listing; exercise E4 without installing a surface.
+    monkeypatch.setattr(surfaces, "tree_listing", lambda *_: [{"kind": "file", "path": filename}])
+    monkeypatch.setattr(Path, "read_bytes", lambda _: raw)
+    monkeypatch.setattr(surfaces, "tree_hash", lambda rows: rows)
+    assert surfaces.install_hash("/sandbox/install", [], 55467) == [
+        {"kind": "file", "path": filename, "size": len(masked), "sha256": sha256(masked).hexdigest()}]
+
+
 def snapshot(root):
     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None
             for p in root.rglob("*")}
@@ -381,6 +428,50 @@ def test_stable_digest_real_fixture_ledgers(tmp_path):
     assert digest == stable_digest(a + [{"type": "lifecycle", "t": 999}], RUN_VALUES)
 
 
+def test_stable_digest_all_cursors_matches_base():
+    records = [request(cursor=cursor, sim_now=1000 + 720 * i, lock_hash=LOCK,
+                       attempt_id="attempt-a", write_calls=i,
+                       write_turn_failed="", write_turn_readback=True)
+               for i, cursor in enumerate(({"session": 10, "turn": 1}, {"session": 2, "turn": 10},
+                                           {"session": 2, "turn": 2}, {"session": 1, "turn": 1}))]
+    # Captured with b752670's projection; every request has a cursor.
+    assert stable_digest(records, RUN_VALUES) == "a35aeece91d85e7fc7752e5599461826a9a43a2adbd4a2a032acbe4f658b5e3d"
+
+
+def test_stable_digest_cursorless_sim_now_is_omitted():
+    records = [request(cursor=None, sim_now=1000)]
+    shifted = [dict(records[0], sim_now=1720)]
+    original = copy.deepcopy(records)
+    assert stable_digest(records, RUN_VALUES) == stable_digest(shifted, RUN_VALUES)
+    assert records == original
+
+
+def test_stable_digest_cursor_sim_now_counts():
+    records = [request(cursor={"session": 1, "turn": 1}, sim_now=1000)]
+    shifted = [dict(records[0], sim_now=1720)]
+    assert stable_digest(records, RUN_VALUES) != stable_digest(shifted, RUN_VALUES)
+
+
+@pytest.mark.parametrize("field,value", [("req_masked_sha256", "b" * 64),
+                                        ("resp_masked_sha256", "c" * 64), ("status", 201)])
+def test_stable_digest_cursorless_content_counts(field, value):
+    records = [request(cursor=None, sim_now=1000)]
+    changed = [dict(records[0], **{field: value})]
+    assert stable_digest(records, RUN_VALUES) != stable_digest(changed, RUN_VALUES)
+
+
+def test_stable_digest_mem0_shaped_clock_steps():
+    records = [request(cursor=None, role="embeddings", subrole="embedding",
+                       path="/mem0/v1/embeddings", sim_now=10000 + 720 * i,
+                       req_masked_sha256=f"{i + 1:064x}") for i in range(7)]
+    shifted = [dict(rec, sim_now=rec["sim_now"] + step)
+               for rec, step in zip(records, (720, -720, 0, 720, -720, 720, 0), strict=True)]
+    digest = stable_digest(records, RUN_VALUES)
+    assert digest == stable_digest(list(reversed(shifted)), RUN_VALUES)
+    shifted[0]["req_masked_sha256"] = "f" * 64
+    assert digest != stable_digest(shifted, RUN_VALUES)
+
+
 def test_stable_projection_and_numeric_cursor_order(tmp_path):
     writer = ledger(tmp_path)
     try:
@@ -391,6 +482,7 @@ def test_stable_projection_and_numeric_cursor_order(tmp_path):
         writer.close()
     props = json.loads((ROOT.parent / "schemas/ledger-record.schema.json").read_bytes())["properties"]
     projected = [{k: v for k, v in r.items() if props[k]["x-stability"] == "stable"} for r in records]
+    del projected[1]["sim_now"]  # This request is outside the cursor (RING0 §13 E17).
     expected = [projected[i] for i in (1, 3, 2, 0)]
     assert stable_digest(records, RUN_VALUES) == sha256(canon(expected)).hexdigest()
     assert stable_digest([], RUN_VALUES) == sha256(canon([])).hexdigest()

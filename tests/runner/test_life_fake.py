@@ -439,8 +439,10 @@ def test_determinism(lives, tmp_path):
         digests = {k for k in stable if schema[k].get("pattern") == "^[0-9a-f]{64}$"}
 
         def projection(result):
-            # Use the ledger's named masks and digest exception, solely for diagnostics.
-            return sorted((dict(apply_masks({k: v for k, v in row.items() if k in stable - digests},
+            # Use the ledger's named masks, digest exception and cursor-less sim_now rule (#287),
+            # solely for diagnostics.
+            return sorted((dict(apply_masks({k: v for k, v in row.items() if k in stable - digests
+                                             and (k != "sim_now" or row["cursor"] is not None)},
                                             result.run_values),
                                 **{k: row[k] for k in sorted(digests) if k in row})
                            for row in result.records if row.get("type") == "request"), key=canon)

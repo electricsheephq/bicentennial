@@ -21,6 +21,7 @@ from bicentennial.director.serve import serve, shutdown
 from bicentennial.harness.egress import Egress
 from bicentennial.harness.hermes.config import (
     CONFIG_DEVIATIONS,
+    MCP_DEVIATIONS,
     SCRIPTED_DEVIATIONS,
     T1_TOOLSETS,
     hermes_config,
@@ -397,7 +398,9 @@ class HermesAdapter:
     def harness_record(self) -> dict:
         pin = self.harness_pin  # the harness's own pin, never a plug-in system's artifact (A1)
         return {"name": pin.get("name"), "version": pin.get("version"), "sha256": pin.get("sha256"),
-                "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS) + (list(SCRIPTED_DEVIATIONS) if self.scripted else []),
+                "commit": self.commit, "entrypoint": self.entrypoint, "config_deviations": list(CONFIG_DEVIATIONS)
+                + (list(MCP_DEVIATIONS) if self.env_server is not None else [])
+                + (list(SCRIPTED_DEVIATIONS) if self.scripted else []),
                 "plugin_config": deepcopy(self.plugin_config), "memory": self.memory,
                 "active_memory_providers": list(self.active_memory_providers)}
 

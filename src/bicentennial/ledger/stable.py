@@ -55,7 +55,9 @@ def apply_masks(obj, run_values: dict[str, str]):
     # with the port's digits is masked whole. Pattern targets have no groups of their own.
     pattern = re.compile(r"(?P<director_id>bcw-[0-9a-f]{16})|" + "|".join(
         [f"(?P<p{i}>{e['target']})" for i, e in enumerate(patterns)]
-        + [re.escape(v) for v in sorted(replacements, key=lambda v: (-len(v), v))]))
+        + [r"(?<![0-9])" + re.escape(v) + r"(?![0-9])"
+           if re.fullmatch(r"[0-9]+", v) else re.escape(v)
+           for v in sorted(replacements, key=lambda v: (-len(v), v))]))
 
     def substitute(m):
         if m.lastgroup == "director_id":
@@ -84,7 +86,9 @@ def stable_digest(records: list[dict], run_values: dict[str, str]) -> str:
     # The sha256 fields already cover masked bodies; masking them again would let a run value
     # (the port, say) that happens to occur inside a hex digest rewrite it.
     digests = {k for k in stable if _SCHEMA["properties"][k].get("pattern") == "^[0-9a-f]{64}$"}
-    projected = [dict(apply_masks({k: v for k, v in rec.items() if k in stable - digests}, run_values),
+    # Outside the cursor, sim_now depends on background request arrival timing (#287).
+    projected = [dict(apply_masks({k: v for k, v in rec.items() if k in stable - digests
+                                  and (k != "sim_now" or rec["cursor"] is not None)}, run_values),
                       **{k: rec[k] for k in digests if k in rec})
                  for rec in records if rec.get("type") == "request"]
 

@@ -173,7 +173,7 @@ def install_hash(root, volatile_paths, port) -> str:
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("port must be an int in 1..65535")
     listing = tree_listing(root, volatile_paths)
-    pattern = rb"127\.0\.0\.1:" + str(port).encode() + rb"(?!\d)"
+    pattern = rb"127\.0\.0\.1:(?<![0-9])" + str(port).encode() + rb"(?![0-9])"
     for row in listing:
         if row["kind"] == "file" and row["path"] in PORT_FILES:
             masked = re.sub(pattern, b"127.0.0.1:{DIRECTOR_PORT}", (Path(root) / row["path"]).read_bytes())

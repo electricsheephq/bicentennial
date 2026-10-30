@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-10-30: v0.1's second official run (#29)
+- **RING0 §13 E13, E15, E17, E19:** v0.1's maintenance kit carries the unbound-socket rule (#205), the whole-number port mask (#278), the cursor-less `sim_now` projection (#287) and the MCP discovery wait (#71), so that its second official run can repeat byte for byte. The first official run, on db9c0c5, is published as rejected on repeatability. E12, E14, E16 and E18 stay next-kit errata. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 contract change, 2026-10-28: Holographic's dependencies (#210)
 - **RING0 §13 E9:** Holographic gets a benchmark lock for numpy and snowballstemmer, at pinned Hermes's own versions, and runs on its own prepared copy of pinned Hermes. Before this, it ran without numpy, which turns off its holographic vectors and structural recall. No PREREG version change.
 

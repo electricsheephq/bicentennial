@@ -19,8 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPERS = runpy.run_path(str(ROOT / "tests/director/test_compiler.py"))
 
 
-@pytest.mark.parametrize("genre", ["G1", "G2"])
-def test_live_check_compile(tmp_path, monkeypatch, genre):
+def pinned(genre):
     given = os.environ.get("BICENTENNIAL_HERMES")
     if not given or not (Path(given) / ".venv/bin/python").exists():
         pytest.skip("BICENTENNIAL_HERMES is unset or has no .venv/bin/python")
@@ -37,6 +36,12 @@ def test_live_check_compile(tmp_path, monkeypatch, genre):
         if sdk.returncode == 1:
             pytest.skip("mcp SDK not in the pinned install (spec-inputs l.14)")
         assert sdk.returncode == 0
+    return checkout, entry
+
+
+@pytest.mark.parametrize("genre", ["G1", "G2"])
+def test_live_check_compile(tmp_path, monkeypatch, genre):
+    checkout, entry = pinned(genre)
     world = HELPERS["fixture"](tmp_path / "world", genre)
     try:
         life = HELPERS["life_directory"](world, tmp_path / "life")
@@ -80,3 +85,46 @@ def test_live_check_compile(tmp_path, monkeypatch, genre):
     assert all(s["non_loopback"] == [] for s in summaries)
     (tmp_path / "live-report.json").write_bytes(canon(dict(report=report, overhead=overhead, egress=summaries)))
     print(json.dumps(dict(genre=genre, first_main=overhead[0])))
+
+
+def test_live_slow_environment_server_keeps_tool_order(tmp_path, monkeypatch):
+    """#71: a server slower than the pin's default 1.5 s discovery wait still enters the agent's first tool snapshot,
+    so every main request offers the tools in the pin's sorted order instead of appending the server's tools last."""
+    from bicentennial.harness.hermes import envwire
+
+    checkout, entry = pinned("G2")
+    world = HELPERS["fixture"](tmp_path / "world", "G2")
+    try:
+        life = HELPERS["life_directory"](world, tmp_path / "life")
+    finally:
+        world[1].close()
+    real_wiring, real_adapter, seen = envwire.EnvWiring, adapter.HermesAdapter, []
+
+    class Slow(real_wiring):
+        def __call__(self, session, reason):
+            server = super().__call__(session, reason)
+            assert server["args"][:2] == ["-m", "bicentennial.sandbox.envserver"]
+            start = ("import runpy, sys, time; time.sleep(4); "
+                     "runpy.run_module('bicentennial.sandbox.envserver', run_name='__main__', alter_sys=True)")
+            return dict(server, args=["-c", start, *server["args"][2:]])
+
+    class Capture(real_adapter):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            seen.append(self)
+
+    monkeypatch.setattr(envwire, "EnvWiring", Slow)
+    monkeypatch.setattr(adapter, "HermesAdapter", Capture)
+    helper = runpy.run_path(str(ROOT / "tests/harness/test_hermes_adapter.py"))
+    report = check_compile(life, entry=entry, route_table=helper["ROUTES"], harness_pin=entry["artifact"],
+                           checkout=checkout, scratch=tmp_path / "runs")
+    assert report["ok"], report
+    assert seen
+    for a in seen:
+        store = BlobStore(a.paths["root"] / "ledger/blobs", Guard([]))
+        rows = [r for r in a.records() if r.get("path") == "/main/v1/chat/completions"]
+        assert rows
+        for row in rows:
+            names = [t["function"]["name"] for t in json.loads(store.get(row["req"]))["tools"]]
+            assert any(name.startswith("mcp__envserver__") for name in names)
+            assert names == sorted(names), names
