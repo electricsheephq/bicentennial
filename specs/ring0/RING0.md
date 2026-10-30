@@ -131,9 +131,9 @@ Everything in `card.json` is written by `canon.canon`, with no floats.
 - tool-call ids that the harness generated;
 - response ids that the harness generated;
 - every wall-clock timestamp field;
-- the run's sandbox root wherever it occurs in body text, and the director's port where it occurs as a whole number, with no ASCII digit adjacent. Each is replaced by a fixed placeholder (`{SANDBOX_ROOT}`, `{DIRECTOR_PORT}`), so a path or port embedded in a tool result does not reach the digest. The port boundary keeps unrelated numbers containing its digits unchanged, so the digest does not depend on the port a run drew (§13 E15).
+- the run's sandbox root wherever it occurs in body text, and the director's port where it occurs as a whole number, with no ASCII digit adjacent. Each is replaced by a fixed placeholder (`{SANDBOX_ROOT}`, `{DIRECTOR_PORT}`), so a path or port embedded in a tool result does not reach the digest. The port boundary leaves a longer number that merely contains the port's digits unchanged, so such a number no longer makes the digest depend on the port a run drew (§13 E15). A separate whole number equal to the port is still masked.
 
-Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, a literal substitution for body text, or a pattern for random ids in body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
+Each mask is a named entry in the masks table of the stable-field schema (K14): a JSONPath for a field, a literal substitution for body text (for a value made only of ASCII digits, only where it occurs as a whole number), or a pattern for random ids in body text. A value is masked only through that table, never ad hoc. Ids that the director issues (`keyed.mint_id`) are stable and never masked. The raw-body digest goes to `receipt.json`.
 
 **Canonical order:** (life, branch, session, cursor turn, role, served kind), then the sha256 of the masked canonical record bytes as the tie-break. The arrival sequence is never used, since concurrent auxiliary calls reorder it.
 
