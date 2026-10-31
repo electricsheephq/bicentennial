@@ -38,7 +38,7 @@ These are the requirements Bicentennial's design answers to. They summarise the 
   - "baselines for at least 3 competing memory systems, run by us and reproducible by them";
   - "results published where we lose too";
   - "an external co-maintainer if possible".
-  - *How v2.0 meets it:* the seeds, the seal and the open harness are unchanged. Every scheduled run is published, and so is every valid zero (DV21). The external reviewer with a veto over scoring (G below) stands in until a co-maintainer exists. If the owner waives that reviewer (asked on 2026-10-31), the Scoring Veto Panel (G below, DV48) stands in instead. Developers of every registered system, LCM-X included, get the same outputs on the same terms (DV8, DV23).
+  - *How v2.0 meets it:* the seeds, the seal and the open harness are unchanged. Every scheduled run is published, and so is every valid zero (DV21). Until a co-maintainer exists, the Scoring Veto Panel (G below, DV48) stands in; the owner waived the external reviewer with a veto over scoring on 2026-10-31. Developers of every registered system, LCM-X included, get the same outputs on the same terms (DV8, DV23).
 
 ## The addendum (binding on what is measured, how it is scored, and what counts as done)
 
@@ -100,7 +100,7 @@ These are the requirements Bicentennial's design answers to. They summarise the 
   - *How v2.0 meets it:* PREREG, from v0.2 on, freezes the rules, not the per-season contents (the census, community templates) (DV24).
 - An external reviewer has veto power over scoring.
   - *How v2.0 meets it:* the map, the verdicts and the gates (DV1, DV4, DV5) go to the external reviewer before PREREG-v1 (DV24).
-  - **Recorded change** (owner, 2026-10-31): a Scoring Veto Panel of agents (C-18) reviews the map, the verdicts and the gates before each freeze, and a blocking finding from any one of its families blocks the freeze (DV48). A freeze needs valid reviews from at least two of its families, and the panel's rule binds from the first freeze after they are chosen. Whether the owner's direction waives the external human reviewer was asked on 2026-10-31 and is pending. With the owner's written waiver on lcm-x #1964, the panel holds the veto alone; without it, the panel runs in addition to the reviewer.
+  - **Recorded change** (owner, 2026-10-31): a Scoring Veto Panel of agents (C-18) reviews the map, the verdicts and the gates before each freeze, and a blocking finding from any one of its families blocks the freeze (DV48). A freeze needs valid reviews from at least two of its families, and the panel's rule binds from the first freeze after they are chosen. The owner waived the external human reviewer in writing on 2026-10-31 (recorded on lcm-x #1964), so the panel holds the veto alone.
 
 **H. Real failures as seeds.** Real failure classes are rebuilt as **synthetic** generator cases. Raw transcripts, corpus text and personal data are never used.
 - *How v2.0 meets it:* a community contribution is an executable template over a synthetic world, with its validity evidence on controls. It never carries raw transcripts, corpus text or personal data, and its admission never depends on any system failing (DV16).
@@ -124,5 +124,5 @@ These are the requirements Bicentennial's design answers to. They summarise the 
 - "Design doc v1 and the pre-registration (§G) are approved by [the integration owner] before the Phase 1 build. [The integration owner] escalates to the owner only for owner-private calls (public repo, public leaderboard, external partners, spend beyond limits)."
 - "#1964 remains the durable status channel. It is not an approval point."
 - "Public text rules still apply."
-- **Recorded change:** the owner's grant of 2026-10-26 replaced K's approval route. The benchmark session owns approval of the design and of each PREREG freeze, and each freeze hash is posted on lcm-x #1964. The owner retired the co-sign on 2026-10-26. PREREG-v1 is not frozen without the external reviewer unless the owner waives that in writing. The owner-private calls are unchanged (`docs/DESIGN.md` §16).
-- **Recorded change** (owner, 2026-10-31): every freeze also goes to the Scoring Veto Panel (G above, DV48). The owner's waiver of the external reviewer was asked on 2026-10-31 and is pending, and each freeze record states which applies. The human grader pool is no longer an owner-private call, because no person grades (DV48).
+- **Recorded change:** the owner's grant of 2026-10-26 replaced K's approval route. The benchmark session owns approval of the design and of each PREREG freeze, and each freeze hash is posted on lcm-x #1964. The owner retired the co-sign on 2026-10-26. The external reviewer that PREREG-v1 needed was waived by the owner in writing on 2026-10-31 (below). The owner-private calls are unchanged (`docs/DESIGN.md` §16).
+- **Recorded change** (owner, 2026-10-31): every freeze also goes to the Scoring Veto Panel (G above, DV48). The owner waived the external reviewer in writing the same day (recorded on lcm-x #1964), so the panel holds the veto alone. The human grader pool is no longer an owner-private call, because no person grades (DV48).

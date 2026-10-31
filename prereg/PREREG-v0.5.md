@@ -56,7 +56,7 @@
   - **Reports** are published with the freeze.
   - **Quorum:** a freeze needs valid reviews, calibrated and complete, from at least two C-18 families; otherwise it is not frozen.
   - **From when:** every freeze before C-18 is filled, PREREG-v0.5's included, keeps design v2.2's interim rule (DESIGN §14): every adversarial review of the design tests for self-serving construction. The panel's rule binds from the first freeze after C-18 is filled, and from PREREG-v1 at the latest.
-  - **The external human reviewer.** If the owner waives the external human reviewer in writing on #1964, the SVP holds the veto alone. Otherwise the SVP runs in addition: an external reviewer with a veto over scoring is recruited before PREREG-v1, the owner decides who, the same scope goes to that reviewer before PREREG-v1, and PREREG-v1 is not frozen without one. The freeze record states which applies (`prereg/FREEZE-v0.5.md`).
+  - **The external human reviewer.** The owner waived the external human reviewer in writing on 2026-10-31, and the waiver is recorded on #1964 ([the record](https://github.com/electricsheephq/lcm-x/issues/1964#issuecomment-6539072295)), as PREREG-v0.4's External veto requires. The SVP holds the veto alone: no external reviewer is recruited, and PREREG-v1 does not wait for one. The freeze record states this (`prereg/FREEZE-v0.5.md`).
 
 **Change control:**
 - Every change makes a new version with a changelog, and every result discloses the version used.
@@ -77,7 +77,7 @@
 - **Exact or structured matching first.** Image items use typed answer envelopes (§4).
 - **Raw transcripts, corpus text and personal data are never used.** Community contributions are executable templates over synthetic worlds (§4).
 - **The benchmark does not tune, patch or advise on the maintainers' own memory system.** LCM-X improves only through outputs every registered system gets on equal terms (§10).
-- **Pre-registration and the external veto.** This version freezes the rules, not per-season contents. The redesigned scoring goes to the Scoring Veto Panel before each freeze, and to the external reviewer before PREREG-v1 unless the owner waives that reviewer in writing (Freezes, above).
+- **Pre-registration and the external veto.** This version freezes the rules, not per-season contents. The redesigned scoring goes to the Scoring Veto Panel before each freeze (Freezes, above).
 
 **Notation:**
 
@@ -929,7 +929,7 @@ If a cut leaves a season below the certification rule's powered size (§7), no c
 ## Changelog: PREREG-v0.4 → PREREG-v0.5
 - **Status and identity:** drafted for design v2.3; frozen after review, with its hash in `prereg/FREEZE-v0.5.md`. PREREG-v0.4 binds until then.
 - **DV48, agent-only validation** (`docs/DECISIONS-v2.md`), at the owner's direction of 2026-10-31. No person grades, annotates, keys, audits, adjudicates or breaks a tie. Every disagreement is settled by a pre-registered rule, and nothing clears because a model withdraws a finding after a rebuttal written by the benchmark side.
-- **Freezes:** completion slots C-16 (the validation families), C-17 (the image readers) and C-18 (the Scoring Veto Panel's families), each filled by its rule in the completion record. C-16 lists at least three families in a fixed order; its validation pair is the first two that pass the Stage A bars, skipping a template author's family, and it names the A1 family. The LCM-X lane registry is defined and pinned by hash. The external veto becomes the Scoring Veto Panel, with its checklist, union veto, calibration on planted self-serving tweaks, a quorum of two families, a registry-completeness check, specification curve and published reports. C-18's families are listed before any review and never removed for their findings. Every freeze before C-18 is filled, this one included, keeps design v2.2's interim rule. If the owner waives the external human reviewer in writing on #1964, the SVP holds the veto alone; otherwise the SVP runs in addition, and PREREG-v1 is not frozen without the reviewer.
+- **Freezes:** completion slots C-16 (the validation families), C-17 (the image readers) and C-18 (the Scoring Veto Panel's families), each filled by its rule in the completion record. C-16 lists at least three families in a fixed order; its validation pair is the first two that pass the Stage A bars, skipping a template author's family, and it names the A1 family. The LCM-X lane registry is defined and pinned by hash. The external veto becomes the Scoring Veto Panel, with its checklist, union veto, calibration on planted self-serving tweaks, a quorum of two families, a registry-completeness check, specification curve and published reports. C-18's families are listed before any review and never removed for their findings. Every freeze before C-18 is filled, this one included, keeps design v2.2's interim rule. The owner waived the external human reviewer in writing on 2026-10-31, recorded on #1964, so the SVP holds the veto alone.
 - **Requirements met differently:** the human key on a sample becomes the agent-key row with validation columns; the redesigned scoring goes to the SVP before each freeze.
 - **§4:** independent authorship is decided by provenance; the author's family is excluded from that template's auditor pair, and results are also reported with each affiliated author's templates removed.
 - **§5:**

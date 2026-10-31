@@ -13,7 +13,7 @@
 | Approved by | the benchmark session, the product and release owner under the owner's grant of 2026-10-26 |
 | Owner co-sign | not required. The owner retired it on 2026-10-26. |
 | Completion record | pending: slots C-1 to C-18, in `prereg/PREREG-v0-completion.md`, committed before any real memory system's first pilot run; C-16 to C-18 are filled by their rules in that record |
-| External scoring veto | the Scoring Veto Panel (C-18), with a quorum of two families, binding from the first freeze after C-18 is filled; every freeze before that, this one included, keeps design v2.2's interim rule, that every adversarial review tests for self-serving construction; the owner's waiver of the external human reviewer: asked 2026-10-31, pending |
+| External scoring veto | the Scoring Veto Panel (C-18), with a quorum of two families, binding from the first freeze after C-18 is filled; every freeze before that, this one included, keeps design v2.2's interim rule, that every adversarial review tests for self-serving construction; the external human reviewer: waived by the owner in writing on 2026-10-31 ([recorded on lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964#issuecomment-6539072295)), so the panel holds the veto alone |
 
 **Verify:**
 

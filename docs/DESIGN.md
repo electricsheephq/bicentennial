@@ -61,7 +61,7 @@ One line per decision. Where a decision changes how a binding requirement (`docs
 - **DV21, difficulty and honest zeros** (§12): difficulty frozen from controls only, valid zeros published, and certification stability printed.
 - **DV22, horizon, streams and the north star** (§3, §9.2, §11.3): a long-horizon run size and a continuous-stream item in the research tier. Wake keeps its row, and Flatten's row reads "not yet built".
 - **DV23, purpose order and the firewall** (§14): LCM-X improves only through outputs every registered system gets on equal terms.
-- **DV24, process** (§12, §14, §16): PREREG, from v0.2 on, freezes the rules, not per-season contents. DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1.
+- **DV24, process** (§12, §14, §16): PREREG, from v0.2 on, freezes the rules, not per-season contents. DV1, DV4 and DV5 go to the external veto before PREREG-v1: since DV48, the Scoring Veto Panel (§14).
 - **DV25, scales** (§7.1, §7.7): gates and cell admission are computed on the raw penalised scale, −100 to +100; the normalised 0-100 scale is for display only. A cell is admitted when the lower bound of (raw ceiling − raw floor) is at least 30 raw points.
 - **DV26, provisional certification numbers** (§7.7, §12, §13): n_L ≥ 24, b = 150 and the SE bound are planning values; an operating-characteristic simulation on the penalised scale sets the final ones. A season below the powered size issues no certificate, and its results are still published.
 - **DV27, the Ring 2 bit** (§10): it reads "transfer gap detected" or "no gap detected", and neither is called CLEAR or FAIL.
@@ -955,7 +955,7 @@ The CIs come from a wild cluster bootstrap over base-plus-twin life pairs, with 
 - the harmful-actions panel, which is the violations panel (§7.1a);
 - cost.
 
-**The board's statistical claims** remain the paired confirmatory family (§12). Certification is a separate per-system statement. The stages (§3), the verdicts and non-results, and the gates and certification rule go to the Scoring Veto Panel before each freeze, and to the external veto reviewer before PREREG-v1 unless the owner waives that reviewer (§14).
+**The board's statistical claims** remain the paired confirmatory family (§12). Certification is a separate per-system statement. The stages (§3), the verdicts and non-results, and the gates and certification rule go to the Scoring Veto Panel before each freeze (§14).
 
 **Requirement note** (addendum D, the asymmetric penalty): met as before. The penalised action score sets the gates and certification, and per-item action accuracy is only shown beside it.
 
@@ -1448,8 +1448,8 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
   - The acceptance bar (§9.3) is shown on the benchmark team's own baseline, never on LCM-X.
 - **Approval and veto.** The benchmark session approves the design and each PREREG freeze, and each freeze hash is posted on #1964 (§16).
   - A Scoring Veto Panel of agents (C-18) reviews each freeze candidate on a fixed checklist (DV48). The self-serving construction test, which this design first required of every adversarial review until a reviewer exists, is on that checklist permanently. A blocking finding from any one panel family blocks the freeze, and it clears only with the mechanical evidence it names, or by reverting the rule to the previous frozen version. A freeze needs valid reviews from at least two panel families, which are listed with their models before any review and never removed for their findings. A blocking finding raised in any run stands; a rerun never clears it. Every freeze before C-18 is filled, PREREG-v0.5's included, keeps the interim rule above.
-  - An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who, unless the owner waives that reviewer in writing; the waiver was asked on 2026-10-31. With a waiver, the panel holds the veto alone.
-  - The capability map's stages (DV1), the verdicts and non-results (DV4), and the gates and certification rule (DV5) go to the panel before each freeze, and to the external reviewer before PREREG-v1 unless waived.
+  - The panel holds the veto alone. The owner waived the external human reviewer in writing on 2026-10-31, recorded on #1964, so no reviewer is recruited before PREREG-v1.
+  - The capability map's stages (DV1), the verdicts and non-results (DV4), and the gates and certification rule (DV5) go to the panel before each freeze.
 - **Production agents.** Bicentennial never runs against any live production agent. Any later test of one is an offline replay of a copy, with owner approval at that time.
 - **Openness.** The harness, adapters and public lives are open. Competitors are run with their vendors' best documented configuration. Results are published where LCM-X loses.
 - **Requirement note** (addendum G, the firewall): met as before. The owner's purpose order sets the first user, not the measurement.
@@ -1530,13 +1530,13 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 ## 16. Approval and channels
 - **Ownership.** The benchmark session owns this design.
 - **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; PREREG-v0.4 carries v2.2's and was frozen on 2026-10-26; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
-- **External veto.** The Scoring Veto Panel (C-18) reviews each freeze candidate (DV48, §14). An external reviewer with a veto over scoring is also recruited before PREREG-v1, and the owner decides who. PREREG-v1 is not frozen without one unless the owner waives that in writing; the waiver was asked on 2026-10-31, and with it the panel holds the veto alone. DV1, DV4 and DV5 go to the panel and, unless waived, to that reviewer first (§14).
+- **External veto.** The Scoring Veto Panel (C-18) reviews each freeze candidate (DV48, §14). The panel holds the veto alone: the owner waived the external human reviewer in writing on 2026-10-31, recorded on #1964, so PREREG-v1 does not wait for one. DV1, DV4 and DV5 go to the panel first (§14).
 - **Channel.** #1964 is the status channel, not an approval point.
 
 **Owner-private decisions:**
 - the public repository (approved and created: `bicentennial`);
 - a public leaderboard;
-- external partners: the external reviewer and vendor configuration windows;
+- external partners: vendor configuration windows (the external reviewer was waived on 2026-10-31);
 - sealing infrastructure (§10);
 - spend above the standing limits (§13 paid rows);
 - the vision budget: about $50 a season, approved on 2026-10-26 (§11.1).
