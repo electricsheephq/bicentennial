@@ -1,6 +1,6 @@
 # Errata to design v2.2 and the planning documents
 
-**Status:** v0.1, written by the benchmark session for the v0.1 Kit (#29).
+**Status:** v0.1, written by the benchmark session for the v0.1 Kit (#29). Its line numbers cite the documents as they stood before design v2.3, on main at 8740caf.
 
 **Precedence.** PREREG-v0.4 is the only normative source for every frozen quantity (PREREG-v0.4 line 5; DESIGN line 17). Where DESIGN, a genre document or a spike specification says something different, PREREG governs. The difference is recorded here and fixed in the next version of the document it touches; nothing is re-frozen. Where PREREG itself leaves a case open, the entry gives the provisional rule the v0.1 Kit runs under, labelled "provisional", and queues the case for PREREG-v0.6. The benchmark session decides that version. PREREG-v0.5 carries only DV48.
 

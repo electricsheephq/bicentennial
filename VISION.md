@@ -3,11 +3,12 @@
 **The question.** Does an agent that lives for months wake up as itself and act on the right memories? Bicentennial asks it across restarts, compactions, crashes, model swaps and long silences, inside the harness the agent really runs in. The name comes from *The Bicentennial Man*, in which an android becomes a person over two hundred years. The benchmark measures the memory that journey needs: first for today's coding and assistant agents, then for agents that see and hear, then for robots that keep a home in mind.
 
 ## Agents run it, end to end
-No step needs a person (DV48). An agent can generate a life, run its own system through it, read the scores, take the repro bundle for each failure, fix the system and run again. That is how Bicentennial is meant to be used: agents improving their own memory.
+No run step needs a person (DV48). An agent can generate a life, run its own system through it, read the scores, take the repro bundle for each failure, fix the system and run again. That is how Bicentennial is meant to be used: agents improving their own memory.
 - **Gold is computed, never labelled.** Ground truth comes from the generator's world state, so every answer key is derived from the world the life was rendered from.
 - **Mechanical checks come first.** A second gold implementation, written from the plain-language world rules, recomputes every answer. Metamorphic relations, contradiction searches and property tests check each template, render round-trips check the text, and scene-graph floors and seeded mutants check the images. The no-memory floor shows that an item needs memory, and the oracle-evidence ceiling shows that it can be answered.
 - **Judgements go to agents.** Where a judgement is still needed, panels of agents from different model families make it, and their own recall is measured on planted errors. When they disagree, a pre-registered rule decides (the item is quarantined, dropped or flagged on the card), never a person, and never a model withdrawing a finding after a rebuttal.
 - **There are no human graders, annotators or human answer keys.** Every card says "agent-validated; no human key" and carries the validation receipts, and every published table has an agent-key row.
+- **What stays with the owner:** decisions taken before a run, on spend, accounts, paid capacity and a narrower design. They are governance, not run steps. And until the owner decides whether to waive it (asked on 2026-10-31), PREREG-v1 also needs an external human reviewer of the scoring.
 - **Developer loops stay cheap.** Public packs ship with their validation receipts. A life generated locally gets a lite audit from a model family other than the running agent's own, and lite results never feed a board.
 
 ## Built to pull the field forward
@@ -44,4 +45,4 @@ A new profile joins only when it exposes a memory question the earlier ones cann
 ## What it will not do
 - Claim firstness, or that any system is better, before the results exist.
 - Use raw transcripts, corpus text or personal data.
-- Tune toward any system. The benchmark is maintained alongside LCM-X, one of the systems it tests, under the firewall in [`README.md`](README.md): it never tunes, patches or advises on LCM-X, and LCM-X's developers never see held-out seeds or keys. A Scoring Veto Panel of agents from outside families reviews every pre-registration freeze for self-serving construction.
+- Tune toward any system. The benchmark is maintained alongside LCM-X, one of the systems it tests, under the firewall in [`README.md`](README.md): it never tunes, patches or advises on LCM-X, and LCM-X's developers never see held-out seeds or keys. From the first freeze after its families are chosen, a Scoring Veto Panel of agents from outside families reviews every pre-registration freeze for self-serving construction.

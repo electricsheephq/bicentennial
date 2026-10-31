@@ -38,7 +38,7 @@ These are the requirements Bicentennial's design answers to. They summarise the 
   - "baselines for at least 3 competing memory systems, run by us and reproducible by them";
   - "results published where we lose too";
   - "an external co-maintainer if possible".
-  - *How v2.0 meets it:* the seeds, the seal and the open harness are unchanged. Every scheduled run is published, and so is every valid zero (DV21). The external reviewer with a veto over scoring (G below) stands in until a co-maintainer exists. Developers of every registered system, LCM-X included, get the same outputs on the same terms (DV8, DV23).
+  - *How v2.0 meets it:* the seeds, the seal and the open harness are unchanged. Every scheduled run is published, and so is every valid zero (DV21). The external reviewer with a veto over scoring (G below) stands in until a co-maintainer exists. If the owner waives that reviewer (asked on 2026-10-31), the Scoring Veto Panel (G below, DV48) stands in instead. Developers of every registered system, LCM-X included, get the same outputs on the same terms (DV8, DV23).
 
 ## The addendum (binding on what is measured, how it is scored, and what counts as done)
 
@@ -100,7 +100,7 @@ These are the requirements Bicentennial's design answers to. They summarise the 
   - *How v2.0 meets it:* PREREG, from v0.2 on, freezes the rules, not the per-season contents (the census, community templates) (DV24).
 - An external reviewer has veto power over scoring.
   - *How v2.0 meets it:* the map, the verdicts and the gates (DV1, DV4, DV5) go to the external reviewer before PREREG-v1 (DV24).
-  - **Recorded change** (owner, 2026-10-31): a Scoring Veto Panel of agents (C-18) reviews the map, the verdicts and the gates before each freeze, and a blocking finding from any one of its families blocks the freeze (DV48). Whether the owner's direction waives the external human reviewer was asked on 2026-10-31 and is pending. With the owner's written waiver on lcm-x #1964, the panel holds the veto alone; without it, the panel runs in addition to the reviewer.
+  - **Recorded change** (owner, 2026-10-31): a Scoring Veto Panel of agents (C-18) reviews the map, the verdicts and the gates before each freeze, and a blocking finding from any one of its families blocks the freeze (DV48). A freeze needs valid reviews from at least two of its families, and the panel's rule binds from the first freeze after they are chosen. Whether the owner's direction waives the external human reviewer was asked on 2026-10-31 and is pending. With the owner's written waiver on lcm-x #1964, the panel holds the veto alone; without it, the panel runs in addition to the reviewer.
 
 **H. Real failures as seeds.** Real failure classes are rebuilt as **synthetic** generator cases. Raw transcripts, corpus text and personal data are never used.
 - *How v2.0 meets it:* a community contribution is an executable template over a synthetic world, with its validity evidence on controls. It never carries raw transcripts, corpus text or personal data, and its admission never depends on any system failing (DV16).
