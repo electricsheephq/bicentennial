@@ -1,5 +1,6 @@
-"""Small, local Git checkouts for environment-isolation regressions."""
+"""Small, local Git checkouts for environment-isolation regressions, and CI's test shards."""
 
+import hashlib
 import os
 import subprocess
 from types import SimpleNamespace
@@ -52,3 +53,23 @@ def git_checkouts(tmp_path, monkeypatch):
                                "GIT_INDEX_FILE": str(other / ".git/index"),
                                "GIT_COMMON_DIR": str(other / ".git"),
                            })
+
+
+def shard_of(path, total):
+    """The CI shard that runs every test in one test file."""
+    return int(hashlib.sha256(path.encode()).hexdigest(), 16) % total
+
+
+def pytest_collection_modifyitems(config, items):
+    total = int(os.environ.get("BICENTENNIAL_TEST_SHARDS") or 0)
+    if total < 2:
+        return
+    index = int(os.environ["BICENTENNIAL_TEST_SHARD"])
+    if not 0 <= index < total:
+        raise pytest.UsageError("BICENTENNIAL_TEST_SHARD is out of range")
+    keep, drop = [], []
+    for item in items:
+        (keep if shard_of(item.nodeid.split("::", 1)[0], total) == index else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
