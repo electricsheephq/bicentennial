@@ -30,6 +30,29 @@ def test_overlaps(tmp_path):
         assert not fixedroot.overlaps(other)
 
 
+def test_overlaps_through_a_link_inside_a_base(tmp_path, monkeypatch):
+    root = Path(os.path.realpath(tmp_path))
+    parent, outside = root / "parent", root / "outside"
+    (parent / "bicentennial-2").mkdir(parents=True)
+    outside.mkdir()
+    (parent / "bicentennial-2" / "alias").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(fixedroot, "PARENT", str(parent))
+    # The sweep unlinks the link, so a path spelled through it is refused although it resolves outside.
+    assert fixedroot.overlaps(parent / "bicentennial-2" / "alias" / "new-output")
+    assert not fixedroot.overlaps(outside / "new-output")
+
+
+def test_overlaps_other_spelling_of_a_base(tmp_path, monkeypatch):
+    parent = Path(os.path.realpath(tmp_path)) / "parent"
+    (parent / "bicentennial-4").mkdir(parents=True)
+    other = parent / "BICENTENNIAL-4"
+    if not other.exists():
+        pytest.skip("case-sensitive volume: no other spelling names the base")
+    monkeypatch.setattr(fixedroot, "PARENT", str(parent))
+    assert fixedroot.overlaps(other) and fixedroot.overlaps(other / "packs")
+    assert not fixedroot.overlaps(parent / "BICENTENNIAL-40")
+
+
 @pytest.mark.parametrize("slot", [-1, 10, "0", None, 0.0, True])
 def test_invalid_slot(slot):
     with pytest.raises(T1Refused, match="sandbox_slot"):

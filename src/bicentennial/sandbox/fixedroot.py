@@ -36,10 +36,30 @@ def holding(fd):
 
 
 def overlaps(path):
-    # A lease sweeps its base, so an operator path at or below any slot's base would be deleted.
-    real, parent = Path(os.path.realpath(path)), Path(os.path.realpath(PARENT))
-    return any(real == base or base in real.parents
-               for base in (parent / f"bicentennial-{slot}" for slot in range(10)))
+    # A lease sweeps its base, so an operator path at or below any slot's base would be deleted. Each prefix of the
+    # path is resolved on its own, so a link inside a base cannot carry a path out of it, and an existing prefix is
+    # also matched by file identity, which other spellings of a base share on a case-insensitive volume.
+    parent = Path(os.path.realpath(PARENT))
+    bases = [parent / f"bicentennial-{slot}" for slot in range(10)]
+    ids = set()
+    for base in bases:
+        try:
+            info = os.stat(base)
+        except OSError:
+            continue
+        ids.add((info.st_dev, info.st_ino))
+    full = Path(os.path.abspath(path))
+    for prefix in (*reversed(full.parents), full):
+        real = Path(os.path.realpath(prefix))
+        if any(real == base or base in real.parents for base in bases):
+            return True
+        try:
+            info = os.stat(prefix)
+        except OSError:
+            continue
+        if (info.st_dev, info.st_ino) in ids:
+            return True
+    return False
 
 
 def remove_tree(path):
