@@ -41,6 +41,9 @@ def test_overlaps_through_a_link_inside_a_base(tmp_path, monkeypatch):
     # The sweep unlinks the link, so a path spelled through it is refused although it resolves outside.
     assert fixedroot.overlaps(parent / "bicentennial-2" / "alias" / "new-output")
     assert not fixedroot.overlaps(outside / "new-output")
+    # A link outside into the base, then the base's link back out: the sweep would unlink the second.
+    (outside / "into").symlink_to(parent / "bicentennial-2" / "alias", target_is_directory=True)
+    assert fixedroot.overlaps(outside / "into" / "results")
 
 
 def test_overlaps_other_spelling_of_a_base(tmp_path, monkeypatch):
@@ -181,7 +184,7 @@ def test_busy_and_distinct_slots():
     assert fixedroot.held() == ()
 
 
-@pytest.mark.parametrize("kind", ["symlink", "mode", "owner", "parent", "file", "lock"])
+@pytest.mark.parametrize("kind", ["symlink", "mode", "owner", "parent", "file", "lock", "hardlink"])
 def test_untrusted(tmp_path, monkeypatch, kind):
     parent = Path(fixedroot.PARENT)
     base = parent / "bicentennial-0"
@@ -199,6 +202,11 @@ def test_untrusted(tmp_path, monkeypatch, kind):
             base.chmod(0o755)
         elif kind == "owner":
             monkeypatch.setattr(os, "geteuid", lambda: base.stat().st_uid + 1)
+        elif kind == "hardlink":
+            # The lease truncates its lock, which would empty the file a hard link shares.
+            precious = parent / "precious"
+            precious.write_text("keep")
+            os.link(precious, base / ".lock")
         else:
             (base / ".lock").symlink_to(tmp_path / "target")
     with pytest.raises(T1Refused, match="sandbox_root_untrusted"):
@@ -206,6 +214,8 @@ def test_untrusted(tmp_path, monkeypatch, kind):
             pytest.fail("untrusted root acquired")
     if kind == "parent":
         assert not base.exists()
+    if kind == "hardlink":
+        assert (parent / "precious").read_text() == "keep"
 
 
 @pytest.mark.parametrize("error", [False, True])

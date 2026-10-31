@@ -769,6 +769,10 @@ def test_cli_refuses_inputs_in_its_scratch(tmp_path, monkeypatch, capfd):
         assert cli.main([*args[:i], str(link), *args[i + 1:]]) == 2
         assert link.is_symlink()
     assert cli.main(args) == 0
+    # An error the guard cannot resolve stops the command with the input-error exit, not a traceback.
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "within", lambda path, root: (_ for _ in ()).throw(OSError(5, "injected")))
+        assert cli.main(args) == 2
     capfd.readouterr()
 
 

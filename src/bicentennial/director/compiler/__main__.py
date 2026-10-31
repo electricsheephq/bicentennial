@@ -22,11 +22,11 @@ def main(argv=None):
         parser.add_argument(f"--{flag}", type=Path, required=True)
     parser.add_argument("--step-s", type=int, default=60)
     args = parser.parse_args(argv)
-    # Each job root is cleared before use; check_compile refuses its own path inputs inside scratch, and these three
-    # files are read here.
-    if any(within(path, args.scratch) for path in (args.entry, args.route_table, args.harness_pin)):
-        return 2
     try:
+        # Each job root is cleared before use; check_compile refuses its own path inputs inside scratch, and these
+        # three files are read here.
+        if any(within(path, args.scratch) for path in (args.entry, args.route_table, args.harness_pin)):
+            return 2
         report = check_compile(args.life_dir, entry=load(args.entry),
             route_table=json.loads(args.route_table.read_bytes()), harness_pin=json.loads(args.harness_pin.read_bytes()),
             checkout=args.checkout, scratch=args.scratch, step_s=args.step_s)
