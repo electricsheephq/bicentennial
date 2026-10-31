@@ -245,7 +245,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `visible_canary` | Canary found in agent-visible input. |
 | `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
 | `scratch_exists` | T1 arm scratch path already exists. |
-| `sandbox_slot` | Slot is not an integer from 0 to 9; exit 3. |
+| `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
 | `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
 | `check_compile` | Script compilation check failed. The runner writes a per-branch summary to stderr. |

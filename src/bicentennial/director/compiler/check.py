@@ -6,6 +6,7 @@ from fractions import Fraction
 from bicentennial.canon import milli, sha256_canon
 from bicentennial.genres.g2_assistant.envseed import probe_envseed
 from bicentennial.items.tags import check_precondition
+from bicentennial.sandbox.fixedroot import remove_tree
 
 
 def precondition_holds(item, *, repo_tree_hash, env_state_hash, probe_env_state_hash):
@@ -212,6 +213,7 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
                             adapter.close()
                         except HarnessFailed as error:
                             result["mismatches"].extend(_mismatch(c, f"harness_failed:{error}", None) for c in calls)
+                remove_tree(root)
         finally:
             db.close()
     return dict(life=meta["life"], genre=genre, branches=branches,

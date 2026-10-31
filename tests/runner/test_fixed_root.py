@@ -183,6 +183,11 @@ def test_compile_roots(policy, tmp_path, monkeypatch):
         roots = [root for b, root in seen if b == branch]
         assert roots
         assert roots == [scratch / f"check-{branch}-{k}" for k in range(len(roots))]
+    assert not list(scratch.glob("check-*"))
+    seen.clear()
+    check_compile(pack.life_dir, entry=policy.ctx.entry, route_table=t1._routes("hermes-native"),
+                  harness_pin=policy.ctx.harness_pin, checkout=None, scratch=scratch)
+    assert seen
 
 
 def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
@@ -257,6 +262,7 @@ def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
             cards = [acceptance.read(tmp_path / entry["name"] / name, arm)
                      for name in ("short", "long-" + "x" * 70)]
             assert cards[0]["masked_ledger_digest"] == cards[1]["masked_ledger_digest"]
+            assert cards[0] == cards[1]
     sandbox = Path(fixedroot.PARENT) / "bicentennial-0"
     for branch in ("B0", "B1"):
         assert {r.root for r in runs if r.branch == branch} == {sandbox / "t1" / branch / "run"}

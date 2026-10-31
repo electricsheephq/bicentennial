@@ -91,6 +91,22 @@ def test_sweeps(tmp_path, error):
     assert (outside / "keep").read_text() == "keep"
 
 
+def test_sweep_read_only():
+    base = Path(fixedroot.PARENT) / "bicentennial-0"
+    with fixedroot.lease(0, T1Refused):
+        inner = base / "locked" / "inner"
+        inner.mkdir(parents=True)
+        (inner / "data").write_text("data")
+        inner.chmod(0o555)
+        hidden = base / "hidden"
+        hidden.mkdir()
+        (hidden / "data").write_text("data")
+        hidden.chmod(0o000)
+    assert sorted(p.name for p in base.iterdir()) == [".lock"]
+    with fixedroot.lease(0, T1Refused):
+        assert sorted(p.name for p in base.iterdir()) == [".lock"]
+
+
 def test_sigkilled_holder():
     code = """
 import sys

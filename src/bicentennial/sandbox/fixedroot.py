@@ -25,19 +25,25 @@ def held():
     return tuple(_held)
 
 
-def _remove_tree(path):
-    if path.is_symlink() or not path.is_dir():
+def remove_tree(path):
+    # A unit can leave a read-only directory; unlinking inside it needs the owner's bits. Links are never followed.
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(info.st_mode):
         path.unlink(missing_ok=True)
         return
+    os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
     for child in sorted(path.iterdir()):
-        _remove_tree(child)
+        remove_tree(child)
     path.rmdir()
 
 
 def _sweep(base):
     for child in sorted(base.iterdir()):
         if child.name != ".lock":
-            _remove_tree(child)
+            remove_tree(child)
 
 
 @contextmanager

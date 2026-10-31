@@ -26,7 +26,7 @@ from bicentennial.runner.guard import admit, read_marker
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.life import SEGMENTS, STEP_S, LifeRun, run_life
 from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock, lock_hash
-from bicentennial.sandbox.fixedroot import _remove_tree
+from bicentennial.sandbox.fixedroot import remove_tree
 from bicentennial.score.bundle import make_bundle
 from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
@@ -446,4 +446,4 @@ def run_arms(ctx, *, scratch) -> T1Run:
             tuple(sorted({i for p in ctx.packs for i in p.meta["duty_items"]})),
             tuple(ctx.index["not_exercised"]))
     finally:
-        _remove_tree(scratch)
+        remove_tree(scratch)
