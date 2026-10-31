@@ -18,6 +18,18 @@ def test_default_parent():
     assert isinstance(parent, str) and os.path.realpath(parent) == parent
 
 
+def test_overlaps(tmp_path):
+    parent = Path(fixedroot.PARENT)
+    for slot in (0, 9):
+        base = parent / f"bicentennial-{slot}"
+        assert fixedroot.overlaps(base) and fixedroot.overlaps(base / "results" / "deep")
+    link = tmp_path / "link"
+    link.symlink_to(parent, target_is_directory=True)
+    assert fixedroot.overlaps(link / "bicentennial-3" / "out")
+    for other in (parent, parent / "bicentennial-10", parent / "bicentennial-0x", tmp_path / "bicentennial-0"):
+        assert not fixedroot.overlaps(other)
+
+
 @pytest.mark.parametrize("slot", [-1, 10, "0", None, 0.0, True])
 def test_invalid_slot(slot):
     with pytest.raises(T1Refused, match="sandbox_slot"):

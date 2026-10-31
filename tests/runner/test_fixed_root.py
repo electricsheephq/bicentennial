@@ -1,5 +1,6 @@
 """#282 path text regressions, including owner-run socket-backed evidence."""
 
+import fcntl
 import json
 import os
 import re
@@ -154,6 +155,39 @@ def test_slot_validation_before_execution(synth, installed, tmp_path, monkeypatc
     assert invoke(out) == 3
     assert json.loads((out / "refusal.json").read_bytes())["code"] == "sandbox_slot"
     assert not list(tmp_path.glob("bicentennial-*"))
+
+
+@pytest.mark.parametrize("runner", ["t0", "t1"])
+@pytest.mark.parametrize("name", ["out", "cache"])
+def test_path_inside_a_root_refused(synth, installed, tmp_path, monkeypatch, capsys, runner, name):
+    # A lease sweeps every slot's base, so an operator path there is refused before anything is created.
+    base = Path(fixedroot.PARENT) / "bicentennial-3"
+    base.mkdir(mode=0o700)
+    (base / "holder").write_text("untouched")
+    paths = dict(out=tmp_path / runner, cache=None) | {name: base / name}
+    if runner == "t0":
+        monkeypatch.setattr(t0, "_preflight", lambda **kw: pytest.fail("preflight ran"))
+        code = t0.run_t0(system="reference", packs=[], packs_dir="unused", pack_hash="unused", **paths)
+    else:
+        code = acceptance.invoke(installed, **paths)
+    assert code == 3
+    assert capsys.readouterr().err.splitlines()[-1] == "sandbox_overlap"
+    assert [p.name for p in base.iterdir()] == ["holder"]
+    assert not paths["out"].exists()
+
+
+def test_compile_scratch_held(tmp_path):
+    # Job roots have fixed names, so a second call on the same scratch is refused, not interleaved.
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    fd = os.open(scratch / ".check.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ValueError, match="scratch_busy"):
+            check_compile(tmp_path / "missing", entry=None, route_table=None, harness_pin=None,
+                          checkout=None, scratch=scratch)
+    finally:
+        os.close(fd)
 
 
 def test_leaked_branch_refused(policy, tmp_path, monkeypatch):

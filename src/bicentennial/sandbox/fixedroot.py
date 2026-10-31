@@ -25,6 +25,13 @@ def held():
     return tuple(_held)
 
 
+def overlaps(path):
+    # A lease sweeps its base, so an operator path at or below any slot's base would be deleted.
+    real, parent = Path(os.path.realpath(path)), Path(os.path.realpath(PARENT))
+    return any(real == base or base in real.parents
+               for base in (parent / f"bicentennial-{slot}" for slot in range(10)))
+
+
 def remove_tree(path):
     # A unit can leave a read-only directory; unlinking inside it needs the owner's bits. Links are never followed.
     try:

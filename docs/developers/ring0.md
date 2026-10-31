@@ -248,6 +248,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
 | `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
+| `sandbox_overlap` | `--out`, `--packs`, `--cache`, `--model-cache`, `--hermes`, `--plugin-source` or T1's `--baseline` resolves to a slot's base or below it, where a lease would delete it; refused before anything is created; exit 3. |
 | `check_compile` | Script compilation check failed. The runner writes a per-branch summary to stderr. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `lock_mismatch` | Current run lock differs from expected lock. |

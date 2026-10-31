@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 contract change, 2026-10-31: fixed sandbox roots (#282)
-- **RING0 §13 E20:** from the next kit, every Hermes unit runs below a fixed per-slot base, exclusively leased for the run and inherited by workers. T0/T1 accept and disclose `--sandbox-slot`; the mask is unchanged. v0.1's frozen kit keeps its layout; next-kit baselines are rebuilt. No PREREG version change; PREREG-v0.4 remains frozen.
+- **RING0 §13 E20:** from the next kit, every Hermes unit runs below a fixed per-slot base, exclusively leased for the run and inherited by workers. T0/T1 accept and disclose `--sandbox-slot`, and refuse operator paths inside any slot's base (`sandbox_overlap`); the mask is unchanged. v0.1's frozen kit keeps its layout; next-kit baselines are rebuilt. No PREREG version change; PREREG-v0.4 remains frozen.
 
 ## Ring 0 docs, 2026-10-30: v0.1's maintenance kit (#29, #302)
 - **RING0 §13 E13, E15, E17, E19:** v0.1's maintenance kit (`maint/v0.1`, #302) carries these four errata for v0.1's second official run, and their closing sentences now say so. §13's opening names them. No rule changes on main; E12, E14, E16 and E18 stay next-kit errata. No PREREG version change; PREREG-v0.4 remains frozen.

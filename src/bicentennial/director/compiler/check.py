@@ -99,6 +99,26 @@ def _compare(adapter, calls):
 
 
 def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None):
+    """Hold scratch exclusively for the call: its job roots have fixed names (#282)."""
+    import fcntl
+    import os
+    from pathlib import Path
+
+    scratch = Path(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+    fd = os.open(scratch / ".check.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise ValueError("scratch_busy") from None
+        return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
+                              checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv)
+    finally:
+        os.close(fd)
+
+
+def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s, worker_argv):
     """Execute each check session in a fresh home and compare its durable tool-result receipts."""
     import sqlite3
     from pathlib import Path

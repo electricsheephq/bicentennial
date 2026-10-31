@@ -461,6 +461,9 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
                 raise T1Refused("hashseed")
             if out.exists() or out.is_symlink():
                 raise T1Refused("out_exists")
+            if any(p is not None and fixedroot.overlaps(p)
+                   for p in (out, packs_dir, baseline, hermes, plugin_source, model_cache, cache)):
+                raise T1Refused("sandbox_overlap")
             ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
                 plugin_source=plugin_source, entry=entry, worker_argv=worker_argv, model_cache=model_cache)
             data = None

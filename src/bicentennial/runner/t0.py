@@ -1011,6 +1011,9 @@ def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
                 raise T0Refused("hashseed")
             if out.exists() or out.is_symlink():
                 raise T0Refused("out_exists")
+            if any(p is not None and fixedroot.overlaps(p)
+                   for p in (out, packs_dir, hermes, plugin_source, model_cache, cache)):
+                raise T0Refused("sandbox_overlap")
             prepared = _preflight(system=system, packs=packs_dir, selected=packs, pack_hash=pack_hash,
                 workers=workers, mode=mode, hermes=hermes, plugin_source=plugin_source,
                 entry=entry, host_overrides=host_overrides, model_cache=model_cache)
