@@ -253,6 +253,29 @@ def test_solver_audit_and_failure(tiny_inputs, tables):
         run.solver_audit(ctx)
 
 
+@pytest.mark.parametrize("missing", ["F", "C", "RAG", "CEIL", "anchor"])
+def test_gate_probe_rates_required_and_planning_fallback(missing):
+    raw = tiny_raw()
+    raw["planning"] = False
+    raw["probe_only"]["rates"] = {a: "7/1" for a in ("F", "C", "RAG", "CEIL", "anchor") if a != missing}
+    with rejects(f"inputs: missing probe_only rates: {missing}"):
+        run.parse_inputs(canon(raw), ladder=((2, 5),))
+    raw["planning"] = True
+    parsed = run.parse_inputs(canon(raw), ladder=((2, 5),))
+    assert parsed.probe_only.rates[missing] == 3600
+    assert all(parsed.probe_only.rates[a] == 7 for a in raw["probe_only"]["rates"])
+
+
+def test_probe_planning_validation_precedes_load():
+    raw = tiny_raw()
+    raw.update(planning=0, probe_only=None)
+    with rejects("planning must be a bool"):
+        run.parse_inputs(canon(raw), ladder=((2, 5),))
+    raw.update(planning=False, probe_only=tiny_raw()["probe_only"])
+    with rejects("inputs: missing probe_only rates: C, CEIL, F, RAG, anchor"):
+        run.parse_inputs(canon(raw), ladder=((2, 5),))
+
+
 def test_parser_validation_and_fallback():
     raw = tiny_raw()
     parsed = run.parse_inputs(canon(raw), ladder=((2, 5),))

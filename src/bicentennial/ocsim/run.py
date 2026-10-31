@@ -244,7 +244,7 @@ def _fraction(value, name):
 def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> RunInputs:
     """Read data only. Tuple-key maps use sorted JSON rows [key..., value].
 
-    Missing load rates inherit the slowest measured row/load rate (S-41).
+    Planning load rates inherit the slowest measured row/load rate (S-41).
     ``ladder`` is the validation seam used for tiny tests and custom ladders.
     """
     raw = json.loads(data)
@@ -287,12 +287,18 @@ def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> Ru
         raise ValueError(f"need at least {largest} lives in the dry history set")
     rows = tuple(schedule.Row(r["row"], _fraction(r["rate"], "rows.rate")) for r in raw["rows"])
     lanes = tuple(schedule.LaneCapacity(**r) for r in raw["lanes"])
+    if type(raw["planning"]) is not bool:
+        raise ValueError("planning must be a bool")
     load = raw["probe_only"]
     rates = {arm: _fraction(rate, f"probe_only.rates.{arm}")
              for arm, rate in sorted(load["rates"].items())}
-    slowest = max([r.rate for r in rows] + list(rates.values()))
-    for arm in (*reserve.PROBE_ONLY_LOAD, "anchor"):
-        rates.setdefault(arm, slowest)
+    missing = sorted(set((*reserve.PROBE_ONLY_LOAD, "anchor")) - rates.keys())
+    if not raw["planning"] and missing:
+        raise ValueError(f"inputs: missing probe_only rates: {', '.join(missing)}")
+    if raw["planning"]:
+        slowest = max([r.rate for r in rows] + list(rates.values()))
+        for arm in (*reserve.PROBE_ONLY_LOAD, "anchor"):
+            rates.setdefault(arm, slowest)
     probe = reserve.ProbeOnlyLoad({(a, who, branch, c): n
                                    for a, who, branch, c, n in load["tokens"]},
                                   dict(load["anchor_tokens"]), rates)
@@ -305,8 +311,6 @@ def _parse_inputs(data: bytes, *, ladder=LADDER, root: Path | None = None) -> Ru
     # Validate durations and rates independently of reserve feasibility.
     schedule.prepare(schedule.ScheduleDesign(lives, rows, checkpoints,
                                              schedule.Capacity(1, 1), passes, failure))
-    if type(raw["planning"]) is not bool:
-        raise ValueError("planning must be a bool")
     if type(raw["n_lives_floor"]) is not int or raw["n_lives_floor"] < 1:
         raise ValueError("n_lives_floor must be a positive int")
     sensitivities = {k: _params(v, k) for k, v in sorted(raw["sensitivity_params"].items())}

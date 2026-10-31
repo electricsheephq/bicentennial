@@ -1,7 +1,6 @@
 """Build binding OC base documents from locked, synthetic-testable sources.
 
-Stage c1 leaves probe_only pending for stage c2. No
-schema loader or contract validator runs here; the history checks are frozen
+No schema loader or contract validator runs here; the history checks are frozen
 below and covered by C-8, together with the token estimator.
 """
 
@@ -21,7 +20,8 @@ from itertools import combinations
 from pathlib import Path
 
 from bicentennial.canon import canon
-from bicentennial.ocsim import inputs, run
+from bicentennial.ocsim import inputs, reserve, run
+from bicentennial.runner.dispatch import anchor_order
 from bicentennial.stats import pilot
 from bicentennial.world import scale
 from bicentennial.world.tokens import estimate_tokens
@@ -31,12 +31,14 @@ C12 = "prereg/completion/C-12.json"
 C11 = "prereg/completion/C-11.json"
 C1 = "prereg/completion/C-1.json"
 C2 = "prereg/completion/C-2.json"
+C4 = "prereg/completion/C-4.json"
 DRY = "prereg/ocsim/dry-set.json"
 RENDER_CODE = ("src/bicentennial", "tiers", "specs/ring0", "schemas")
 STAGE_B = ("#245 issuecomment-6522316290", "#245 issuecomment-6522904866",
            "#245 issuecomment-6524597333")
 FIELD_ARTIFACTS = {"rows": (ROSTER,), "required": (C12,), "lanes": (C11, C1, C2),
-                   "lives": (DRY,), "alloc_by_b": (DRY, C12), "n_lives_floor": (ROSTER, C12)}
+                   "lives": (DRY,), "alloc_by_b": (DRY, C12), "n_lives_floor": (ROSTER, C12),
+                   "probe_only": (DRY, C4)}
 BASE_FIELDS = ("required", "alloc_by_b", "checkpoints", "lives", "rows", "lanes",
                "passover", "control_failure", "probe_only", "n_lives_floor", "planning")
 RESERVED = frozenset(("S", "F", "C", "RAG", "CEIL", "anchor", "no_memory", "oracle_evidence"))
@@ -214,7 +216,7 @@ def _chain(chain, n, where, life, items):
 
 
 def _bar2(data, history, roster):
-    _shape(data, ("run_lock", "arms", "items", "bundles"), "bar2:shape:root")
+    _shape(data, ("run_lock", "arms", "items", "probe_only", "bundles"), "bar2:shape:root")
     lock = data["run_lock"]
     _shape(lock, ("benchmark_commit", "analysis_commit", "generator_version", "generator_versions",
                   "history_sha256", "status", "account_pool"),
@@ -261,7 +263,40 @@ def _bar2(data, history, roster):
                     _need(keep in keeps, f"bar2:chain_missing:{where}")
                     _chain(keeps[keep], len(history["lives"][life][branch]), where, life, items)
     _bundles_shape(data["bundles"], arms, history["lives"])
+    _probe_shape(data["probe_only"], history["lives"], items)
     return data
+
+
+def _probe_shape(probes, lives, items):
+    _shape(probes, reserve.PROBE_ONLY_LOAD, "bar2:probe_only_shape:probe_only")
+    for arm, records in probes.items():
+        _shape(records, lives, f"bar2:probe_only_shape:{arm}")
+        for life, branches in records.items():
+            _shape(branches, ("B0", "B1"), f"bar2:probe_only_shape:{arm}/{life}")
+            seen = set()
+            for branch, sessions in branches.items():
+                where = f"{arm}/{life}/{branch}"
+                reason = f"bar2:probe_only_shape:{where}"
+                _need(isinstance(sessions, list), reason)
+                checkpoints = set()
+                for session in sessions:
+                    reason = f"bar2:probe_only_shape:{where}"
+                    _shape(session, ("checkpoint", "attempt", "stopped", "wall_ms", "items",
+                                     "context_tokens"), reason)
+                    checkpoint = session["checkpoint"]
+                    _need(_integer(checkpoint, 1) and checkpoint <= len(lives[life][branch])
+                          and checkpoint not in checkpoints and _integer(session["attempt"], 1)
+                          and type(session["stopped"]) is bool
+                          and (session["wall_ms"] is None or _integer(session["wall_ms"]))
+                          and _strings(session["items"]) and bool(session["items"])
+                          and isinstance(session["context_tokens"], list), reason)
+                    checkpoints.add(checkpoint)
+                    reason = f"bar2:probe_only_item:{where}"
+                    _need(len(session["items"]) == len(session["context_tokens"]), reason)
+                    for iid, tokens in zip(session["items"], session["context_tokens"], strict=True):
+                        _need(_integer(tokens) and (arm != "F" or tokens == 2)
+                              and iid in items and iid not in seen and items[iid]["life"] == life, reason)
+                        seen.add(iid)
 
 
 def _bundles_shape(bundles, arms, lives):
@@ -340,7 +375,7 @@ class _Context:
         return self.values[name]
 
     def artifact(self, path):
-        if path not in (ROSTER, C12, C11, C1, C2, DRY):
+        if path not in (ROSTER, C12, C11, C1, C2, C4, DRY):
             raise AssertionError(f"unknown artifact: {path}")
         if path in self.values:
             return self.values[path]
@@ -358,6 +393,10 @@ class _Context:
             keys = ("pinned_model",) if path == C1 else ("swap_model", "effort")
             _need(isinstance(data.get("status"), str)
                   and all(isinstance(data.get(k), str) for k in keys), f"source_shape:{path}")
+        if path == C4:
+            _need(isinstance(data.get("status"), str)
+                  and isinstance(data.get("window_name"), str) and bool(data["window_name"])
+                  and _integer(data.get("window_tokens"), 1), f"source_shape:{path}")
         _need(data.get("status") == "binding", f"source_provisional:{path}")
         if path == ROSTER:
             _shape(data, ("status", "systems", "reference", "pre_generator_lcmx"), f"source_shape:{path}")
@@ -589,17 +628,24 @@ def _dry_shape(data):
     _need(isinstance(data["lives"], list), reason)
     for life in data["lives"]:
         _shape(life, ("i", "life", "genre", "seed", "generator_version", "render_commit",
-                      "fork", "branches", "bundles"), reason)
+                      "fork", "branches", "bundles", "anchor"), reason)
         _need(_integer(life["i"]) and isinstance(life["life"], str)
               and isinstance(life["genre"], str) and _integer(life["seed"])
               and isinstance(life["generator_version"], str)
               and _hex(life["render_commit"], 40) and _integer(life["fork"], 1), reason)
         _shape(life["branches"], ("B0", "B1"), reason)
         for branch in life["branches"].values():
-            _shape(branch, ("est_tokens", "probe_points", "probe_tokens", "swap", "content_sha256"), reason)
-            for key, minimum in (("est_tokens", 1), ("probe_points", 1), ("probe_tokens", 0), ("swap", 1)):
+            _shape(branch, ("est_tokens", "probe_points", "probe_tokens", "swap", "content_sha256",
+                            "probe_items", "probe_only_context", "ceil_peak"), reason)
+            for key, minimum in (("est_tokens", 1), ("probe_points", 1), ("probe_tokens", 0),
+                                 ("swap", 1), ("probe_items", 0), ("ceil_peak", 0)):
                 _need(isinstance(branch[key], list)
                       and all(_integer(v, minimum) for v in branch[key]), reason)
+            _shape(branch["probe_only_context"], reserve.PROBE_ONLY_LOAD, reason)
+            lists = [branch[k] for k in ("probe_items", "probe_tokens", "ceil_peak")]
+            lists += list(branch["probe_only_context"].values())
+            _need(all(isinstance(v, list) and len(v) == len(branch["probe_points"])
+                      and all(_integer(n) for n in v) for v in lists), reason)
             _need(isinstance(branch["content_sha256"], list)
                   and all(_hex(v, 64) for v in branch["content_sha256"]), reason)
         _need(isinstance(life["bundles"], list), reason)
@@ -611,6 +657,13 @@ def _dry_shape(data):
             pair = tuple(bundle[:2])
             _need(pair not in seen, reason)
             seen.add(pair)
+        _need(isinstance(life["anchor"], list), reason)
+        refs = []
+        for pair in life["anchor"]:
+            _need(isinstance(pair, list) and len(pair) == 2
+                  and _hex(pair[0], 64) and _integer(pair[1]), reason)
+            refs.append(pair[0])
+        _need(refs == sorted(set(refs)), reason)
 
 
 def _render_check(context, commit):
@@ -729,10 +782,78 @@ def _n_lives_floor(context):
     return value
 
 
-def _pending(rule):
-    def refuse(context):
-        raise ValueError(f"pending:{rule}")
-    return refuse
+def _probe_rates(context):
+    data = context.get("bar2")
+    rates, provenance = {}, {}
+    for arm, lives in sorted(data["probe_only"].items()):
+        counted = wall = tokens = 0
+        for branches in lives.values():
+            for sessions in branches.values():
+                for session in sessions:
+                    if session["wall_ms"] is None or session["stopped"]:
+                        continue
+                    counted += 1
+                    wall += session["wall_ms"]
+                    tokens += (sum(estimate_tokens(data["items"][i]["prompt"]) for i in session["items"])
+                               + sum(session["context_tokens"]))
+        if counted:
+            _need(tokens > 0, f"probe_only:zero_tokens:{arm}")
+            _need(wall > 0, f"probe_only:zero_wall:{arm}")
+            rates[arm] = Fraction(wall, tokens)
+        provenance[arm] = dict(timed_sessions=counted, wall_ms=wall, tokens=tokens,
+                               source="own" if counted else "slowest")
+    _need(bool(rates), "probe_only:no_timed_arm")
+    slowest = max(rates.values())
+    for arm in reserve.PROBE_ONLY_LOAD:
+        rates.setdefault(arm, slowest)
+    rates["anchor"] = rates["C"]
+    provenance["anchor"] = {**provenance["C"], "source": "C"}
+    context.provenance["probe_only_rates"] = provenance
+    return rates
+
+
+def _probe_controls(context):
+    data, controls = context.get("bar2"), context.get("controls")
+    for name, arm in inputs.ARMS.items():
+        output = controls["A"][name]
+        owners = dict(output["singleton_lives"])
+        for bundle in output["bundles"]:
+            owners.update((iid, bundle["life"]) for iid in bundle["items"])
+        expected = {life: {i["item_id"] for i in output["items"] if owners[i["item_id"]] == life}
+                    for life in context.get("history")["lives"]}
+        actual = {life: {iid for sessions in branches.values() for s in sessions for iid in s["items"]}
+                  for life, branches in data["probe_only"][arm].items()}
+        _need(actual == expected and set(owners.values()) == set(expected), "probe_only:controls_mismatch")
+
+
+def _probe_only(context):
+    context.get("bar2")
+    _probe_controls(context)
+    window = context.artifact(C4)["window_tokens"]
+    full = scale.named("full")
+    _need(window == full.window, "probe_only:c4_window")
+    rows, anchors = [], {}
+    for life in context.artifact(DRY)["lives"]:
+        who = life["life"]
+        for branch, record in life["branches"].items():
+            reason = f"probe_only:dry_inconsistent:{who}/{branch}"
+            for c, checkpoint in enumerate(record["probe_points"]):
+                count, prompt, peak = (record[k][c] for k in ("probe_items", "probe_tokens", "ceil_peak"))
+                contexts = {a: v[c] for a, v in record["probe_only_context"].items()}
+                _need(count >= sum(n for _, k, n in life["bundles"] if k == checkpoint), reason)
+                total = prompt + contexts["CEIL"]
+                _need((count == 0 and prompt == peak == 0 and not any(contexts.values()))
+                      or (count > 0 and total <= peak * count and peak <= total), reason)
+                for arm in reserve.PROBE_ONLY_LOAD:
+                    if arm != "CEIL" or peak <= window:
+                        rows.append([arm, who, branch, checkpoint, prompt + contexts[arm]])
+        anchor = dict(life["anchor"])
+        _need(len(anchor) == sum(n for _, k, n in life["bundles"] if k > full.swap),
+              f"probe_only:anchor_count:{who}")
+        _need(len(anchor) >= 20, f"probe_only:anchor_short:{who}")
+        order = anchor_order(str(life["seed"]), who, anchor)
+        anchors[who] = sum(anchor[ref] for ref in order[:20])
+    return dict(tokens=sorted(rows), anchor_tokens=anchors, rates=_probe_rates(context))
 
 
 @dataclass(frozen=True)
@@ -752,7 +873,8 @@ RULES = {
         ("alloc_by_b", "B-6", ("PREREG l.418", *STAGE_B), _alloc),
         ("checkpoints", "B-7", ("PREREG l.418",), _checkpoints),
         ("lives", "B-7, B-17, B-17a, B-17b, B-18, B-19", ("PREREG l.431,734,795", *STAGE_B), _lives),
-        ("probe_only", "B-8", ("PREREG l.453,759", CLARIFICATION), _pending("B-8")),
+        ("probe_only", "B-8, B-21 to B-25",
+         ("PREREG l.453,759", CLARIFICATION, "#245 issuecomment-6535643668"), _probe_only),
         ("n_lives_floor", "B-9, B-26, B-27",
          ("PREREG l.491,498,503", "PREREG l.574", "#245 issuecomment-6535643668"), _n_lives_floor),
         ("required", "B-10", ("PREREG l.27",), _required),
@@ -798,7 +920,7 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
                              "passover_counts": stops, "control_counts": units}
     context.provenance.update(
         account_pool=context.get("bar2")["run_lock"]["account_pool"], neutrality=neutrality,
-        pending_disclosures=["B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records",
+        pending_disclosures=["B-4 recovered INFRA attempts: pending; sources C5a's container (B-4) and the bar-2 runner",
                              "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card"])
     document["base_provenance"] = context.provenance
     return canon(run._encode(document))
