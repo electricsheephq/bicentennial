@@ -124,7 +124,8 @@ def main():
                 if args.fail_turn == session:
                     emit(dict(ok=False, error="injected turn failure"))
                     continue
-                system = f"fake harness; cwd {cwd}; home {home}"
+                system = (f"fake harness; cwd {cwd}; home {home}; getcwd {os.getcwd()}; "
+                          f"realhome {os.path.realpath(os.environ['HOME'])}")
                 if cfg["memory"]["memory_enabled"]:
                     entries = memory_entries(memory)
                     if entries:

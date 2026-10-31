@@ -32,6 +32,7 @@ from bicentennial.report.determinism import determinism_check
 from bicentennial.report.receipt import loop_time
 from bicentennial.runner import compare, t0, t1
 from bicentennial.runner.lock import LockMismatch
+from bicentennial.sandbox import fixedroot
 from bicentennial.score.classes import IDENTITY, outcome
 from bicentennial.score.invariants import GATED_T1, INVARIANTS, Verdict
 from bicentennial.systems.controls import WIPED_LABEL
@@ -107,6 +108,7 @@ def no_results(out):
 def completed(installed, cases, tmp_path_factory):
     root = tmp_path_factory.mktemp("compare-full")
     patch = pytest.MonkeyPatch()
+    patch.setattr(fixedroot, "PARENT", os.path.realpath(tmp_path_factory.mktemp("fixedroot")))
     patch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     patch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     patch.setattr(adapter, "assert_niced", lambda pid: None)
@@ -984,7 +986,8 @@ def test_cli(monkeypatch):
     args = ["t1", "--system", "s", "--packs", "p", "--pack-hash", "h", "--out", "o"]
     assert cli.main(args) == 2
     assert calls == [["-m", "bicentennial.cli", *args], dict(system="s", packs_dir="p",
-        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, model_cache=None, cache=None)]
+        pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, model_cache=None,
+        cache=None, sandbox_slot=0)]
     assert cli.main(["t0", "--system", "s", "--pack", "all", "--packs", "p",
                      "--pack-hash", "h", "--out", "o"]) == 0
 

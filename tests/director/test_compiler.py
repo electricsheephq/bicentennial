@@ -744,6 +744,38 @@ def test_cli_bad_input_and_pin(tmp_path, monkeypatch):
     assert cli.main(args) == 3
 
 
+def test_cli_refuses_inputs_in_its_scratch(tmp_path, monkeypatch, capfd):
+    # The command reads its pin, route table and entry itself, so a job-root reset would delete one inside scratch.
+    from bicentennial.director.compiler import __main__ as cli
+    from bicentennial.sandbox import fixedroot
+
+    def clear(life_dir, *, scratch, **kwargs):
+        fixedroot.remove_tree(Path(scratch) / "check-B0-0")
+        return {"ok": True, "branches": {}}
+
+    monkeypatch.setattr(cli, "check_compile", clear)
+    scratch = tmp_path / "runs"
+    args = cli_args(tmp_path / "life", scratch, tmp_path)
+    root = scratch / "check-B0-0"
+    for flag in ("--harness-pin", "--route-table", "--entry"):
+        root.mkdir(parents=True, exist_ok=True)
+        i = args.index(flag) + 1
+        inside = root / Path(args[i]).name
+        inside.write_bytes(Path(args[i]).read_bytes())
+        assert cli.main([*args[:i], str(inside), *args[i + 1:]]) == 2
+        assert inside.exists()
+        link = root / f"link-{Path(args[i]).name}"
+        link.symlink_to(Path(args[i]).resolve())
+        assert cli.main([*args[:i], str(link), *args[i + 1:]]) == 2
+        assert link.is_symlink()
+    assert cli.main(args) == 0
+    # An error the guard cannot resolve stops the command with the input-error exit, not a traceback.
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "within", lambda path, root: (_ for _ in ()).throw(OSError(5, "injected")))
+        assert cli.main(args) == 2
+    capfd.readouterr()
+
+
 def test_cli_refused_system(tmp_path, monkeypatch):
     from bicentennial.director.compiler import __main__ as cli
     from bicentennial.systems.registry import SystemRefused

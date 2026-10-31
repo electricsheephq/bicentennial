@@ -262,8 +262,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
     life_dir, scratch = Path(life_dir), Path(scratch)
     life = json.loads((life_dir / "life.json").read_bytes())
     schedule = schedule if schedule is not None else build_schedule(life["seed"], life["life"], named(life["scale"]))
-    root = scratch / arm / life["life"] / branch / f"a{attempt}"
-    root.mkdir(parents=True, exist_ok=True)
+    root = scratch / branch
+    root.mkdir(parents=True)
     evidence = LifeRun(arm, life["life"], branch, attempt, _root=root)
     sessions, transforms, adapter = [], [], None
     workspace_ms = {}
