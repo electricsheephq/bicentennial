@@ -88,6 +88,7 @@ def main(argv=None) -> int:
     command.add_argument("--out", required=True)
     command.add_argument("--mode", choices=("api", "hermes"), default="api")
     command.add_argument("--workers", type=_workers, default=1)
+    command.add_argument("--sandbox-slot", type=int, default=0)
     for name in ("hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command = commands.add_parser("t1")
@@ -96,6 +97,7 @@ def main(argv=None) -> int:
     command.add_argument("--packs", dest="packs_dir", required=True)
     for name in ("baseline", "hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
+    command.add_argument("--sandbox-slot", type=int, default=0)
     command = commands.add_parser("build")
     command.add_argument("--tier", choices=("T0", "T1"), required=True)
     command.add_argument("--out", required=True)

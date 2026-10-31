@@ -26,6 +26,7 @@ from bicentennial.runner.guard import admit, read_marker
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.life import SEGMENTS, STEP_S, LifeRun, run_life
 from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock, lock_hash
+from bicentennial.sandbox.fixedroot import remove_tree
 from bicentennial.score.bundle import make_bundle
 from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
@@ -306,7 +307,7 @@ def _unit(ctx, pack, arm, b, scratch, voids, floor):
     for attempt in range(3):
         run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=b,
             items=pack.items[b], records=pack.records_b[b], keys=pack.keys,
-            scratch=scratch / "units", run=ctx.run_id, attempt=attempt, gate=ctx.gate,
+            scratch=scratch, run=ctx.run_id, attempt=attempt, gate=ctx.gate,
             current_lock=ctx.current_lock, voids=voids, harness_pin=ctx.harness_pin,
             hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
             worker_argv=_worker(ctx, pack.life, b, arm), visible=pack.visible,
@@ -400,15 +401,6 @@ def _arm(arm, packs, units, scores, labels, voids):
         tuple(recall[iid] for iid in sorted(recall)), tuple(sorted(transforms)), hits)
 
 
-def _remove_tree(path):
-    if path.is_symlink() or not path.is_dir():
-        path.unlink(missing_ok=True)
-        return
-    for child in sorted(path.iterdir()):
-        _remove_tree(child)
-    path.rmdir()
-
-
 def run_arms(ctx, *, scratch) -> T1Run:
     """Run the floor first, rerun infrastructure failures and always release scratch."""
     scratch = Path(scratch)
@@ -454,4 +446,4 @@ def run_arms(ctx, *, scratch) -> T1Run:
             tuple(sorted({i for p in ctx.packs for i in p.meta["duty_items"]})),
             tuple(ctx.index["not_exercised"]))
     finally:
-        _remove_tree(scratch)
+        remove_tree(scratch)

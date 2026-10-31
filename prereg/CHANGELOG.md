@@ -2,8 +2,14 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
-## PREREG-v0.4 clarification, 2026-10-31: the anchor's seed order (#285)
-- **l.759:** "in seed order" means ascending `keyed.draw(str(seed), world.unit(life, "anchor", "order"), 0, bundle_ref)`, ties broken by `bundle_ref`, where `bundle_ref` is the sha256 hex of the bundle id and the seed is the life's. `runner/dispatch.py:anchor_order` computes it, for the OC base document and the full-tier runner alike (#245 B-25). No version change; PREREG-v0.4 remains frozen.
+## PREREG-v0.5 clarification, 2026-10-31: the anchor's seed order (#285)
+- **l.814 (l.759 in PREREG-v0.4):** "in seed order" means ascending `keyed.draw(str(seed), world.unit(life, "anchor", "order"), 0, bundle_ref)`, ties broken by `bundle_ref`, where `bundle_ref` is the sha256 hex of the bundle id and the seed is the life's. `runner/dispatch.py:anchor_order` computes it, for the OC base document and the full-tier runner alike (#245 B-25). No version change; PREREG-v0.5 remains frozen.
+
+## Design erratum, 2026-10-31: the Scoring Veto Panel's timing (#321)
+- **DESIGN §14 and §16** now carry PREREG-v0.5's backstop: the panel's rule binds from the first freeze after C-18 is filled, and from PREREG-v1 at the latest (PREREG-v0.5, Freezes, External veto, From when). `docs/REQUIREMENTS.md`'s three lines that say when the panel stands in, binds and holds the veto alone now carry the same two conditions. No rule changes: PREREG-v0.5 already states both. FREEZE-v0.5 verifies `docs/DESIGN.md` and `prereg/PREREG-v0.5.md` as they are at the tag `prereg-v0.5`, so its hashes stay valid. No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 contract change, 2026-10-31: fixed sandbox roots (#282)
+- **RING0 §13 E20:** from the next kit, every Hermes unit runs below a fixed per-slot base, exclusively leased for the run and inherited by workers. T0/T1 accept and disclose `--sandbox-slot`, and refuse operator paths inside any slot's base (`sandbox_overlap`); the mask is unchanged. v0.1's frozen kit keeps its layout; next-kit baselines are rebuilt. No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## PREREG-v0.5, 2026-10-31: frozen (supersedes v0.4; DV48, #311)
 - **DV48, agent-only validation,** at the owner's direction of 2026-10-31: no person grades, annotates, keys, audits, adjudicates or breaks a tie. `prereg/PREREG-v0.5.md` carries design v2.3. Its freeze record, `prereg/FREEZE-v0.5.md`, keeps both hashes, the freeze time and the tag.

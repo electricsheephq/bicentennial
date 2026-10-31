@@ -505,11 +505,13 @@ def test_probe_zero_items_and_c_standin(fake):
 
 
 def test_anchor_changelog():
-    entry = (ROOT / "prereg/CHANGELOG.md").read_text().split("\n\n")[2]
-    assert entry.startswith("## PREREG-v0.4 clarification, 2026-10-31: the anchor's seed order (#285)")
+    heading = "## PREREG-v0.5 clarification, 2026-10-31: the anchor's seed order (#285)"
+    entries = [e for e in (ROOT / "prereg/CHANGELOG.md").read_text().split("\n\n") if e.startswith(heading)]
+    assert len(entries) == 1
+    entry = entries[0]
     assert 'keyed.draw(str(seed), world.unit(life, "anchor", "order"), 0, bundle_ref)' in entry
     assert "ties broken by `bundle_ref`" in entry and "runner/dispatch.py:anchor_order" in entry
-    assert entry.endswith("No version change; PREREG-v0.4 remains frozen.")
+    assert "**l.814 (l.759 in PREREG-v0.4):**" in entry and entry.endswith("No version change; PREREG-v0.5 remains frozen.")
 
 
 def test_round_trip(tmp_path, monkeypatch):

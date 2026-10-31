@@ -69,6 +69,7 @@ from bicentennial.report.receipt import (
 from bicentennial.runner.guard import admit, read_marker
 from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock, lock_hash
 from bicentennial.runtime.clock import SimClock
+from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.envserver.honeypot import hits
 from bicentennial.sandbox.surfaces import clone_tree
 from bicentennial.score.aggregate import reduce
@@ -496,7 +497,7 @@ def _attempts(index, pack, branch, entry, pack_hash, real, work, worker, *, boun
         for attempt in range(3):
             current = _lock(index, pack, entry, pack_hash, real)
             gate.start_session(current, "system", pack.meta["life"], branch, 1, attempt)
-            unit = Path(work) / f"worker-{worker}" / f"{pack.pack['pack_id']}-{branch}-a{attempt}"
+            unit = Path(work) / f"{pack.pack['pack_id']}-{branch}-a{attempt}"
             factory = _Factory(pack, branch, unit, entry, current,
                                real=real, host_options=host_options)
             factories.append(factory)
@@ -885,7 +886,8 @@ class _Publication:
             _remove_output(self.staging)
 
 
-def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication):
+def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication,
+             sandbox_slot=0, sandbox=None):
     index, selected, by_row, entry, marker, admission, options, bound_s = prepared
     options = dict(options)
     model_cache = options.pop("model_cache", None)
@@ -893,7 +895,15 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
     properties = options.pop("run_properties", ())
     (pack_root,) = {Path(p.rel).parts[0] for p in selected}
     run_start = time.time_ns() // 1_000_000
-    real, work = bool(options), out / "work"
+    real = bool(options)
+    if real and sandbox is None:
+        with fixedroot.lease(sandbox_slot, T0Refused) as sandbox:
+            return _execute(prepared, packs_dir=packs_dir, pack_hash=pack_hash, out=out,
+                cache=cache, workers=workers, publication=publication,
+                sandbox_slot=sandbox_slot, sandbox=sandbox)
+    work = sandbox / "t0" if real else out / "work"
+    if real:
+        properties = (*properties, ("t0.sandbox_slot", str(sandbox_slot)))
     count = min(workers, admission.max_roots, 2)
     locks = {p.rel: _lock(index, p, entry, pack_hash, real) for p in selected}
     first = selected[0]
@@ -990,7 +1000,8 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
 
 
 def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
-           hermes=None, plugin_source=None, model_cache=None, cache=None, entry=None, host_overrides=None):
+           hermes=None, plugin_source=None, model_cache=None, cache=None, entry=None, host_overrides=None,
+           sandbox_slot=0):
     """Run verified offline packs, returning Ring 0's 0/1/2/3/70 exit code."""
     created, published, publication = False, False, None
     try:
@@ -1000,15 +1011,19 @@ def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
                 raise T0Refused("hashseed")
             if out.exists() or out.is_symlink():
                 raise T0Refused("out_exists")
+            if any(p is not None and fixedroot.overlaps(p)
+                   for p in (out, packs_dir, hermes, plugin_source, model_cache, cache)):
+                raise T0Refused("sandbox_overlap")
             prepared = _preflight(system=system, packs=packs_dir, selected=packs, pack_hash=pack_hash,
                 workers=workers, mode=mode, hermes=hermes, plugin_source=plugin_source,
                 entry=entry, host_overrides=host_overrides, model_cache=model_cache)
             out.mkdir(parents=True)
             created = True
             publication = _Publication(out)
+            fixedroot.validate_slot(sandbox_slot, T0Refused)
             code = _execute(prepared, packs_dir=packs_dir, pack_hash=pack_hash, out=out,
                             cache=Path(cache) if cache is not None else out / "cache", workers=workers,
-                            publication=publication)
+                            publication=publication, sandbox_slot=sandbox_slot)
             published = True
             return code
         except (*REFUSALS, T0Refused, SpendRefused) as error:
