@@ -188,11 +188,14 @@ def test_compile_roots(policy, tmp_path, monkeypatch):
         roots = [root for b, root in seen if b == branch]
         assert roots
         assert roots == [scratch / f"check-{branch}-{k}" for k in range(len(roots))]
-    assert not list(scratch.glob("check-*"))
+    assert sorted(scratch.glob("check-*")) == sorted({root for _, root in seen})
+    stale = scratch / "check-B0-0" / "stale"
+    stale.write_text("from an earlier call")
     seen.clear()
     check_compile(pack.life_dir, entry=policy.ctx.entry, route_table=t1._routes("hermes-native"),
                   harness_pin=policy.ctx.harness_pin, checkout=None, scratch=scratch)
     assert seen
+    assert not stale.exists()
 
 
 def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):

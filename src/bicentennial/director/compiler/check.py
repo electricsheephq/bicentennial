@@ -173,6 +173,7 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
             result = branches[branch] = dict(sessions=0, calls=0, mismatches=[])
             for k, (session, calls, instant, cadence, seed, end_hash) in enumerate(jobs):
                 root = scratch / f"check-{branch}-{k}"
+                remove_tree(root)  # a stale root from an earlier call; this call's evidence stays for its caller
                 root.mkdir(parents=True)
                 if genre == "G1":
                     materialize(db, schedule, branch=branch, boundary=start_boundary(schedule, session["index"]),
@@ -213,7 +214,6 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
                             adapter.close()
                         except HarnessFailed as error:
                             result["mismatches"].extend(_mismatch(c, f"harness_failed:{error}", None) for c in calls)
-                remove_tree(root)
         finally:
             db.close()
     return dict(life=meta["life"], genre=genre, branches=branches,
