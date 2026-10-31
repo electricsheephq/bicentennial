@@ -707,6 +707,8 @@ def _n_lives_floor(context):
     _need(len(lives) == 16, "n_lives_floor:bar2_lives")
     subset = _keep_subset(bundles, tracks)
     flags = {s["id"]: s["lcmx"] for s in roster["systems"]}
+    # Bar 2 runs the full pilot roster (PREREG l.463); without the reference, its contrasts are missing from the family.
+    _need(roster["reference"] in arms, "n_lives_floor:no_reference")
     pairs = list(combinations([a for a in arms if not flags[a]], 2))
     _need(bool(pairs), "n_lives_floor:no_pairs")
     scored = {a: {tuple(r[:4]) for r in bundles[a] if r[4] is not None} for a in arms}
@@ -796,6 +798,7 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
                              "passover_counts": stops, "control_counts": units}
     context.provenance.update(
         account_pool=context.get("bar2")["run_lock"]["account_pool"], neutrality=neutrality,
-        pending_disclosures=["B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records"])
+        pending_disclosures=["B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records",
+                             "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card"])
     document["base_provenance"] = context.provenance
     return canon(run._encode(document))

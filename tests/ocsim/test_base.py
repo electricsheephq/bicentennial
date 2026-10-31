@@ -224,7 +224,8 @@ def test_complete(fake):
         assert artifact == {"path": artifact["path"], "commit": fake.data["run_lock"]["benchmark_commit"],
                             "sha256": sha256((fake.root / artifact["path"]).read_bytes()).hexdigest()}
     assert provenance["pending_disclosures"] == [
-        "B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records"]
+        "B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records",
+        "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card"]
     paths = {"rows": {base.ROSTER}, "required": {base.C12}, "lanes": {base.C11, base.C1, base.C2},
              "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY},
              "n_lives_floor": {base.ROSTER, base.C12}}
@@ -993,11 +994,14 @@ def test_bundles_container_shape(fake, case, arm):
 @pytest.mark.parametrize("case,reason", [("required", "required_track:missing-cell"),
     ("missing", "bundles_mismatch"), ("identity", "bundles_mismatch"),
     ("track", "bundles_track:alpha/Drift"), ("lives", "bar2_lives"),
-    ("pairs", "no_pairs"), ("empty", "empty_track:beta/gamma/Wake")])
+    ("reference", "no_reference"), ("pairs", "no_pairs"), ("empty", "empty_track:beta/gamma/Wake")])
 def test_pilot_refusals(tmp_path, monkeypatch, case, reason):
     fixture = (Fake(tmp_path, monkeypatch) if case == "lives" else
                sixteen(tmp_path, monkeypatch, systems=("alpha", "beta") if case == "pairs"
+                       else ("alpha", "beta", "gamma", "eps") if case == "reference"
                        else ("alpha", "beta", "gamma")))
+    if case == "reference":
+        fixture.remove_arm("beta")  # gamma and eps still form a pair
     if case == "required":
         fixture.c12["required"].append("missing-cell")
         fixture.c12["required"].sort()
