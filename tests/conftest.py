@@ -6,6 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from bicentennial.sandbox import fixedroot
+
+
+@pytest.fixture(autouse=True)
+def fixedroot_parent(tmp_path_factory, monkeypatch):
+    monkeypatch.setattr(fixedroot, "PARENT", os.path.realpath(tmp_path_factory.mktemp("fixedroot")))
+
 
 @pytest.fixture
 def git_checkouts(tmp_path, monkeypatch):

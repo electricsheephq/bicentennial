@@ -32,6 +32,7 @@ from bicentennial.harness.hermes.config import (
 )
 from bicentennial.ledger import BlobStore, Guard, stable_digest
 from bicentennial.runner.guard import admit, assert_niced, read_marker
+from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.envserver.honeypot import hits
 from bicentennial.sandbox.surfaces import surface_hash
 from bicentennial.systems.registry import SystemRefused, check
@@ -113,7 +114,7 @@ class _Worker:
         with open(log, "ab") as err:
             self.proc = subprocess.Popen([*prefix, *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=err, env=env, cwd=cwd, text=True, encoding="utf-8",
-                                         start_new_session=True)
+                                         start_new_session=True, pass_fds=fixedroot.held())
         os.set_blocking(self.proc.stdin.fileno(), False)
         try:
             if self.egress is not None:

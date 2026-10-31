@@ -193,6 +193,7 @@ def _code_refusals():
         codes.update(_refusal_codes(REPO / f"src/bicentennial/runner/{name}.py"))
     # Helpers raise through the tier's refusal factory, passed as `refused` or `refuse`.
     codes.update(_refusal_codes(REPO / "src/bicentennial/systems/hermes_plugin.py", ("refused", "refuse")))
+    codes.update(_refusal_codes(REPO / "src/bicentennial/sandbox/fixedroot.py", ("refused", "refuse")))
     tree = ast.parse((REPO / "src/bicentennial/systems/registry.py").read_text())
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)

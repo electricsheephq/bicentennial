@@ -387,6 +387,8 @@ def completed(installed, tmp_path_factory):
         start = time.monotonic()
         try:
             run = real(**kw)
+            assert kw["scratch"] in (root / "one", root / "two")
+            assert run._root == kw["scratch"] / kw["branch"]
         finally:
             print(f"run_life {key} a{kw['attempt']} wall_ms={int((time.monotonic() - start) * 1000)}", flush=True)
         assert run.stopped is None, (key, run.stopped, run.audit)
@@ -426,7 +428,7 @@ def completed(installed, tmp_path_factory):
             pytest.fail(f"determinism first differing item={different}")
         assert len(cleaned) == 24 and len({id(r) for r in cleaned}) == 24
         assert len(checks) == 4
-        assert not list(root.rglob("a[0-9]*"))
+        assert not (root / "two").exists()
         print(f"T1 deterministic_sha256={sha256(projection(first)).hexdigest()}", flush=True)
     finally:
         # Undo before yielding: later tests (test_pairing_stop_fake_worker) call the real run_life.

@@ -6,6 +6,7 @@ from fractions import Fraction
 from bicentennial.canon import milli, sha256_canon
 from bicentennial.genres.g2_assistant.envseed import probe_envseed
 from bicentennial.items.tags import check_precondition
+from bicentennial.sandbox.fixedroot import holding, remove_tree
 
 
 def precondition_holds(item, *, repo_tree_hash, env_state_hash, probe_env_state_hash):
@@ -98,9 +99,29 @@ def _compare(adapter, calls):
 
 
 def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None):
+    """Hold scratch exclusively for the call: its job roots have fixed names (#282)."""
+    import fcntl
+    import os
+    from pathlib import Path
+
+    scratch = Path(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+    fd = os.open(scratch / ".check.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise ValueError("scratch_busy") from None
+        with holding(fd):  # workers inherit the lock, so a killed caller's live workers keep scratch busy
+            return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
+                                  checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv)
+    finally:
+        os.close(fd)
+
+
+def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s, worker_argv):
     """Execute each check session in a fresh home and compare its durable tool-result receipts."""
     import sqlite3
-    import tempfile
     from pathlib import Path
 
     from bicentennial.director.routes import RouteTable
@@ -171,8 +192,10 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
             else:
                 raise ValueError("unknown genre")
             result = branches[branch] = dict(sessions=0, calls=0, mismatches=[])
-            for session, calls, instant, cadence, seed, end_hash in jobs:
-                root = Path(tempfile.mkdtemp(prefix=f"check-{branch}-", dir=scratch))
+            for k, (session, calls, instant, cadence, seed, end_hash) in enumerate(jobs):
+                root = scratch / f"check-{branch}-{k}"
+                remove_tree(root)  # a stale root from an earlier call; this call's evidence stays for its caller
+                root.mkdir(parents=True)
                 if genre == "G1":
                     materialize(db, schedule, branch=branch, boundary=start_boundary(schedule, session["index"]),
                                 root=root / "workspace")
