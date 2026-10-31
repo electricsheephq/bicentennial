@@ -352,8 +352,8 @@ with tempfile.TemporaryDirectory() as directory:
 
 
 def test_purity():
-    tree = ast.parse(Path(twin.__file__).read_text() + "\n" +
-                     Path(twin.__file__).with_name("fulltwin.py").read_text())
+    tree = ast.parse("\n".join(Path(twin.__file__).with_name(name + ".py").read_text()
+                              for name in ("twin", "fulltwin", "fixtureplan", "planned")))
     forbidden = {"random", "time", "socket", "ssl", "http", "urllib", "subprocess", "bicentennial.sandbox", "bicentennial.director", "spikes"}
     for node in ast.walk(tree):
         names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module] if isinstance(node, ast.ImportFrom) else []
@@ -551,6 +551,32 @@ def test_value_alternate_collision_rejects_later_key(tmp_path, monkeypatch, stem
     assert str(error.value) == ids[expected]
     assert not (tmp_path / "twin.db").exists()
     assert not (tmp_path / "branches").exists()
+    db.close()
+
+
+def test_alternates_reserved(tmp_path, monkeypatch):
+    db, s = base(tmp_path / "base.db")
+    templates = []
+    for i, stem in enumerate(("VALUE", "OTHER")):
+        spec = Chain(id=f"chain-{i}", subject=NAMES[i + 1], key="status", stem=stem,
+                     depth=1, at=((1, i + 1), (2, i + 1)))
+        write_corrections(db, s, [spec], principal="principal")
+        template = QA("value", mint(s, "corrections", spec.id, "fact", "value", 1))
+        object.__setattr__(template, "template_id", f"value-{i}")
+        templates.append(template)
+    finish(db, s)
+    taken = {v.rsplit("-", 1)[1] for (v,) in db.execute("SELECT value FROM locked_token")}
+    numbers = [str(n) for n in range(100000, 100100) if str(n) not in taken]
+    monkeypatch.setattr(twin, "token_value", lambda *args, **kwargs: f"{args[6]}-{numbers[args[5]]}")
+    kwargs = dict(world_path=tmp_path / "twin.db", out_dir=tmp_path / "branches",
+                  principal_id="principal", expected_state=state)
+    with pytest.raises(twin.IndependenceError):
+        twin.twin_life(db, s, templates, **kwargs)
+    result = twin.twin_life(db, s, templates, reserve_alternates=True, **kwargs)
+    alternates = [json.loads(line)["row"]["value"].rsplit("-", 1)[1]
+                  for f in result.flips for line in f.into if json.loads(line)["table"] == "locked_token"]
+    assert len(set(alternates)) == len(alternates) == 2
+    result.b1.close()
     db.close()
 
 

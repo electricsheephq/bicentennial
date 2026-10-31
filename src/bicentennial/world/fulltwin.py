@@ -1,18 +1,22 @@
-"""Full-length twins over the default builders' finite, static fixtures."""
+"""Full-length twins over planned fixtures, with default-world diagnostics."""
 
-from dataclasses import asdict, dataclass
+import json
+import os
+import shutil
+import tempfile
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from bicentennial.canon import canon
 from bicentennial.genres.g1_software.world import build_g1, world_meta
 from bicentennial.genres.g2_assistant.world import build_base
 from bicentennial.items.bindings import Binding, compile_bound
-from bicentennial.items.protocol import CELL_IDS, DEFERRED_CELLS
 from bicentennial.items.templates.g1 import TEMPLATES as G1
 from bicentennial.items.templates.g2 import TEMPLATES as G2
 from bicentennial.render.session_cut import cut
 
-from . import create_world
+from . import create_world, fixtureplan, open_world, planned
+from .processes import mint
 from .scale import named
 from .schedule import build_schedule
 from .targeted import MIN_DISTANCE_SESSIONS, expected_state, seed_text
@@ -69,19 +73,7 @@ def candidates(genre):
 
 
 def validate_budget(budget):
-    if type(budget) is not list:
-        raise ValueError("budget:shape")
-    seen = set()
-    for row in budget:
-        if (type(row) is not list or len(row) != 3 or type(row[0]) is not str
-                or row[0] not in CELL_IDS or row[0] in DEFERRED_CELLS
-                or type(row[1]) is not int or row[1] not in named("full").checkpoints
-                or type(row[2]) is not int or row[2] < 1):
-            raise ValueError("budget:shape")
-        key = row[0], row[1]
-        if key in seen:
-            raise ValueError("budget:shape")
-        seen.add(key)
+    fixtureplan.validate_budget(budget)
 
 
 def accepts(binding, compile_one):
@@ -93,29 +85,6 @@ def accepts(binding, compile_one):
             and branch.entries[0][1]["evidence_session"] is not None
             and binding.checkpoint - branch.entries[0][1]["evidence_session"]
             >= MIN_DISTANCE_SESSIONS)
-
-
-def select(budget, table, compile_one):
-    """Greedily reserve each logical fixture once, independently of input order."""
-    validate_budget(budget)
-    selected, used = [], set()
-    table = sorted(table, key=lambda c: (c.template.template_id, c.fixture))
-    for cell, checkpoint, n in sorted(budget):
-        found = 0
-        for c in table:
-            if c.template.cell_id != cell or c.fixture in used:
-                continue
-            binding = c.binding(checkpoint)
-            if not accepts(binding, compile_one):
-                continue
-            selected.append(binding)
-            used.add(c.fixture)
-            found += 1
-            if found == n:
-                break
-        if found < n:
-            raise ValueError(f"budget:{cell}@{checkpoint}:{found}/{n}")
-    return tuple(selected)
 
 
 def _world(genre, life, seed, directory):
@@ -169,45 +138,122 @@ class FullTwin:
 
 def build(genre, life, seed, budget, out_dir) -> FullTwin:
     validate_budget(budget)
-    table = candidates(genre)
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    db, schedule, principal = _world(genre, life, seed, out_dir)
+    if out_dir.exists() and (not out_dir.is_dir() or any(out_dir.iterdir())):
+        raise ValueError("out:exists")
+    registry = G1 if genre == "G1" else G2
+    schedule = build_schedule(seed_text(seed), life, named("full"))
+    plan = fixtureplan.plan(genre, schedule, budget, registry)
+    missing, parent = [], out_dir.parent
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    stage = scratch = db = twin = None
     try:
-        bindings = select(budget, table, _compiler(db, schedule, principal, genre))
-        twin = twin_life(db, schedule, G1 if genre == "G1" else G2, bindings=bindings,
-                         world_path=out_dir / "world.B1.db", out_dir=out_dir / "branches",
-                         principal_id=principal, expected_state=expected_state(genre, schedule))
-    except BaseException:
-        # This call reserved world.B0.db, so a refused or failed build leaves no partial world.
+        out_dir.parent.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(dir=out_dir.parent, prefix="." + out_dir.name + "."))
+        (stage / "scratch").mkdir()
+        scratch, _, principal = _world(genre, life, seed, stage / "scratch")
+        counts = planned.write_extra(genre, scratch, schedule, plan, principal)
+        db = planned.rebuild(scratch, stage / "world.B0.db")
+        scratch.close()
+        shutil.rmtree(stage / "scratch")
+        host(db, schedule, principal, genre, plan, registry)
+        twin = twin_life(db, schedule, registry, bindings=plan.bindings,
+                         world_path=stage / "world.B1.db", out_dir=stage / "branches",
+                         principal_id=principal, expected_state=expected_state(genre, schedule),
+                         reserve_alternates=True)
+        indices = {p.session_id: p.index for p in schedule.sessions}
+        if indices[twin.cuts[0].rows[twin.prefix]["session_id"]] != plan.fork:
+            raise ValueError("plan:fork_mismatch")
+        (stage / "bindings.json").write_bytes(canon([asdict(b) for b in sorted(
+            plan.bindings, key=lambda b: (b.template_id, b.fields, b.checkpoint))]) + b"\n")
+        (stage / "plan.json").write_bytes(canon(
+            json.loads(fixtureplan.plan_json(plan)) | {"written": counts}) + b"\n")
         db.close()
-        (out_dir / "world.B0.db").unlink(missing_ok=True)
+        twin.b1.close()
+        os.rename(stage, out_dir)
+    except BaseException:
+        for connection in (scratch, db, twin.b1 if twin else None):
+            if connection is not None:
+                connection.close()
+        if stage is not None:
+            shutil.rmtree(stage)
+        for path in missing:
+            path.rmdir()
         raise
-    db.close()
-    (out_dir / "bindings.json").write_bytes(canon([asdict(b) for b in sorted(
-        bindings, key=lambda b: (b.template_id, b.fields, b.checkpoint))]) + b"\n")
+    twin = replace(twin, b1=open_world(out_dir / "world.B1.db"))
     records = {r["item_id"]: r for r in twin.compiled.records}
     prompts = {}
     for branch in ("B0", "B1"):
-        for checkpoint in sorted({b.checkpoint for b in bindings}):
+        for checkpoint in sorted({b.checkpoint for b in plan.bindings}):
             prompts[branch, checkpoint] = tuple(i["prompt"] for i in twin.compiled.items
                 if records[i["item_id"]]["branch"] == branch and i["probe_point"] == checkpoint)
-    return FullTwin(twin, bindings, prompts)
+    return FullTwin(twin, plan.bindings, prompts)
+
+
+def survey(genre, life, seed, work_dir):
+    table = candidates(genre)
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=work_dir) as directory:
+        db, schedule, principal = _world(genre, life, seed, directory)
+        try:
+            compile_one = _compiler(db, schedule, principal, genre)
+            result = []
+            for c in table:
+                for k in schedule.scale.checkpoints:
+                    try:
+                        branch = compile_one(c.binding(k))
+                    except ValueError as error:
+                        refusal = str(error)
+                    else:
+                        refusal = None if accepts(c.binding(k), lambda b, v=branch: v) else "distance"
+                    result.append((c, k, refusal))
+            return tuple(result)
+        finally:
+            db.close()
 
 
 def capacity(genre, life, seed, work_dir):
-    table = candidates(genre)
-    Path(work_dir).mkdir(parents=True, exist_ok=True)
-    db, schedule, principal = _world(genre, life, seed, work_dir)
-    try:
-        compile_one = _compiler(db, schedule, principal, genre)
-        result = {(cell, checkpoint): len({c.fixture for c in table
-                  if c.template.cell_id == cell and accepts(c.binding(checkpoint), compile_one)})
-                  for cell in sorted({c.template.cell_id for c in table})
-                  for checkpoint in schedule.scale.checkpoints}
-    except BaseException:
-        db.close()
-        (Path(work_dir) / "world.B0.db").unlink(missing_ok=True)
-        raise
-    db.close()
-    return result
+    rows = survey(genre, life, seed, work_dir)
+    return {(cell, k): len({c.fixture for c, checkpoint, refusal in rows
+                           if c.template.cell_id == cell and checkpoint == k and refusal is None})
+            for cell in sorted({c.template.cell_id for c, _, _ in rows})
+            for k in named("full").checkpoints}
+
+
+def host(db, schedule, principal, genre, plan, registry):
+    """Check instances first; compiler integrity errors then propagate unchanged."""
+    pre = cut(db, schedule, branch="B0", principal_id=principal,
+              expected_state=expected_state(genre, schedule)(db))
+    lookup = {t.template_id: t for t in registry}
+    checked = {}
+    for b in plan.bindings:
+        t = lookup[b.template_id]
+        bound = replace(t, **dict(b.fields), checkpoint=b.checkpoint)
+        try:
+            instances = tuple(bound.instances(db, schedule))
+            if len(instances) != 1:
+                raise ValueError("binding:instances")
+        except ValueError as error:
+            raise ValueError(f"plan:unhostable:{t.cell_id}@{b.checkpoint}:{b.template_id}:{error}") from error
+        checked[b.template_id, instances[0].key] = b
+    compiled = compile_bound(db, schedule, pre, registry, plan.bindings)
+    positions = {r["event_id"]: r["session_id"] for r in pre.rows}
+    indices = {p.session_id: p.index for p in schedule.sessions}
+    for item, meta in compiled.entries:
+        b = checked[meta["template_id"], meta["instance_key"]]
+        t = lookup[b.template_id]
+        cue = fixtureplan.CUES.get(fixtureplan.qualname(t))
+        exempt = mint(schedule, "commitments", dict(b.fields)["commitment_id"], "event", cue, 0) if cue else None
+        evidence = [indices[positions[e]] for e in item["gold_spans"] if e != exempt]
+        if not evidence or b.checkpoint - max(evidence) < MIN_DISTANCE_SESSIONS:
+            raise ValueError(f"plan:distance:{t.cell_id}@{b.checkpoint}:{b.template_id}")
+    turns = {}
+    for r in pre.rows:
+        kinds, facts = turns.setdefault(r["turn_key"], (set(), set()))
+        kinds.add(r["kind"])
+        facts.update(r["fact_ids"])
+    if any("filler" in kinds and facts for kinds, facts in turns.values()):
+        raise ValueError("plan:mixed")
+    return compiled

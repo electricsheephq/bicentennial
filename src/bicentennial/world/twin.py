@@ -78,7 +78,8 @@ def _rows(db):
     return [json.loads(line) for line in export_jsonl(db).splitlines()]
 
 
-def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -> Flip:
+def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id,
+              reserved_numbers=()) -> Flip:
     """Plan one bundle against B0; refusal messages contain only the decisive id."""
     rows, out, into = _rows(db), [], []
 
@@ -129,6 +130,8 @@ def plan_flip(db, schedule, *, key, twin_type, decisive_fact_id, principal_id) -
             values = [r["value"] for r in find("locked_token") if r != token]
             for n in range(8):
                 alternate = token_value(db, schedule, "twin", decisive_fact_id, "value", n, stem, containment=False)
+                if set(NUMBER.findall(alternate)) & set(reserved_numbers):
+                    continue
                 try:
                     check_values([*values, alternate])
                     break
@@ -275,15 +278,21 @@ def independent(db, schedule, flips, guards):
     return tuple(accepted), tuple(sorted(rejected))
 
 
-def plan(db0, schedule, b0, *, principal_id):
+def plan(db0, schedule, b0, *, principal_id, reserve_alternates=False):
     flips, guards, ids, refused = [], {}, {}, []
+    reserved = set()
     for item, meta in b0.entries:
         if meta["twin_type"] is None:
             continue
         key = meta["template_id"], meta["instance_key"]
         try:
-            flips.append(plan_flip(db0, schedule, key=key, twin_type=meta["twin_type"],
-                                   decisive_fact_id=meta["decisive_fact_id"], principal_id=principal_id))
+            f = plan_flip(db0, schedule, key=key, twin_type=meta["twin_type"],
+                          decisive_fact_id=meta["decisive_fact_id"], principal_id=principal_id,
+                          reserved_numbers=reserved)
+            flips.append(f)
+            if reserve_alternates and f.kind == "value":
+                reserved.update(n for line in f.into if (r := json.loads(line))["table"] == "locked_token"
+                                for n in NUMBER.findall(r["row"]["value"]))
         except ValueError:
             refused.append(key)
         guards[key] = frozenset(item["gold_spans"]), guard(db0, item, meta["decisive_fact_id"])
@@ -352,7 +361,7 @@ def apply(db, flips, path) -> sqlite3.Connection:
 
 
 def twin_life(db0, schedule, templates, *, world_path, out_dir, principal_id, expected_state,
-              bank=None, bindings=None) -> TwinLife:
+              bank=None, bindings=None, reserve_alternates=False) -> TwinLife:
     """Compile both worlds, prove their independence and stream diff, then publish branches."""
     world_path, out_dir = Path(world_path), Path(out_dir)
     files = [out_dir / f"{name}.{branch}.{suffix}" for branch in ("B0", "B1")
@@ -367,7 +376,8 @@ def twin_life(db0, schedule, templates, *, world_path, out_dir, principal_id, ex
         return (compile_branch(db, schedule, c, templates) if bindings is None else
                 compile_bound(db, schedule, c, templates, bindings))
 
-    flips = plan(db0, schedule, compile_one(db0, pre), principal_id=principal_id)
+    flips = plan(db0, schedule, compile_one(db0, pre), principal_id=principal_id,
+                 reserve_alternates=reserve_alternates)
     db1 = None
     try:
         db1 = apply(db0, flips, world_path)
