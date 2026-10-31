@@ -917,7 +917,21 @@ def test_pilot_floor_provenance_round_trip_and_neutrality(tmp_path, monkeypatch)
     assert renamed == provenance
 
 
-@pytest.mark.parametrize("sigma,expected", [(1.0, 24), (40.0, 48)])
+def test_pilot_floor_pairs_and_m_from_the_roster(tmp_path, monkeypatch):
+    # Three lcmx-false bar-2 arms, of which only two pairs include the reference, and a roster system with no bar-2
+    # arm: the pairs are bar 2's family and M is B-26's, so neither can come from the reference or the bar-2 arms.
+    fixture = sixteen(tmp_path, monkeypatch, systems=("alpha", "beta", "gamma", "eps"))
+    fixture.roster["systems"].append({"id": "theta", "lcmx": False})
+    fixture.commit()
+    value, provenance = pilot_oracle(fixture, ("Wake", "Tuesday"))
+    document = fixture.document()
+    assert provenance["M"] == 4
+    assert [r[:2] for r in provenance["pairs"]] == [["beta", "eps"], ["beta", "gamma"], ["eps", "gamma"]]
+    assert document["n_lives_floor"] == value
+    assert document["base_provenance"]["n_lives"] == provenance
+
+
+@pytest.mark.parametrize("sigma,expected", [(1.0, 24), (14.25, 31), (40.0, 48)])
 def test_life_count_clamps(sigma, expected):
     n = ((statistics.NormalDist().inv_cdf(1 - .05 / 4) + statistics.NormalDist().inv_cdf(.8)) * sigma / 8) ** 2
     assert base._life_count(sigma, 2) == (expected, n)
@@ -1014,6 +1028,10 @@ def test_keep_subset_rule(tmp_path, monkeypatch):
                     item["track"] = "Keep"
     fixture.data["bundles"] = pilot_bundles(("alpha", "beta", "gamma"), fixture.history["lives"],
                                             ("Keep", "Tuesday"))
+    for i, rows in enumerate(fixture.data["bundles"].values()):
+        for row in rows:
+            if row[2:4] == ["Keep", "K10"]:
+                row[4] += 37 * i  # K10's pair differences then differ from K100's, so Keep's 1/4-3/4 weight shows
     full = deepcopy(fixture.data["bundles"])
     for count in (3, 4):
         subset = [f"life-{i}" for i in range(count)]
