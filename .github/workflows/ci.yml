@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -20,5 +20,32 @@ jobs:
           python-version: "3.14"
       - run: pip install -e .[dev]
       - run: ruff check
-      - run: PYTHONHASHSEED=0 pytest -q
       - run: python scripts/public_check.py
+
+  shard:
+    name: pytest shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.14"
+      - run: pip install -e .[dev]
+      # Each shard runs whole test files, chosen by a hash of the file path (tests/conftest.py).
+      # The shard count comes from the matrix, so adding a leg cannot leave files unrun.
+      - run: PYTHONHASHSEED=0 BICENTENNIAL_TEST_SHARDS=${{ strategy.job-total }} BICENTENNIAL_TEST_SHARD=${{ strategy.job-index }} pytest -q --durations=15
+
+  # The one check the merge barrier reads: green only when lint and every shard passed.
+  test:
+    needs: [lint, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.lint.result }}" = success && test "${{ needs.shard.result }}" = success
