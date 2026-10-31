@@ -764,6 +764,10 @@ def test_cli_refuses_inputs_in_its_scratch(tmp_path, monkeypatch, capfd):
         inside.write_bytes(Path(args[i]).read_bytes())
         assert cli.main([*args[:i], str(inside), *args[i + 1:]]) == 2
         assert inside.exists()
+        link = root / f"link-{Path(args[i]).name}"
+        link.symlink_to(Path(args[i]).resolve())
+        assert cli.main([*args[:i], str(link), *args[i + 1:]]) == 2
+        assert link.is_symlink()
     assert cli.main(args) == 0
     capfd.readouterr()
 

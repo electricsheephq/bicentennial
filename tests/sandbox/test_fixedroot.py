@@ -104,6 +104,9 @@ def test_within(tmp_path):
     (outside / "jump").symlink_to(scratch / "check-B0-0", target_is_directory=True)
     assert fixedroot.within(outside / "jump" / "life", scratch)
     assert fixedroot.within(f"{outside}/../scratch/x", scratch)
+    # A link spelled inside scratch is unlinked by a reset, so it is inside although its target is not.
+    (scratch / "check-B0-0" / "alias").symlink_to(outside, target_is_directory=True)
+    assert fixedroot.within(scratch / "check-B0-0" / "alias", scratch)
     other = root / "SCRATCH"
     if other.exists():
         assert fixedroot.within(other / "check-B0-0", scratch)

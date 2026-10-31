@@ -81,15 +81,17 @@ def overlaps(path):
 
 
 def within(path, root):
-    # Whether path, resolved as the system resolves it, is root or lies below it. Each existing ancestor is matched by
-    # file identity, which other spellings of root share on a case-insensitive volume.
+    # Whether path is root or lies below it, either as spelled (a reset would unlink a link spelled below root) or
+    # resolved as the system resolves it. Each existing prefix is matched by file identity, which other spellings of
+    # root share on a case-insensitive volume.
     try:
         info = os.stat(root)
     except OSError:
         return False
     root_id = (info.st_dev, info.st_ino)
-    real = Path(os.path.realpath(Path(os.getcwd(), path)))
-    for prefix in (real, *real.parents):
+    full = Path(os.getcwd(), path)
+    real = Path(os.path.realpath(full))
+    for prefix in (full, *full.parents, real, *real.parents):
         try:
             info = os.stat(prefix)
         except OSError:
