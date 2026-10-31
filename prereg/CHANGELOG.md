@@ -2,6 +2,14 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## PREREG-v0.5, 2026-10-31: drafted, not yet frozen (DV48, #311)
+- **DV48, agent-only validation,** at the owner's direction of 2026-10-31: no person grades, annotates, keys, audits, adjudicates or breaks a tie. `prereg/PREREG-v0.5.md` carries design v2.3. Its freeze record, `prereg/FREEZE-v0.5.md`, keeps every hash, the freeze time and the tag pending until the freeze, after review. PREREG-v0.4 binds until PREREG-v0.5 is frozen.
+- **What it changes** (PREREG-v0.5's closing changelog has the full list): completion slots C-16 (the validation families), C-17 (the image readers) and C-18 (the Scoring Veto Panel's families); the Scoring Veto Panel, with the external human reviewer kept in addition unless the owner waives it in writing on lcm-x #1964; the phrase bank's calibration and receipt; image fidelity from scene-graph floors, a reader ensemble and seeded mutants; judge validation on a world-state set; agent annotators and auditors for Stage A and Stage B, with mechanical legs and a recall-corrected gate; the agent-key row; the feasibility-pilot label computed from the receipts; the validation row and the sealed-exposure rule (§11).
+- **Not in it:** the cases `docs/ERRATA-v2.2.md` queued for PREREG-v0.5 move to PREREG-v0.6. S8's keysheet, the phrase-bank receipt gate and the C-16 to C-18 fills are follow-up issues.
+
+## Design erratum, 2026-10-31: DESIGN edits after the PREREG-v0.4 freeze (#311)
+- **FREEZE-v0.4's DESIGN hash:** `docs/DESIGN.md` was edited after the v0.4 freeze, in commits a5e3c3b and 3316337. Those edits changed no frozen quantity. FREEZE-v0.4's DESIGN hash verifies only at the freeze commit 2600616, not on later trees; its PREREG-v0.4 hash still verifies. No PREREG version change; PREREG-v0.4 remains frozen.
+
 ## Ring 0 docs, 2026-10-30: v0.1's maintenance kit (#29, #302)
 - **RING0 §13 E13, E15, E17, E19:** v0.1's maintenance kit (`maint/v0.1`, #302) carries these four errata for v0.1's second official run, and their closing sentences now say so. §13's opening names them. No rule changes on main; E12, E14, E16 and E18 stay next-kit errata. No PREREG version change; PREREG-v0.4 remains frozen.
 

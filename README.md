@@ -7,9 +7,11 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 **The claim Bicentennial has to earn with results:** memory measured inside a real agent harness across a life, judged on actions, covering governance (forgetting, consent, standing rules), with a fast diagnostic loop for developers. It claims no firstness, no multimodal novelty, and no superiority for any system before the results exist.
 
 > **Status: pre-pilot.**
-> - Design v2.2 is done.
+> - Design v2.3 is done. It adds DV48, agent-only validation, at the owner's direction of 2026-10-31.
+> - **PREREG-v0.5 is drafted for DV48** ([`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md)). Its freeze, after review, is recorded in [`prereg/FREEZE-v0.5.md`](prereg/FREEZE-v0.5.md); until then PREREG-v0.4 binds.
 > - **PREREG-v0.4 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
 > - **The run-time rule:** the full-tier runs (the board with its seasonal study, each delta board and the Image board) execute in locked, resumable segments from the same commit and stores. Every replaying arm's run of a life finishes within a day, and each system's work fits a work bound in each of its board, study and Image board runs. It is sized by the measured capacity of each model lane, per account. Paid-lane spend is capped at $100 per full-tier run, all systems together. The Image board, when it runs, is a run separate from the Text board, under the same rule. The pilot's runs of record run contiguously, within wall-time ceilings.
+> - **Agents run the benchmark end to end, with no human graders.** Gold comes from the world state, mechanical checks come first, agent panels from different model families judge what is left, and pre-registered rules settle every disagreement (DV48).
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
 > - The v0.1 developer kit (Ring 0 T0 and T1) runs from a source checkout. Its first official run is published, rejected on repeatability: [results/v0.1-kit](results/v0.1-kit/README.md).
 
@@ -88,9 +90,10 @@ Follow [Run Ring 0 on your system](docs/developers/ring0.md) for requirements, p
 
 ## Documents
 - [`docs/developers/ring0.md`](docs/developers/ring0.md): run the v0.1 developer kit from a source checkout.
-- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.2).
-- [`prereg/PREREG-v0.4.md`](prereg/PREREG-v0.4.md): the pre-registration (the superseded v0 to v0.3 are kept beside it). It is the only normative source for frozen quantities.
-- [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0 to v2.2, which the other documents cite as DV1-DV47 (DV42 decided in v2.1, DV47 added in v2.2).
+- [`VISION.md`](VISION.md): what Bicentennial is for, and where it goes.
+- [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.3).
+- [`prereg/PREREG-v0.4.md`](prereg/PREREG-v0.4.md): the pre-registration (the superseded v0 to v0.3 are kept beside it). It is the only normative source for frozen quantities. [`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md), drafted for DV48, takes its place once frozen.
+- [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0 to v2.3, which the other documents cite as DV1-DV48 (DV42 decided in v2.1, DV47 added in v2.2, DV48 in v2.3).
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to, with how v2.0 meets each changed one.
 - [`docs/REVIEW-SUMMARY.md`](docs/REVIEW-SUMMARY.md): the adversarial reviews and what they changed.
 - [`docs/genres/`](docs/genres/): the life generators, G1 software partner and G2 personal assistant.
@@ -107,7 +110,7 @@ Follow [Run Ring 0 on your system](docs/developers/ring0.md) for requirements, p
   - LCM-X's developers never see held-out seeds or keys;
   - LCM-X at its last release before the public generator runs on every board, to detect tuning to the public lives;
   - LCM-X gets the same configuration budget as every other system.
-- An external reviewer with a veto over scoring is recruited before the full-tier pre-registration. The map, the verdicts and the gates go to that reviewer before PREREG-v1.
+- A Scoring Veto Panel of agents, from model families outside the authoring family, the judges', the tested systems' and any in the LCM-X lane registry, reviews the map, the verdicts and the gates before each freeze. A blocking finding from any one family blocks the freeze until the mechanical evidence it names clears it, or the rule reverts to its last frozen version. Whether the owner's direction waives the external human reviewer was asked on 2026-10-31: with a written waiver on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964) the panel holds the veto alone; otherwise an external reviewer with a veto over scoring is also recruited before PREREG-v1.
 
 ## Licence
 - **Code:** Apache-2.0 ([`LICENSE`](LICENSE)).

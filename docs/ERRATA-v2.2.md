@@ -2,7 +2,7 @@
 
 **Status:** v0.1, written by the benchmark session for the v0.1 Kit (#29).
 
-**Precedence.** PREREG-v0.4 is the only normative source for every frozen quantity (PREREG-v0.4 line 5; DESIGN line 17). Where DESIGN, a genre document or a spike specification says something different, PREREG governs. The difference is recorded here and fixed in the next version of the document it touches; nothing is re-frozen. Where PREREG itself leaves a case open, the entry gives the provisional rule the v0.1 Kit runs under, labelled "provisional", and queues the case for PREREG-v0.5. The benchmark session decides that version.
+**Precedence.** PREREG-v0.4 is the only normative source for every frozen quantity (PREREG-v0.4 line 5; DESIGN line 17). Where DESIGN, a genre document or a spike specification says something different, PREREG governs. The difference is recorded here and fixed in the next version of the document it touches; nothing is re-frozen. Where PREREG itself leaves a case open, the entry gives the provisional rule the v0.1 Kit runs under, labelled "provisional", and queues the case for PREREG-v0.6. The benchmark session decides that version. PREREG-v0.5 carries only DV48.
 
 **Numbering** continues the errata recorded at the PREREG-v0.4 freeze (`prereg/CHANGELOG.md`, #26):
 - **E1:** the run-lock list leaves out the tool lists.
@@ -22,7 +22,7 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 **E5. Two "(pre-reg)" marks with no PREREG text.**
 - **The text:** DESIGN §4.2 marks two values "(pre-reg)": the simulated span of 3-26 weeks (line 221), and incidental details mixed with decoys at 3 or more times their rate (line 229).
 - **What governs:** PREREG-v0.4 contains neither value, so neither is frozen.
-- **In v0.1:** both are queued for PREREG-v0.5. Until then they are provisional generator configuration, labelled "provisional pending PREREG-v0.5" in the completion record draft (K02). They are never chosen or revised from any real system's results.
+- **In v0.1:** both are queued for PREREG-v0.6. Until then they are provisional generator configuration, labelled "provisional pending PREREG-v0.5" in the completion record draft (K02); the label keeps its earlier wording. They are never chosen or revised from any real system's results.
 
 **E6. The adapter contract gains a settle step.**
 - **The text:** DESIGN §6.9 (lines 641-647) lists `reset`, `ingest`, `query`, `checkpoint` and `restore`, `forget` and `stats`.
@@ -55,7 +55,7 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 - **The conflict:** Learn chains are a v0.2 deliverable (ROADMAP).
 - **In v0.1:** S6 reports their term, C_learn, as missing, with the break-even that S6b computed. The term is measured in v0.2, before any Learn chain enters a run of record.
 
-## Cases PREREG-v0.4 leaves open (provisional rules; queued for PREREG-v0.5)
+## Cases PREREG-v0.4 leaves open (provisional rules; queued for PREREG-v0.6)
 
 **E10. A missing QA envelope after a system failure.**
 - **The conflict:**
@@ -67,7 +67,7 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
   - The §3 penalty of **−1** for a missing or unparseable envelope applies when the probe turn completed with no system-failure classification.
 - **Why:** both treatments are frozen. Reading §3's "missing" envelope as the one a completed turn fails to produce keeps both. PREREG's own guard against crashing instead of answering is the worst-case row, which prints every system failure at −1.
 - **At T0 and T1:** the scripted reader always emits an envelope when the recall call returns. A crash or timeout of the recall call is a SYSTEM_FAILURE under this rule.
-- **For PREREG-v0.5:** it states this precedence in the text.
+- **For PREREG-v0.6:** it states this precedence in the text.
 
 **E11. A bundle whose two items carry different classes.**
 - **The conflict:** a bundle scores the minimum of its two items (PREREG §2). PREREG does not say what happens when one twin item is scored and the other is a non-result.
