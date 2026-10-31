@@ -25,6 +25,16 @@ def held():
     return tuple(_held)
 
 
+@contextmanager
+def holding(fd):
+    # Workers spawned meanwhile get held() as pass_fds, so a killed holder's live workers keep fd's lock.
+    _held.append(fd)
+    try:
+        yield
+    finally:
+        _held.remove(fd)
+
+
 def overlaps(path):
     # A lease sweeps its base, so an operator path at or below any slot's base would be deleted.
     real, parent = Path(os.path.realpath(path)), Path(os.path.realpath(PARENT))
@@ -82,15 +92,16 @@ def lease(slot, refused):
             raise refused("sandbox_busy", detail=(f"holder_pid={pid}",)) from None
         os.ftruncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
-        _held.append(fd)
-        try:
+        with holding(fd):
             _sweep(base)
             try:
                 yield base
             finally:
-                _sweep(base)
-        finally:
-            _held.remove(fd)
+                try:
+                    _sweep(base)
+                except OSError:
+                    # The next lease sweeps again under the lock; a failed exit sweep keeps the run's outcome.
+                    pass
     finally:
         # Close without unlocking: an orphan retains the shared open file description.
         os.close(fd)

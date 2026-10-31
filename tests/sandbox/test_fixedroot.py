@@ -119,6 +119,30 @@ def test_sweep_read_only():
         assert sorted(p.name for p in base.iterdir()) == [".lock"]
 
 
+@pytest.mark.parametrize("error", [False, True])
+def test_failed_exit_sweep(monkeypatch, error):
+    # A failed exit sweep never replaces the body's result or refusal; the next lease sweeps again.
+    base, real = Path(fixedroot.PARENT) / "bicentennial-0", fixedroot.remove_tree
+
+    def fail(path):
+        raise OSError("injected")
+
+    try:
+        with fixedroot.lease(0, T1Refused):
+            (base / "left").mkdir()
+            monkeypatch.setattr(fixedroot, "remove_tree", fail)
+            if error:
+                raise T1Refused("check_compile")
+    except T1Refused as caught:
+        assert error and caught.code == "check_compile"
+    else:
+        assert not error
+    monkeypatch.setattr(fixedroot, "remove_tree", real)
+    assert (base / "left").is_dir() and fixedroot.held() == ()
+    with fixedroot.lease(0, T1Refused):
+        assert sorted(p.name for p in base.iterdir()) == [".lock"]
+
+
 def test_sigkilled_holder():
     code = """
 import sys

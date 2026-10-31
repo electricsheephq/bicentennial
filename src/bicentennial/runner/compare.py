@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -236,7 +235,7 @@ def corpus(ctx, arm, cases, *, catalogue, work, host=None, audit=None, gates=Non
             if measurements is not None:
                 measured = [h for h in hosts if hasattr(h, "paths")]
                 measurements.append(t0._audit([SimpleNamespace(hosts=measured)], evidence))
-            shutil.rmtree(unit)
+            fixedroot.remove_tree(unit)
             if result.status != "INFRA_FAILURE":
                 break
         results.append(result)
@@ -394,8 +393,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
             host=corpus_host, audit=corpus_rows[arm], gates=corpus_gates[arm],
             delivery=delivery[arm], measurements=measurements[arm]) for arm in GATED}
     finally:
-        if (sandbox / "corpus").exists():
-            shutil.rmtree(sandbox / "corpus")
+        fixedroot.remove_tree(sandbox / "corpus")
     for arm in GATED:
         rows.extend(corpus_rows[arm])
     base = _controls(ctx, Path(cache) if cache is not None else out / "cache")

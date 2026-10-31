@@ -6,7 +6,7 @@ from fractions import Fraction
 from bicentennial.canon import milli, sha256_canon
 from bicentennial.genres.g2_assistant.envseed import probe_envseed
 from bicentennial.items.tags import check_precondition
-from bicentennial.sandbox.fixedroot import remove_tree
+from bicentennial.sandbox.fixedroot import holding, remove_tree
 
 
 def precondition_holds(item, *, repo_tree_hash, env_state_hash, probe_env_state_hash):
@@ -112,8 +112,9 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             raise ValueError("scratch_busy") from None
-        return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
-                              checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv)
+        with holding(fd):  # workers inherit the lock, so a killed caller's live workers keep scratch busy
+            return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
+                                  checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv)
     finally:
         os.close(fd)
 

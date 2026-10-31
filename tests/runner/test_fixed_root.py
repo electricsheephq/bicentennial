@@ -82,6 +82,19 @@ def test_fixed_scratch(synth, installed, tmp_path, monkeypatch):
                      for _ in range(2 * len(compare.GATED) * 2) for n in range(2)]
 
 
+def test_read_only_corpus_unit(synth, installed, tmp_path, monkeypatch):
+    # A corpus unit can leave a read-only directory; its cleanup must still remove it, not exit 70.
+    def case(case, factory, **kwargs):
+        inner = kwargs["root"].parent / "locked" / "inner"
+        inner.mkdir(parents=True)
+        (inner / "data").write_text("data")
+        inner.chmod(0o555)
+        return acceptance.fake_case(case, factory, **kwargs)
+
+    monkeypatch.setattr(compare, "run_case", case)
+    assert acceptance.invoke(installed, tmp_path / "out") == 0
+
+
 def test_unit_and_compile_scratch(synth, policy, installed, tmp_path, monkeypatch):
     checks, units = [], []
 
@@ -188,6 +201,32 @@ def test_compile_scratch_held(tmp_path):
                           checkout=None, scratch=scratch)
     finally:
         os.close(fd)
+
+
+def test_compile_lock_inherited(tmp_path, monkeypatch):
+    # Workers inherit the check lock, so a killed caller's live workers keep the scratch busy.
+    procs = []
+
+    def body(*args, **kwargs):
+        if not procs:
+            procs.append(subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                          stdin=subprocess.PIPE, pass_fds=fixedroot.held()))
+        return {"ok": True}
+
+    monkeypatch.setattr("bicentennial.director.compiler.check._check_compile", body)
+    call = dict(entry=None, route_table=None, harness_pin=None, checkout=None, scratch=tmp_path / "scratch")
+    try:
+        assert check_compile(tmp_path / "life", **call) == {"ok": True}
+        assert fixedroot.held() == ()
+        with pytest.raises(ValueError, match="scratch_busy"):
+            check_compile(tmp_path / "life", **call)
+        procs[0].communicate(timeout=10)
+        assert check_compile(tmp_path / "life", **call) == {"ok": True}
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=10)
 
 
 def test_leaked_branch_refused(policy, tmp_path, monkeypatch):
