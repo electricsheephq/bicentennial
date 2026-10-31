@@ -53,6 +53,22 @@ def test_overlaps_other_spelling_of_a_base(tmp_path, monkeypatch):
     assert not fixedroot.overlaps(parent / "BICENTENNIAL-40")
 
 
+
+def test_overlaps_dotdot_after_a_link(tmp_path, monkeypatch):
+    root = Path(os.path.realpath(tmp_path))
+    parent, outside = root / "parent", root / "outside"
+    (parent / "bicentennial-5" / "deep").mkdir(parents=True)
+    (outside / "a" / "b").mkdir(parents=True)
+    (root / "far" / "deep").mkdir(parents=True)
+    monkeypatch.setattr(fixedroot, "PARENT", str(parent))
+    # `..` applies to where the link before it leads, as the system resolves the path.
+    (outside / "jump").symlink_to(parent / "bicentennial-5" / "deep", target_is_directory=True)
+    assert fixedroot.overlaps(f"{outside}/jump/../packs")
+    (parent / "bicentennial-5" / "escape").symlink_to(outside / "a" / "b", target_is_directory=True)
+    assert fixedroot.overlaps(f"{parent}/bicentennial-5/escape/../../result")
+    (parent / "jump").symlink_to(root / "far" / "deep", target_is_directory=True)
+    assert not fixedroot.overlaps(f"{parent}/jump/../bicentennial-5/out")
+
 @pytest.mark.parametrize("slot", [-1, 10, "0", None, 0.0, True])
 def test_invalid_slot(slot):
     with pytest.raises(T1Refused, match="sandbox_slot"):
