@@ -2,8 +2,8 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
-## PREREG-v0.5, 2026-10-31: drafted, not yet frozen (DV48, #311)
-- **DV48, agent-only validation,** at the owner's direction of 2026-10-31: no person grades, annotates, keys, audits, adjudicates or breaks a tie. `prereg/PREREG-v0.5.md` carries design v2.3. Its freeze record, `prereg/FREEZE-v0.5.md`, keeps every hash, the freeze time and the tag pending until the freeze, after review. PREREG-v0.4 binds until PREREG-v0.5 is frozen.
+## PREREG-v0.5, 2026-10-31: frozen (supersedes v0.4; DV48, #311)
+- **DV48, agent-only validation,** at the owner's direction of 2026-10-31: no person grades, annotates, keys, audits, adjudicates or breaks a tie. `prereg/PREREG-v0.5.md` carries design v2.3. Its freeze record, `prereg/FREEZE-v0.5.md`, keeps both hashes, the freeze time and the tag.
 - **What it changes** (PREREG-v0.5's closing changelog has the full list): completion slots C-16 (the validation families), C-17 (the image readers) and C-18 (the Scoring Veto Panel's families); the Scoring Veto Panel, with a two-family quorum, binding from the first freeze after C-18 is filled, and holding the veto alone, since the owner waived the external human reviewer in writing on 2026-10-31 (recorded on lcm-x #1964); the phrase bank's calibration and receipt; image fidelity from scene-graph floors, a reader ensemble and seeded mutants; judge validation on a world-state set; agent annotators and auditors for Stage A and Stage B, with mechanical legs, a recall-corrected gate and a false-error bar on the auditor pair together; the agent-key row; the feasibility-pilot label computed from the receipts; the validation row and the sealed-exposure rule (§11).
 - **Not in it:** the cases `docs/ERRATA-v2.2.md` queued for PREREG-v0.5 move to PREREG-v0.6. S8's keysheet, the phrase-bank receipt gate and the C-16 to C-18 fills are follow-up issues.
 

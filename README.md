@@ -8,8 +8,8 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 
 > **Status: pre-pilot.**
 > - Design v2.3 is done. It adds DV48, agent-only validation, at the owner's direction of 2026-10-31.
-> - **PREREG-v0.5 is drafted for DV48** ([`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md)). Its freeze, after review, is recorded in [`prereg/FREEZE-v0.5.md`](prereg/FREEZE-v0.5.md); until then PREREG-v0.4 binds.
-> - **PREREG-v0.4 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze. It supersedes PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
+> - **PREREG-v0.5 was frozen on 2026-10-31** for DV48 ([`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md)). The hash is in [`prereg/FREEZE-v0.5.md`](prereg/FREEZE-v0.5.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze and supersedes PREREG-v0.4.
+> - **PREREG-v0.4 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It superseded PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
 > - **The run-time rule:** the full-tier runs (the board with its seasonal study, each delta board and the Image board) execute in locked, resumable segments from the same commit and stores. Every replaying arm's run of a life finishes within a day, and each system's work fits a work bound in each of its board, study and Image board runs. It is sized by the measured capacity of each model lane, per account. Paid-lane spend is capped at $100 per full-tier run, all systems together. The Image board, when it runs, is a run separate from the Text board, under the same rule. The pilot's runs of record run contiguously, within wall-time ceilings.
 > - **Agents run the benchmark end to end, with no human graders.** Gold comes from the world state, mechanical checks come first, agent panels from different model families judge what is left, and pre-registered rules settle every disagreement (DV48).
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
@@ -92,7 +92,7 @@ Follow [Run Ring 0 on your system](docs/developers/ring0.md) for requirements, p
 - [`docs/developers/ring0.md`](docs/developers/ring0.md): run the v0.1 developer kit from a source checkout.
 - [`VISION.md`](VISION.md): what Bicentennial is for, and where it goes.
 - [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.3).
-- [`prereg/PREREG-v0.4.md`](prereg/PREREG-v0.4.md): the pre-registration (the superseded v0 to v0.3 are kept beside it). It is the only normative source for frozen quantities. [`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md), drafted for DV48, takes its place once frozen.
+- [`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md): the pre-registration (the superseded v0 to v0.4 are kept beside it). It is the only normative source for frozen quantities.
 - [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0 to v2.3, which the other documents cite as DV1-DV48 (DV42 decided in v2.1, DV47 added in v2.2, DV48 in v2.3).
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to, with how v2.0 meets each changed one.
 - [`docs/REVIEW-SUMMARY.md`](docs/REVIEW-SUMMARY.md): the adversarial reviews and what they changed.
