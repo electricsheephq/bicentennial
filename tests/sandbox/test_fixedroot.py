@@ -69,6 +69,18 @@ def test_overlaps_dotdot_after_a_link(tmp_path, monkeypatch):
     (parent / "jump").symlink_to(root / "far" / "deep", target_is_directory=True)
     assert not fixedroot.overlaps(f"{parent}/jump/../bicentennial-5/out")
 
+
+def test_overlaps_other_case_of_a_missing_base(tmp_path, monkeypatch):
+    parent = Path(os.path.realpath(tmp_path)) / "parent"
+    parent.mkdir()
+    monkeypatch.setattr(fixedroot, "PARENT", str(parent))
+    # No base exists yet, so no identity can match: the name in any case under the parent's identity does.
+    assert fixedroot.overlaps(parent / "BICENTENNIAL-0" / "results")
+    assert fixedroot.overlaps(f"{parent}/x/../Bicentennial-7")
+    assert not fixedroot.overlaps(parent / "BICENTENNIAL-40" / "results")
+    assert not fixedroot.overlaps(Path(os.path.realpath(tmp_path)) / "BICENTENNIAL-0")
+    assert sorted(p.name for p in parent.iterdir()) == []
+
 @pytest.mark.parametrize("slot", [-1, 10, "0", None, 0.0, True])
 def test_invalid_slot(slot):
     with pytest.raises(T1Refused, match="sandbox_slot"):
