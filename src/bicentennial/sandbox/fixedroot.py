@@ -81,24 +81,46 @@ def overlaps(path):
 
 
 def within(path, root):
-    # Whether path is root or lies below it, either as spelled (a reset would unlink a link spelled below root) or
-    # resolved as the system resolves it. Each existing prefix is matched by file identity, which other spellings of
-    # root share on a case-insensitive volume.
+    # Whether resolving path, as the system does, visits root or anything below it: a directory it passes through or a
+    # link it reads. A reset below root would delete what the path depends on. The walk follows each link where the
+    # system would, and every visited entry is matched by file identity, which other spellings of root share on a
+    # case-insensitive volume. A link loop, which the system could not resolve either, ends the walk.
     try:
         info = os.stat(root)
     except OSError:
         return False
     root_id = (info.st_dev, info.st_ino)
-    full = Path(os.getcwd(), path)
-    real = Path(os.path.realpath(full))
-    for prefix in (full, *full.parents, real, *real.parents):
-        try:
-            info = os.stat(prefix)
-        except OSError:
+
+    def below(entry):  # entry's parent is fully resolved
+        for prefix in (entry, *entry.parents):
+            try:
+                info = os.lstat(prefix)
+            except OSError:
+                continue
+            if (info.st_dev, info.st_ino) == root_id:
+                return True
+        return False
+
+    todo, current, links = list(Path(os.getcwd(), path).parts[1:]), Path("/"), 0
+    while todo:
+        part = todo.pop(0)
+        if part == "..":
+            current = current.parent
             continue
-        if (info.st_dev, info.st_ino) == root_id:
+        entry = current / part
+        if below(entry):
             return True
-    return False
+        if os.path.islink(entry):
+            links += 1
+            if links > 40:
+                return False
+            target = Path(os.readlink(entry))
+            if target.is_absolute():
+                current = Path("/")
+            todo[:0] = target.parts[1:] if target.is_absolute() else target.parts
+            continue
+        current = entry
+    return below(current)
 
 
 def remove_tree(path):

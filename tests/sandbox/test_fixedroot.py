@@ -107,6 +107,18 @@ def test_within(tmp_path):
     # A link spelled inside scratch is unlinked by a reset, so it is inside although its target is not.
     (scratch / "check-B0-0" / "alias").symlink_to(outside, target_is_directory=True)
     assert fixedroot.within(scratch / "check-B0-0" / "alias", scratch)
+    # An outside link into a job root, then an input link there: the walk visits the job root.
+    (outside / "safe-pin.json").write_text("{}")
+    (scratch / "check-B0-0" / "pin.json").symlink_to(outside / "safe-pin.json")
+    (outside / "jump2").symlink_to(scratch / "check-B0-0", target_is_directory=True)
+    assert fixedroot.within(outside / "jump2" / "pin.json", scratch)
+    # A link read on the way, even when the path ends outside.
+    (scratch / "check-B0-0" / "hop").symlink_to(outside, target_is_directory=True)
+    (outside / "jump3").symlink_to(scratch / "check-B0-0" / "hop", target_is_directory=True)
+    assert fixedroot.within(outside / "jump3" / "safe-pin.json", scratch)
+    loop = root / "loop"
+    loop.symlink_to(loop)
+    assert not fixedroot.within(loop / "x", scratch)
     other = root / "SCRATCH"
     if other.exists():
         assert fixedroot.within(other / "check-B0-0", scratch)
