@@ -1,10 +1,12 @@
 """Frozen checkpoint-dispatch clauses, with no runner or upstream calls."""
 
 from dataclasses import FrozenInstanceError
+from hashlib import sha256
 
 import pytest
 
 from bicentennial import keyed
+from bicentennial.canon import canon
 from bicentennial.runner import dispatch as dispatch_module
 from bicentennial.runner.dispatch import (
     DISPATCH_DRAW_LABEL,
@@ -12,11 +14,26 @@ from bicentennial.runner.dispatch import (
     DispatchResult,
     NonArrival,
     PassOver,
+    anchor_order,
     dispatch,
 )
 
 UNIT = ("seed", "life-1", "B0", 20)
 CAUSES = ("replay_stopped", "life_bound", "start_window")
+
+
+def test_anchor_order_oracle_and_identity():
+    refs = [sha256(str(i).encode()).hexdigest() for i in range(40)]
+    expected = sorted(refs, key=lambda ref: (
+        int.from_bytes(sha256(canon(["s", ["L", "anchor", "order"], 0, ref])).digest()[:8], "big"), ref))
+    actual = anchor_order("s", "L", reversed(refs))
+    assert actual == expected and sorted(actual) == sorted(refs) and len(set(actual)) == len(refs)
+    assert anchor_order("other", "L", refs) != actual
+    assert anchor_order("s", "other", refs) != actual
+
+
+def test_anchor_order_ties(ordered_draws):
+    assert anchor_order("s", "L", ["c", "a", "b"]) == ["a", "b", "c"]
 
 
 def _followed_order(seed, arm_ids):

@@ -5,10 +5,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 from bicentennial.keyed import draw
+from bicentennial.world import unit
 
 DISPATCH_DRAW_LABEL = "dispatch"
 PassOverCause = Literal["replay_stopped", "life_bound", "start_window"]
 NonArrivalKind = Literal["fault_fork", "aa_rerun", "comparator_chain"]
+
+
+def anchor_order(seed: str, life: str, refs) -> list[str]:
+    """B-25's shared anchor order, independent of input enumeration."""
+    return sorted(refs, key=lambda ref: (draw(seed, unit(life, "anchor", "order"), 0, ref), ref))
 
 
 def _check_time(value: int) -> None:

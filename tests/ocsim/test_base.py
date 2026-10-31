@@ -10,6 +10,7 @@ import sys
 from copy import deepcopy
 from dataclasses import replace
 from fractions import Fraction
+from functools import lru_cache
 from hashlib import sha256
 from itertools import combinations
 from pathlib import Path
@@ -22,7 +23,7 @@ from bicentennial.ocsim import base, inputs, run
 from .test_inputs import REQUIRED, sample
 
 ROOT = Path(__file__).resolve().parents[2]
-PENDING = {"probe_only": "B-8", "n_lives_floor": "B-9"}
+PENDING = {"n_lives_floor": "B-9"}
 REAL_C8 = base.c8_check
 REAL_CAP = base.runner_cap
 
@@ -34,6 +35,19 @@ def pilot_bundles(arms, lives, tracks=("Wake", "Tuesday")):
                   for keep in ("K100", "K10")] for i, arm in enumerate(arms)}
 
 
+@lru_cache(maxsize=None)
+def anchor_refs(life, count):
+    return tuple(sha256(f"{life}/{j}".encode()).hexdigest() for j in range(count))
+
+
+def set_probe_counts(life):
+    counts = [sum(n for _, k, n in life["bundles"] if k == c) for c in (20, 60, 120, 200)]
+    for branch in life["branches"].values():
+        branch["probe_items"] = counts[:]
+        branch["probe_only_context"]["F"] = [2 * n for n in counts]
+    life["anchor"] = sorted([ref, j + 1] for j, ref in enumerate(anchor_refs(life["life"], counts[-1])))
+
+
 def dry_set(commit, cells):
     lives = []
     for i in range(48):
@@ -42,12 +56,16 @@ def dry_set(commit, cells):
         for branch in ("B0", "B1"):
             branches[branch] = dict(est_tokens=[j + i + 1 for j in range(200)],
                                     probe_points=[20, 60, 120, 200], probe_tokens=[0, 2, 3, 4], swap=[150],
+                                    probe_only_context=dict(F=[0, 0, 0, 0], C=[0, 6, 8, 10],
+                                                            RAG=[0, 7, 9, 11], CEIL=[0, 131072, 131069, 500]),
+                                    ceil_peak=[0, 131073, 131072, 100],
                                     content_sha256=[sha256(canon([i, j, branch if j >= fork else "shared"])).hexdigest()
                                                     for j in range(1, 21)])
         lives.append(dict(i=i, life=f"ocsim-dry-{i:03d}", genre="G1" if i % 2 == 0 else "G2",
                           seed=int.from_bytes(sha256(canon(["ocsim-dry", i])).digest()[:8], "big") >> 1,
                           generator_version="synthetic-v1", render_commit=commit, fork=fork,
                           branches=branches, bundles=[[c, k, 180] for c in cells for k in (20, 60, 120, 200)]))
+        set_probe_counts(lives[-1])
     return {"status": "binding", "lives": lives}
 
 
@@ -64,6 +82,7 @@ class Fake:
             "swap": dict(model="synthetic-swap", concurrency=2, rate_per_min=30, accounts=1)}}
         self.c1 = dict(status="binding", pinned_model="synthetic-pinned", extra="ignored")
         self.c2 = dict(status="binding", swap_model="synthetic-swap", effort="synthetic", extra="ignored")
+        self.c4 = dict(status="binding", window_name="synthetic-full", window_tokens=131072, extra="ignored")
         self.history = {"generator_version": "synthetic-v1", "lives": {}}
         for i in range(n):
             self.history["lives"][f"life-{i}"] = {branch: [dict(
@@ -93,6 +112,35 @@ class Fake:
                         sessions.append(dict(index=5, kind="probe", checkpoint=2, wall_ms=rate * 2,
                                              gate_ms=1, egress_wait_ms=2, items=[iid]))
                         value["lives"][life][branch][keep] = dict(attempt=2, stopped=None, sessions=sessions)
+        self.data["probe_only"] = {a: {life: {b: [] for b in ("B0", "B1")}
+                                       for life in self.history["lives"]} for a in ("F", "C", "RAG", "CEIL")}
+        for name, arm in inputs.ARMS.items():
+            output = self.controls["A"][name]
+            owners = dict(output["singleton_lives"])
+            for bundle in output["bundles"]:
+                owners.update((iid, bundle["life"]) for iid in bundle["items"])
+            for item in output["items"]:
+                iid = item["item_id"]
+                self.data["items"][iid] = dict(life=owners[iid], prompt="abcdefgh", classes={})
+            for life in self.history["lives"]:
+                for branch in ("B0", "B1"):
+                    ids = [i["item_id"] for i in output["items"]
+                           if owners[i["item_id"]] == life and self.controls["branches"][i["item_id"]] == branch]
+                    groups = [ids[:3], ids[3:4], ids[4:]] if arm == "F" and branch == "B0" else [ids]
+                    for j, group in enumerate(groups, 1):
+                        context = 2 if arm == "F" else 3
+                        self.data["probe_only"][arm][life][branch].append(dict(
+                            checkpoint=j, attempt=2, stopped=j == 2, items=group,
+                            context_tokens=[context] * len(group),
+                            wall_ms=None if j == 3 else (9999 if j == 2 else
+                                                        (11 if arm == "F" else 13) * (2 + context) * len(group))))
+        for arm, context in (("RAG", 3), ("CEIL", 4)):
+            for life in self.history["lives"]:
+                iid = f"{arm}-{life}"
+                self.data["items"][iid] = dict(life=life, prompt="abcdefgh", classes={})
+                self.data["probe_only"][arm][life]["B0"] = [dict(
+                    checkpoint=1, attempt=1, stopped=False, wall_ms=None if arm == "RAG" else 102,
+                    items=[iid], context_tokens=[context])]
         for item in self.data["items"].values():
             item["classes"] = dict.fromkeys(self.data["arms"])
         self.stop("alpha", "life-0", "B0", "K100", "replay", 4, None, "SYSTEM_FAILURE")
@@ -112,7 +160,7 @@ class Fake:
 
     def commit(self):
         artifacts = [(base.ROSTER, self.roster), (base.C12, self.c12),
-                     (base.C11, self.c11), (base.C1, self.c1), (base.C2, self.c2)]
+                     (base.C11, self.c11), (base.C1, self.c1), (base.C2, self.c2), (base.C4, self.c4)]
         if hasattr(self, "dry"):
             artifacts.append((base.DRY, self.dry))
         for path, data in artifacts:
@@ -187,8 +235,7 @@ def test_registry_and_pending(tmp_path, monkeypatch):
     fixture = Fake(tmp_path, monkeypatch)
     with pytest.raises(base.BaseRefused) as error:
         fixture.build()
-    assert error.value.refusals == (("n_lives_floor", "n_lives_floor:bar2_lives"),
-                                    ("probe_only", "pending:B-8"))
+    assert error.value.refusals == (("n_lives_floor", "n_lives_floor:bar2_lives"),)
     for field in base.BASE_FIELDS:
         with monkeypatch.context() as patch:
             patch.delitem(base.RULES, field)
@@ -215,6 +262,8 @@ def test_complete(fake):
     assert document["required"] == list(REQUIRED) and document["planning"] is False
     assert fake.build() == canon(document)
     provenance = document["base_provenance"]
+    assert document["probe_only"] == probe_oracle(fake)[0]
+    assert provenance["probe_only_rates"] == probe_oracle(fake)[1]
     assert provenance["account_pool"] == ["synthetic-account"]
     assert provenance["a_prime"] == {a: {"items": 30, "bundles": 15} for a in inputs.ARMS}
     assert provenance["waits"]["alpha"] == {"gate": "59/988", "egress_wait": "59/494", "untimed_sessions": 0}
@@ -224,32 +273,263 @@ def test_complete(fake):
         assert artifact == {"path": artifact["path"], "commit": fake.data["run_lock"]["benchmark_commit"],
                             "sha256": sha256((fake.root / artifact["path"]).read_bytes()).hexdigest()}
     assert provenance["pending_disclosures"] == [
-        "B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records",
-        "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card"]
+        "B-4 recovered INFRA attempts: pending; sources C5a's container (B-4) and the bar-2 runner",
+        "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card",
+        "B-8 the anchor's rate: C's measured pinned-lane rate, a proxy for the swap lane, since bar 2 never runs the swap model: the card"]
     paths = {"rows": {base.ROSTER}, "required": {base.C12}, "lanes": {base.C11, base.C1, base.C2},
              "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY},
-             "n_lives_floor": {base.ROSTER, base.C12}}
+             "n_lives_floor": {base.ROSTER, base.C12}, "probe_only": {base.DRY, base.C4}}
     for field, rule in base.RULES.items():
         assert provenance[field] == {"rule": rule.rule, "sources": list(rule.sources),
                                      "artifacts": [a for a in provenance["artifacts"]
                                                    if a["path"] in paths.get(field, set())]}
 
 
+def probe_oracle(fake):
+    rows, anchors, rates, evidence = [], {}, {}, {}
+    for life in fake.dry["lives"]:
+        pairs = life["anchor"]
+        ranked = sorted(pairs, key=lambda pair: (
+            int.from_bytes(sha256(canon([str(life["seed"]), [life["life"], "anchor", "order"],
+                                        0, pair[0]])).digest()[:8], "big"), pair[0]))
+        anchors[life["life"]] = sum(n for _, n in ranked[:20])
+        for branch, record in life["branches"].items():
+            for j, checkpoint in enumerate(record["probe_points"]):
+                for arm in ("F", "C", "RAG", "CEIL"):
+                    if arm != "CEIL" or record["ceil_peak"][j] <= fake.c4["window_tokens"]:
+                        rows.append([arm, life["life"], branch, checkpoint,
+                                     record["probe_tokens"][j] + record["probe_only_context"][arm][j]])
+    for arm, lives in fake.data["probe_only"].items():
+        timed = [s for branches in lives.values() for sessions in branches.values() for s in sessions
+                 if s["wall_ms"] is not None and not s["stopped"]]
+        wall = sum(s["wall_ms"] for s in timed)
+        tokens = sum(sum((len(fake.data["items"][i]["prompt"].encode()) + 3) // 4 for i in s["items"])
+                     + sum(s["context_tokens"]) for s in timed)
+        evidence[arm] = dict(timed_sessions=len(timed), wall_ms=wall, tokens=tokens,
+                             source="own" if timed else "slowest")
+        if timed:
+            rates[arm] = Fraction(wall, tokens)
+    slowest = max(rates.values())
+    rates = {a: rates.get(a, slowest) for a in fake.data["probe_only"]}
+    rates["anchor"] = rates["C"]
+    evidence["anchor"] = {**evidence["C"], "source": "C"}
+    return dict(tokens=sorted(rows), anchor_tokens=anchors,
+                rates={a: f"{r.numerator}/{r.denominator}" for a, r in rates.items()}), evidence
+
+
+def test_probe_values_and_registry(fake):
+    document = fake.document()
+    expected, evidence = probe_oracle(fake)
+    assert document["probe_only"] == expected
+    assert document["base_provenance"]["probe_only_rates"] == evidence
+    assert expected["rates"] == dict(F="11/1", C="13/1", RAG="17/1", CEIL="17/1", anchor="13/1")
+    assert expected["rates"]["RAG"] not in {r["rate"] for r in document["rows"]}
+    assert any(row[-1] == 0 for row in expected["tokens"])
+    rule = base.RULES["probe_only"]
+    assert rule.rule == "B-8, B-21 to B-25"
+    assert {base.RULING, base.CLARIFICATION, "#245 issuecomment-6535643668"} <= set(rule.sources)
+
+
+@pytest.mark.parametrize("case", ["missing", "status", "name", "tokens", "provisional", "window"])
+def test_probe_c4_refusals(fake, case):
+    if case == "missing":
+        stage_b_refusal(fake, None, "missing-" + base.C4)
+    else:
+        key, value = {"status": ("status", None), "name": ("window_name", ""),
+                      "tokens": ("window_tokens", True), "provisional": ("status", "provisional"),
+                      "window": ("window_tokens", 131071)}[case]
+        fake.c4[key] = value
+        fake.commit()
+    reason = ("probe_only:c4_window" if case == "window" else
+              f"source_{'missing' if case == 'missing' else 'provisional' if case == 'provisional' else 'shape'}:{base.C4}")
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("probe_only", reason) in error.value.refusals
+
+
+@pytest.mark.parametrize("key", ["probe_items", "probe_only_context", "ceil_peak", "anchor"])
+@pytest.mark.parametrize("case", ["missing", "type", "value", "length"])
+def test_probe_dry_shape(fake, key, case):
+    life = fake.dry["lives"][0]
+    target = life if key == "anchor" else life["branches"]["B0"]
+    if case == "missing":
+        target.pop(key)
+    elif case == "type":
+        target[key] = None
+    elif key == "anchor":
+        target[key] = [["X" * 64, 0]] if case == "value" else target[key] + target[key][:1]
+    elif key == "probe_only_context":
+        target[key]["F"] = [-1] * 4 if case == "value" else []
+    else:
+        target[key] = [-1] * 4 if case == "value" else []
+    fake.commit()
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("probe_only", "lives:dry_shape") in error.value.refusals
+
+
+@pytest.mark.parametrize("case", ["zero-prompt", "zero-context", "zero-peak", "below-bundles", "mean", "peak",
+                                  "f-context"])
+def test_probe_dry_consistency(fake, case):
+    life = fake.dry["lives"][0]
+    branch = life["branches"]["B0"]
+    if case.startswith("zero-"):
+        life["bundles"] = [row for row in life["bundles"] if row[1] != 20]
+        branch["probe_items"][0] = 0
+        if case == "zero-prompt":
+            branch["probe_tokens"][0] = 1
+        if case == "zero-context":
+            branch["probe_only_context"]["RAG"][0] = 1
+        if case == "zero-peak":
+            branch["ceil_peak"][0] = 1
+    elif case == "below-bundles":
+        branch["probe_items"][0] -= 1
+    elif case == "mean":
+        branch["ceil_peak"][3] = 1
+    elif case == "peak":
+        branch["ceil_peak"][3] = 505
+    branch["probe_only_context"]["F"] = [2 * n for n in branch["probe_items"]]
+    if case == "f-context":
+        branch["probe_only_context"]["F"][3] -= 1
+    fake.commit()
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("probe_only", "probe_only:dry_inconsistent:ocsim-dry-000/B0") in error.value.refusals
+
+
+@pytest.mark.parametrize("short", [False, True])
+def test_probe_anchor_refusals(fake, short):
+    life = fake.dry["lives"][0]
+    if short:
+        life["bundles"] = [r for r in life["bundles"] if r[1] != 200] + [["action", 200, 19]]
+        set_probe_counts(life)
+    else:
+        life["anchor"].pop()
+    fake.commit()
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("probe_only", f"probe_only:anchor_{'short' if short else 'count'}:ocsim-dry-000") in error.value.refusals
+
+
+@pytest.mark.parametrize("case,suffix", [("root", "probe_only"), ("arm", "F"), ("life", "F/life-0"),
+    *((case, "F/life-0/B0") for case in ("branch", "keys", "checkpoint", "duplicate", "attempt",
+                                        "stopped", "wall", "items", "context"))])
+def test_probe_bar2_shape(fake, case, suffix):
+    probes = fake.data["probe_only"]
+    sessions = probes["F"]["life-0"]["B0"]
+    session = sessions[0]
+    if case == "root":
+        probes.pop("RAG")
+    elif case == "arm":
+        probes["F"].pop("life-0")
+    elif case == "life":
+        probes["F"]["life-0"].pop("B1")
+    elif case == "branch":
+        probes["F"]["life-0"]["B0"] = {}
+    elif case == "duplicate":
+        sessions.append(deepcopy(session))
+    else:
+        key, value = {"keys": ("unknown", 0), "checkpoint": ("checkpoint", 5),
+                      "attempt": ("attempt", 0), "stopped": ("stopped", 0), "wall": ("wall_ms", -1),
+                      "items": ("items", []), "context": ("context_tokens", None)}[case]
+        session[key] = value
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("probe_only", "bar2:probe_only_shape:" + suffix) in error.value.refusals
+
+
+@pytest.mark.parametrize("case", ["length", "negative", "bool", "unknown", "repeat", "sessions", "branches",
+                                 "F-context", "life"])
+def test_probe_bar2_items(fake, case):
+    branches = fake.data["probe_only"]["F"]["life-0"]
+    session = branches["B0"][0]
+    if case == "length":
+        session["context_tokens"].pop()
+    if case in ("negative", "bool", "F-context"):
+        session["context_tokens"][0] = {"negative": -1, "bool": True, "F-context": 3}[case]
+    if case == "unknown":
+        session["items"][0] = "absent"
+    if case == "repeat":
+        session["items"][1] = session["items"][0]
+    if case == "sessions":
+        branches["B0"][1]["items"][0] = session["items"][0]
+    if case == "branches":
+        branches["B1"][0]["items"][0] = session["items"][0]
+    if case == "life":
+        session["items"][0] = "RAG-life-1"
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    suffix = "B1" if case == "branches" else "B0"
+    assert ("probe_only", f"bar2:probe_only_item:F/life-0/{suffix}") in error.value.refusals
+
+
+@pytest.mark.parametrize("case", ["controls", "zero_tokens", "zero_wall", "no_timed_arm"])
+def test_probe_rate_and_guard_refusals(fake, case):
+    if case == "controls":
+        fake.data["probe_only"]["C"]["life-0"]["B0"] = []
+        reason = "probe_only:controls_mismatch"
+    else:
+        for arm, lives in fake.data["probe_only"].items():
+            for branches in lives.values():
+                for sessions in branches.values():
+                    for session in sessions:
+                        if case == "no_timed_arm":
+                            session["wall_ms"] = None
+                        elif arm == "CEIL":
+                            if case == "zero_wall":
+                                session["wall_ms"] = 0
+                            else:
+                                session["context_tokens"] = [0] * len(session["items"])
+                                for iid in session["items"]:
+                                    fake.data["items"][iid]["prompt"] = ""
+        reason = "probe_only:" + case + (":CEIL" if case != "no_timed_arm" else "")
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("probe_only", reason) in error.value.refusals
+
+
+def test_probe_zero_items_and_c_standin(fake):
+    for branches in fake.data["probe_only"]["C"].values():
+        for sessions in branches.values():
+            for session in sessions:
+                session["wall_ms"] = None
+    fake.commit()
+    document = fake.document()
+    expected, evidence = probe_oracle(fake)
+    assert document["probe_only"] == expected
+    assert expected["rates"]["C"] == expected["rates"]["anchor"] == "17/1"
+    assert document["base_provenance"]["probe_only_rates"] == evidence
+    assert evidence["C"]["source"] == "slowest" and evidence["anchor"]["source"] == "C"
+    # Isolate a valid empty probe set from allocation's mandatory per-cell coverage.
+    life = fake.dry["lives"][0]
+    life["bundles"] = [r for r in life["bundles"] if r[1] != 20]
+    for record in life["branches"].values():
+        record["probe_items"][0] = record["probe_only_context"]["F"][0] = 0
+    fake.commit()
+    context = base._Context(canon(fake.data), canon(fake.controls), canon(fake.history), fake.root)
+    assert run._encode(base._probe_only(context)) == probe_oracle(fake)[0]
+
+
+def test_anchor_changelog():
+    heading = "## PREREG-v0.5 clarification, 2026-10-31: the anchor's seed order (#285)"
+    entries = [e for e in (ROOT / "prereg/CHANGELOG.md").read_text().split("\n\n") if e.startswith(heading)]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert 'keyed.draw(str(seed), world.unit(life, "anchor", "order"), 0, bundle_ref)' in entry
+    assert "ties broken by `bundle_ref`" in entry and "runner/dispatch.py:anchor_order" in entry
+    assert "**l.814 (l.759 in PREREG-v0.4):**" in entry and entry.endswith("No version change; PREREG-v0.5 remains frozen.")
+
+
 def test_round_trip(tmp_path, monkeypatch):
     fixture = Fake(tmp_path, monkeypatch, n=6)
     fixture.controls = sample()[0]
-    def probe_only(context):
-        return dict(rates={}, anchor_tokens=[[f"ocsim-dry-{i:03d}", 1] for i in range(48)],
-                    tokens=[[arm, f"ocsim-dry-{i:03d}", branch, k, 1]
-                            for arm in ("C", "F") for i in range(48)
-                            for branch in ("B0", "B1") for k in (20, 60, 120, 200)])
-    monkeypatch.setitem(base.RULES, "probe_only", replace(base.RULES["probe_only"], function=probe_only))
     monkeypatch.setitem(base.RULES, "n_lives_floor", replace(base.RULES["n_lives_floor"], function=lambda context: 1))
     monkeypatch.setattr(run, "c8_dirty", lambda root: False)
     built = fixture.build()
     merged = inputs.build(canon(sample()[0]), built, root=ROOT, resamples=3)
     parsed = run.parse_inputs(merged)
     assert parsed.planning is False and len(parsed.lives) == 48
+    assert parsed.probe_only.rates == {a: Fraction(r) for a, r in json.loads(built)["probe_only"]["rates"].items()}
     assert json.loads(merged)["base_provenance"] == json.loads(built)["base_provenance"]
 
 
@@ -545,8 +825,6 @@ def test_control_exclusion_and_neutrality(fake):
     assert neutrality["without_lcmx"]["passover"] == {"failed": "0/1", "blocked": "1/3"}
     fake.data["items"][iid]["classes"]["alpha"] = "BLOCKED"
     assert fake.document()["control_failure"] == "0/1"
-    fake.data["items"].pop(iid)
-    assert fake.document()["control_failure"] == "0/1"
 
 
 def test_locked_artifacts_and_environment(fake, monkeypatch):
@@ -667,7 +945,7 @@ def stage_b_refusal(fake, monkeypatch, case):
         prefix = kind + "-"
         if case.startswith(prefix):
             path = case.removeprefix(prefix)
-            data = {base.C11: fake.c11, base.C1: fake.c1, base.C2: fake.c2, base.DRY: fake.dry}[path]
+            data = {base.C11: fake.c11, base.C1: fake.c1, base.C2: fake.c2, base.C4: fake.c4, base.DRY: fake.dry}[path]
             if kind == "provisional":
                 data["status"] = "provisional"
             if kind == "shape":
@@ -746,6 +1024,7 @@ def test_allocation_dry_cover_every_budget(fake):
         fake.dry = dry_set(commit, cells)
         for life in fake.dry["lives"]:
             life["bundles"] = [[c, k, n] for (c, k), n in counts.items()]
+            set_probe_counts(life)
         fake.commit()
         if refused:
             with pytest.raises(base.BaseRefused) as error:
@@ -868,15 +1147,7 @@ def pilot_oracle(fake, tracks):
 
 
 def sixteen(tmp_path, monkeypatch, systems=("alpha", "beta", "gamma")):
-    fixture = Fake(tmp_path, monkeypatch, n=16, systems=systems)
-    def probe_only(context):
-        return dict(rates=dict.fromkeys(("F", "C", "RAG", "CEIL", "anchor"), "6/1"),
-                    anchor_tokens=[[f"ocsim-dry-{i:03d}", 1] for i in range(48)],
-                    tokens=[[arm, f"ocsim-dry-{i:03d}", branch, k, 1]
-                            for arm in ("C", "F") for i in range(48)
-                            for branch in ("B0", "B1") for k in (20, 60, 120, 200)])
-    monkeypatch.setitem(base.RULES, "probe_only", replace(base.RULES["probe_only"], function=probe_only))
-    return fixture
+    return Fake(tmp_path, monkeypatch, n=16, systems=systems)
 
 
 def test_pilot_floor_provenance_round_trip_and_neutrality(tmp_path, monkeypatch):
