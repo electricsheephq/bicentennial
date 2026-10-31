@@ -1,6 +1,6 @@
-# Bicentennial: a benchmark of memory for long-lived agents — design v2.2
+# Bicentennial: a benchmark of memory for long-lived agents — design v2.3
 
-Status: design v2.2, 2026-10-26. It amends design v2.1 with one decision: DV47, the run-time rule, which replaces the contiguous 24-hour window with locked, resumable segments at the owner's direction of 2026-10-26 (§6.2, §6.6, §6.7a, §6.8, §13). Design v2.1 amended design v2.0, which the owner approved the same day, with DV42, the pinned agent family, decided after spike S6b by the benchmark session under the owner's grant, and its consequences (§5.2, §6.2c, §13). Design v2.0 restructures v1.4 into a capability map, at the owner's direction of 2026-10-26. Its decisions, DV1-DV46 (DV42 decided in v2.1; DV47 added in v2.2), are recorded in `docs/DECISIONS-v2.md`, published in public form after the owner's review. DV1-DV24 were checked by an adversarial review, a statistics check of the certification rule, and an enumeration of every passage they change; DV25-DV33 settle a closure check of that review and a consistency review of the drafts, DV34-DV41 close a second round of that consistency review, and DV43-DV46 close a final closure check and a third consistency round. Each is summarised under "What changed in v2.0" below.
+Status: design v2.3, 2026-10-31. It amends design v2.2 with one decision: DV48, agent-only validation, at the owner's direction of 2026-10-31: no person grades, annotates, keys, audits, adjudicates or breaks a tie (§4.4, §7.5, §8, §10, §11.1, §13-§17). Design v2.2, 2026-10-26, amended design v2.1 with one decision: DV47, the run-time rule, which replaces the contiguous 24-hour window with locked, resumable segments at the owner's direction of 2026-10-26 (§6.2, §6.6, §6.7a, §6.8, §13). Design v2.1 amended design v2.0, which the owner approved the same day, with DV42, the pinned agent family, decided after spike S6b by the benchmark session under the owner's grant, and its consequences (§5.2, §6.2c, §13). Design v2.0 restructures v1.4 into a capability map, at the owner's direction of 2026-10-26. Its decisions, DV1-DV46 (DV42 decided in v2.1; DV47 added in v2.2; DV48 added in v2.3), are recorded in `docs/DECISIONS-v2.md`, published in public form after the owner's review. DV1-DV24 were checked by an adversarial review, a statistics check of the certification rule, and an enumeration of every passage they change; DV25-DV33 settle a closure check of that review and a consistency review of the drafts, DV34-DV41 close a second round of that consistency review, and DV43-DV46 close a final closure check and a third consistency round. Each is summarised under "What changed in v2.0" below.
 
 Earlier versions were revised after three adversarial review rounds and a closure check. Every finding has a recorded disposition in `docs/REVIEW-SUMMARY.md`:
 - **Round 1:** two independent reviewers, 98 findings.
@@ -11,17 +11,21 @@ Earlier versions were revised after three adversarial review rounds and a closur
 - **v2.0:** results become a capability map of track rows × evaluation profiles, certified on the Act stage within a declared profile. The developer loop gains rings and rungs, the Image profile enters through spike S8, and World profiles become a roadmap.
 - **v2.1:** DV42 pins the agent family: OpenAI's gpt-6.1-sol, on dedicated benchmark accounts, with GLM as the replication family. The blind panel, the capacity slot and the tuning disclosure follow (PREREG-v0.3).
 - **v2.2:** DV47, the run-time rule. The full-tier runs execute in locked, resumable segments: every arm's run of a life finishes within 24 h, and each system's work fits a work bound in each of its board, study and Image board runs. The pilot's runs of record stay contiguous. v1.4's cadence goal now lives in Rings 0-2 (§9); the board keeps v1.4's sizing discipline and a day per life (PREREG-v0.4).
+- **v2.3:** DV48, agent-only validation. Gold comes from the world state, mechanical checks come first, cross-family agent panels handle what is left, and pre-registered rules settle every disagreement. A Scoring Veto Panel of agents reviews each freeze (PREREG-v0.5).
 
-PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16). PREREG-v0.4 carries v2.2's rules. It was frozen on 2026-10-26, and its hash is posted on #1964 (§16).
+PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26 by the benchmark session. PREREG-v0.3 carries v2.1's rules. It was frozen the same day, and its hash is posted on #1964 (§16). PREREG-v0.4 carries v2.2's rules. It was frozen on 2026-10-26, and its hash is posted on #1964 (§16). PREREG-v0.5 carries v2.3's rules. It is drafted and is frozen after review (`prereg/FREEZE-v0.5.md`); PREREG-v0.4 binds until then, and where v2.3's DV48 passages differ from it, PREREG-v0.4 governs.
 
-**Precedence:** `prereg/PREREG-v0.4.md` is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
+**Precedence:** `prereg/PREREG-v0.4.md`, and from its freeze `prereg/PREREG-v0.5.md`, is the only normative source for every frozen quantity: constants, thresholds, rosters, sample sizes, tests and ceilings. This document explains and motivates. Where the two differ, PREREG governs, and the difference is an erratum here.
 
 The numbers marked *(pre-reg)* freeze twice:
-- in `PREREG-v0.4`, before the first real-system pilot run;
+- in `PREREG-v0.4` (from its freeze, `PREREG-v0.5`), before the first real-system pilot run;
 - in `PREREG-v1`, before any system's first full-tier run.
 
 
 A memory system can score well on a quiz and still delete the thing that mattered most. Bicentennial is built to catch that.
+
+## What changed in v2.3
+- **DV48, agent-only validation** (§4.4, §7.5, §8, §10, §11.1, §13-§17), at the owner's direction of 2026-10-31. No person grades, annotates, keys, audits, adjudicates or breaks a tie. The phrase bank is calibrated by agent families with a round-trip check; image legibility is read by an agent reader ensemble over scene-graph floors, and the manifest verifier is checked on seeded mutants; the census and the instance audit use agent families beside mechanical legs, with rules for every dispute and a recall-corrected audit gate; judges are validated on a world-state set; every published table carries an agent-key row. New completion slots C-16 to C-18 name the validation families, the image readers and the Scoring Veto Panel's families. The feasibility-pilot label is computed from the receipts.
 
 ## What changed in v2.2
 - **DV47, the run-time rule** (§6.2, §6.6, §6.7a, §6.8, §13): for the full-tier runs (the board with its study, each delta board and the Image board), the contiguous 24-hour window becomes locked, resumable segments. Every replaying arm's run of a life finishes within 24 h of that arm's first request on it. Each system's projected lane work, with a pause allowance, fits a work bound of 96 h on every lane, in each of its board, study and Image board runs, not summed. The pilot's runs of record stay contiguous, within wall-time ceilings. The run lock, keyed randomness, a served-identity check, control arms in every one-life block on the pinned reader with checkpoint-dispatched probes, pause rules with a hash proof of every agent-visible surface, attempts per (arm, life) and one-life blocks of interleaved arms make a segmented run valid. A run that ends early is published as diagnostics. The card discloses the segments.
@@ -57,7 +61,7 @@ One line per decision. Where a decision changes how a binding requirement (`docs
 - **DV21, difficulty and honest zeros** (§12): difficulty frozen from controls only, valid zeros published, and certification stability printed.
 - **DV22, horizon, streams and the north star** (§3, §9.2, §11.3): a long-horizon run size and a continuous-stream item in the research tier. Wake keeps its row, and Flatten's row reads "not yet built".
 - **DV23, purpose order and the firewall** (§14): LCM-X improves only through outputs every registered system gets on equal terms.
-- **DV24, process** (§12, §14, §16): PREREG, from v0.2 on, freezes the rules, not per-season contents. DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1.
+- **DV24, process** (§12, §14, §16): PREREG, from v0.2 on, freezes the rules, not per-season contents. DV1, DV4 and DV5 go to the external veto before PREREG-v1: since DV48, the Scoring Veto Panel (§14).
 - **DV25, scales** (§7.1, §7.7): gates and cell admission are computed on the raw penalised scale, −100 to +100; the normalised 0-100 scale is for display only. A cell is admitted when the lower bound of (raw ceiling − raw floor) is at least 30 raw points.
 - **DV26, provisional certification numbers** (§7.7, §12, §13): n_L ≥ 24, b = 150 and the SE bound are planning values; an operating-characteristic simulation on the penalised scale sets the final ones. A season below the powered size issues no certificate, and its results are still published.
 - **DV27, the Ring 2 bit** (§10): it reads "transfer gap detected" or "no gap detected", and neither is called CLEAR or FAIL.
@@ -250,8 +254,8 @@ A life is a schedule of about 200 sessions *(full tier)* over a simulated span o
   - Occurrence claims ("as we discussed on Monday") must map to event ids.
   - Non-propositional content (greetings, filler) is whitelisted.
   - A render that adds, drops or alters a fact is rejected and re-rendered, and falls back to a template after three attempts.
-- **Gold-critical events** (evidence, controls, lures, commitments, hedges, corrections, forget requests) are rendered from a **phrase bank** calibrated by human annotators. Their modality, strength and speech act are compared exactly, so "might try the window seat" can never become "window seat from now on".
-- **Images** (the Image profile, §11.1) are rendered from world state, never by an image generator. Each carries an **exposure manifest**: the values that are legible and unoccluded. Gold uses only those values. The image fidelity checks are a manifest verifier and a human-key sample covering legibility: the manifest verifier's recall is at least 0.99 against a 200-item human-key sample, and human legibility is at least 95% *(pre-reg)*.
+- **Gold-critical events** (evidence, controls, lures, commitments, hedges, corrections, forget requests) are rendered from a **phrase bank** calibrated by agent families (DV48). Their modality, strength and speech act are compared exactly, so "might try the window seat" can never become "window seat from now on". Every entry is tagged, a deterministic inverse parser recovers the tag from every rendered gold-critical instance, and two validation families (C-16) classify 20 public synthetic fills per cell; a cell either family fails, or on which they disagree, never renders a gold-critical event. A run of record needs a passing calibration receipt *(pre-reg; PREREG-v0.5 §5)*.
+- **Images** (the Image profile, §11.1) are rendered from world state, never by an image generator. Each carries an **exposure manifest**: the values that are legible and unoccluded. Gold uses only those values. The image fidelity checks are a manifest verifier and a legibility check (DV48): construction floors computed from the renderer's scene graph, legibility read by an agent reader ensemble that includes a non-LLM OCR engine (C-17), with a legible share of at least 0.95, and manifest-verifier recall of at least 0.99 against at least 500 seeded image mutants *(pre-reg; PREREG-v0.5 §5)*. Illegible entries leave the manifest before gold is built.
 - **Salience leaks.**
   - The render lane (LLM or template) is assigned independently of event class.
   - Before freeze, a classifier trained on surface features must fail to pick gold-critical events (AUC ≤ 0.6 *(pre-reg)*).
@@ -829,13 +833,16 @@ Image-profile items use the same typed envelopes, exact or structured first (§1
 - Rankings are reported under both, because in prior work the judge choice alone reversed a ranking.
 - Each judgement runs three trials with a majority vote and an A/A′ placebo.
 - A shipped validation suite of planted wrong-but-topical answers sets a published false-accept bound.
+- **Judge validation** (DV48): a validation set built from world state, with known labels, per judge and per class, holds false-accept and false-reject each at most 2%. A judge that misses a class bar leaves that class "judge-unvalidated" until a newly pinned judge passes *(pre-reg; PREREG-v0.5 §5)*.
 
 **Gold error has a budget:**
 Gold error is controlled in two stages *(pre-reg)*.
 
 **Stage A, the template census.** Every template version is audited, so template-level error is inspected directly, not estimated by sampling.
-- Two annotators, Cohen's kappa, and a global contradiction search.
-- Seeded known-bad items, with annotator recall of at least 90% on them.
+- Two annotators, Cohen's kappa, and a global contradiction search. The annotators are two agent families (C-16), never the template author's (DV48).
+- Mechanical legs beside them: a second gold implementation written from the plain-language world rules, metamorphic relations, and property tests on each decision table.
+- Seeded known-bad items, with annotator recall of at least 90% on them, and seeded known-good versions, of which the pair together flags at most 5% (DV48).
+- A factual flag clears only when the deterministic checker refutes its premise; an interpretive flag quarantines the version.
 - The census passes only with zero unresolved template-level errors.
 
 **Stage B, the instance audit.** It estimates the remaining, instance-level gold error from a sample, in confirm-or-dispute format.
@@ -856,8 +863,8 @@ Gold error is controlled in two stages *(pre-reg)*.
   - The computed bound is the only gate. For orientation only: with ρ at its floor, the pilot passes with at most 1 error and the release with at most 2. Errors concentrated in one version raise ρ̂ and can fail the gate with fewer.
 - **Also reported:** the fully conservative cluster-level bound, which treats each sampled template version as one observation.
 - **Unmet gates.** If the rule cannot establish a gate's bound, for example because a track has too few template versions, the gate is reported as unmet. It is never waived.
-- **Human key:** the release audit is human-graded, and it also validates the judges.
-- **Outside audit:** private templates are audited outside the LCM-X lanes, and retired seasons are published for outside audit.
+- **Agent graders** (DV48): the template's validation pair (C-16) answers from the oracle evidence first, then confirms or disputes gold. A1 re-derivation and the exposure check run on every scored bundle. An interpretive dispute is an error, and a factual dispute clears only when the checker refutes its premise. Hidden plants measure the procedure's recall and its false errors (at most 0.5% of known-good plants, the pair together), and the gate is the bound divided by that recall's lower bound. The audit runs before the run lock, as its own capped validation row, and its outcome and quarantine list are hashed into the lock *(pre-reg; PREREG-v0.5 §5)*. The judges are validated on their own set (above).
+- **Outside audit:** private templates are audited outside the LCM-X lanes, and retired seasons are published for outside audit. "Outside the LCM-X lanes" means accounts and sessions in no LCM-X lane-registry entry and with no LCM-X repository access or development context, attested on every release-audit and census receipt. Anyone's agent may challenge a public pack or a retired season with a machine-checkable reproduction; an accepted challenge re-audits the whole template version across every system (DV48).
 
 ### 7.6 Keep: budgets that bind, and forgetting that is observed
 **Storage.**
@@ -948,7 +955,7 @@ The CIs come from a wild cluster bootstrap over base-plus-twin life pairs, with 
 - the harmful-actions panel, which is the violations panel (§7.1a);
 - cost.
 
-**The board's statistical claims** remain the paired confirmatory family (§12). Certification is a separate per-system statement. The stages (§3), the verdicts and non-results, and the gates and certification rule go to the external veto reviewer before PREREG-v1 (§14).
+**The board's statistical claims** remain the paired confirmatory family (§12). Certification is a separate per-system statement. The stages (§3), the verdicts and non-results, and the gates and certification rule go to the Scoring Veto Panel before each freeze (§14).
 
 **Requirement note** (addendum D, the asymmetric penalty): met as before. The penalised action score sets the gates and certification, and per-item action accuracy is only shown beside it.
 
@@ -994,7 +1001,7 @@ Headline tables show:
 - the cell gate in raw points, with SE(g), and the cell verdict (§7.7);
 - the raw-archive marker, as a column.
 
-**Requirement note** (addendum E, baselines in every published table): met per profile. In the Image profile the oracle ceiling is the direct-evidence control (§11.1), and the human key also covers image legibility (§4.4). The competitor counts are unchanged.
+**Requirement note** (addendum E, baselines in every published table): met per profile. In the Image profile the oracle ceiling is the direct-evidence control (§11.1), and the agent-key row, with its validation columns, replaces the human key in every table (DV48; image legibility, §4.4). The competitor counts are unchanged.
 
 ## 9. Tiers: two ladders
 The brief asks for a smoke tier that takes minutes, a dev tier that takes about an hour, and a powered full tier. v1.2 had drifted to a 12 h smoke study and a 36 h dev tier, because the one-off validation runs for pilot bars 1 and 2 had taken the slots meant for developers. The first-principles review splits them into two ladders (PREREG §6 is normative).
@@ -1136,7 +1143,7 @@ In v1, dev bundles are stratified random. IRT selection can come later, once eno
 - **Admission never depends on any system failing.** A reproducer may illustrate a template, but never qualifies it.
 - **No raw transcripts, corpus text or personal data** (§4.5).
 - **Contributions enter versioned seasons** with bridge anchors. Old versions never change, and exposure history is preserved.
-- **Independent authorship** applies to community contributions used in the sealed set. The maintainers' own private templates stay under §14's firewall and the external veto.
+- **Independent authorship** applies to community contributions used in the sealed set. The maintainers' own private templates stay under §14's firewall and the external veto. Provenance decides independence: the author is not a maintainer or LCM-X account, commits are signed, and the model families used and any tested-system affiliation are declared. The author's family is excluded from that template's auditor pair, and results are also reported with each affiliated author's templates removed (DV48).
 - **Community status is version provenance** (§3).
 
 **Requirement notes:**
@@ -1188,7 +1195,7 @@ Answers use typed envelopes, exact or structured first (§7.5).
 
 **Recorded change.** The owner's direction of 2026-10-26, to test capabilities such as images that systems lack, moves rendered images ahead of the original brief's rule to build capture only after measured use (#1719). Continuous-stream capture still waits for measured use.
 
-**Requirement note** (addendum D, exact matching first; addendum E, baselines): met per profile. Image items use typed envelopes, the human key covers image legibility (§4.4), and every Image table shows the three baselines above.
+**Requirement note** (addendum D, exact matching first; addendum E, baselines): met per profile. Image items use typed envelopes, the agent reader ensemble covers image legibility (§4.4), and every Image table shows the three baselines above and the agent-key row (DV48).
 
 ### 11.2 The cell inventory and the capability census
 - **The inventory.** The scored cells are frozen per release from the ability taxonomy (`survey/SYNTHESIS.md`: 11 groups, 34 abilities) and the track templates, never from any system's documentation or results.
@@ -1415,6 +1422,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 - A **plan lane** (also called a subscription lane) adds no charge at the margin; any per-token or per-call charge makes a paid lane.
 - Paid rows are labelled and capped: the third blind-panel family (on a plan lane, or its own capped run at ≤ $100 projected per release), extraction competitors' vendor models, the replication family when it runs off a plan lane, and the pinned vision reader (§11.1).
 - **Embedding spend** is a labelled paid row under the owner's standing embedding grant of up to $100 per run, outside the paid-lane ceiling.
+- **Validation spend** (DV48) is a labelled row: the validation families, the image readers and the red-team seeds run as their own capped run, at most $100 per release, and the Scoring Veto Panel at most $25 per freeze. Sealed items, keys and images go only to local models, or to hosted families whose API terms exclude training on inputs.
 - **The vision slot's cost** is about $50 a season, approved by the owner on 2026-10-26.
 - Every run reports its spend, and its tokens by role.
 
@@ -1439,8 +1447,9 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
   - The benchmark session runs nothing on LCM-X beyond the scheduled runs every system gets, and never advises on its internals.
   - The acceptance bar (§9.3) is shown on the benchmark team's own baseline, never on LCM-X.
 - **Approval and veto.** The benchmark session approves the design and each PREREG freeze, and each freeze hash is posted on #1964 (§16).
-  - An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. Until one exists, every adversarial review of this design must test for self-serving construction.
-  - The capability map's stages (DV1), the verdicts and non-results (DV4), and the gates and certification rule (DV5) go to that reviewer before PREREG-v1.
+  - A Scoring Veto Panel of agents (C-18) reviews each freeze candidate on a fixed checklist (DV48). The self-serving construction test, which this design first required of every adversarial review until a reviewer exists, is on that checklist permanently. A blocking finding from any one panel family blocks the freeze, and it clears only with the mechanical evidence it names, or by reverting the rule to the previous frozen version. A freeze needs valid reviews from at least two panel families, which are listed with their models before any review and never removed for their findings. A blocking finding raised in any run stands; a rerun never clears it. Every freeze before C-18 is filled, PREREG-v0.5's included, keeps the interim rule above.
+  - The panel holds the veto alone. The owner waived the external human reviewer in writing on 2026-10-31, recorded on #1964, so no reviewer is recruited before PREREG-v1.
+  - The capability map's stages (DV1), the verdicts and non-results (DV4), and the gates and certification rule (DV5) go to the panel before each freeze.
 - **Production agents.** Bicentennial never runs against any live production agent. Any later test of one is an offline replay of a copy, with owner approval at that time.
 - **Openness.** The harness, adapters and public lives are open. Competitors are run with their vendors' best documented configuration. Results are published where LCM-X loses.
 - **Requirement note** (addendum G, the firewall): met as before. The owner's purpose order sets the first user, not the measurement.
@@ -1476,7 +1485,7 @@ A cut that leaves a season below certification's powered size (§7.7) means no c
 5. **Cost.** The S6a and S6 projection fits the run-time rule (life and work bounds) at the measured sustainable capacity, and the paid-lane spend ceilings and the pilot runs' wall-time ceilings hold (§13). Token counts are reported, never a bar. The developer-tier targets are not bars; any that are missed are disclosed.
 6. **Correlation.** API mode vs system is measured per comparable pair, with no bar. Proxy status needs the §6.1 criterion.
 
-**Labelling.** If no human grader pool exists by pilot time, the pilot is labelled a **feasibility pilot**, and it cannot claim the binding gate.
+**Labelling.** If any agent-validation gate is unmet at pilot time (the validation families or image readers not filled by rule, no passing phrase-bank receipt, a failed census, an audit that misses its gate or its sensitivity bars, failed judge validation, or for Image claims a missed legibility or verifier gate), the pilot is labelled a **feasibility pilot**, and it cannot claim the binding gate. The frozen analysis code computes the label from the receipts (DV48).
 
 **When bars fail:**
 - **Ordinary inclusion vs the failed-pilot fallback.** "A track that is hard for everyone stays in" governs ordinary inclusion. The addendum's exit rule is a separate fallback, which fires when the bar 1 companion or bar 2 fails. Bicentennial then narrows before Phase 1 is built:
@@ -1521,13 +1530,13 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 ## 16. Approval and channels
 - **Ownership.** The benchmark session owns this design.
 - **Approval.** The benchmark session approves the design and each PREREG freeze, under the owner's grant of 2026-10-26, which replaced the integration-owner approval in the original brief. Each freeze hash is posted on #1964; the owner retired the co-sign on 2026-10-26. PREREG-v0.1 and PREREG-v0.2 were frozen on 2026-10-26. PREREG-v0.3 carries v2.1's rules and was frozen the same day; PREREG-v0.4 carries v2.2's and was frozen on 2026-10-26; the completion record comes before the first real-system pilot run; PREREG-v1 comes before the full tier.
-- **External veto.** An external reviewer with a veto over scoring is recruited before PREREG-v1, and the owner decides who. PREREG-v1 is not frozen without one unless the owner waives that in writing. DV1, DV4 and DV5 go to that reviewer first (§14).
+- **External veto.** The Scoring Veto Panel (C-18) reviews each freeze candidate (DV48, §14). The panel holds the veto alone: the owner waived the external human reviewer in writing on 2026-10-31, recorded on #1964, so PREREG-v1 does not wait for one. DV1, DV4 and DV5 go to the panel first (§14).
 - **Channel.** #1964 is the status channel, not an approval point.
 
 **Owner-private decisions:**
 - the public repository (approved and created: `bicentennial`);
 - a public leaderboard;
-- external partners: the external reviewer, vendor configuration windows and the human grader pool;
+- external partners: vendor configuration windows (the external reviewer was waived on 2026-10-31);
 - sealing infrastructure (§10);
 - spend above the standing limits (§13 paid rows);
 - the vision budget: about $50 a season, approved on 2026-10-26 (§11.1).
@@ -1536,7 +1545,7 @@ Pilot cut order if the timebox binds: the LLM renderer (template renders only), 
 1. **Hermes entrypoint:** can its documented production entrypoint be driven deterministically by the director, or does the pilot fall back to the CLI, with disclosure? (Spike S5.)
 2. **Clocks:** if spike S2 fails for a C-level time source, the affected rows become N/A_CLOCK for time-dependent bundles. Is the remaining coverage enough for a headline rank, and for 95% coverage in every required cell (§7.7)?
 3. **Third blind-panel family:** which family, at what single-call cost?
-4. **Human grader pool,** an owner decision. It covers the template census, the pilot instance audit (75 bundles per track), the release audit (200 per track) and the 200-item image human-key sample (§4.4).
+4. **Human grader pool:** closed by DV48. No person grades; the census, the audits and the image checks run on agent families filled by rule in completion slots C-16 (the validation families), C-17 (the image readers) and C-18 (the Scoring Veto Panel), §4.4, §7.5 and §14.
 5. **Template counts:** can every track reach the minimum of 25 template versions for the pilot audit and 40 for release (PREREG §5), or do some tracks need more templates before the pilot?
 6. **Variance inputs:** what are the twin correlation and the within-cell and cross-cell life correlations? They are measured on the bar-2 run's control arms with one A/A′ rerun, before the PREREG-v1 freeze gate, and the operating-characteristic simulation sets the final certification numbers from them (§7.7). The per-rung A/A′ flip rate (q₀) is measured before any loop claim (§9.1).
 7. **Loop time:** what does each developer tier take, idle and busy? It is measured and published per tier (§9.1), replacing the T1 projection.

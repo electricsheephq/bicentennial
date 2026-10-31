@@ -98,7 +98,7 @@ The **write-turn prompt text** is open. Ring 0 runs with a scripted model and se
 
 ## Pending proposals (not completion entries)
 
-These two values come from DESIGN §4.2, and no PREREG-v0.4 rule or slot covers them (`docs/ERRATA-v2.2.md` E5). They are generator configuration proposed for PREREG-v0.5, not completion entries:
+These two values come from DESIGN §4.2, and no PREREG-v0.4 rule or slot covers them (`docs/ERRATA-v2.2.md` E5). They are generator configuration proposed for PREREG-v0.6 (PREREG-v0.5 carries only DV48), not completion entries:
 - a full-tier life spans 3-26 simulated weeks;
 - incidental details are mixed with decoys at 3 or more times their rate.
 
