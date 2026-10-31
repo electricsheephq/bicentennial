@@ -66,7 +66,7 @@ def test_sweep(genre, capsys):
         for i in range(48) if (i % 2 == 0) == (genre == "G1")]
     rows = fp.sweep(genre, lives, budget(genre))
     assert [(r["life"], r["seed"]) for r in rows] == lives
-    for row, (life, seed) in zip(rows, lives):
+    for row, (life, seed) in zip(rows, lives, strict=True):
         s = schedule(life, seed)
         p = fp.plan(genre, s, budget(genre), fp.G1 if genre == "G1" else fp.G2)
         check_plan(p, s)
