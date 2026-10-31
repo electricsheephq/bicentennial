@@ -116,9 +116,16 @@ def test_within(tmp_path):
     (scratch / "check-B0-0" / "hop").symlink_to(outside, target_is_directory=True)
     (outside / "jump3").symlink_to(scratch / "check-B0-0" / "hop", target_is_directory=True)
     assert fixedroot.within(outside / "jump3" / "safe-pin.json", scratch)
+    # A resolution the walk cannot finish is refused: a loop, and a chain longer than the bound into a job root.
     loop = root / "loop"
     loop.symlink_to(loop)
-    assert not fixedroot.within(loop / "x", scratch)
+    assert fixedroot.within(loop / "x", scratch)
+    chain = scratch / "check-B0-0"
+    for i in range(41):
+        (outside / f"c{i}").symlink_to(chain, target_is_directory=True)
+        chain = outside / f"c{i}"
+    assert fixedroot.within(chain / "pin.json", scratch)
+    assert fixedroot.within(outside / "c40", scratch) and not fixedroot.within(outside / "safe-pin.json", scratch)
     other = root / "SCRATCH"
     if other.exists():
         assert fixedroot.within(other / "check-B0-0", scratch)

@@ -84,7 +84,8 @@ def within(path, root):
     # Whether resolving path, as the system does, visits root or anything below it: a directory it passes through or a
     # link it reads. A reset below root would delete what the path depends on. The walk follows each link where the
     # system would, and every visited entry is matched by file identity, which other spellings of root share on a
-    # case-insensitive volume. A link loop, which the system could not resolve either, ends the walk.
+    # case-insensitive volume. It answers False only for a resolution it finished: past 40 links (a loop, or a chain a
+    # caller's own resolution might still finish) it answers True.
     try:
         info = os.stat(root)
     except OSError:
@@ -113,7 +114,7 @@ def within(path, root):
         if os.path.islink(entry):
             links += 1
             if links > 40:
-                return False
+                return True
             target = Path(os.readlink(entry))
             if target.is_absolute():
                 current = Path("/")
