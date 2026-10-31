@@ -922,6 +922,7 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
     context.provenance.update(
         account_pool=context.get("bar2")["run_lock"]["account_pool"], neutrality=neutrality,
         pending_disclosures=["B-4 recovered INFRA attempts: pending; sources C5a's container (B-4) and the bar-2 runner",
-                             "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card"])
+                             "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card",
+                             "B-8 the anchor's rate: C's measured pinned-lane rate, a proxy for the swap lane, since bar 2 never runs the swap model: the card"])
     document["base_provenance"] = context.provenance
     return canon(run._encode(document))
