@@ -1,5 +1,6 @@
 """Fixed root trust, cleanup and open-file-description lock lifetime."""
 
+import errno
 import os
 import subprocess
 import sys
@@ -131,6 +132,32 @@ def test_within(tmp_path):
         assert fixedroot.within(other / "check-B0-0", scratch)
     assert not fixedroot.within(outside, root / "missing")
 
+
+
+def test_within_propagates_unexpected_errors(tmp_path, monkeypatch):
+    # Only a missing entry ends a branch; any other error propagates, so the caller refuses instead of guessing.
+    root = Path(os.path.realpath(tmp_path))
+    scratch, outside = root / "scratch", root / "outside"
+    (scratch / "check-B0-0").mkdir(parents=True)
+    outside.mkdir()
+
+    def failing(real, target):
+        def call(path, *args, **kwargs):
+            if Path(path) == target:
+                raise OSError(errno.EIO, "injected")
+            return real(path, *args, **kwargs)
+        return call
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "stat", failing(os.stat, scratch))
+        with pytest.raises(OSError):
+            fixedroot.within(scratch / "check-B0-0", scratch)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "lstat", failing(os.lstat, outside))
+        with pytest.raises(OSError):
+            fixedroot.within(outside / "pin.json", scratch)
+    assert not fixedroot.within(root / "missing" / "pin.json", scratch)
+    assert not fixedroot.within(outside / "pin.json", root / "no-scratch")
 
 @pytest.mark.parametrize("slot", [-1, 10, "0", None, 0.0, True])
 def test_invalid_slot(slot):

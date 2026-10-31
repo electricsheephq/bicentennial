@@ -84,21 +84,24 @@ def within(path, root):
     # Whether resolving path, as the system does, visits root or anything below it: a directory it passes through or a
     # link it reads. A reset below root would delete what the path depends on. The walk follows each link where the
     # system would, and every visited entry is matched by file identity, which other spellings of root share on a
-    # case-insensitive volume. It answers False only for a resolution it finished: past 40 links (a loop, or a chain a
-    # caller's own resolution might still finish) it answers True.
-    try:
-        info = os.stat(root)
-    except OSError:
+    # case-insensitive volume. It answers False only for a resolution it finished. A missing entry ends a branch, as
+    # it ends the system's resolution; any other error propagates, and past 40 links (a loop, or a chain a caller's
+    # own resolution might still finish) it answers True.
+    def look(entry, follow=False):
+        try:
+            return os.stat(entry) if follow else os.lstat(entry)
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+
+    info = look(root, follow=True)
+    if info is None:
         return False
     root_id = (info.st_dev, info.st_ino)
 
     def below(entry):  # entry's parent is fully resolved
         for prefix in (entry, *entry.parents):
-            try:
-                info = os.lstat(prefix)
-            except OSError:
-                continue
-            if (info.st_dev, info.st_ino) == root_id:
+            info = look(prefix)
+            if info is not None and (info.st_dev, info.st_ino) == root_id:
                 return True
         return False
 
@@ -111,7 +114,8 @@ def within(path, root):
         entry = current / part
         if below(entry):
             return True
-        if os.path.islink(entry):
+        info = look(entry)
+        if info is not None and stat.S_ISLNK(info.st_mode):
             links += 1
             if links > 40:
                 return True
