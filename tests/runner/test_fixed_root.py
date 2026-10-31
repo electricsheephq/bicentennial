@@ -44,9 +44,14 @@ def test_fixed_scratch(synth, installed, tmp_path, monkeypatch):
     original = compare.corpus
 
     class Host(ReferenceStore):
+        write_clipped, write_max_length = 0, None
+
         def __init__(self, entry, **kwargs):
             super().__init__()
             hosts.append(kwargs["root"])
+
+        def fields(self):
+            return {"actor": "not_delivered", "text": "full", "time": "session_clock"}
 
     def case(case, factory, **kwargs):
         factory()
