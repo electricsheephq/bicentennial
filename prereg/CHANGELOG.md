@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Design erratum, 2026-10-31: the Scoring Veto Panel's timing (#321)
+- **DESIGN §14 and §16** now carry PREREG-v0.5's backstop: the panel's rule binds from the first freeze after C-18 is filled, and from PREREG-v1 at the latest (PREREG-v0.5, Freezes, External veto, From when). `docs/REQUIREMENTS.md`'s three lines that say when the panel stands in, binds and holds the veto alone now carry the same two conditions. No rule changes: PREREG-v0.5 already states both. FREEZE-v0.5 verifies `docs/DESIGN.md` and `prereg/PREREG-v0.5.md` as they are at the tag `prereg-v0.5`, so its hashes stay valid. No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-10-31: fixed sandbox roots (#282)
 - **RING0 §13 E20:** from the next kit, every Hermes unit runs below a fixed per-slot base, exclusively leased for the run and inherited by workers. T0/T1 accept and disclose `--sandbox-slot`, and refuse operator paths inside any slot's base (`sandbox_overlap`); the mask is unchanged. v0.1's frozen kit keeps its layout; next-kit baselines are rebuilt. No PREREG version change; PREREG-v0.5 remains frozen.
 
