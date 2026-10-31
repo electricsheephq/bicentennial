@@ -425,6 +425,18 @@ def test_c8_covers_every_imported_module():
     assert closure <= paths, sorted(closure - paths)
 
 
+def test_ocsim_import_closure_excludes_execution_modules():
+    todo = [p.relative_to(ROOT).as_posix() for p in (ROOT / "src/bicentennial/ocsim").glob("*.py")]
+    closure = set()
+    while todo:
+        path = todo.pop()
+        if path not in closure:
+            closure.add(path)
+            todo += _imported_files(path)
+    forbidden = {"controls", "api", "probe", "score", "render", "genres", "items"}
+    assert not {p for p in closure if Path(p).parts[2] in forbidden}
+
+
 def test_resume_keeps_busy_marker_history(tiny_inputs, tmp_path, monkeypatch):
     # Interrupted after a pause and resumed, a run reports the busy-marker history of an uninterrupted run
     config = tiny_config(alternatives=("LITERAL",), constants={**TINY_CONSTANTS, "CHUNK": 1})

@@ -3,10 +3,15 @@
 import ast
 import inspect
 import json
+import math
+import statistics
 import subprocess
+import sys
 from copy import deepcopy
 from dataclasses import replace
+from fractions import Fraction
 from hashlib import sha256
+from itertools import combinations
 from pathlib import Path
 
 import pytest
@@ -20,6 +25,13 @@ ROOT = Path(__file__).resolve().parents[2]
 PENDING = {"probe_only": "B-8", "n_lives_floor": "B-9"}
 REAL_C8 = base.c8_check
 REAL_CAP = base.runner_cap
+
+
+def pilot_bundles(arms, lives, tracks=("Wake", "Tuesday")):
+    return {arm: [[f"{track}-{life}", life, track, keep,
+                   ((i + 1) * (j * j + 3) * (t + 1) * 13 + (401 if keep == "K10" else 0)) % 1801 - 900]
+                  for j, life in enumerate(lives) for t, track in enumerate(tracks)
+                  for keep in ("K100", "K10")] for i, arm in enumerate(arms)}
 
 
 def dry_set(commit, cells):
@@ -40,10 +52,12 @@ def dry_set(commit, cells):
 
 
 class Fake:
-    def __init__(self, root, monkeypatch, n=3, marker=True, extra_files=()):
+    def __init__(self, root, monkeypatch, n=3, marker=True, extra_files=(), systems=("alpha", "beta")):
         self.root, self.monkeypatch = root, monkeypatch
         self.roster = {"status": "binding", "systems": [
-            {"id": "alpha", "lcmx": True}, {"id": "beta", "lcmx": False}]}
+            {"id": "alpha", "lcmx": True}, {"id": "alpha-pre", "lcmx": True},
+            *[{"id": a, "lcmx": False} for a in systems if a != "alpha"]],
+            "reference": "beta", "pre_generator_lcmx": "alpha-pre"}
         self.c12 = {"status": "binding", "profile": "Text", "required": list(REQUIRED)}
         self.c11 = {"status": "binding", "lanes": {
             "pinned": dict(model="synthetic-pinned", concurrency=3, rate_per_min=None, accounts=2),
@@ -62,8 +76,10 @@ class Fake:
                                   "analysis_commit": "0" * 40,
                                   "generator_versions": dict(G1="synthetic-v1", G2="synthetic-v1"),
                                   "history_sha256": "0" * 64, "status": "complete",
-                                  "account_pool": ["synthetic-account"]}, "arms": {}, "items": {}}
-        for arm, rate in (("alpha", 2), ("beta", 4), *((("marker", 6),) if marker else ())):
+                                  "account_pool": ["synthetic-account"]}, "arms": {}, "items": {},
+                     "bundles": pilot_bundles(systems, self.history["lives"])}
+        for arm, rate in (*((a, (i + 1) * 2) for i, a in enumerate(systems)),
+                          *((("marker", 6),) if marker else ())):
             value = self.data["arms"][arm] = {"kind": "marker" if arm == "marker" else "system", "lives": {}}
             for life in self.history["lives"]:
                 value["lives"][life] = {}
@@ -135,6 +151,7 @@ class Fake:
 
     def remove_arm(self, arm):
         self.data["arms"].pop(arm)
+        self.data["bundles"].pop(arm, None)
         for item in self.data["items"].values():
             item["classes"].pop(arm)
 
@@ -170,7 +187,8 @@ def test_registry_and_pending(tmp_path, monkeypatch):
     fixture = Fake(tmp_path, monkeypatch)
     with pytest.raises(base.BaseRefused) as error:
         fixture.build()
-    assert error.value.refusals == tuple(sorted((f, f"pending:{r}") for f, r in PENDING.items()))
+    assert error.value.refusals == (("n_lives_floor", "n_lives_floor:bar2_lives"),
+                                    ("probe_only", "pending:B-8"))
     for field in base.BASE_FIELDS:
         with monkeypatch.context() as patch:
             patch.delitem(base.RULES, field)
@@ -188,7 +206,8 @@ def test_history_schema_constant():
 
 def test_complete(fake):
     document = fake.document()
-    assert document["rows"] == [{"row": "alpha", "rate": "2/1"}, {"row": "beta", "rate": "4/1"},
+    assert document["rows"] == [{"row": "alpha", "rate": "2/1"}, {"row": "alpha-pre", "rate": "6/1"},
+                                 {"row": "beta", "rate": "4/1"},
                                  {"row": "marker", "rate": "6/1"}]
     assert document["passover"] == {"failed": "1/6", "blocked": "1/6"}
     assert document["control_failure"] == "1/6"
@@ -207,7 +226,8 @@ def test_complete(fake):
     assert provenance["pending_disclosures"] == [
         "B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records"]
     paths = {"rows": {base.ROSTER}, "required": {base.C12}, "lanes": {base.C11, base.C1, base.C2},
-             "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY}}
+             "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY},
+             "n_lives_floor": {base.ROSTER, base.C12}}
     for field, rule in base.RULES.items():
         assert provenance[field] == {"rule": rule.rule, "sources": list(rule.sources),
                                      "artifacts": [a for a in provenance["artifacts"]
@@ -347,7 +367,7 @@ def test_refusals(fake, monkeypatch, case, field, reason):
     if case == "markers":
         fake.data["arms"]["alpha"]["kind"] = "marker"
     if case == "roster":
-        fake.roster["systems"].pop(0)
+        fake.roster["systems"][0]["id"] = "other-alpha"
         fake.commit()
     if case == "chain":
         fake.data["arms"]["alpha"]["lives"]["life-0"]["B0"].pop("K100")
@@ -557,11 +577,14 @@ def test_neutrality_rename_permute(fake):
         return document
 
     expected = comparable(fake.document())
-    renames = {"alpha": "zeta", "beta": "delta"}
+    renames = {"alpha": "zeta", "alpha-pre": "zeta-pre", "beta": "delta"}
     fake.data["arms"] = {renames.get(k, k): v for k, v in reversed(list(fake.data["arms"].items()))}
     for item in fake.data["items"].values():
         item["classes"] = {renames.get(k, k): v for k, v in reversed(list(item["classes"].items()))}
     fake.roster["systems"] = [{**s, "id": renames[s["id"]]} for s in reversed(fake.roster["systems"])]
+    for key in ("reference", "pre_generator_lcmx"):
+        fake.roster[key] = renames[fake.roster[key]]
+    fake.data["bundles"] = {renames[k]: v for k, v in reversed(list(fake.data["bundles"].items()))}
     fake.commit()
     actual = comparable(fake.document())
     text = json.dumps(actual)
@@ -807,4 +830,251 @@ def test_rule_sources_and_programming_errors(fake, monkeypatch):
         context.artifact("synthetic-unknown.json")
     monkeypatch.setattr(base, "_checkpoints", lambda context: [1])
     with pytest.raises(AssertionError):
+        fake.build()
+
+
+def pilot_oracle(fake, tracks):
+    # Reconstruct §2 directly from shared row identities, without pilot/core helpers.
+    lives = sorted(fake.history["lives"])
+    indexed = {a: {tuple(r[:4]): r[4] for r in rows} for a, rows in fake.data["bundles"].items()}
+    arms = sorted(s["id"] for s in fake.roster["systems"] if not s["lcmx"] and s["id"] in indexed)
+    deviations = []
+    for a, b in combinations(arms, 2):
+        terms = {life: Fraction(0) for life in lives}
+        for track in tracks:
+            differences = {}
+            for life in lives:
+                means = []
+                for keep in (("K100", "K10") if track == "Keep" else ("K100",)):
+                    keys = [k for k in indexed[a] if k[1:] == (life, track, keep)
+                            and indexed[a][k] is not None and indexed[b][k] is not None]
+                    if keys:
+                        means.append(sum((Fraction(indexed[a][k] - indexed[b][k]) for k in keys),
+                                         Fraction(0)) / len(keys))
+                if len(means) == (2 if track == "Keep" else 1):
+                    differences[life] = ((means[0] + 3 * means[1]) / 4 if track == "Keep" else means[0])
+            for life, difference in differences.items():
+                terms[life] += Fraction(len(lives), len(tracks) * len(differences)) * difference
+        sd = math.sqrt(float(statistics.variance([v / 10 for v in terms.values()])))
+        deviations.append([a, b, sd.hex()])
+    sigma = statistics.median([float.fromhex(row[2]) for row in deviations])
+    m = len(fake.roster["systems"]) - 2
+    z = [statistics.NormalDist().inv_cdf(p) for p in (1 - .05 / (2 * m), .8)]
+    n = ((sum(z) * sigma) / 8) ** 2
+    subset = sorted({r[1] for r in next(iter(indexed.values())) if r[2:] == ("Keep", "K10")})
+    return min(48, max(24, math.ceil(n))), dict(M=m, pairs=deviations, sigma_d=sigma.hex(),
+                                              z=[v.hex() for v in z], n=n.hex(), keep_subset=subset)
+
+
+def sixteen(tmp_path, monkeypatch, systems=("alpha", "beta", "gamma")):
+    fixture = Fake(tmp_path, monkeypatch, n=16, systems=systems)
+    def probe_only(context):
+        return dict(rates=dict.fromkeys(("F", "C", "RAG", "CEIL", "anchor"), "6/1"),
+                    anchor_tokens=[[f"ocsim-dry-{i:03d}", 1] for i in range(48)],
+                    tokens=[[arm, f"ocsim-dry-{i:03d}", branch, k, 1]
+                            for arm in ("C", "F") for i in range(48)
+                            for branch in ("B0", "B1") for k in (20, 60, 120, 200)])
+    monkeypatch.setitem(base.RULES, "probe_only", replace(base.RULES["probe_only"], function=probe_only))
+    return fixture
+
+
+def test_pilot_floor_provenance_round_trip_and_neutrality(tmp_path, monkeypatch):
+    fixture = sixteen(tmp_path, monkeypatch)
+    calls, real = [], base._keep_subset
+    def subset_spy(bundles, tracks):
+        calls.append(set(tracks))
+        return real(bundles, tracks)
+    monkeypatch.setattr(base, "_keep_subset", subset_spy)
+    value, provenance = pilot_oracle(fixture, ("Wake", "Tuesday"))
+    built = fixture.build()
+    document = json.loads(built)
+    assert calls == [{"Wake", "Tuesday"}]
+    assert document["n_lives_floor"] == value
+    assert document["base_provenance"]["n_lives"] == provenance
+    assert provenance["M"] == 2 and [r[:2] for r in provenance["pairs"]] == [["beta", "gamma"]]
+    rule = base.RULES["n_lives_floor"]
+    assert rule.rule == "B-9, B-26, B-27"
+    assert {base.RULING, "#245 issuecomment-6535643668", "PREREG l.574"} <= set(rule.sources)
+    monkeypatch.setattr(run, "c8_dirty", lambda root: False)
+    parsed = run.parse_inputs(inputs.build(canon(fixture.controls), built, root=ROOT, resamples=3))
+    assert parsed.n_lives_floor == value and parsed.planning is False
+    renames = dict(alpha="zeta", beta="omega", gamma="delta", **{"alpha-pre": "zeta-pre"})
+    fixture.roster["systems"] = [{**s, "id": renames[s["id"]]} for s in reversed(fixture.roster["systems"])]
+    for key in ("reference", "pre_generator_lcmx"):
+        fixture.roster[key] = renames[fixture.roster[key]]
+    for key in ("arms", "bundles"):
+        fixture.data[key] = {renames.get(a, a): v for a, v in reversed(list(fixture.data[key].items()))}
+    for rows in fixture.data["bundles"].values():
+        rows.reverse()
+    for item in fixture.data["items"].values():
+        item["classes"] = {renames.get(a, a): v for a, v in reversed(list(item["classes"].items()))}
+    fixture.commit()
+    actual = fixture.document()
+    assert actual["n_lives_floor"] == value
+    renamed = actual["base_provenance"]["n_lives"]
+    inverse = {v: k for k, v in renames.items()}
+    renamed["pairs"] = sorted([*sorted((inverse[a], inverse[b])), sd] for a, b, sd in renamed["pairs"])
+    assert renamed == provenance
+
+
+@pytest.mark.parametrize("sigma,expected", [(1.0, 24), (40.0, 48)])
+def test_life_count_clamps(sigma, expected):
+    n = ((statistics.NormalDist().inv_cdf(1 - .05 / 4) + statistics.NormalDist().inv_cdf(.8)) * sigma / 8) ** 2
+    assert base._life_count(sigma, 2) == (expected, n)
+
+
+@pytest.mark.parametrize("case", ["missing-reference", "missing-pre_generator_lcmx", "unknown-reference",
+                                 "unknown-pre_generator_lcmx", "reference-true", "pre-false",
+                                 "reference-type", "pre-type", "one-true", "three-true"])
+def test_roster_pointers(fake, case):
+    if case.startswith("missing-"):
+        fake.roster.pop(case.removeprefix("missing-"))
+    if case.startswith("unknown-"):
+        fake.roster[case.removeprefix("unknown-")] = "synthetic-absent"
+    if case in ("reference-true", "pre-false", "reference-type", "pre-type"):
+        key, value = {"reference-true": ("reference", "alpha"),
+                      "pre-false": ("pre_generator_lcmx", "beta"),
+                      "reference-type": ("reference", []), "pre-type": ("pre_generator_lcmx", None)}[case]
+        fake.roster[key] = value
+    if case == "one-true":
+        fake.roster["systems"][0]["lcmx"] = False
+    if case == "three-true":
+        fake.roster["systems"].append(dict(id="synthetic-third", lcmx=True))
+    fake.commit()
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("rows", f"source_shape:{base.ROSTER}") in error.value.refusals
+
+
+@pytest.mark.parametrize("row", [None, [], ["x", "life-0", "Wake", "K100"],
+                                ["", "life-0", "Wake", "K100", 0],
+                                ["x", "absent-life", "Wake", "K100", 0],
+                                ["x", "life-0", "absent-track", "K100", 0],
+                                ["x", "life-0", "Wake", "K1", 0],
+                                *[["x", "life-0", "Wake", "K100", s] for s in (True, 1001, -1001, 1.5)]])
+def test_bundles_row_shape(fake, row):
+    fake.data["bundles"]["alpha"].append(row)
+    history = canon(fake.history)
+    fake.data["run_lock"]["history_sha256"] = sha256(history).hexdigest()
+    with pytest.raises(base.BaseRefused) as error:
+        base.build_base(bar2=json.dumps(fake.data).encode(), controls=canon(fake.controls),
+                        history=history, root=fake.root)
+    assert ("rows", "bar2:bundles_shape:alpha") in error.value.refusals
+
+
+@pytest.mark.parametrize("case,arm", [("duplicate", "alpha"), ("rows", "alpha"),
+                                     ("marker", "marker"), ("unknown", "absent"), ("root", "root")])
+def test_bundles_container_shape(fake, case, arm):
+    if case == "duplicate":
+        fake.data["bundles"][arm].append(fake.data["bundles"][arm][0][:])
+    elif case == "root":
+        fake.data["bundles"] = []
+    else:
+        fake.data["bundles"][arm] = {} if case == "rows" else []
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("rows", f"bar2:bundles_shape:{arm}") in error.value.refusals
+
+
+@pytest.mark.parametrize("case,reason", [("required", "required_track:missing-cell"),
+    ("missing", "bundles_mismatch"), ("identity", "bundles_mismatch"),
+    ("track", "bundles_track:alpha/Drift"), ("lives", "bar2_lives"),
+    ("pairs", "no_pairs"), ("empty", "empty_track:beta/gamma/Wake")])
+def test_pilot_refusals(tmp_path, monkeypatch, case, reason):
+    fixture = (Fake(tmp_path, monkeypatch) if case == "lives" else
+               sixteen(tmp_path, monkeypatch, systems=("alpha", "beta") if case == "pairs"
+                       else ("alpha", "beta", "gamma")))
+    if case == "required":
+        fixture.c12["required"].append("missing-cell")
+        fixture.c12["required"].sort()
+        fixture.commit()
+    if case == "missing":
+        fixture.data["bundles"].pop("alpha")
+    if case == "identity":
+        fixture.data["bundles"]["alpha"][0][0] = "changed-bundle"
+    if case == "track":
+        for rows in fixture.data["bundles"].values():
+            rows.append(["extra", "life-0", "Drift", "K100", 0])
+    if case == "empty":
+        for row in fixture.data["bundles"]["beta"]:
+            if row[2] == "Wake" and row[3] == "K100":
+                row[4] = None
+    with pytest.raises(base.BaseRefused) as error:
+        fixture.build()
+    assert [r for f, r in error.value.refusals if f == "n_lives_floor"] == [f"n_lives_floor:{reason}"]
+
+
+def test_keep_subset_rule(tmp_path, monkeypatch):
+    fixture = sixteen(tmp_path, monkeypatch)
+    before = fixture.document()
+    for name in ("A", "A_prime"):
+        for output in fixture.controls[name].values():
+            for item in output["items"]:
+                if item["cell_id"] == "action":
+                    item["track"] = "Keep"
+    fixture.data["bundles"] = pilot_bundles(("alpha", "beta", "gamma"), fixture.history["lives"],
+                                            ("Keep", "Tuesday"))
+    full = deepcopy(fixture.data["bundles"])
+    for count in (3, 4):
+        subset = [f"life-{i}" for i in range(count)]
+        fixture.data["bundles"] = {a: [r for r in rows if r[2:4] != ["Keep", "K10"] or r[1] in subset]
+                                    for a, rows in full.items()}
+        if count == 3:
+            with pytest.raises(base.BaseRefused) as error:
+                fixture.build()
+            assert error.value.refusals == (("n_lives_floor", "n_lives_floor:keep_subset"),)
+        else:
+            document = fixture.document()
+            value, provenance = pilot_oracle(fixture, ("Keep", "Tuesday"))
+            assert document["n_lives_floor"] == value
+            assert document["base_provenance"]["n_lives"] == provenance
+            assert provenance["keep_subset"] == subset
+            assert {k: v for k, v in before.items() if k not in ("n_lives_floor", "base_provenance")} == {
+                k: v for k, v in document.items() if k not in ("n_lives_floor", "base_provenance")}
+
+
+@pytest.mark.parametrize("count", [3, 5])
+def test_keep_subset_and_m_guards(count):
+    with pytest.raises(ValueError, match="n_lives_floor:keep_subset"):
+        base._keep_subset({"a": [[str(i), str(i), "Keep", "K10", None] for i in range(count)]}, ("Keep",))
+    with pytest.raises(ValueError, match="n_lives_floor:roster_m"):
+        base._roster_m({"systems": [{}, {}]})
+
+
+def test_followup_alloc_and_empty_required(fake, monkeypatch):
+    context = base._Context(canon(fake.data), canon(fake.controls), canon(fake.history), fake.root)
+    monkeypatch.setattr(run, "LADDER", ((24, 90), (48, 120), (32, 90)))
+    result = base._alloc(context)
+    assert list(result) == ["90", "120"]
+    assert [sum(n for _, _, n in rows) for rows in result.values()] == [54, 72]
+    fake.c12["required"] = []
+    fake.commit()
+    with pytest.raises(base.BaseRefused) as error:
+        fake.build()
+    assert ("required", "required:empty") in error.value.refusals
+    assert ("alloc_by_b", "required:empty") in error.value.refusals
+    monkeypatch.setattr(base, "_required", lambda context: [])
+    with pytest.raises(ValueError, match="required:empty"):
+        base._alloc(context)
+
+
+def test_checkpoint_guard_under_optimization():
+    code = """
+from bicentennial.ocsim import base
+base._checkpoints = lambda context: [1]
+try:
+    base._lives(None)
+except AssertionError:
+    pass
+else:
+    raise RuntimeError('checkpoint guard disappeared')
+"""
+    subprocess.run([sys.executable, "-O", "-c", code], check=True, capture_output=True)
+
+
+def test_c8_assertion_propagates(fake, monkeypatch):
+    def broken(context):
+        raise AssertionError("synthetic C-8 programming error")
+    monkeypatch.setattr(base, "c8_check", broken)
+    with pytest.raises(AssertionError, match="synthetic C-8"):
         fake.build()

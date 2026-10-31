@@ -340,13 +340,13 @@ _C8_FIXED = tuple(sorted(
     [f"src/bicentennial/{name}.py" for name in ("__init__", "canon", "keyed")]
     + [f"src/bicentennial/contracts/{name}.py" for name in ("__init__", "run")]
     + [f"src/bicentennial/stats/{name}.py"
-       for name in ("__init__", "certify", "core", "seeds", "tcal", "variance_inputs")]
+       for name in ("__init__", "certify", "core", "pilot", "seeds", "tcal", "variance_inputs")]
     + [f"src/bicentennial/runner/{name}.py" for name in ("__init__", "dispatch", "occupancy", "projection")]
     + [f"src/bicentennial/world/{name}.py"
        for name in ("__init__", "bitemporal", "db", "export", "scale", "tokens")]
     + ["tests/contracts/test_run_contracts.py"]
     + [f"tests/test_{name}.py" for name in ("canon", "keyed")]
-    + [f"tests/stats/test_{name}.py" for name in ("certify", "core", "tcal", "variance_inputs")]
+    + [f"tests/stats/test_{name}.py" for name in ("certify", "core", "pilot", "tcal", "variance_inputs")]
     + [f"tests/runner/test_{name}.py" for name in ("dispatch", "occupancy", "projection")]
     + [f"tests/world/test_{name}.py" for name in ("core", "schedule", "tokens")]))
 _C8_DIRS = ("src/bicentennial/ocsim", "tests/ocsim")
