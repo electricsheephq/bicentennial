@@ -30,7 +30,7 @@ def sample(extra=False, lives=6):
                 for cell in (*REQUIRED, *(("unused",) if extra else ())):
                     pairs = ((-1000, -1000), (0, 1000), (1000, 0), (1000, 1000))
                     if cell == "timing":
-                        pairs = (([-250, 0, 125, 375, 875, 1000][life], 1000),)
+                        pairs = (([-250, 0, 125, 375, 875, 1000][life % 6], 1000),)
                     if cell == "unused":
                         pairs = ((1000, 1000), (1000, 1000))
                     for j, (b0, b1) in enumerate(pairs):

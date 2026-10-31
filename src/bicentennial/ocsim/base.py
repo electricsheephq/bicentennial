@@ -1,24 +1,28 @@
 """Build binding OC base documents from locked, synthetic-testable sources.
 
-Stage b deliberately refuses the two rules assigned to stage c. No
+Stage c1 leaves probe_only pending for stage c2. No
 schema loader or contract validator runs here; the history checks are frozen
 below and covered by C-8, together with the token estimator.
 """
 
 import io
 import json
+import math
 import os
 import re
+import statistics
 import subprocess
 import tarfile
 import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from hashlib import sha256
+from itertools import combinations
 from pathlib import Path
 
 from bicentennial.canon import canon
 from bicentennial.ocsim import inputs, run
+from bicentennial.stats import pilot
 from bicentennial.world import scale
 from bicentennial.world.tokens import estimate_tokens
 
@@ -32,7 +36,7 @@ RENDER_CODE = ("src/bicentennial", "tiers", "specs/ring0", "schemas")
 STAGE_B = ("#245 issuecomment-6522316290", "#245 issuecomment-6522904866",
            "#245 issuecomment-6524597333")
 FIELD_ARTIFACTS = {"rows": (ROSTER,), "required": (C12,), "lanes": (C11, C1, C2),
-                   "lives": (DRY,), "alloc_by_b": (DRY, C12)}
+                   "lives": (DRY,), "alloc_by_b": (DRY, C12), "n_lives_floor": (ROSTER, C12)}
 BASE_FIELDS = ("required", "alloc_by_b", "checkpoints", "lives", "rows", "lanes",
                "passover", "control_failure", "probe_only", "n_lives_floor", "planning")
 RESERVED = frozenset(("S", "F", "C", "RAG", "CEIL", "anchor", "no_memory", "oracle_evidence"))
@@ -210,7 +214,7 @@ def _chain(chain, n, where, life, items):
 
 
 def _bar2(data, history, roster):
-    _shape(data, ("run_lock", "arms", "items"), "bar2:shape:root")
+    _shape(data, ("run_lock", "arms", "items", "bundles"), "bar2:shape:root")
     lock = data["run_lock"]
     _shape(lock, ("benchmark_commit", "analysis_commit", "generator_version", "generator_versions",
                   "history_sha256", "status", "account_pool"),
@@ -256,7 +260,24 @@ def _bar2(data, history, roster):
                     where = f"{arm}/{life}/{branch}/{keep}"
                     _need(keep in keeps, f"bar2:chain_missing:{where}")
                     _chain(keeps[keep], len(history["lives"][life][branch]), where, life, items)
+    _bundles_shape(data["bundles"], arms, history["lives"])
     return data
+
+
+def _bundles_shape(bundles, arms, lives):
+    _need(isinstance(bundles, dict), "bar2:bundles_shape:root")
+    for arm, rows in bundles.items():
+        reason = f"bar2:bundles_shape:{arm}"
+        _need(arm in arms and arms[arm]["kind"] == "system" and isinstance(rows, list), reason)
+        seen = set()
+        for row in rows:
+            _need(isinstance(row, list) and len(row) == 5, reason)
+            bid, life, track, keep, score = row
+            _need(isinstance(bid, str) and bool(bid) and isinstance(life, str)
+                  and life in lives and track in inputs.TRACKS and keep in ("K100", "K10")
+                  and (score is None or type(score) is int and -1000 <= score <= 1000), reason)
+            _need((bid, keep) not in seen, reason)
+            seen.add((bid, keep))
 
 
 def _controls(raw):
@@ -339,7 +360,7 @@ class _Context:
                   and all(isinstance(data.get(k), str) for k in keys), f"source_shape:{path}")
         _need(data.get("status") == "binding", f"source_provisional:{path}")
         if path == ROSTER:
-            _shape(data, ("status", "systems"), f"source_shape:{path}")
+            _shape(data, ("status", "systems", "reference", "pre_generator_lcmx"), f"source_shape:{path}")
             _need(isinstance(data["systems"], list) and bool(data["systems"]), f"source_shape:{path}")
             ids = []
             for system in data["systems"]:
@@ -348,6 +369,11 @@ class _Context:
                       and type(system["lcmx"]) is bool, f"source_shape:{path}")
                 ids.append(system["id"])
             _need(len(ids) == len(set(ids)), f"source_shape:{path}")
+            flags = {s["id"]: s["lcmx"] for s in data["systems"]}
+            _need(isinstance(data["reference"], str) and isinstance(data["pre_generator_lcmx"], str)
+                  and flags.get(data["reference"]) is False
+                  and flags.get(data["pre_generator_lcmx"]) is True
+                  and sum(flags.values()) == 2, f"source_shape:{path}")
         elif path == C12:
             _shape(data, ("status", "profile", "required"), f"source_shape:{path}")
             _need(data["profile"] == "Text" and _strings(data["required"]), f"source_shape:{path}")
@@ -490,6 +516,7 @@ def _checkpoints(context):
 
 def _required(context):
     cells = context.artifact(C12)["required"]
+    _need(bool(cells), "required:empty")
     _need(cells == sorted(set(cells)), "required:not_sorted_unique")
     return cells
 
@@ -524,10 +551,10 @@ def alloc_total(b):
 
 def _alloc(context):
     cells = _required(context)
-    _need(bool(cells), "required:not_sorted_unique")
+    _need(bool(cells), "required:empty")
     checkpoints = _checkpoints(context)
     result, disclosure = {}, {}
-    for b in (150, 200, 250, 300):
+    for b in sorted({b for _, b in run.LADDER}):
         q, r = divmod(alloc_total(b), len(cells))
         order = sorted(cells, key=lambda cell, b=b: sha256(canon(["ocsim-alloc", b, cell])).hexdigest())
         totals = {cell: q + (i < r) for i, cell in enumerate(order)}
@@ -597,7 +624,8 @@ def _render_check(context, commit):
 
 def _lives(context):
     full = scale.named("full")
-    assert list(full.checkpoints) == _checkpoints(context)
+    if list(full.checkpoints) != _checkpoints(context):
+        raise AssertionError("full checkpoints differ from base checkpoints")
     records = context.artifact(DRY)["lives"]
     _need(len(records) == 48, "lives:dry_identity")
     versions = context.get("bar2")["run_lock"]["generator_versions"]
@@ -636,6 +664,71 @@ def _planning(context):
     return False
 
 
+def _roster_m(roster):
+    m = len(roster["systems"]) - 2
+    _need(m >= 1, "n_lives_floor:roster_m")
+    return m
+
+
+def _keep_subset(bundles, tracks):
+    subset = sorted({life for _, life, track, keep, _ in next(iter(bundles.values()), ())
+                     if track == "Keep" and keep == "K10"}) if "Keep" in tracks else []
+    _need("Keep" not in tracks or len(subset) == 4, "n_lives_floor:keep_subset")
+    return subset
+
+
+def _life_count(sigma_d, m):
+    z_a = statistics.NormalDist().inv_cdf(1 - 0.05 / (2 * m))
+    z_b = statistics.NormalDist().inv_cdf(0.8)
+    n = ((z_a + z_b) * sigma_d / 8) ** 2
+    return min(48, max(24, math.ceil(n))), n
+
+
+def _n_lives_floor(context):
+    roster = context.get("roster")
+    m = _roster_m(roster)
+    controls = context.get("controls")
+    tracks = set()
+    for cell in _required(context):
+        found = {item["track"] for arm in inputs.ARMS for item in controls["A"][arm]["items"]
+                 if item["cell_id"] == cell}
+        _need(bool(found), f"n_lives_floor:required_track:{cell}")
+        tracks.update(found)
+    data = context.get("bar2")
+    arms = sorted(a for a, value in data["arms"].items() if value["kind"] == "system")
+    bundles = data["bundles"]
+    _need(all(a in bundles for a in arms), "n_lives_floor:bundles_mismatch")
+    _need(len({frozenset(tuple(r[:4]) for r in bundles[a]) for a in arms}) <= 1,
+          "n_lives_floor:bundles_mismatch")
+    for arm in arms:
+        for track in sorted({r[2] for r in bundles[arm]}):
+            _need(track in tracks, f"n_lives_floor:bundles_track:{arm}/{track}")
+    lives = sorted(context.get("history")["lives"])
+    _need(len(lives) == 16, "n_lives_floor:bar2_lives")
+    subset = _keep_subset(bundles, tracks)
+    flags = {s["id"]: s["lcmx"] for s in roster["systems"]}
+    # Bar 2 runs the full pilot roster (PREREG l.463); without the reference, its contrasts are missing from the family.
+    _need(roster["reference"] in arms, "n_lives_floor:no_reference")
+    pairs = list(combinations([a for a in arms if not flags[a]], 2))
+    _need(bool(pairs), "n_lives_floor:no_pairs")
+    scored = {a: {tuple(r[:4]) for r in bundles[a] if r[4] is not None} for a in arms}
+    for a, b in pairs:
+        common = scored[a] & scored[b]
+        for track in sorted(tracks):
+            valid = {life for _, life, t, k in common if t == track and k == "K100"}
+            if track == "Keep":
+                valid &= {life for _, life, t, k in common if t == track and k == "K10"}
+            _need(bool(valid), f"n_lives_floor:empty_track:{a}/{b}/{track}")
+    sigma_d, deviations = pilot.sigma_d(bundles, pairs, tracks, lives)
+    value, n = _life_count(sigma_d, m)
+    context.provenance["n_lives"] = {
+        "M": m, "pairs": [[a, b, sd.hex()] for (a, b), sd in sorted(deviations.items())],
+        "sigma_d": sigma_d.hex(), "z": [statistics.NormalDist().inv_cdf(p).hex()
+                                        for p in (1 - 0.05 / (2 * m), 0.8)],
+        "n": n.hex(), "keep_subset": subset}
+    return value
+
+
 def _pending(rule):
     def refuse(context):
         raise ValueError(f"pending:{rule}")
@@ -660,7 +753,8 @@ RULES = {
         ("checkpoints", "B-7", ("PREREG l.418",), _checkpoints),
         ("lives", "B-7, B-17, B-17a, B-17b, B-18, B-19", ("PREREG l.431,734,795", *STAGE_B), _lives),
         ("probe_only", "B-8", ("PREREG l.453,759", CLARIFICATION), _pending("B-8")),
-        ("n_lives_floor", "B-9", ("PREREG l.491,498,503",), _pending("B-9")),
+        ("n_lives_floor", "B-9, B-26, B-27",
+         ("PREREG l.491,498,503", "PREREG l.574", "#245 issuecomment-6535643668"), _n_lives_floor),
         ("required", "B-10", ("PREREG l.27",), _required),
         ("planning", "B-10", (), _planning),
     )}
@@ -687,6 +781,8 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
     if context.global_reason is None and "bar2" not in context.errors:
         try:
             c8_check(context)
+        except AssertionError:
+            raise
         except Exception as error:
             refusals.append(("C-8", str(error)))
     if refusals:
@@ -702,6 +798,7 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
                              "passover_counts": stops, "control_counts": units}
     context.provenance.update(
         account_pool=context.get("bar2")["run_lock"]["account_pool"], neutrality=neutrality,
-        pending_disclosures=["B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records"])
+        pending_disclosures=["B-4 recovered INFRA attempts: stage c, with the probe-only arms' bar-2 records",
+                             "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card"])
     document["base_provenance"] = context.provenance
     return canon(run._encode(document))
