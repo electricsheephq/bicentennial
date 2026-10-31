@@ -65,10 +65,12 @@ def test_sweep(genre, capsys):
         sha256(canon(["ocsim-dry", i])).digest()[:8], "big") >> 1)
         for i in range(48) if (i % 2 == 0) == (genre == "G1")]
     rows = fp.sweep(genre, lives, budget(genre))
-    assert all(r["refusal"] is None and 1 <= r["fork"] <= 20 for r in rows)
-    for life, seed in lives:
+    assert [(r["life"], r["seed"]) for r in rows] == lives
+    for row, (life, seed) in zip(rows, lives):
         s = schedule(life, seed)
-        check_plan(fp.plan(genre, s, budget(genre), fp.G1 if genre == "G1" else fp.G2), s)
+        p = fp.plan(genre, s, budget(genre), fp.G1 if genre == "G1" else fp.G2)
+        check_plan(p, s)
+        assert row == dict(life=life, seed=seed, fork=p.fork, refusal=None) and 1 <= p.fork <= 20
     with capsys.disabled():
         print("SWEEP", genre, json.dumps(dict(sorted(Counter(r["fork"] for r in rows).items()))))
 
@@ -164,6 +166,15 @@ def test_lower_bounds(monkeypatch):
     assert chain.events[0].at == (110, 2)
     fault = next(f for f in p.fixtures if f.binding.template_id == "drift-chain-fault")
     assert max(e.at for e in fault.events) <= (110, 1)
+    check_plan(p, schedule())
+
+
+def test_upper_bounds(monkeypatch):
+    # At the upper bound a fault chain reaches the kill session, where only turn 1 is open to it.
+    monkeypatch.setattr(fp, "_draw", lambda s, key, purpose, lo, hi: hi)
+    p = fp.plan("G1", schedule(), [["DRIFT-CUR", 20, 1], ["DRIFT-CUR", 120, 4], ["TUE-EVENT", 20, 1]], fp.G1)
+    fault = next(f for f in p.fixtures if f.binding.template_id == "drift-chain-fault")
+    assert max(e.at for e in fault.events) == (110, 1)
     check_plan(p, schedule())
 
 

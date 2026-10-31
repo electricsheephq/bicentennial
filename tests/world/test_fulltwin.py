@@ -131,6 +131,26 @@ def test_full_scale(measured, capsys):
     s = full.build_schedule(full.seed_text(facts["seed"]), facts["life"], full.named("full"))
     indices = {v.session_id: v.index for v in s.sessions}
     assert indices[result.twin.cuts[0].rows[result.twin.prefix]["session_id"]] == p["fork"] <= 20
+    assert len(s.sessions) == 200
+    assert s.scale.checkpoints == (20, 60, 120, 200)
+    assert s.scale.kill == 110 and s.scale.swap == 150
+    templates = {t.template_id: t for t in (*full.G1, *full.G2)}
+    checkpoints = {b.checkpoint for b in result.bindings}
+    assert set(result.prompts) == {(branch, k) for k in checkpoints for branch in ("B0", "B1")}
+    assert checkpoints == {k for _, k, _ in budget(facts["genre"])}
+    for branch in ("B0", "B1"):
+        branch_records = [r for r in result.twin.compiled.records if r["branch"] == branch]
+        assert len(branch_records) == len(result.bindings)
+        for b in result.bindings:
+            assert templates[b.template_id].checkpoint is None
+            bound = replace(templates[b.template_id], **dict(b.fields), checkpoint=b.checkpoint)
+            instance, = bound.instances(result.twin.b1, s)
+            assert len([r for r in branch_records if r["template_id"] == b.template_id
+                        and r["instance_key"] == instance.key]) == 1
+        ids = {r["item_id"] for r in branch_records}
+        for checkpoint in checkpoints:
+            assert result.prompts[branch, checkpoint] == tuple(i["prompt"] for i in result.twin.compiled.items
+                                                              if i["item_id"] in ids and i["probe_point"] == checkpoint)
     cells = {r["item_id"]: next(i["cell_id"] for i in result.twin.compiled.items if i["item_id"] == r["item_id"])
              for r in records}
     actual = {}

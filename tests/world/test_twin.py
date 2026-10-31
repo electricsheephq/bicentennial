@@ -356,7 +356,12 @@ def test_purity():
                               for name in ("twin", "fulltwin", "fixtureplan", "planned")))
     forbidden = {"random", "time", "socket", "ssl", "http", "urllib", "subprocess", "bicentennial.sandbox", "bicentennial.director", "spikes"}
     for node in ast.walk(tree):
-        names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module] if isinstance(node, ast.ImportFrom) else []
+        names = [a.name for a in node.names] if isinstance(node, ast.Import) else []
+        if isinstance(node, ast.ImportFrom):
+            # Resolve relative imports against bicentennial.world, and check each imported name as a module too.
+            base = ".".join(["bicentennial", "world"][:3 - node.level]) if node.level else ""
+            module = ".".join(part for part in (base, node.module) if part)
+            names = [module, *(module + "." + a.name for a in node.names)]
         assert not any(name and any(name == f or name.startswith(f + ".") for f in forbidden) for name in names)
         assert not (isinstance(node, ast.Constant) and type(node.value) is float)
 
