@@ -60,11 +60,21 @@ def shard_of(path, total):
     return int(hashlib.sha256(path.encode()).hexdigest(), 16) % total
 
 
+def _shard_setting(name):
+    value = os.environ.get(name, "")
+    try:
+        return int(value)
+    except ValueError:
+        raise pytest.UsageError(f"{name} must be an integer, not {value!r}") from None
+
+
 def pytest_collection_modifyitems(config, items):
-    total = int(os.environ.get("BICENTENNIAL_TEST_SHARDS") or 0)
+    if not os.environ.get("BICENTENNIAL_TEST_SHARDS"):
+        return
+    total = _shard_setting("BICENTENNIAL_TEST_SHARDS")
     if total < 2:
         return
-    index = int(os.environ["BICENTENNIAL_TEST_SHARD"])
+    index = _shard_setting("BICENTENNIAL_TEST_SHARD")
     if not 0 <= index < total:
         raise pytest.UsageError("BICENTENNIAL_TEST_SHARD is out of range")
     keep, drop = [], []
