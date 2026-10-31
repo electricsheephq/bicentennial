@@ -841,6 +841,7 @@ def _probe_only(context):
                 count, prompt, peak = (record[k][c] for k in ("probe_items", "probe_tokens", "ceil_peak"))
                 contexts = {a: v[c] for a, v in record["probe_only_context"].items()}
                 _need(count >= sum(n for _, k, n in life["bundles"] if k == checkpoint), reason)
+                _need(contexts["F"] == 2 * count, reason)  # B-21: F carries 2 context tokens per item
                 total = prompt + contexts["CEIL"]
                 _need((count == 0 and prompt == peak == 0 and not any(contexts.values()))
                       or (count > 0 and total <= peak * count and peak <= total), reason)

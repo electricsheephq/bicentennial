@@ -44,6 +44,7 @@ def set_probe_counts(life):
     counts = [sum(n for _, k, n in life["bundles"] if k == c) for c in (20, 60, 120, 200)]
     for branch in life["branches"].values():
         branch["probe_items"] = counts[:]
+        branch["probe_only_context"]["F"] = [2 * n for n in counts]
     life["anchor"] = sorted([ref, j + 1] for j, ref in enumerate(anchor_refs(life["life"], counts[-1])))
 
 
@@ -55,7 +56,7 @@ def dry_set(commit, cells):
         for branch in ("B0", "B1"):
             branches[branch] = dict(est_tokens=[j + i + 1 for j in range(200)],
                                     probe_points=[20, 60, 120, 200], probe_tokens=[0, 2, 3, 4], swap=[150],
-                                    probe_only_context=dict(F=[0, 5, 7, 9], C=[0, 6, 8, 10],
+                                    probe_only_context=dict(F=[0, 0, 0, 0], C=[0, 6, 8, 10],
                                                             RAG=[0, 7, 9, 11], CEIL=[0, 131072, 131069, 500]),
                                     ceil_peak=[0, 131073, 131072, 100],
                                     content_sha256=[sha256(canon([i, j, branch if j >= fork else "shared"])).hexdigest()
@@ -366,7 +367,8 @@ def test_probe_dry_shape(fake, key, case):
     assert ("probe_only", "lives:dry_shape") in error.value.refusals
 
 
-@pytest.mark.parametrize("case", ["zero-prompt", "zero-context", "zero-peak", "below-bundles", "mean", "peak"])
+@pytest.mark.parametrize("case", ["zero-prompt", "zero-context", "zero-peak", "below-bundles", "mean", "peak",
+                                  "f-context"])
 def test_probe_dry_consistency(fake, case):
     life = fake.dry["lives"][0]
     branch = life["branches"]["B0"]
@@ -383,8 +385,11 @@ def test_probe_dry_consistency(fake, case):
         branch["probe_items"][0] -= 1
     elif case == "mean":
         branch["ceil_peak"][3] = 1
-    else:
+    elif case == "peak":
         branch["ceil_peak"][3] = 505
+    branch["probe_only_context"]["F"] = [2 * n for n in branch["probe_items"]]
+    if case == "f-context":
+        branch["probe_only_context"]["F"][3] -= 1
     fake.commit()
     with pytest.raises(base.BaseRefused) as error:
         fake.build()
@@ -498,7 +503,7 @@ def test_probe_zero_items_and_c_standin(fake):
     life = fake.dry["lives"][0]
     life["bundles"] = [r for r in life["bundles"] if r[1] != 20]
     for record in life["branches"].values():
-        record["probe_items"][0] = 0
+        record["probe_items"][0] = record["probe_only_context"]["F"][0] = 0
     fake.commit()
     context = base._Context(canon(fake.data), canon(fake.controls), canon(fake.history), fake.root)
     assert run._encode(base._probe_only(context)) == probe_oracle(fake)[0]
