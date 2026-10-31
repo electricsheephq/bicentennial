@@ -245,7 +245,7 @@ def test_compile_refuses_inputs_in_its_scratch(tmp_path, monkeypatch):
         check_compile(life, checkout=tmp_path / "hermes", **call)
     with pytest.raises(ValueError, match="scratch_overlap"):
         check_compile(tmp_path / "life", checkout=life / "hermes", **call)
-    assert (life / "life.json").read_text() == "{}"
+    assert (life / "life.json").read_text() == "{}" and not (scratch / ".check.lock").exists()
     assert check_compile(tmp_path / "life", checkout=tmp_path / "hermes", **call) == {"ok": True}
     assert not life.exists()
 
