@@ -6,7 +6,7 @@ from fractions import Fraction
 from bicentennial.canon import milli, sha256_canon
 from bicentennial.genres.g2_assistant.envseed import probe_envseed
 from bicentennial.items.tags import check_precondition
-from bicentennial.sandbox.fixedroot import holding, remove_tree
+from bicentennial.sandbox.fixedroot import holding, remove_tree, within
 
 
 def precondition_holds(item, *, repo_tree_hash, env_state_hash, probe_env_state_hash):
@@ -106,6 +106,9 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
 
     scratch = Path(scratch)
     scratch.mkdir(parents=True, exist_ok=True)
+    # Each job root is cleared before use, so an input at or below scratch could be deleted.
+    if any(path is not None and within(path, scratch) for path in (life_dir, checkout)):
+        raise ValueError("scratch_overlap")
     fd = os.open(scratch / ".check.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         try:

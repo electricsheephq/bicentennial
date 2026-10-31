@@ -229,6 +229,27 @@ def test_compile_lock_inherited(tmp_path, monkeypatch):
             proc.wait(timeout=10)
 
 
+def test_compile_refuses_inputs_in_its_scratch(tmp_path, monkeypatch):
+    # Job roots have fixed names and are cleared before use, so an input at or below scratch would be deleted.
+    def body(life_dir, *, scratch, **kwargs):
+        fixedroot.remove_tree(scratch / "check-B0-0")
+        return {"ok": True}
+
+    monkeypatch.setattr("bicentennial.director.compiler.check._check_compile", body)
+    scratch = tmp_path / "scratch"
+    life = scratch / "check-B0-0"
+    life.mkdir(parents=True)
+    (life / "life.json").write_text("{}")
+    call = dict(entry=None, route_table=None, harness_pin=None, scratch=scratch)
+    with pytest.raises(ValueError, match="scratch_overlap"):
+        check_compile(life, checkout=tmp_path / "hermes", **call)
+    with pytest.raises(ValueError, match="scratch_overlap"):
+        check_compile(tmp_path / "life", checkout=life / "hermes", **call)
+    assert (life / "life.json").read_text() == "{}"
+    assert check_compile(tmp_path / "life", checkout=tmp_path / "hermes", **call) == {"ok": True}
+    assert not life.exists()
+
+
 def test_leaked_branch_refused(policy, tmp_path, monkeypatch):
     pack, ctx = policy.ctx.packs[0], policy.ctx
     scratch = tmp_path / "t1"

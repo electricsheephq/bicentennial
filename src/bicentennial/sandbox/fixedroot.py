@@ -51,11 +51,13 @@ def overlaps(path):
         parent_id = None
     ids = set()
     for base in bases:
+        # A base that is a link is never leased, so nothing at its target is swept: its target is no base.
         try:
-            info = os.stat(base)
+            info = os.lstat(base)
         except OSError:
             continue
-        ids.add((info.st_dev, info.st_ino))
+        if not stat.S_ISLNK(info.st_mode):
+            ids.add((info.st_dev, info.st_ino))
     full = Path(os.getcwd(), path)
     for prefix in (*reversed(full.parents), full):
         real = Path(os.path.realpath(prefix))
@@ -74,6 +76,25 @@ def overlaps(path):
         except OSError:
             continue
         if (info.st_dev, info.st_ino) in ids:
+            return True
+    return False
+
+
+def within(path, root):
+    # Whether path, resolved as the system resolves it, is root or lies below it. Each existing ancestor is matched by
+    # file identity, which other spellings of root share on a case-insensitive volume.
+    try:
+        info = os.stat(root)
+    except OSError:
+        return False
+    root_id = (info.st_dev, info.st_ino)
+    real = Path(os.path.realpath(Path(os.getcwd(), path)))
+    for prefix in (real, *real.parents):
+        try:
+            info = os.stat(prefix)
+        except OSError:
+            continue
+        if (info.st_dev, info.st_ino) == root_id:
             return True
     return False
 

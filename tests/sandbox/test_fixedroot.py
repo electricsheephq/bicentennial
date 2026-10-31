@@ -81,6 +81,35 @@ def test_overlaps_other_case_of_a_missing_base(tmp_path, monkeypatch):
     assert not fixedroot.overlaps(Path(os.path.realpath(tmp_path)) / "BICENTENNIAL-0")
     assert sorted(p.name for p in parent.iterdir()) == []
 
+def test_overlaps_ignores_a_linked_base(tmp_path, monkeypatch):
+    root = Path(os.path.realpath(tmp_path))
+    parent, data = root / "parent", root / "data"
+    (parent / "bicentennial-0").mkdir(parents=True)
+    data.mkdir()
+    monkeypatch.setattr(fixedroot, "PARENT", str(parent))
+    # A linked base is never leased, so its target is no base: one malformed slot must not refuse every path.
+    (parent / "bicentennial-9").symlink_to("/", target_is_directory=True)
+    (parent / "bicentennial-8").symlink_to(data, target_is_directory=True)
+    assert not fixedroot.overlaps(root / "out") and not fixedroot.overlaps(data / "packs")
+    assert fixedroot.overlaps(parent / "bicentennial-0" / "out")
+
+
+def test_within(tmp_path):
+    root = Path(os.path.realpath(tmp_path))
+    scratch, outside = root / "scratch", root / "outside"
+    (scratch / "check-B0-0").mkdir(parents=True)
+    outside.mkdir()
+    assert fixedroot.within(scratch, scratch) and fixedroot.within(scratch / "check-B0-0" / "new", scratch)
+    assert not fixedroot.within(outside, scratch) and not fixedroot.within(root, scratch)
+    (outside / "jump").symlink_to(scratch / "check-B0-0", target_is_directory=True)
+    assert fixedroot.within(outside / "jump" / "life", scratch)
+    assert fixedroot.within(f"{outside}/../scratch/x", scratch)
+    other = root / "SCRATCH"
+    if other.exists():
+        assert fixedroot.within(other / "check-B0-0", scratch)
+    assert not fixedroot.within(outside, root / "missing")
+
+
 @pytest.mark.parametrize("slot", [-1, 10, "0", None, 0.0, True])
 def test_invalid_slot(slot):
     with pytest.raises(T1Refused, match="sandbox_slot"):
