@@ -6,6 +6,8 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 
 **Recorded change.** The owner's direction of 2026-10-26, to test capabilities such as images that systems lack, moves rendered images ahead of the original brief's "build capture only after measured use" (#1719). The images here are rendered from world state, never by an image generator. Continuous-stream capture still waits for measured use.
 
+**Recorded change.** The owner's direction of 2026-10-31, that no person grades (DV48), replaces the human keysheet. Its `typed` column becomes the readings of the agent reader ensemble (completion slot C-17: at least one non-LLM OCR engine and vision models from at least two families outside the tested families, the pinned vision reader's family, the authoring family and the LCM-X lane registry). The fidelity bars below are design v2.3's (PREREG-v0.5 §5). The reader spend sits inside the validation row (PREREG-v0.5 §11). The code and tests still expect a typed keysheet; replacing it is a separate follow-up issue.
+
 ## What it builds (spike-grade code, under `spikes/s8/`)
 1. **A renderer.** It draws images deterministically from world-state records, never with an image generator. Kinds:
    - an app screenshot (a settings page with a port value);
@@ -13,7 +15,7 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
    - a simple scene (a desk with labelled objects).
 
    Each image carries an **exposure manifest**: every value that is legible and unoccluded in the image, with its bounding box. Gold questions may use only manifest values. Presentation (font, theme, layout, colour) is randomised from its own seed, independently of the gold values.
-   - **Fidelity checks** (joining the design's render checks): a manifest verifier, which checks each manifest value is drawn as recorded, and a human-key sample covering legibility. The design's thresholds are manifest-verifier recall ≥ 0.99 against a 200-item human-key sample, and human legibility ≥ 95%; the spike reports against them.
+   - **Fidelity checks** (joining the design's render checks): a manifest verifier, which checks each manifest value is drawn as recorded, and a legibility check. Legibility needs the scene-graph construction floors (x-height ≥ 9 px, contrast ≥ 4.5:1, no occluder overlap, a canvas margin ≥ 2 px) and at least two exact readings from the reader ensemble, one of them non-LLM. The design's thresholds are a legible share ≥ 0.95 of all manifest entries, with its Wilson lower bound, and manifest-verifier recall ≥ 0.99 against at least 500 seeded image mutants (DV48); the spike reports against them.
 2. **Delivery into a life.** Ten seeded 6-session micro-lives in the G1 genre, scripted as in S6a, so each mode gets at least 30 base questions plus their twins. Three images arrive in session 2: one as a user attachment, one as a tool observation (the env server's `screen` tool), one as a workspace file. Session 2 ends with a third replay turn, "Thanks. Please keep both images in mind.", so a live write turn receives the workspace inspection result. Questions come in session 6. Each question asks about a detail that the session-2 conversation never mentions.
    - **Typed answer envelopes:** every question has an exact or structured answer type first (a number, a string from the manifest, a list), so no judge is needed for the spike's items.
 3. **Routing through Hermes v0.22.2** (the pinned clone), in both of `agent/image_routing.py`'s modes:
@@ -49,11 +51,11 @@ S8 is a feasibility spike for the Image profile (design v2.0, DV9 in `docs/DECIS
 - Cost and latency per vision call, cache hit rate, reinspections and their charge, and projected vision spend per season under the design (about $50 a season, approved by the owner on 2026-10-26). These fill the design's cost term for the Image profile's two views.
 - Each row's stack identity: memory, harness, model, the vision provider and spend.
 - Whether presentation alone predicts any answer: the twin, shuffled-history and held-out-style results.
-- The fidelity checks: manifest verifier results and the human-key legibility sample.
+- The fidelity checks: manifest verifier results on the seeded mutants, and the reader ensemble's legibility readings.
 
 ## Done when
 `spikes/s8/REPORT.md` gives each measurement with its sample size, and every mode × channel pair (user attachment, `screen` tool observation, workspace file) routes its image through the director with the ledger showing every request classified and none unknown. **Admission to Ring 0.** This is a feasibility gate for the developer packs only, never a board rule. A mode is admitted when all of these hold:
-1. **Fidelity first.** The manifest verifier's recall is ≥ 0.99 against the 200-item human-key sample, and human legibility is ≥ 95%. Otherwise the renderer is fixed and re-run, and no mode is admitted.
+1. **Fidelity first.** The manifest verifier's recall is ≥ 0.99 against at least 500 seeded image mutants, and the legible share read by the reader ensemble is ≥ 0.95 (DV48). Otherwise the renderer is fixed and re-run, and no mode is admitted.
 2. **Sample size.** At least 30 base questions in the mode, from at least 10 lives; twins are counted separately.
 3. **The reader can perceive.** At most 20% of the mode's items are N/A_READER. N/A_READER items leave the delayed comparison, and their count is reported. A mode above 20% is not admitted, because it would measure perception, not memory.
 4. **Direct evidence clears the floor.** The one-sided 95% lower bound of (direct-evidence accuracy − no-memory accuracy) is at least 30 percentage points.

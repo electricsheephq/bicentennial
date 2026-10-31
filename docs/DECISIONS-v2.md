@@ -1,8 +1,8 @@
-# Design v2.0 to v2.2: the decision record
+# Design v2.0 to v2.3: the decision record
 
-**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.4.md`](../prereg/PREREG-v0.4.md)) is the only normative source for frozen quantities. PREREG-v0.4 is frozen and supersedes PREREG-v0.3. Its hash is in [`prereg/FREEZE-v0.4.md`](../prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). Design v2.1 adds DV42, decided by the benchmark session under the owner's grant of 2026-10-26. Design v2.2 adds DV47, the run-time rule, at the owner's direction of the same day.
+**Status:** approved by the owner on 2026-10-26. This is the decision record of Bicentennial design v2.0, published after the owner's review. It states the final decisions only. [`docs/DESIGN.md`](DESIGN.md) carries them out, [`docs/REQUIREMENTS.md`](REQUIREMENTS.md) says how each changed requirement is met, and the pre-registration ([`prereg/PREREG-v0.5.md`](../prereg/PREREG-v0.5.md)) is the only normative source for frozen quantities. PREREG-v0.5 is frozen and supersedes PREREG-v0.4. Its hash is in [`prereg/FREEZE-v0.5.md`](../prereg/FREEZE-v0.5.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). Design v2.1 adds DV42, decided by the benchmark session under the owner's grant of 2026-10-26. Design v2.2 adds DV47, the run-time rule, at the owner's direction of the same day. Design v2.3 adds DV48, agent-only validation, at the owner's direction of 2026-10-31, and PREREG-v0.5 carries it.
 
-The other documents cite these decisions as DV1-DV47. DV42 was decided on 2026-10-26, after spike S6b, in design v2.1, and DV47 the same day, in design v2.2. Section references (DESIGN §, PREREG §) are to design v2.2 and PREREG-v0.4; v2.1 changes only DV42's passages, and v2.2 only DV47's.
+The other documents cite these decisions as DV1-DV48. DV42 was decided on 2026-10-26, after spike S6b, in design v2.1, DV47 the same day, in design v2.2, and DV48 on 2026-10-31, in design v2.3. Section references (DESIGN §, PREREG §) are to design v2.2 and PREREG-v0.4, except DV48's, which are to design v2.3 and PREREG-v0.5; v2.1 changes only DV42's passages, v2.2 only DV47's, and v2.3 only DV48's.
 
 **What does not change:**
 - the north star and the firewall (DESIGN §1, §14);
@@ -13,7 +13,7 @@ The other documents cite these decisions as DV1-DV47. DV42 was decided on 2026-1
 - **action-outcome scoring with the asymmetric penalty (DESIGN §7.1), which stays the scoring that decides**;
 - the paired confirmatory family (DESIGN §12, PREREG §7), except that DV47 computes each c_l within its life's block and adds a first-half and second-half sensitivity;
 - the sealed board and the developer/measurement split (DESIGN §9-§10);
-- the external scoring veto before PREREG-v1;
+- the external scoring veto before PREREG-v1, which DV48 gives to the Scoring Veto Panel alone, since the owner waived the external human reviewer in writing on 2026-10-31;
 - the 24-hour rule, until DV47 (design v2.2) replaced its contiguous window with the run-time rule at the owner's direction; every replaying (arm, life) still finishes within 24 h.
 
 Where v2.0 changes how a requirement is met, DESIGN says so and the pre-registration records it.
@@ -118,7 +118,7 @@ Spatial memory waits for E1 (DV15).
 ## D. Profiles and tracks
 
 **DV9. The Image profile, admitted through spike S8.**
-- **Evidence** is rendered from world state, never by an image generator. Gold uses only values in the exposure manifest (legible and unoccluded). The image fidelity checks join DESIGN §4.4: the manifest verifier and a human-key sample covering legibility, with manifest-verifier recall ≥ 0.99 against a 200-item human-key sample and human legibility ≥ 95% (DV33).
+- **Evidence** is rendered from world state, never by an image generator. Gold uses only values in the exposure manifest (legible and unoccluded). The image fidelity checks join DESIGN §4.4: the manifest verifier and a legibility check (DV33). Under DV48, legibility is read by an agent reader ensemble that includes a non-LLM OCR engine, over scene-graph floors, with a legible share ≥ 0.95, and manifest-verifier recall is ≥ 0.99 against at least 500 seeded image mutants; these replace the 200-item human-key sample and "human legibility ≥ 95%".
 - **Gist and detail are descriptive tags.** Any representation that keeps the information earns credit. The design principle is the unforeseen later question.
 - **The observation and assistance contract** (memory comparisons):
   - every row gets the same image bytes per item, the same perception service, the same access timing and the same logical budget;
@@ -189,7 +189,7 @@ Spatial memory waits for E1 (DV15).
 - **Admission never depends on any system failing.** A reproducer may illustrate a template but never qualifies it.
 - **No raw transcripts, corpus text or personal data.**
 - **Contributions enter versioned seasons** with bridge anchors; old versions never change, and exposure history is preserved.
-- **Independent authorship** applies to community contributions used in the sealed set. The maintainers' own private templates stay under DESIGN §14's firewall and the external veto.
+- **Independent authorship** applies to community contributions used in the sealed set. The maintainers' own private templates stay under DESIGN §14's firewall and the external veto. DV48 decides independence by provenance.
 
 ## F. Product, rules and process
 
@@ -240,7 +240,7 @@ Spatial memory waits for E1 (DV15).
 
 **DV24. Process.**
 - PREREG, from v0.2 on, freezes the **rules**, not per-season contents (the census, community templates).
-- DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1.
+- DV1, DV4 and DV5 go to the external veto reviewer before PREREG-v1. Under DV48 they go to the Scoring Veto Panel before each freeze instead, since the owner waived the external reviewer in writing on 2026-10-31.
 - Each changed requirement gets its DESIGN note.
 
 ## G. Scales, attribution and settled details
@@ -298,7 +298,7 @@ Spatial memory waits for E1 (DV15).
 - **Certification** may be issued by season boards and by delta boards, when powered.
 - **The stack view** follows board eligibility, minus the open-source rule. Each row is vendor-submitted with a disclosed configuration.
 - **A model swap** does not move the vision provider: it is pinned separately.
-- **Image fidelity:** manifest-verifier recall ≥ 0.99 against a 200-item human-key sample, and human legibility ≥ 95%.
+- **Image fidelity:** manifest-verifier recall ≥ 0.99 against a 200-item human-key sample, and human legibility ≥ 95%. DV48 replaces both: recall ≥ 0.99 against at least 500 seeded image mutants, and a legible share ≥ 0.95 read by the agent reader ensemble.
 - **Image twins:** the same template with the gold value changed and presentation matched.
 - **Oracle ceilings:** every table carries both the oracle-evidence ceiling and the full-history oracle ceiling where it fits (requirement E).
 - **E2** also needs a confirming spike before commitment.
@@ -434,7 +434,37 @@ Spatial memory waits for E1 (DV15).
 - **Before the pilot:** a code check for keyed randomness and a fully rendered, hashed history set.
 - **The firewall holds:** every input is a spike measurement of cost, timing or capacity, or a control. No slot is filled from any real system's score.
 
+**DV48. Agent-only validation** (design v2.3, PREREG-v0.5; at the owner's direction of 2026-10-31, decided by the benchmark session under the owner's grant, before any pilot data).
+- **Why.** The owner directed: "we will never have human graders, the whole point of doing this right is that humans don't have to be involved and agents can run this benchmark to then improve themselves". The design still had people in its run steps: the phrase bank "calibrated by human annotators" (DESIGN §4.4); the template census's annotators and the instance audit's graders, put in a human grader pool (DESIGN §7.5, §17); a human-graded release audit that validated the judges (DESIGN §7.5); the Image profile's 200-item human-key sample and human legibility (DESIGN §4.4, PREREG-v0.4 §5, spike S8); the feasibility-pilot label keyed to the grader pool (PREREG-v0.4 §8); requirement E's human key on a sample; and an external human reviewer as the only scoring veto (PREREG-v0.4 Freezes).
+- **The principle.** No person grades, annotates, keys, audits, adjudicates or breaks a tie. Gold is computed from the world state. Validity is shown first by mechanical checks, then by cross-family agent panels for what is left. Every disagreement is settled by a pre-registered rule; nothing is cleared because a model withdraws a finding after a rebuttal written by the benchmark side. Every card says "agent-validated; no human key".
+- **New completion slots,** each filled by rule before any run of record (PREREG Freezes):
+  - **C-16, the validation families:** at least three model families other than the pinned, replication, judge, blind-panel and authoring families, the C-3 family, the second judge family and any family in the LCM-X lane registry, each with its model, listed in an order fixed before any census or audit. The validation pair is the first two that pass the census's per-family bars; a pair that misses a pair-together bar fails, and no other combination is tried. It skips a template author's family; a template with no eligible pair leaves the season. The record also names the A1 family, an eligible family that may also sit in a pair, and neither is changed after an outcome. If no eligible pair passes, the pilot is a feasibility pilot; there is no human fallback, and no fallback to an excluded family.
+  - **C-17, the image readers:** at least one cross-platform, non-LLM OCR engine, pinned by version and hash, and vision models from at least two families outside the tested families, the pinned vision reader's family, the authoring family and the LCM-X lane registry.
+  - **C-18, the Scoring Veto Panel's families:** at least two families outside Anthropic, the judge families, the tested families and the LCM-X lane registry, listed with their models before any review. Every listed family reviews each freeze, and none is removed for its findings. A blocking finding raised in any run stands, and a rerun never clears it. It may overlap C-16.
+- **The phrase bank** (DESIGN §4.4, now PREREG §5): every entry is tagged, and a deterministic inverse parser recovers the tag from every rendered gold-critical instance. The C-16 families calibrate each cell on 20 public synthetic fills, judging strength exactly, at 19 of 20 and 95% of minimal pairs. A cell any family fails, or on which they disagree, is quarantined from gold-critical events. A run of record needs a passing calibration receipt, whose hash is on every card.
+- **Image fidelity** (DESIGN §4.4, PREREG §5): construction floors from the renderer's scene graph; legibility read by the C-17 ensemble, at least two exact readings with one non-LLM, legible share ≥ 0.95; verifier recall ≥ 0.99 against at least 500 seeded mutants. Illegible entries leave the manifest before gold is built. S8's keysheet becomes the ensemble's readings.
+- **Stage A, the census** (DESIGN §7.5, PREREG §5): the template's validation pair (C-16), never including the author's family, beside mechanical legs: N-version gold written from the plain-language world rules, metamorphic relations, and contradiction and property tests. Annotator recall ≥ 0.90 (Wilson lower bound ≥ 0.80) on seeded known-bad variants, and false flags ≤ 5% on at least 50 known-good versions, per family and for the pair together. A factual flag clears only when the checker refutes its premise; an interpretive flag quarantines the version.
+- **Stage B, the audit** (DESIGN §7.5, PREREG §5): the sampling rule, sizes and clustered bound stay. Two C-16 auditor families answer from the oracle evidence first, then confirm or dispute gold. A1 and the exposure check run on every scored bundle. Interpretive disputes are errors, and a factual dispute clears only when the checker refutes its premise. Hidden plants measure the procedure's recall, and the gate becomes the bound divided by that recall's lower bound. At least 200 known-bad plants, built to pass the deterministic legs, measure what only the auditors catch; on at least 200 known-good plants, the pair together turns at most 0.5% into errors. The outcome and quarantine list are hashed into the run lock before any result is unblinded.
+- **Judges** (DESIGN §7.5, PREREG §5): the human key's job of validating the judges passes to a world-state validation set, per judge and class, with false-accept and false-reject each ≤ 2%. A judge that misses a class bar leaves that class "judge-unvalidated".
+- **The feasibility-pilot label** (DESIGN §15, PREREG §8) is computed from the receipts: any unmet agent-validation gate sets it.
+- **The human grader pool** leaves the owner-private decisions (DESIGN §16), and its open question (DESIGN §17) closes, replaced by C-16 to C-18. The external reviewer leaves them too, since the owner waived it.
+- **Requirement E** (`docs/REQUIREMENTS.md`): the human key on a sample becomes an agent-key row with validation columns in every published table. A cell below 0.90 gets a census re-audit of its template versions and reads BLOCKED until it passes.
+- **The external veto** (PREREG Freezes; DESIGN §14, §16): a Scoring Veto Panel of agents reviews each freeze candidate's stages, verdicts and non-results, gates and certification rule on a fixed checklist that includes the self-serving construction test, made permanent. A blocking finding from any one family blocks the freeze, and it clears only with the mechanical evidence it names or by reverting the rule. The panel is calibrated on planted self-serving tweaks. The specification curve is on every card. The owner waived the external human reviewer in writing on 2026-10-31 ([recorded on lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964#issuecomment-6539072295)), so the panel holds the veto alone. A freeze needs valid reviews from two panel families, and the checklist includes the lane registry's completeness. Every freeze before C-18 is filled, PREREG-v0.5's included, keeps design v2.2's interim rule, that every adversarial review tests for self-serving construction; the panel's rule binds after that.
+- **Spend and exposure** (PREREG §11): a labelled validation row, at most $100 per release, and the panel at most $25 per freeze. Sealed items, keys and images go only to local models, or to hosted families whose API terms exclude training on inputs; the same rule binds the blind panel.
+- **Outside audit** (DESIGN §7.5, PREREG §5): the LCM-X lane registry is the list, declared by LCM-X's maintainers, of the model families, accounts and sessions used in LCM-X's development, pinned by hash in the completion record. "Outside the LCM-X lanes" means accounts and sessions in no LCM-X lane-registry entry and with no LCM-X repository access or development context, attested on every release-audit and private-template census receipt. A public challenge protocol covers the public packs and retired seasons, and an accepted challenge re-audits the whole template version across every system. A challenge is accepted when its reproduction replays and either the checker confirms a factual premise or the alternative is interpretive.
+- **Independent authorship** (DESIGN §10, PREREG §4): decided by provenance. The author's family is excluded from that template's auditor pair, and results are also reported with each affiliated author's templates removed.
+- **Unchanged:** a co-maintainer is welcome but never a gate (REQUIREMENTS, credibility); completed spikes keep their history, and future spikes take expected labels from the ledger, the world state or these rules; the owner's stops on spend, accounts, paid capacity and a narrower design (PREREG §11) are pre-run governance decisions, not run steps, and are disclosed as such, with no automatic narrowing default.
+- **Developer loops:** public packs ship with their validation receipts. A locally generated life gets a lite audit from one family other than the running agent's own, on 10% of bundles, and lite results never feed a board or a certification.
+- **Considered and not chosen:**
+  - keeping a human key on a sample: ruled out by the owner's direction;
+  - construction only: it cannot catch an error in what a spec means;
+  - panels only, with a 100% audit and loose dispute bars: its thresholds contradicted each other;
+  - a false-dispute bar of 2% per auditor: with interpretive disputes counted as errors, two auditors could turn about 4% of good instances into errors, and the release gate would then pass about 1% of the time on error-free templates.
+- **What it loses:** native human pragmatics in the phrase bank, disclosed; the readers of every stream are agents.
+- **Follow-ups,** outside this decision's text: S8's keysheet replaced by the reader ensemble in code and tests; the phrase-bank receipt gate in code; C-16 to C-18 in the completion record.
+
 ## Owner decisions
 - **Approved on 2026-10-26:** design v2.0, and the vision budget of about $50 a season (DV9).
 - **Directed by the owner on 2026-10-26:** replace the 24-hour window with resumable runs from the same commit and stores (DV47), and spend no more than $100 per test except on plan lanes.
+- **Directed by the owner on 2026-10-31:** no human graders; agents run the benchmark end to end (DV48). Asked the same day whether this also waives the external human reviewer, the owner answered "Yes, waive it" ([recorded on lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964#issuecomment-6539072295)).
 - **Decided by the benchmark session on 2026-10-26, under the owner's grant:** the 24-hour decision of PREREG §11, through DV42; then DV47's run-time rule and its parameters. The plan of record is n_L = 48, uncut, on two benchmark accounts, with the §11 cut order on one account as the fallback.
