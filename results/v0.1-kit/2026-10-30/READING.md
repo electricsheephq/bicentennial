@@ -72,7 +72,7 @@ LCM-X, the benchmark's sponsor, is not run by the benchmark. Its own maintainers
   - PASS;
   - OMISSION, 0: nothing usable reached the agent;
   - FAIL_MEMORY, −1000: the agent acted on a wrong memory. A confident false memory costs far more than an honest gap.
-- **Question items** (stages "remember" and "survive") read correct (+1000, or +500 when hedged), unknown (0) or wrong (−1000). Their action verdict is empty by design.
+- **Question items** (stages "remember" and "survive") read correct (+1000), unknown (0) or wrong (−1000). An answer hedged with a stated confidence below 0.5 counts half: +500 when correct, −500 when wrong. Unknown scores +1000 when the life never stated the fact, so that unknown is the right answer. A missing or unparseable answer scores −1000. Their action verdict is empty by design.
 
 **Invariants** are model-free rules every system must keep:
 - **INV-VERB:** stored text survives a crash verbatim.
