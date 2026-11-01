@@ -211,7 +211,7 @@
 
 **Two inputs that are not slots:**
 - **The second judge family.** The judge rule gives two pinned judges from different families, neither used by any tested agent: Anthropic and one more (DESIGN §7.5; PREREG-v0.5 line 909). No slot names the second. C-16 and C-18 exclude it, so the procedure picks it first. A pending proposal below gives it a slot.
-- **The LCM-X lane registry,** as LCM-X's release manager declared it on 2026-10-31, before this procedure's provisional answer was public: Anthropic, OpenAI, Zhipu and xAI. That declaration binds this fill, and this record pins it: a family LCM-X's lanes add later moves no slot. The SVP's completeness check (line 52) still compares the registry with LCM-X's public development record at every freeze, so such a family is raised there, never refilled silently. The family is then added to the registry for disclosure, its slot stays filled, and the completeness item is answered by the dated declaration and LCM-X's dated public record, which show the family entered the lanes after the slot was filled. The cards disclose the overlap.
+- **The LCM-X lane registry,** as LCM-X's release manager declared it on 2026-10-31, before this procedure's provisional answer was public: Anthropic, OpenAI, Zhipu and xAI, plus any family the completeness list adds before the fill (Before the procedure binds, below). That registry binds this fill, and this record pins it: a family LCM-X's lanes add later moves no slot. The SVP's completeness check (line 52) still compares the registry with LCM-X's public development record at every freeze, so such a family is raised there, never refilled silently. The family is then added to the registry for disclosure, its slot stays filled, and the completeness item is answered by the dated declaration and LCM-X's dated public record, which show the family entered the lanes after the slot was filled. The cards disclose the overlap.
   - NeonDiff, which reviews LCM-X pull requests, runs on OpenAI.
   - CodeRabbit, which also reviews them, is vendor-managed and pins no model, so it adds no family. It holds no role here.
 
@@ -226,7 +226,7 @@
 
    Terms that are unclear, opt-out or yes fail.
 4. **Builds and tiers.** No preview or experimental builds, since a pinned model may change only if its provider withdraws it. Standard tiers only: no `flex`, `spot`, `priority` or `:batch`, since the census, audit and judge stages have no batch path.
-5. **The lane registry:** the 2026-10-31 declaration above, unchanged.
+5. **The lane registry:** the 2026-10-31 declaration above, with any family the completeness list adds.
 
 **Choosing a model and a host.**
 - For each role, a family's model is its highest-ranked served model whose projected cost fits the role's screen. That model's rank is the family's rank for the role.
@@ -244,8 +244,8 @@
 1. **Second judge:** the family with the highest judge rank outside Anthropic, the tested families and the lane registry. It must pass judge validation (PREREG-v0.5 line 380) before use. If it fails, the next family by judge rank outside every slot already filled takes its place as judge, and no other slot changes, so nothing moves after an outcome is seen. Judging is a run cost, outside the validation row.
 2. **C-16:** the first four families by C-16 rank, in that fixed order. The pair is the first two that pass Stage A; the others are spares, never reordered. The first family is the A1 family.
 3. **C-3:** the family with the highest C-3 rank outside C-16's four.
-4. **C-18:** C-16's first three, minus any tested family; the next C-16 family fills a gap. Every listed family reviews every freeze; two is the quorum, not a cap.
-5. **C-17:** the first two image-capable families in C-16's list, outside the tested families and the pinned vision reader's family; plus Tesseract (5.5.4 today), pinned on the record date by `tesseract --version`, the binary's sha256 and the sha256 of `eng.traineddata`.
+4. **C-18:** C-16's first three, minus any tested family. Each gap is filled by the next family in C-16 rank order, past C-16's four if needed, that is not a tested family. Every listed family reviews every freeze; two is the quorum, not a cap. If fewer than two families remain, the record says so before binding, since no freeze passes without two (line 57).
+5. **C-17:** the first two image-capable families in C-16 rank order, past C-16's four if needed, outside the tested families and the pinned vision reader's family; plus Tesseract (5.5.4 today), pinned on the record date by `tesseract --version`, the binary's sha256 and the sha256 of `eng.traineddata`. If fewer than two families remain, the record says so before binding, and C-17 stays open.
 6. **The red team:** the second judge family. It writes Stage A's seeded variants (line 391), Stage B's plants (line 407) and the panel's calibration catalogue (line 54). It is never listed in C-16 or C-18, including any later addition, whether or not it still judges, so it never annotates, audits or reviews anything it wrote; while it judges, both slots' own rules exclude it too. It is fixed with the second judge, before any census, and keeps the role if a later replacement (step 1) takes the judging from it. It never sees the operator list.
 
 **What it gives today** (provisional: C-1 is open, and every cost is projected from unmeasured token counts):
@@ -283,8 +283,8 @@
 **Before the procedure binds:**
 - C-1 names the tested families and the pinned vision reader (S8, #312). Both set C-17's and C-18's exclusions. If C-1 names a tested family that C-3 or C-16 lists, the record says so, and the benchmark owner decides in writing, before the fill, whether to propose that exclusion for PREREG-v0.6.
 - A measuring batch (at most $2, public material only, nothing scored) replaces the ×4 factor and the per-call sizes.
-- **The named families are classed.** The SVP's completeness item (line 52) covers every model family LCM-X's public development record names. Before the fill, the benchmark lists each family that record names before the 2026-10-31 declaration, with the commits, pull requests or reviews that name it, and classes each as a development lane (a model that writes, reviews or tests LCM-X's code, which belongs on the registry) or a provider LCM-X's product supports (which does not). The completeness item is then answered by that dated list.
-- **[RISK]** LCM-X's public record already names families this provisional fill uses, among them MiniMax, DeepSeek and Qwen. A family classed as a lane leaves every slot that excludes the registry, and the fill is recomputed before any census.
+- **The completeness list.** The SVP's completeness item (line 52) requires every model family LCM-X's public development record names (its commits, pull requests and reviews) to be on the registry, and this record does not narrow it. Before the fill, the benchmark lists each family that record names before the 2026-10-31 declaration, with the commits, pull requests or reviews that name it, and marks each as a development lane (a model that writes, reviews or tests LCM-X's code) or a provider LCM-X's product supports. Each listed family not yet on the registry joins it, unless PREREG-v0.6 first narrows the item to development lanes (proposed below). A family that joins leaves every slot that excludes the registry, and the fill is recomputed before any census.
+- **[RISK]** LCM-X's public record already names families this provisional fill uses, among them MiniMax, DeepSeek and Qwen. Unless that proposal is frozen first, they join the registry, and the recomputed fill may leave too few families for C-16, C-17 or C-18.
 - The record date's index page, price lists and host terms are saved and hashed, and a script recomputes every slot from them.
 - Each family meets its slot's own bars before use: Stage A for C-16, judge validation for the second judge, C-17's legibility bars, and the panel's calibration for C-18.
 
@@ -378,6 +378,8 @@ These two values come from DESIGN §4.2, and no PREREG-v0.4 rule or slot covers 
 Neither is ever chosen or revised from any real system's results.
 
 One slot is also proposed for PREREG-v0.6: the second judge family, filled by the judge rule (DESIGN §7.5). C-16 and C-18 exclude it, but no slot names it today, so the procedure under C-3, C-16, C-17 and C-18 picks it.
+
+One rule change is also proposed for PREREG-v0.6: the registry completeness item (line 52) would cover only the families LCM-X's public development record names as development lanes (models that write, review or test LCM-X's code), not the providers its product supports. Until it is frozen, the item stands as written.
 
 ## C-12: the Text profile's declaration (draft, provisional)
 
