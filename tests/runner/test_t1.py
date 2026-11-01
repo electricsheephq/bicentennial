@@ -364,6 +364,7 @@ def action_score(case, ev):
 def completed(installed, tmp_path_factory):
     root = tmp_path_factory.mktemp("t1-runs")
     patch = pytest.MonkeyPatch()
+    runpy.run_path(str(Path(__file__).resolve().parents[2] / "tests/director/test_roles.py"))["check_base"](patch)
     patch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     patch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     patch.setattr(adapter, "assert_niced", lambda pid: None)

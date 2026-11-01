@@ -60,7 +60,7 @@ At T1 every request the harness or the system sends is answered by a determinist
 | `aux` | an empty assistant message with no tool call |
 | `unknown` | refused, as the director does on every tier |
 
-A request reaches `replay_main` or `probe_main` by the cursor rule: its last user text equals the scripted turn's. Pinned Hermes appends a turn's prefetched memory to that text: a blank line, then a `<memory-context>` fence that opens with Hermes's system note. A script whose user text holds the wrapper is refused, so the first such wrapper is Hermes's own block. If the exact text matches no turn, the rule compares the text before it. So an exact retry is never read as the next turn. The block, and anything after it, stays in the request, so it is part of the Hermes-mode context (§1). Text appended without that wrapper still fails closed.
+A request reaches `replay_main` or `probe_main` by the cursor rule: its last user text equals the scripted turn's, and that turn belongs to the session the director is in, when both sessions are known (#310). A retry of the current turn matches in any session. Pinned Hermes appends a turn's prefetched memory to that text: a blank line, then a `<memory-context>` fence that opens with Hermes's system note. A script whose user text holds the wrapper is refused, so the first such wrapper is Hermes's own block. If the exact text matches no turn, the rule compares the text before it. So an exact retry is never read as the next turn. The block, and anything after it, stays in the request, so it is part of the Hermes-mode context (§1). Text appended without that wrapper still fails closed.
 
 Embedding requests (an embeddings endpoint on a declared alias) go to the hashed-vector stub.
 
