@@ -519,7 +519,9 @@ def test_existing_pack_trees_are_unchanged(tmp_path):
     result = build.build_tier("T0", tmp_path, harness_artifacts=[
         dict(name="hermes", version="test", sha256="a" * 64)])
     packs = result["index"]["packs"]
-    assert {rel: host_free_tree_sha256(tmp_path / "T0" / rel) for rel in packs} == LEGACY_PACK_HASHES
+    digests = {rel: host_free_tree_sha256(tmp_path / "T0" / rel) for rel in packs}
+    # A change that moves packs on purpose updates the table from this message.
+    assert digests == LEGACY_PACK_HASHES, canon(digests).decode()
     for rel, identity in packs.items():
         assert manifest.tree_sha256(tmp_path / "T0" / rel) == identity["tree_sha256"]
     # Another host's SQLite writes its own version number into each DB header.
