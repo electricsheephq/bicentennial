@@ -277,6 +277,8 @@ Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. C
 
 ## 10. Reading the outputs
 
+Ring 0 contract change, 2026-11-01: memory hosts append `t0.forget_kept` and `t1.forget_kept` after their delivery properties, as canonical JSON counts for `ambiguous`, `same_text` and `unattributed`, zeros included. Counts follow the host lifetime across reset and restore; the first reason per row id (or text hash without search) wins. T0 sums all invocation hosts and T1 sums corpus hosts per gated arm; a row kept by two hosts counts twice. Reference adapters disclose nothing. `forget_ambiguous` reads the `ambiguous` plus `same_text` count. INV-FORGET adds reason `host_kept` beside `store_hit` only when a kept text contains a searched needle; the status stays FAIL. Kept texts remain in memory and never enter outputs or checkpoints ([RING0 E22](../../specs/ring0/RING0.md#13-v01-errata)). No PREREG version change; PREREG-v0.5 remains frozen.
+
 Also inspect `t0.sandbox_slot` for registry T0 runs (reference runs disclose no slot), and `t1.sandbox_slot` for T1. The value is the selected slot, default 0; it is a run property outside the frozen disclosure tuple.
 
 T0 writes `<out>/<pack relpath>/{card.json, receipt.json, junit.xml, invariants.json, controls.json}` plus `<out>/adapter_invariants.json`, `relations.json`, `relations.xml` and optional `cache/`. Relations never change the exit code. T1 writes `<out>/{system,wiped}/{card.json, receipt.json, junit.xml, invariants.json, corpus.json, controls.json}`.

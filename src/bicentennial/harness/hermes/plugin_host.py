@@ -132,7 +132,7 @@ class HermesMemoryHost(Adapter):
         self.paths = layout(root, scratch)
         self._worker, self.pids, self.gate, self.active_memory_providers = None, [], [], []
         self.events, self.session, self.turn, self.latency_ms = {}, 1, 0, 0
-        self.forget_ambiguous = 0
+        self.forget_kept, self.forget_kept_texts = {}, {}
         self.write_clipped, self.write_max_length = 0, None
         self.settled, self._blocks, self._cache = True, (), None
         self.script = script = dict(canary=CANARY, life_id=life, genre="t0", harness="hermes", sessions=[])
@@ -380,11 +380,14 @@ class HermesMemoryHost(Adapter):
             wipe_to_fresh(directory, fresh)
             verify_empty(directory, volatile, digest)
         self._blocks, self._cache = (), None
-        self.forget_ambiguous = 0
 
     def reset(self):
         self._wipe()
         self.events, self.turn, self.settled = {}, 0, True
+
+    @property
+    def forget_ambiguous(self):
+        return sum(r in ("ambiguous", "same_text") for r in self.forget_kept.values())
 
     def forget(self, selector):
         self._cache = None
@@ -403,6 +406,11 @@ class HermesMemoryHost(Adapter):
         written = {i: r["written"] for i, r in self.events.items()}
         kept, seen = {}, set()
 
+        def record(key, reason, text):
+            if key not in self.forget_kept:
+                self.forget_kept[key] = reason
+                self.forget_kept_texts[key] = text
+
         def owns(hit, row_id):
             if row_id in seen:  # each row is decided once per call, however many searches return it
                 return False
@@ -413,12 +421,14 @@ class HermesMemoryHost(Adapter):
                     return False
                 if kept.get(hit, 0) < len(exact - selected):
                     kept[hit] = kept.get(hit, 0) + 1
-                    self.forget_ambiguous += 1
+                    record(("row", row_id), "ambiguous", hit)
                     return False
                 return True
             candidates = {i for i, text in written.items() if text and (hit in text or text in hit)}
             if candidates & selected and candidates - selected:
-                self.forget_ambiguous += 1
+                record(("row", row_id), "ambiguous", hit)
+            elif not candidates:
+                record(("row", row_id), "unattributed", hit)
             return bool(candidates) and candidates <= selected
 
         search, args, query, listing, text_key, id_key, delete, fixed, key = FORGET[self.name]
@@ -426,7 +436,7 @@ class HermesMemoryHost(Adapter):
             if not text:
                 continue
             if not search and any(value == text and i not in selected for i, value in written.items()):
-                self.forget_ambiguous += 1
+                record(("text", sha256(text.encode()).hexdigest()), "same_text", text)
                 continue
             # A backend's result page can hide matching rows until deletes free room, so search again
             # while the last pass deleted a row. Rows already decided are skipped, so this ends.
@@ -507,10 +517,13 @@ class WriteDelivery:
 
     def __init__(self):
         self.clipped, self.limits, self.delivered = 0, set(), _fields(None)
+        self.forget_kept = dict.fromkeys(("ambiguous", "same_text", "unattributed"), 0)
 
     def add(self, hosts):
         for host in hosts:
             self.clipped += host.write_clipped
+            for reason in getattr(host, "forget_kept", {}).values():
+                self.forget_kept[reason] += 1
             limit = host.write_max_length
             if limit is not None:
                 self.limits.add(limit)
@@ -525,4 +538,5 @@ class WriteDelivery:
                       (f"{tier}.fields", canon(self.delivered).decode())]
         if self.limits:
             properties.append((f"{tier}.write_max_length", next(iter(self.limits))))
+        properties.append((f"{tier}.forget_kept", canon(self.forget_kept).decode()))
         return properties
