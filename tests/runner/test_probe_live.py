@@ -24,6 +24,7 @@ from bicentennial.director.upstream.bridge import to_responses
 from bicentennial.director.upstream.router import ProbeLiveRouter
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed
+from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
 from bicentennial.ledger import BlobStore, Guard, apply_masks
 from bicentennial.packs.build import _templates, g1_cases
 from bicentennial.probe.probe_responder import ProbeResponder
@@ -301,6 +302,31 @@ def test_unsettled_checkpoint_wins_over_live_failure(lives, tmp_path, unit_sessi
     assert live.calls
     assert result.classes == {i["item_id"]: ("SYSTEM_FAILURE", "unsettled") for i in case["items"]}
 
+
+def test_live_failure_leaves_the_next_hook_settle_alone(lives, tmp_path, unit_sessions, monkeypatch):
+    # A hook system settles on the last session's exit, which a live failure kills before it is observed.
+    source, entry = HELPERS["plugin_source"](tmp_path)
+    entry["settle"] = dict(kind="hook", bound_s=1)
+    monkeypatch.setitem(SETTLE_THREADS, entry["name"], ("synthetic-settle",))
+    unit = adapter.HermesAdapter.run_session
+    def run_session(self, index, **kwargs):
+        self.end_threads = None
+        result = unit(self, index, **kwargs)
+        self.end_threads = ()  # the real adapter records the exit only after a session ends
+        return result
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", run_session)
+    case = lives["t1-g1", "B0"]
+    by_index = {p.index: p for p in case["compiled"].probes}
+    order = [by_index.get(s["index"]) for s in case["compiled"].script["sessions"]]
+    first = next(a for a, b in zip(order, order[1:], strict=False) if a and b and a.checkpoint == b.checkpoint)
+    def answer(call):
+        if call.cursor["session"] == first.index:
+            return Reply(503, "live_unavailable", "live", call.model)
+        return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
+    result = drive(case, tmp_path / "run", entry=entry, plugin_source=source, live=FakeLive(answer))
+    assert {iid: result.classes[iid] for iid in first.item_ids} == {
+        iid: ("INFRA_FAILURE", "responder_live_unavailable") for iid in first.item_ids}
+    assert ("SYSTEM_FAILURE", "unsettled") not in result.classes.values()
 
 def test_record_bytes_fields_and_live_answer_independence(lives, tmp_path, unit_sessions):
     case = lives["t1-g1", "B0"]

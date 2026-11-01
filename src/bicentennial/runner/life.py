@@ -360,8 +360,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             initial_bytes = _surface_bytes(surfaces)
             expected = expected_state(genre, schedule)(db)
             unsettled, checkpoints = [], []
+            live_cut = False  # the last session ended on a live failure, before its exit was observed
 
             def settle_checkpoint(checkpoint):
+                # Probes run on clones and a failed session's worker is killed, so after a live failure the store is
+                # as its last settle left it: the missing exit observation is not the system's own unsettled store.
+                if live_cut:
+                    return
                 if cell is not None and not cell.settle().settled:
                     unsettled.append(checkpoint)
                     evidence.classes.update((iid, ("SYSTEM_FAILURE", "unsettled"))
@@ -412,6 +417,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 stack.enter_context(swap_in(clone, canonical))
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
                         result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)
+                        live_cut = False
                         sessions.append(result)
                         if not probe:
                             if result.finals_matched != len(session["turns"]):
@@ -477,6 +483,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         elif iid not in results.results() and not (leg is not None and code):
                             evidence.classes.setdefault(iid, cause)
                     if leg is not None and code:
+                        live_cut = True
                         continue
                     break
             if leg is not None:
