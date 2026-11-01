@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 contract change, 2026-11-01: spill-file names are masked (#328)
-- **RING0 §13 E21 and §4:** from the next kit, the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file in body text (`random-uuid-hex-file`). That is the name Hermes gives an oversized memory recall's spill file, which made Mem0's two T1 runs differ. Every card's `masks_hash` changes. v0.1's maintenance kit carries E18 and E21 from its third official run (#329). No PREREG version change; PREREG-v0.5 remains frozen.
+- **RING0 §13 E21 and §4:** from the next kit, the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file after a slash in body text (`random-uuid-hex-file`). That is the name Hermes gives an oversized memory recall's spill file, which made Mem0's two T1 runs differ. Every card's `masks_hash` changes. v0.1's maintenance kit carries E18 and E21 from its third official run (#329). No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## PREREG-v0.5 clarification, 2026-10-31: the anchor's seed order (#285)
 - **l.814 (l.759 in PREREG-v0.4):** "in seed order" means ascending `keyed.draw(str(seed), world.unit(life, "anchor", "order"), 0, bundle_ref)`, ties broken by `bundle_ref`, where `bundle_ref` is the sha256 hex of the bundle id and the seed is the life's. `runner/dispatch.py:anchor_order` computes it for the OC base document, and the full-tier runner must use the same function (#245 B-25). No version change; PREREG-v0.5 remains frozen.

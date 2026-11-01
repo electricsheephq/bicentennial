@@ -593,7 +593,7 @@ def test_spill_file_uuid_hex_is_masked():
     assert a == b and "hook_outputs/{UUID}/{UUID}.txt]" in a["messages"][0]["content"]
     # Only a version-4 UUID's hex that names a .txt file after a slash: other hex runs stay.
     for text in ("/0d5023e69e4f1ea59a2a0832bd7a739d.txt", "/0d5023e69e4f4ea5ca2a0832bd7a739d.txt",
-                 "/" + "4" * 64 + ".txt", "x0d5023e69e4f4ea59a2a0832bd7a739d.txt",
+                 "/" + "0" * 12 + "4000" + "8" + "0" * 47 + ".txt", "x0d5023e69e4f4ea59a2a0832bd7a739d.txt",
                  "/0d5023e69e4f4ea59a2a0832bd7a739d.json"):
         assert apply_masks({"text": text}, RUN_VALUES) == {"text": text}
 
