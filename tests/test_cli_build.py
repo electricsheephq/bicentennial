@@ -96,3 +96,32 @@ def test_build_unexpected_failure(ready, monkeypatch, capsys, module, name):
     assert captured.out == ""
     assert captured.err.startswith("tool_failure\nTraceback")
     assert "RuntimeError: broken build" in captured.err
+
+
+def test_t2lite_rerun_command_roundtrip(ready, monkeypatch):
+    import runpy
+    import shlex
+    from pathlib import Path
+
+    from bicentennial.report.t2lite_flips import rerun_command
+    helpers = runpy.run_path(str(Path(__file__).parent / "report/test_t2lite_flips.py"))
+    item = helpers["item"]("synthetic")
+    command = rerun_command(helpers["card"](), item)
+    for placeholder, path in (("<packs>", "packs"), ("<hermes checkout>", "hermes"), ("<new dir>", "out")):
+        command = command.replace(placeholder, path)
+    argv = shlex.split(command)[2:] + ["--login-home", "fake-login", "--max-sends", "30"]
+    captured = []
+    monkeypatch.setattr(cli, "run_t2lite", lambda **kw: captured.append(kw) or 0)
+    assert cli.main(argv) == 0
+    assert captured[0]["only"] == (item["life"], item["branch"], item["probe_point"])
+    assert captured[0]["repeat"] == 3 and captured[0]["max_sends"] == 30
+
+
+@pytest.mark.parametrize("extra", [[], ["--max-sends", "-1"], ["--max-sends", "1", "--only", "bad"],
+                                   ["--max-sends", "1", "--repeat", "0"]])
+def test_t2lite_invalid_usage(ready, extra):
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["t2lite", "--system", "hermes-native", "--packs", "packs", "--pack-hash", "a" * 64,
+                  "--out", "out", "--login-home", "fake-login", *extra])
+    assert caught.value.code == 3
+    assert ready == []

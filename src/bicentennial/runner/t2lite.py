@@ -1,0 +1,354 @@
+"""Probe-live developer runs over T1 lives, with all-or-refusal publication."""
+
+import fcntl
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+from bicentennial.canon import canon, sha256_canon
+from bicentennial.director.compiler import answer_contract
+from bicentennial.director.compiler.check import Voids
+from bicentennial.director.responder import Reply
+from bicentennial.director.upstream import login as custody
+from bicentennial.items.protocol import CANARY
+from bicentennial.report.receipt import (
+    build_receipt,
+    ledger_latencies,
+    load_milli,
+    raw_body_digest,
+)
+from bicentennial.report.t2lite_card import build_t2lite_card
+from bicentennial.report.t2lite_flips import (
+    BaselineRefused,
+    check_baseline_t2lite,
+    flip_report,
+)
+from bicentennial.runner import t0, t1
+from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
+from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
+from bicentennial.runner.live import build_live_stack
+from bicentennial.runner.probe_live import LiveCredentialStop
+from bicentennial.sandbox import fixedroot
+from bicentennial.score.classes import outcome
+from bicentennial.systems.hermes_plugin import is_plugin, resolve_worker_env
+
+MODEL, EFFORT = "gpt-6.1-sol", "medium"
+# L1's synthetic defaults; operators supply the spike's deployment settings via env.
+TOKEN_URL, CLIENT_ID, BASE_URL = "https://fake.invalid/token", "fake-client", "https://fake.invalid/v1"
+MAX_OUTPUT_TOKENS = 1000
+PIN_FIELDS = ("benchmark_commit", "generator_commit", "director_commit", "scorer_commit", "harness_hash")
+
+
+def _write(root, name, value):
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(canon(value))
+
+
+def _read(root, name):
+    return json.loads((Path(root) / name).read_bytes())
+
+
+class _Guard:
+    def __init__(self, stack):
+        self.stack, self.canary = stack, False
+
+    def __getattr__(self, name):
+        return getattr(self.stack, name)
+
+    def respond(self, call):
+        self.canary |= CANARY.encode() in canon(call.body)
+        if self.canary:
+            return Reply(503, "live_stopped", "live", call.model)
+        return self.stack.respond(call)
+
+
+def _isolation(run):
+    # Worker sockets use T1's check; provider rows instead use L2's probe-live audit.
+    try:
+        t0._check_egress([([], run.egress)], t1.T1Refused)
+    except t1.T1Refused:
+        raise t1.T1Refused("isolation") from None
+    if any(r.get("served_by") == "live" and r.get("role") != "probe_main" or any(
+            a.get("served_by") == "live" and r.get("role") != "probe_main"
+            for a in r.get("upstream", ())) for r in run.records) or any(
+            f.startswith("A5") for f in run.audit.get("failures", ())):
+        raise t1.T1Refused("isolation")
+
+
+def _secrets(home, login=None):
+    raw = (home / "auth.json").read_bytes()
+    values = {raw}
+    def visit(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in ("access_token", "refresh_token", "id_token") and isinstance(value, str) and value:
+                    values.update((value.encode(), canon(value)[1:-1]))
+                visit(value)
+    visit(json.loads(raw))
+    if login is not None:
+        values.update(v.encode() for v in login.needles() if v)
+    return values
+
+
+def _scan(out, needles):
+    if any(n in p.read_bytes() for p in out.rglob("*") if p.is_file() for n in needles):
+        raise t1.T1Refused("credential_scan")
+
+
+def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):
+    return build_t2lite_card(system=ctx.entry["name"], pack_hash=ctx.pack_hash,
+        seed_hash=ctx.pins["seed_hash"], pins={k: ctx.pins[k] for k in PIN_FIELDS},
+        model=MODEL, effort=EFFORT, served_identity=identity, aa_prime=prime, items=rows,
+        counts=dict(floor_cached=int(cached), null_citation=sum(r["envelope"] is not None and
+            r["envelope"]["citation"] is None for r in rows)),
+        answer_contract_sha256=answer_contract.contract_hash())
+
+
+def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
+    for attempt in range(3):
+        try:
+            run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
+                items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys,
+                scratch=scratch / str(attempt), run=ctx.run_id, attempt=attempt, gate=ctx.gate,
+                current_lock=ctx.current_lock, voids=Voids(), harness_pin=ctx.harness_pin,
+                hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
+                worker_argv=t1._worker(ctx, pack.life, branch, arm), visible=pack.visible,
+                honeypot_token=pack.meta["honeypot_token"], live=live,
+                extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
+        except LiveCredentialStop:
+            ledger = scratch / str(attempt) / branch / "run/ledger"
+            rows = _rows(ledger)
+            runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
+                tokens_by_role=_tokens(ledger, rows)))
+            raise
+        runs.append(run)
+        try:
+            _isolation(run)
+            if live.canary:
+                raise t1.T1Refused("canary")
+            if live.state().get("spend_stopped"):
+                raise t1.T1Refused("spend_stop")
+            scores = {}
+            probes = _read(run._root, "t2lite_probes.json")
+            for item in pack.items[branch]:
+                iid = item["item_id"]
+                cls, label = run.classes.get(iid, (None, None))
+                if (arm == "system" and is_plugin(ctx.entry["name"]) and run.stopped and
+                        label in t1.RELABEL and list(run.stopped)[1:] ==
+                        ((floor_stops or {}).get(pack.life + branch) or [None])[1:]):
+                    cls = "INFRA_FAILURE"
+                if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
+                    cls, label = "INFRA_FAILURE", "audit"
+                scores[iid] = score_item(item, cls=cls, label=label,
+                    result=run.results.get(iid, MISSING), envelope=run.envelopes.get(iid, MISSING),
+                    act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
+                    scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
+                    stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
+                if cls or isinstance(scores[iid], Infra):
+                    next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
+            _write(out, "t2lite_probes.json", probes)
+        finally:
+            run.cleanup()
+        if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
+            break
+    for iid, scored in scores.items():
+        if isinstance(scored, Infra):
+            scores[iid] = outcome(identity0(pack.cases[iid].item), None, cause="INFRA_FAILURE", infra_reruns=2)
+    # The shadow selection belongs to the shadow, not the live scorer's synthetic option.
+    for probe in probes:
+        row = scores[probe["item_id"]]
+        if row["failure_class"] is None:
+            row["selected_option"] = probe["shadow"]["selected_option"]
+    return scores, probes
+
+
+def _joined(pack, branch, scores, probes):
+    rows = {}
+    for probe in probes:
+        iid = probe["item_id"]
+        item = next(i for i in pack.items[branch] if i["item_id"] == iid)
+        record = pack.records[iid]
+        bundle = next((b for b in pack.pack["bundles"] if iid in b["items"]), None)
+        rows[iid] = dict(scores[iid], life=pack.life, branch=branch, probe_point=probe["checkpoint"],
+            probe_session=probe["probe_session"], template_ref=f"{record['template_id']}-v{record['template_version']}",
+            genre=pack.genre, twin_bundle=None if bundle is None else bundle["bundle_id"], twin_flip=None,
+            in_context=probe["shadow"]["in_context"], value_match=probe["envelope"]["value_match"],
+            citation_match=probe["envelope"]["citation_match"], crosses_cold_restart=t1._crosses(pack, item),
+            swap_position="before" if item["probe_point"] < 15 else "after")
+    return rows
+
+
+def _receipt(runs, start, status):
+    rows = [r for run in runs for r in run.records]
+    tokens, runtime, failed = {}, {}, {}
+    for run in runs:
+        for name, count in run.egress.get("failed_samples", {}).items():
+            failed[name] = failed.get(name, 0) + count
+        for role, pair in run.tokens_by_role.items():
+            old = tokens.get(role, (0, 0))
+            tokens[role] = tuple(a + b for a, b in zip(old, pair, strict=True))
+    for row in rows:
+        if row.get("type") == "request":
+            runtime[row["role"]] = runtime.get(row["role"], 0) + row["t_ms"]
+    return build_receipt(run_status=status, wall_start_ms=start, wall_end_ms=int(time.time() * 1000),
+        latency_ms=ledger_latencies(rows), load_milli=load_milli(os.getloadavg()),
+        busy_marker_readings=[], tokens_by_role=tokens,
+        runtime_by_role=runtime, spend_micro_usd=0, store_growth_bytes=sum(r.store_growth_bytes for r in runs),
+        process_ids=[p for r in runs for p in r.process_ids], ports=[int(r.run_values["director_port"])
+            for r in runs if r.run_values], temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values],
+        raw_body_digest=raw_body_digest(rows), egress_failed_samples=failed,
+        timings=[dict(arm=r.arm, life=r.life, branch=r.branch,
+            attempt=r.attempt, egress_pid_samples=r.egress.get("samples"),
+            egress_sample_ms=r.egress.get("sample_ms"), **r.timings) for r in runs if r.timings])
+
+
+def _select(ctx, only):
+    if only is None:
+        return [(p, b) for p in ctx.packs for b in ("B0", "B1")]
+    life, branch, checkpoint = only
+    from dataclasses import replace
+    for pack in ctx.packs:
+        if pack.life == life:
+            items = [i for i in pack.items[branch] if i["probe_point"] == checkpoint]
+            ids = {i["item_id"] for i in items}
+            if items:
+                return [(replace(pack, items={branch: items}, records_b={branch: tuple(
+                    r for r in pack.records_b[branch] if r["item_id"] in ids)},
+                    keys={i: pack.keys[i] for i in ids}), branch)]
+    raise t1.T1Refused("only")
+
+
+def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
+               plugin_source=None, model_cache=None, cache=None, sandbox_slot=0,
+               baseline=None, aa_of=None, only=None, repeat=1, entry=None, worker_argv=None):
+    out, home = Path(out), Path(login_home)
+    start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
+    needles, pending_cache = set(), None
+    try:
+        if out.exists() or out.is_symlink():
+            raise t1.T1Refused("out_exists")
+        if any(p is not None and fixedroot.overlaps(p) for p in (
+                out, home, packs_dir, cache, baseline, aa_of, hermes, plugin_source, model_cache)):
+            raise t1.T1Refused("sandbox_overlap")
+        if any(fixedroot.within(p, out) or fixedroot.within(out, p) for p in (
+                home, Path(packs_dir), *([Path(cache)] if cache else []))):
+            raise t1.T1Refused("output_overlap")
+        out.mkdir(parents=True)
+        created = True
+        if system == "lcm-x" and (home / ".bicentennial-operator").exists():
+            raise t1.T1Refused("operator_identity")
+        account = os.open(home / ".t2lite.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(account, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise t1.T1Refused("account_busy") from None
+        ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
+            plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv)
+        ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2lite-" + uuid4().hex}))
+        selection = _select(ctx, only)
+        if repeat < 1 or max_sends < 0 or repeat != 1 and only is None:
+            raise t1.T1Refused("rerun_arguments")
+        prospective = _card(ctx, [], prime=aa_of is not None)
+        try:
+            references = {name: _read(path, "card.json") for name, path in (
+                ("baseline", baseline), ("prime", aa_of)) if path is not None}
+        except (OSError, ValueError):
+            raise t1.T1Refused("baseline_unreadable") from None
+        for card in references.values():
+            check_baseline_t2lite(prospective, card)
+        key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"]])
+        floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
+        cached = floor_path is not None and floor_path.is_file()
+        floor = _read(floor_path.parent, floor_path.name) if cached else None
+        floor_stops = floor["stops"] if cached else {}
+        needles = _secrets(home)
+        with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
+            stack = build_live_stack(out / "spend.json", login_home=home, run=ctx.run_id,
+                token_url=os.environ.get("BICENTENNIAL_SOL_TOKEN_URL", TOKEN_URL),
+                client_id=os.environ.get("BICENTENNIAL_SOL_CLIENT_ID", CLIENT_ID),
+                base_url=os.environ.get("BICENTENNIAL_SOL_BASE_URL", BASE_URL),
+                max_output_tokens=MAX_OUTPUT_TOKENS, max_sends=max_sends, model=MODEL, effort=EFFORT)
+            login = stack.inner.login
+            live = _Guard(stack)
+            try:
+                if not cached:
+                    floor = {"outcomes": {}, "stops": floor_stops}
+                    for pack in ctx.packs:
+                        for branch in ("B0", "B1"):
+                            scores, _ = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
+                                live, runs, out / "no_memory" / pack.life / branch)
+                            floor["outcomes"].update(scores)
+                            stopped = runs[-1].stopped
+                            floor_stops[pack.life + branch] = list(stopped) if stopped else None
+                    if floor_path and not any(r["failure_class"] == "BLOCKED" for r in floor["outcomes"].values()):
+                        pending_cache = (floor_path, floor)
+                print("floor: reused from the cache" if cached else "floor: ran live", file=sys.stderr)
+                repetitions = []
+                for rep in range(repeat):
+                    scores, joined = {}, {}
+                    for pack, branch in selection:
+                        values, probes = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
+                            live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops)
+                        scores.update(values)
+                        joined.update(_joined(pack, branch, values, probes))
+                    repetitions.append(joined)
+                identities = stack.served_identities()
+                card = _card(ctx, list(scores.values()), identity=canon(identities).decode() if identities else "unobserved",
+                    cached=cached, prime=aa_of is not None)
+            finally:
+                try:
+                    stack.close()
+                    needles.update(_secrets(home, login))
+                finally:
+                    login.drain()
+            _write(out, "outcomes.json", repetitions[-1])
+            _write(out, "repetitions.json", repetitions)
+            _write(out, "no_memory.json", floor)
+            _write(out, "disclosures.json", {"t1.transforms": sorted({i for r in runs for i in r.transforms}),
+                "live": stack.state()})
+            if baseline:
+                prime = aa_of if aa_of and Path(aa_of).resolve() != Path(baseline).resolve() else None
+                report = flip_report(card, references["baseline"], _read(baseline, "outcomes.json"), repetitions[-1],
+                    aa_prime=None if prime is None else _read(prime, "outcomes.json"),
+                    aa_prime_card=None if prime is None else references["prime"])
+                report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
+                    current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
+                _write(out, "flips.json", report)
+            _write(out, ".receipt.json", _receipt(runs, start, "COMPLETE"))
+            _write(out, ".card.json", card)
+            _scan(out, needles)
+            if pending_cache:
+                _write(pending_cache[0].parent, pending_cache[0].name, pending_cache[1])
+            (out / ".receipt.json").replace(out / "receipt.json")
+            (out / ".card.json").replace(out / "card.json")
+        return 0
+    except (LiveCredentialStop, custody.Stop, BaselineRefused, *t1.REFUSALS) as error:
+        code = ("credential_stop" if isinstance(error, (LiveCredentialStop, custody.Stop)) else
+            error.reason if isinstance(error, BaselineRefused) else getattr(error, "code", None) or "pin_mismatch")
+        if created:
+            try:
+                _scan(out, needles)
+            except t1.T1Refused:
+                code = "credential_scan"
+            fixedroot.remove_tree(out)
+            out.mkdir()
+            if code in ("credential_stop", "spend_stop"):
+                _write(out, "receipt.json", _receipt(runs, start, "INFRA_FAILURE"))
+            _write(out, "refusal.json", dict(code=code))
+        print(code, file=sys.stderr)
+        return 3
+    except Exception:
+        if created:
+            fixedroot.remove_tree(out)
+            out.mkdir()
+            _write(out, "refusal.json", dict(code="tool_failure"))
+        print("tool_failure", file=sys.stderr)
+        return 70
+    finally:
+        if account is not None:
+            os.close(account)
