@@ -18,6 +18,10 @@ def _text(content):
     raise ValueError("bridge_unsupported_content")
 
 
+def _listed(value):
+    return [] if value is None else value  # an explicit null collection is an empty one
+
+
 def to_responses(body, *, effort):
     unknown = body.keys() - CHAT_KEYS
     if unknown:
@@ -28,13 +32,16 @@ def to_responses(body, *, effort):
         content = message.get("content")
         text = "" if role == "assistant" and content is None else _text(content)
         if role in ("system", "developer"):
+            # Instructions take only the leading system messages; hoisting a later one would move it.
+            if items:
+                raise ValueError("bridge_late_system")
             instructions.append(text)
         elif role == "tool":
             items.append({"type": "function_call_output", "call_id": message["tool_call_id"], "output": text})
         elif role in ("user", "assistant"):
             if text or role == "user":
                 items.append({"type": "message", "role": role, "content": text})
-            for call in message.get("tool_calls", []):
+            for call in _listed(message.get("tool_calls")):
                 if role != "assistant" or call.get("type") != "function":
                     raise ValueError("bridge_unsupported_tool_call")
                 function = call["function"]
@@ -45,7 +52,7 @@ def to_responses(body, *, effort):
     out = {"instructions": "\n\n".join(instructions), "input": typed(items),
            "store": False, "reasoning": {"effort": effort}}
     tools = []
-    for tool in body.get("tools", []):
+    for tool in _listed(body.get("tools")):
         if tool.get("type") != "function":
             raise ValueError("bridge_unsupported_tool")
         function = tool["function"]
@@ -96,11 +103,12 @@ class ResponsesBridge:
             if up is None:
                 raise ValueError("bridge_no_upstream")
             body = to_responses(call.body, effort=up.effort)
-        except ValueError as exc:
-            self.failure = str(exc)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            # A structural failure latches too, under a fixed code that never echoes the request.
+            self.failure = str(exc) if type(exc) is ValueError else "bridge_malformed"
             if hasattr(self.inner, "stop"):
                 self.inner.stop(self.failure)
-            raise
+            raise ValueError(self.failure) from None
         reply = self.inner.respond(replace(call, wire="responses", body=body))
         return replace(reply, usage=chat_usage(reply.usage))
 

@@ -282,6 +282,50 @@ def test_close_waits_for_a_build_in_flight(make_stack, home, monkeypatch):
     assert (home / "holder.lock").resolve() not in custody.HOME_HOLDERS
 
 
+class ObservedCondition(threading.Condition):
+    """Stands in for a stack's call counter and reports when close has to wait for a call."""
+
+    def __init__(self):
+        super().__init__()
+        self.waiting = threading.Event()
+
+    def wait_for(self, predicate, timeout=None):
+        if not predicate():
+            self.waiting.set()
+        return super().wait_for(predicate, timeout)
+
+
+def test_close_keeps_the_hold_until_a_call_in_flight_returns(make_stack, home):
+    live = make_stack()
+    real, inside, go, stops, replies = live.inner, threading.Event(), threading.Event(), [], []
+
+    class InFlight:  # the credential responder, mid-call: its 401 handling would still be to come
+        def respond(self, call):
+            inside.set()
+            go.wait()
+            return Reply(200, "live", "live", call.model)
+
+        def stop(self, reason):
+            stops.append(reason)
+            real.stop(reason)
+
+    live.inner, live._calls = InFlight(), ObservedCondition()
+    path = (home / "holder.lock").resolve()
+    caller = threading.Thread(target=lambda: replies.append(live.respond(call())), daemon=True)
+    closer = threading.Thread(target=live.close, daemon=True)
+    try:
+        caller.start()
+        assert inside.wait(5)
+        closer.start()
+        assert live._calls.waiting.wait(5)
+        assert stops == ["closed"] and path in custody.HOME_HOLDERS and not live.closed
+    finally:  # release the call and join, so no worker outlives the test
+        go.set()
+        caller.join(5)
+        closer.join(5)
+    assert [r.status for r in replies] == [200] and live.closed and path not in custody.HOME_HOLDERS
+
+
 def test_bridge_failure_stops_the_real_stack(make_stack):
     live = make_stack()
     with pytest.raises(ValueError, match="^bridge_unmapped_key:temperature$"):

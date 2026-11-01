@@ -30,11 +30,26 @@ class LiveStack(ResponsesBridge):
     def __init__(self, inner, holder_path):
         super().__init__(inner)
         self.holder_path, self.closed = holder_path, False
+        self._calls, self._active = threading.Condition(), 0
+
+    def respond(self, call):
+        with self._calls:
+            self._active += 1
+        try:
+            return super().respond(call)
+        finally:
+            with self._calls:
+                self._active -= 1
+                self._calls.notify_all()
 
     def close(self):
+        # The holder outlives every call in flight, credential handling included, so a late 401
+        # can never write into the home of a stack built after this one.
         with _BUILD:
             if not self.closed:
                 self.inner.stop("closed")
+                with self._calls:
+                    self._calls.wait_for(lambda: self._active == 0)
                 _release(self.holder_path)
                 self.closed = True
 

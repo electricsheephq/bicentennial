@@ -101,6 +101,19 @@ def test_literal_string_tool_choice(choice):
     ({"tool_choice": {"type": "other"}}, "bridge_unsupported_tool_choice"),
     ({"tool_choice": 1}, "bridge_unsupported_tool_choice"),
     ({"messages": [{"role": "user", "content": [{"type": "image_url"}]}]}, "bridge_unsupported_content"),
+    ({"messages": [{"role": "user", "content": "q"}, {"role": "system", "content": "late"}]},
+     "bridge_late_system"),
+    ({"messages": [{"role": "assistant", "content": "a"}, {"role": "developer", "content": "late"}]},
+     "bridge_late_system"),
+    ({"messages": [{"content": "no role"}]}, "bridge_malformed"),
+    ({"messages": None}, "bridge_malformed"),
+    ({"messages": ["text"]}, "bridge_malformed"),
+    ({"messages": [{"role": "tool", "content": "out"}]}, "bridge_malformed"),
+    ({"messages": [{"role": "assistant", "content": None, "tool_calls": [
+        {"id": "call-1", "type": "function", "function": {"name": "lookup"}}]}]}, "bridge_malformed"),
+    ({"tools": [{"type": "function"}]}, "bridge_malformed"),
+    ({"tools": [1]}, "bridge_malformed"),
+    ({"tool_choice": {"type": "function"}}, "bridge_malformed"),
 ])
 def test_fail_closed_records_reason(body, reason):
     inner = RecordingLive()
@@ -158,6 +171,24 @@ def test_failure_latch_forwards_nothing_more(wire, body):
     reply = bridge.respond(call(body, wire=wire))
     assert (reply.status, reply.served, reply.served_by, reply.model) == (503, "live_stopped", "live", "probe-model")
     assert inner.calls == [] and inner.stops == ["bridge_unmapped_key:temperature"]
+
+
+def test_structural_failure_latches_like_any_other():
+    inner = StoppableLive()
+    bridge = ResponsesBridge(inner)
+    with pytest.raises(ValueError, match="^bridge_malformed$"):
+        bridge.respond(call({"tools": [{"type": "function"}]}))
+    reply = bridge.respond(call({"messages": [{"role": "user", "content": "hello"}]}))
+    assert (reply.status, reply.served) == (503, "live_stopped")
+    assert inner.calls == [] and inner.stops == ["bridge_malformed"]
+
+
+def test_null_collections_are_empty_ones():
+    body = {"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a", "tool_calls": None}],
+            "tools": None}
+    assert to_responses(body, effort="medium") == to_responses(
+        {"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}, effort="medium")
+    assert "tools" not in to_responses(body, effort="medium")
 
 
 def test_model_without_live_upstream_names_the_route():
