@@ -184,11 +184,10 @@ def test_structural_failure_latches_like_any_other():
     assert inner.calls == [] and inner.stops == ["bridge_malformed"]
 
 
-@pytest.mark.parametrize("strict,expected", [(True, True), (False, False), (None, False)])
-def test_tool_strictness_keeps_chat_semantics(strict, expected):
-    function = {"name": "lookup", "parameters": {"type": "object", "properties": {"q": {"type": "integer"}}}}
-    if strict is not None:
-        function["strict"] = strict
+@pytest.mark.parametrize("extra,expected", [({"strict": True}, True), ({"strict": False}, False),
+                                            ({"strict": None}, False), ({}, False)])
+def test_tool_strictness_keeps_chat_semantics(extra, expected):
+    function = {"name": "lookup", "parameters": {"type": "object", "properties": {"q": {"type": "integer"}}}, **extra}
     tools = to_responses({"tools": [{"type": "function", "function": function}]}, effort="medium")["tools"]
     assert tools[0]["strict"] is expected
 
