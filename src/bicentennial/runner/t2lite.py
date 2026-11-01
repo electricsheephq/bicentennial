@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -37,8 +38,9 @@ from bicentennial.score.classes import outcome
 from bicentennial.systems.hermes_plugin import is_plugin, resolve_worker_env
 
 MODEL, EFFORT = "gpt-6.1-sol", "medium"
-# L1's synthetic defaults; operators supply the spike's deployment settings via env.
-TOKEN_URL, CLIENT_ID, BASE_URL = "https://fake.invalid/token", "fake-client", "https://fake.invalid/v1"
+# The live lane's settings, required as in the spikes; nothing defaults to a fake address.
+LIVE_ENV = ("BICENTENNIAL_SOL_TOKEN_URL", "BICENTENNIAL_SOL_CLIENT_ID", "BICENTENNIAL_SOL_BASE_URL")
+# Never sent upstream (build_live_stack sets send_cap=False); it only bounds the zero-price reservation.
 MAX_OUTPUT_TOKENS = 1000
 PIN_FIELDS = ("benchmark_commit", "generator_commit", "director_commit", "scorer_commit", "harness_hash")
 
@@ -208,32 +210,70 @@ def _receipt(runs, start, status):
 
 
 def _select(ctx, only):
+    """The units to run, and the item ids a checkpoint rerun keeps. The rerun replays its whole branch: compiling only
+    the checkpoint's items changes the script, and the write audit then fails (A4 gaps)."""
     if only is None:
-        return [(p, b) for p in ctx.packs for b in ("B0", "B1")]
+        return [(p, b) for p in ctx.packs for b in ("B0", "B1")], None
     life, branch, checkpoint = only
-    from dataclasses import replace
     for pack in ctx.packs:
         if pack.life == life:
-            items = [i for i in pack.items[branch] if i["probe_point"] == checkpoint]
-            ids = {i["item_id"] for i in items}
-            if items:
-                return [(replace(pack, items={branch: items}, records_b={branch: tuple(
-                    r for r in pack.records_b[branch] if r["item_id"] in ids)},
-                    keys={i: pack.keys[i] for i in ids}), branch)]
+            keep = {i["item_id"] for i in pack.items[branch] if i["probe_point"] == checkpoint}
+            if keep:
+                return [(pack, branch)], keep
     raise t1.T1Refused("only")
+
+
+def _references(prospective, selection, baseline, aa_of, aa_prime):
+    """Read and check every earlier run before anything is sent, so a bad one never costs a live run."""
+    cards, outcomes = {}, {}
+    try:
+        for name, path in (("baseline", baseline), ("of", aa_of), ("prime", aa_prime)):
+            if path is not None:
+                cards[name] = _read(path, "card.json")
+                if name != "of":
+                    outcomes[name] = _read(path, "outcomes.json")
+    except (OSError, ValueError):
+        raise t1.T1Refused("baseline_unreadable") from None
+    ids = {i["item_id"] for pack, branch in selection for i in pack.items[branch]}
+    for card in cards.values():
+        check_baseline_t2lite(prospective, card)
+        if {i["item_id"] for i in card["items"]} != ids:
+            raise t1.T1Refused("baseline_items")
+    if baseline is not None:
+        try:
+            # L5's own checks with the baseline on both sides: its outcomes vouch for its card, and A′'s for its own.
+            flip_report(cards["baseline"], cards["baseline"], outcomes["baseline"], outcomes["baseline"],
+                        aa_prime=outcomes.get("prime"), aa_prime_card=cards.get("prime"))
+        except BaselineRefused as error:
+            # The baseline stands in both places here, so a refusal of the "current" side is the baseline's.
+            raise BaselineRefused(error.reason.replace(":current", ":baseline")) from None
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise t1.T1Refused("baseline_invalid") from None
+    return cards, outcomes
 
 
 def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
                plugin_source=None, model_cache=None, cache=None, sandbox_slot=0,
-               baseline=None, aa_of=None, only=None, repeat=1, entry=None, worker_argv=None):
+               baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None):
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
     needles, pending_cache = set(), None
     try:
+        # Arguments and settings first: these refusals create no output, so the same command can run again.
+        if (repeat < 1 or max_sends < 0 or repeat != 1 and only is None
+                or only is not None and (baseline or aa_of or aa_prime)
+                or aa_prime is not None and baseline is None or aa_of and aa_prime):
+            raise t1.T1Refused("rerun_arguments")
+        missing = [name for name in LIVE_ENV if not os.environ.get(name)]
+        if missing:
+            print(" ".join(missing), file=sys.stderr)
+            raise t1.T1Refused("live_config")
+        if not (home / "auth.json").is_file():
+            raise t1.T1Refused("login_home")
         if out.exists() or out.is_symlink():
             raise t1.T1Refused("out_exists")
         if any(p is not None and fixedroot.overlaps(p) for p in (
-                out, home, packs_dir, cache, baseline, aa_of, hermes, plugin_source, model_cache)):
+                out, home, packs_dir, cache, baseline, aa_of, aa_prime, hermes, plugin_source, model_cache)):
             raise t1.T1Refused("sandbox_overlap")
         if any(fixedroot.within(p, out) or fixedroot.within(out, p) for p in (
                 home, Path(packs_dir), *([Path(cache)] if cache else []))):
@@ -250,17 +290,9 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
             plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv)
         ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2lite-" + uuid4().hex}))
-        selection = _select(ctx, only)
-        if repeat < 1 or max_sends < 0 or repeat != 1 and only is None:
-            raise t1.T1Refused("rerun_arguments")
-        prospective = _card(ctx, [], prime=aa_of is not None)
-        try:
-            references = {name: _read(path, "card.json") for name, path in (
-                ("baseline", baseline), ("prime", aa_of)) if path is not None}
-        except (OSError, ValueError):
-            raise t1.T1Refused("baseline_unreadable") from None
-        for card in references.values():
-            check_baseline_t2lite(prospective, card)
+        selection, keep = _select(ctx, only)
+        references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
+                                           aa_of, aa_prime)
         key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"]])
         floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
         cached = floor_path is not None and floor_path.is_file()
@@ -269,9 +301,8 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         needles = _secrets(home)
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
             stack = build_live_stack(out / "spend.json", login_home=home, run=ctx.run_id,
-                token_url=os.environ.get("BICENTENNIAL_SOL_TOKEN_URL", TOKEN_URL),
-                client_id=os.environ.get("BICENTENNIAL_SOL_CLIENT_ID", CLIENT_ID),
-                base_url=os.environ.get("BICENTENNIAL_SOL_BASE_URL", BASE_URL),
+                token_url=os.environ[LIVE_ENV[0]], client_id=os.environ[LIVE_ENV[1]],
+                base_url=os.environ[LIVE_ENV[2]],
                 max_output_tokens=MAX_OUTPUT_TOKENS, max_sends=max_sends, model=MODEL, effort=EFFORT)
             login = stack.inner.login
             live = _Guard(stack)
@@ -294,8 +325,12 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     for pack, branch in selection:
                         values, probes = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
                             live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops)
+                        rows = _joined(pack, branch, values, probes)
+                        if keep is not None:
+                            values = {i: v for i, v in values.items() if i in keep}
+                            rows = {i: v for i, v in rows.items() if i in keep}
                         scores.update(values)
-                        joined.update(_joined(pack, branch, values, probes))
+                        joined.update(rows)
                     repetitions.append(joined)
                 identities = stack.served_identities()
                 card = _card(ctx, list(scores.values()), identity=canon(identities).decode() if identities else "unobserved",
@@ -312,10 +347,8 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "disclosures.json", {"t1.transforms": sorted({i for r in runs for i in r.transforms}),
                 "live": stack.state()})
             if baseline:
-                prime = aa_of if aa_of and Path(aa_of).resolve() != Path(baseline).resolve() else None
-                report = flip_report(card, references["baseline"], _read(baseline, "outcomes.json"), repetitions[-1],
-                    aa_prime=None if prime is None else _read(prime, "outcomes.json"),
-                    aa_prime_card=None if prime is None else references["prime"])
+                report = flip_report(card, references["baseline"], outcomes["baseline"], repetitions[-1],
+                    aa_prime=outcomes.get("prime"), aa_prime_card=references.get("prime"))
                 report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
                     current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
                 _write(out, "flips.json", report)
@@ -338,7 +371,11 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             fixedroot.remove_tree(out)
             out.mkdir()
             if code in ("credential_stop", "spend_stop"):
-                _write(out, "receipt.json", _receipt(runs, start, "INFRA_FAILURE"))
+                receipt = canon(_receipt(runs, start, "INFRA_FAILURE"))
+                if any(n in receipt for n in needles):
+                    code = "credential_scan"
+                else:
+                    (out / "receipt.json").write_bytes(receipt)
             _write(out, "refusal.json", dict(code=code))
         print(code, file=sys.stderr)
         return 3
@@ -348,6 +385,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             out.mkdir()
             _write(out, "refusal.json", dict(code="tool_failure"))
         print("tool_failure", file=sys.stderr)
+        traceback.print_exc()
         return 70
     finally:
         if account is not None:

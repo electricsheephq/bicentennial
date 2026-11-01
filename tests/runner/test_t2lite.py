@@ -59,6 +59,13 @@ class Stack:
         return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
 
 
+@pytest.fixture(autouse=True)
+def live_settings(monkeypatch):
+    for name, value in zip(runner.LIVE_ENV, ("https://synthetic.invalid/token", "synthetic-client",
+                                              "https://synthetic.invalid/v1"), strict=True):
+        monkeypatch.setenv(name, value)
+
+
 @pytest.fixture
 def scenario(tmp_path, monkeypatch):
     home = tmp_path / "login"
@@ -133,8 +140,8 @@ def scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "run_life", life)
     monkeypatch.setattr(runner, "score_item", score)
     monkeypatch.setattr(runner.fixedroot, "PARENT", str(tmp_path))
-    state.invoke = lambda name="out", **kw: runner.run_t2lite(system="hermes-native", packs_dir=tmp_path / "packs",
-        pack_hash=ctx.pack_hash, out=tmp_path / name, login_home=home, max_sends=20, **kw)
+    state.invoke = lambda name="out", **kw: runner.run_t2lite(**dict(system="hermes-native", packs_dir=tmp_path / "packs",
+        pack_hash=ctx.pack_hash, out=tmp_path / name, login_home=home, max_sends=20) | kw)
     state.out = tmp_path / "out"
     return state
 
@@ -255,8 +262,10 @@ def test_baseline_checked_before_build_or_send(scenario, tmp_path, field):
         target = target[part]
     target[parts[-1]] = "T1" if field == "tier" else "f" * (40 if field.startswith("pins.") and field != "pins.harness_hash" else 64)
     runner._write(tmp_path / "baseline", "card.json", card)
+    runner._write(tmp_path / "baseline", "outcomes.json", {})
     assert scenario.invoke(baseline=tmp_path / "baseline") == 3
     assert scenario.stacks == [] and scenario.seen == []
+    assert runner._read(scenario.out, "refusal.json") == {"code": "invalid_card:baseline" if field == "tier" else field}
 
 
 def test_flip_identities_and_prime_card(scenario, tmp_path):
@@ -265,7 +274,8 @@ def test_flip_identities_and_prime_card(scenario, tmp_path):
     assert s.invoke("prime", aa_of=tmp_path / "baseline") == 0
     assert runner._read(tmp_path / "prime", "card.json")["aa_prime"] is True
     s.score, s.mode = 0, "identity"
-    assert s.invoke(baseline=tmp_path / "baseline", aa_of=tmp_path / "prime") == 0
+    assert s.invoke(baseline=tmp_path / "baseline", aa_prime=tmp_path / "prime") == 0
+    assert runner._read(s.out, "card.json")["aa_prime"] is False
     report = runner._read(s.out, "flips.json")
     assert len(report["rows"]) == 4
     assert report["served_identity"]["changed"] is True
@@ -322,6 +332,69 @@ def test_planted_flip_rerun_command_repeats_checkpoint(scenario, tmp_path, monke
     assert all(set(rep) == {flip["item_id"]} and rep[flip["item_id"]]["score_milli"] == 0 for rep in repetitions)
 
 
+@pytest.mark.parametrize("kw", [dict(only=("t1-g1", "B0", 2), baseline="baseline"), dict(only=("t1-g1", "B0", 2), aa_of="b"),
+    dict(aa_prime="prime"), dict(baseline="baseline", aa_of="baseline", aa_prime="prime"), dict(repeat=2),
+    dict(only=("t1-g1", "B0", 2), repeat=0), dict(max_sends=-1)])
+def test_argument_refusals_create_nothing(scenario, tmp_path, capsys, kw):
+    kw = {k: tmp_path / v if isinstance(v, str) else v for k, v in kw.items()}
+    assert scenario.invoke(**kw) == 3 and not scenario.out.exists()
+    assert capsys.readouterr().err.split() == ["rerun_arguments"] and scenario.stacks == []
+
+
+def test_live_settings_and_login_home_refuse_first(scenario, monkeypatch, capsys):
+    monkeypatch.delenv(runner.LIVE_ENV[1])
+    assert scenario.invoke() == 3 and not scenario.out.exists()
+    assert capsys.readouterr().err.split() == [runner.LIVE_ENV[1], "live_config"]
+    monkeypatch.setenv(runner.LIVE_ENV[1], "synthetic-client")
+    (scenario.home / "auth.json").unlink()
+    assert scenario.invoke() == 3 and not scenario.out.exists()
+    assert capsys.readouterr().err.split() == ["login_home"] and scenario.stacks == []
+
+
+@pytest.mark.parametrize("damage", ["items", "outcome", "prime_flag"])
+def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
+    s = scenario
+    assert s.invoke("baseline") == 0 and s.invoke("prime", aa_of=tmp_path / "baseline") == 0
+    card, outcomes = runner._read(tmp_path / "baseline", "card.json"), runner._read(tmp_path / "baseline", "outcomes.json")
+    if damage == "items":
+        dropped = card["items"].pop()["item_id"]
+        outcomes.pop(dropped)
+        runner._write(tmp_path / "baseline", "card.json", card)
+    elif damage == "outcome":
+        next(iter(outcomes.values()))["score_milli"] = 7
+    runner._write(tmp_path / "baseline", "outcomes.json", outcomes)
+    prime = tmp_path / ("baseline" if damage == "prime_flag" else "prime")
+    s.stacks.clear(), s.seen.clear()
+    assert s.invoke(baseline=tmp_path / "baseline", aa_prime=prime) == 3
+    assert s.stacks == [] and s.seen == []
+    expected = {"items": "baseline_items", "outcome": "items:baseline", "prime_flag": "aa_prime:flag"}[damage]
+    assert runner._read(s.out, "refusal.json") == {"code": expected}
+
+
+def test_rerun_replays_the_branch_and_keeps_the_checkpoint(scenario, monkeypatch):
+    s = scenario
+    pack = s.ctx.packs[0]
+    extra = dict(row("t1-g1B0-later"), probe_point=3)
+    pack.items["B0"].append(extra)
+    pack.records[extra["item_id"]] = dict(item_id=extra["item_id"], template_id="synthetic", template_version=1)
+    pack.records_b["B0"].append(pack.records[extra["item_id"]])
+    pack.keys[extra["item_id"]] = {}
+    pack.cases[extra["item_id"]] = SimpleNamespace(item=extra)
+    drive, ran = runner.run_life, []
+    def capture(**kw):
+        ran.append((kw["arm"], sorted(i["item_id"] for i in kw["items"])))
+        return drive(**kw)
+    monkeypatch.setattr(runner, "run_life", capture)
+    assert s.invoke(only=("t1-g1", "B0", 2), repeat=2) == 0
+    # Each repetition replays the whole branch, so both items run; only the checkpoint's are kept.
+    assert [ids for arm, ids in ran if arm == "system"] == [["t1-g1B0", "t1-g1B0-later"]] * 2
+    assert {i["item_id"] for i in runner._read(s.out, "card.json")["items"]} == {"t1-g1B0"}
+    repetitions = runner._read(s.out, "repetitions.json")
+    assert [set(rep) for rep in repetitions] == [{"t1-g1B0"}] * 2
+    assert s.invoke("missing", only=("t1-g1", "B0", 9), repeat=2) == 3
+    assert runner._read(s.out.parent / "missing", "refusal.json") == {"code": "only"}
+
+
 SHARED = runpy.run_path(str(Path(__file__).with_name("test_t1.py")))
 PROBE = runpy.run_path(str(Path(__file__).with_name("test_probe_live.py")))
 installed = SHARED["installed"]
@@ -346,8 +419,8 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     from bicentennial.director.scripted import ScriptedResponder
     from bicentennial.probe.probe_responder import ProbeResponder
     from bicentennial.runner import life
-    from bicentennial.systems.registry import REGISTRY, load
     from bicentennial.sandbox.surfaces import surface_hash
+    from bicentennial.systems.registry import REGISTRY, load
     from bicentennial.world.db import open_world
 
     SHARED["environment"].__wrapped__(monkeypatch)

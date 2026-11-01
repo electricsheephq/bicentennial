@@ -123,7 +123,7 @@ def main(argv=None) -> int:
         command.add_argument("--" + name, required=True)
     command.add_argument("--packs", dest="packs_dir", required=True)
     command.add_argument("--max-sends", type=_sends, required=True)
-    for name in ("baseline", "aa-of", "hermes", "plugin-source", "model-cache", "cache"):
+    for name in ("baseline", "aa-of", "aa-prime", "hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command.add_argument("--sandbox-slot", type=int, default=0)
     command.add_argument("--only", type=_only)
