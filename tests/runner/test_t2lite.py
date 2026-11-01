@@ -129,13 +129,16 @@ def scenario(tmp_path, monkeypatch):
             rows = ({"role": "replay_main", "served_by": "live"},)
         if state.mode == "live_upstream":
             rows = ({"role": "probe_main", "upstream": [{"role": "replay_main", "served_by": "live"}]},)
+        if state.mode == "live_upstream_mixed":
+            rows = ({"role": "probe_main", "upstream": [{"role": "probe_main", "served_by": "live"},
+                                                        {"role": "replay_main", "served_by": "live"}]},)
         # The shadow saw two options and the live model said unknown, or it saw none and the model answered.
         shadow = {"competing": ("opt-a", ("opt-b",)), "asserted": (None, ())}.get(state.mode)
         results = {i["item_id"]: ReaderResult(item_id=i["item_id"], mode="hermes", kind="qa",
             selected_option=shadow[0], envelope=UNKNOWN, plan=None, competing_present=shadow[1], carry_over=False,
             in_context=True, missing_required=0, competing={}, forbidden_in_context=None, recall=None)
             for i in kw["items"]} if shadow else {}
-        envelopes = {i["item_id"]: ANSWER for i in kw["items"]} if state.mode == "asserted" else {}
+        envelopes = {i["item_id"]: ANSWER if state.mode == "asserted" else UNKNOWN for i in kw["items"]} if shadow else {}
         if state.mode == "token":
             runner._write(tmp_path / "out", "planted.json", "synthetic-access-token")
         if state.mode == "authbytes":
@@ -149,9 +152,10 @@ def scenario(tmp_path, monkeypatch):
             classes={i["item_id"]: ("INFRA_FAILURE", "responder_live_unavailable") for i in kw["items"]}
                 if state.mode in (429, 503) else {i["item_id"]: ("SYSTEM_FAILURE", "final_mismatch"
                 if i["item_id"] == "t1-g2B1" else "turn_timeout") for i in kw["items"]}
-                if state.mode in ("relabel", "relabel_alone") else {}, records=rows,
-            stopped=(5, "turn_timeout") if state.mode == "relabel" or state.mode == "relabel_alone"
-                and kw["arm"] == "system" else None,
+                if state.mode in ("relabel", "relabel_alone", "relabel_elsewhere") else {}, records=rows,
+            stopped=("SYSTEM_FAILURE", "turn_timeout", 5) if state.mode == "relabel" or state.mode in (
+                "relabel_alone", "relabel_elsewhere") and kw["arm"] == "system" else
+                ("SYSTEM_FAILURE", "turn_timeout", 4) if state.mode == "relabel_elsewhere" else None,
             timings={"pin_check_ms": 1, "sessions": []}, tokens_by_role={"probe_main": (2, 1)})
     def score(item, **kw):
         if kw["cls"] == "INFRA_FAILURE":
@@ -159,8 +163,8 @@ def scenario(tmp_path, monkeypatch):
         scored = row(item["item_id"], state.score)
         if state.mode in ("competing", "asserted"):
             # The real scorer's Ring 0 checks, applied as hermes_score applies them to the reader result.
-            validate("item_outcome", dict(scored, envelope=kw["envelope"] if isinstance(kw["envelope"], dict)
-                else scored["envelope"], selected_option=kw["result"].selected_option,
+            assert isinstance(kw["envelope"], dict)  # the live answer reaches the scorer
+            validate("item_outcome", dict(scored, envelope=kw["envelope"], selected_option=kw["result"].selected_option,
                 competing_present=list(kw["result"].competing_present)))
         return scored
     monkeypatch.setattr(runner.t1, "prepare", lambda **kw: ctx)
@@ -198,7 +202,7 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
 
 
-@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "commit", "damaged"])
+@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "commit", "damaged", "incomplete"])
 def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     entry, = (tmp_path / "cache").iterdir()
@@ -210,8 +214,10 @@ def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
         scenario.ctx.pack_hash = "c" * 64
     elif changed == "commit":
         scenario.ctx.pins["benchmark_commit"] = "c" * 40
-    else:
+    elif changed == "damaged":
         entry.write_bytes(b"{")
+    else:
+        entry.write_bytes(canon({"outcomes": {}, "stops": {}}))
     assert scenario.invoke("changed", cache=tmp_path / "cache") == 0
     assert runner._read(tmp_path / "changed", "card.json")["counts"]["floor_cached"] == 0
     assert len(scenario.seen) == 16
@@ -222,7 +228,7 @@ def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
 @pytest.mark.parametrize("mode,code", [("credential", "credential_stop"), ("spend", "spend_stop"),
     ("canary", "canary"), ("canary_credential", "canary"), ("token", "credential_scan"),
     ("authbytes", "credential_scan"), ("socket", "isolation"), ("live_replay", "isolation"),
-    ("live_upstream", "isolation"), ("gate", "gate_refused")])
+    ("live_upstream", "isolation"), ("live_upstream_mixed", "isolation"), ("gate", "gate_refused")])
 def test_stops_and_invalid_cleanup(scenario, mode, code):
     scenario.mode = mode
     assert scenario.invoke() == 3
@@ -403,7 +409,7 @@ def test_live_settings_and_login_home_refuse_first(scenario, monkeypatch, capsys
     assert capsys.readouterr().err.split() == ["login_home"] and scenario.stacks == []
 
 
-@pytest.mark.parametrize("damage", ["items", "outcome", "prime_flag"])
+@pytest.mark.parametrize("damage", ["items", "outcome", "place", "prime_flag", "prime_invalid", "prime_field"])
 def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
     s = scenario
     assert s.invoke("baseline") == 0 and s.invoke("prime", aa_of=tmp_path / "baseline") == 0
@@ -414,13 +420,33 @@ def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
         runner._write(tmp_path / "baseline", "card.json", card)
     elif damage == "outcome":
         next(iter(outcomes.values()))["score_milli"] = 7
+    elif damage == "place":
+        next(iter(outcomes.values()))["probe_point"] = 9
+    elif damage in ("prime_invalid", "prime_field"):
+        prime_card = runner._read(tmp_path / "prime", "card.json")
+        if damage == "prime_invalid":
+            prime_card["tier"] = "T1"
+        else:
+            prime_card["pins"]["benchmark_commit"] = "f" * 40
+        runner._write(tmp_path / "prime", "card.json", prime_card)
     runner._write(tmp_path / "baseline", "outcomes.json", outcomes)
     prime = tmp_path / ("baseline" if damage == "prime_flag" else "prime")
     s.stacks.clear(), s.seen.clear()
     assert s.invoke(baseline=tmp_path / "baseline", aa_prime=prime) == 3
     assert s.stacks == [] and s.seen == []
-    expected = {"items": "baseline_items", "outcome": "items:baseline", "prime_flag": "aa_prime:flag"}[damage]
+    expected = {"items": "baseline_items", "outcome": "items:baseline", "place": "baseline_items",
+                "prime_flag": "aa_prime:flag", "prime_invalid": "invalid_card:aa_prime",
+                "prime_field": "aa_prime:pins.benchmark_commit"}[damage]
     assert runner._read(s.out, "refusal.json") == {"code": expected}
+
+
+def test_aa_of_card_refused_by_its_own_name(scenario, tmp_path):
+    assert scenario.invoke("baseline") == 0
+    card = runner._read(tmp_path / "baseline", "card.json")
+    card["tier"] = "T1"
+    runner._write(tmp_path / "baseline", "card.json", card)
+    assert scenario.invoke(aa_of=tmp_path / "baseline") == 3
+    assert runner._read(scenario.out, "refusal.json") == {"code": "invalid_card:aa_of"}
 
 
 def test_rerun_replays_the_branch_and_keeps_the_checkpoint(scenario, monkeypatch):
@@ -457,7 +483,8 @@ def test_shadow_reading_kept_off_the_live_score(scenario, mode, shadow):
     assert {(i["selected_option"], tuple(i["competing_present"])) for i in items} == {shadow}
 
 
-@pytest.mark.parametrize("mode,blocked", [("relabel", {"t1-g1B0", "t1-g1B1", "t1-g2B0"}), ("relabel_alone", set())])
+@pytest.mark.parametrize("mode,blocked", [("relabel", {"t1-g1B0", "t1-g1B1", "t1-g2B0"}), ("relabel_alone", set()),
+                                         ("relabel_elsewhere", set())])
 def test_relabel_follows_t1(scenario, monkeypatch, mode, blocked):
     # A plug-in's stop that the floor shared is the harness's. An item's own different stop code, or a stop
     # the floor did not share, stays the system's.

@@ -250,15 +250,20 @@ def _tool_failure(out, created):
     return 70
 
 
-def _cached_floor(path):
-    """A damaged entry is a miss: the floor runs live, and the run writes a whole entry again."""
+def _cached_floor(path, ids, units):
+    """An entry is a hit only if it covers every floor item and unit; any other entry is a miss, so the floor runs
+    live and the run writes a whole entry again."""
     try:
         floor = _read(path.parent, path.name) if path is not None and path.is_file() else None
     except (OSError, ValueError):
         return None
-    if isinstance(floor, dict) and isinstance(floor.get("outcomes"), dict) and isinstance(floor.get("stops"), dict):
+    if (isinstance(floor, dict) and isinstance(floor.get("outcomes"), dict) and isinstance(floor.get("stops"), dict)
+            and set(floor["outcomes"]) == ids and set(floor["stops"]) == units):
         return floor
     return None
+
+
+ROLES = {"baseline": "baseline", "of": "aa_of", "prime": "aa_prime"}
 
 
 def _references(prospective, selection, baseline, aa_of, aa_prime):
@@ -272,11 +277,24 @@ def _references(prospective, selection, baseline, aa_of, aa_prime):
                     outcomes[name] = _read(path, "outcomes.json")
     except (OSError, ValueError):
         raise t1.T1Refused("baseline_unreadable") from None
-    ids = {i["item_id"] for pack, branch in selection for i in pack.items[branch]}
-    for card in cards.values():
-        check_baseline_t2lite(prospective, card)
-        if {i["item_id"] for i in card["items"]} != ids:
-            raise t1.T1Refused("baseline_items")
+    places = {i["item_id"]: (pack.life, branch, i["probe_point"]) for pack, branch in selection for i in pack.items[branch]}
+    for name, card in cards.items():
+        role = ROLES[name]
+        try:
+            check_baseline_t2lite(prospective, card)
+        except BaselineRefused as error:
+            # L5 calls the compared card the baseline; name the earlier run this flag gave.
+            reason = error.reason if role == "baseline" else (
+                "invalid_card:" + role if error.reason == "invalid_card:baseline" else role + ":" + error.reason)
+            raise BaselineRefused(reason) from None
+        try:
+            # The same items, each in the same place: a rerun command is built from these fields.
+            if {i["item_id"] for i in card["items"]} != places.keys() or any(
+                    (row["life"], row["branch"], row["probe_point"]) != places.get(iid)
+                    for iid, row in outcomes.get(name, {}).items()):
+                raise t1.T1Refused(role + "_items")
+        except (KeyError, TypeError, AttributeError):
+            raise t1.T1Refused("baseline_invalid") from None
     if baseline is not None:
         try:
             # L5's own checks with the baseline on both sides: its outcomes vouch for its card, and A′'s for its own.
@@ -335,7 +353,8 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
                             ctx.pins["benchmark_commit"]])
         floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
-        floor = _cached_floor(floor_path)
+        floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
+                              {p.life + b for p in ctx.packs for b in ("B0", "B1")})
         cached = floor is not None
         floor_stops = floor["stops"] if cached else {}
         needles = _secrets(home)
