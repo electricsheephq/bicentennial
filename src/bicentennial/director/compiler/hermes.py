@@ -38,6 +38,7 @@ class Compiled:
     script: dict
     probes: tuple[ProbeSession, ...]
     calls: tuple[CheckCall, ...]
+    answer_contract_sha256: str | None = None
 
 
 def hermes_call(name, args):
@@ -97,7 +98,7 @@ def step_call(step):
     return wire_call(name, args)
 
 
-def compile_script(out_dir, branch, schedule, db, *, items=(), step_s, probe_mode="ring0"):
+def compile_script(out_dir, branch, schedule, db, *, items=(), step_s, probe_mode="ring0", answer_contract=None):
     if probe_mode not in ("ring0", "per_item"):
         raise ValueError("invalid probe mode")
     manifest = verify_branch(out_dir, branch)
@@ -170,7 +171,9 @@ def compile_script(out_dir, branch, schedule, db, *, items=(), step_s, probe_mod
                 raise ValueError("probe starts before checkpoint")
             # per_item: each probe session checks its own turns and every replay turn (#310, condition 2).
             probe_users = set(users) if probe_mode == "per_item" else users
-            turns = [turn(n, "probe", i["prompt"], [], probe_users) for n, i in enumerate(batch, 1)]
+            turns = [turn(n, "probe", i["prompt"] + (answer_contract.render(
+                [o["envelope"] for o in i["options"]]) if answer_contract is not None and i["stage"] != "act"
+                else ""), [], probe_users) for n, i in enumerate(batch, 1)]
             probes.append(ProbeSession(index, k, tuple(i["item_id"] for i in batch), sim_t_s))
             checkpoint_probes.setdefault(k, []).append(dict(index=index, kind="probe", turns=turns))
             index += 1
@@ -182,7 +185,8 @@ def compile_script(out_dir, branch, schedule, db, *, items=(), step_s, probe_mod
     paths = scan_script(script, sorted(sealed), ())
     if paths:
         raise ValueError("sealed script paths: " + ", ".join(paths))
-    return Compiled(script, tuple(probes), tuple(calls))
+    return Compiled(script, tuple(probes), tuple(calls),
+                    answer_contract.contract_hash() if answer_contract is not None else None)
 
 
 def write_script(path, compiled):

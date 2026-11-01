@@ -22,6 +22,7 @@ from bicentennial.audit.readback import (
 from bicentennial.canon import sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_listing
+from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import expected_probe_env, precondition_holds
 from bicentennial.director.compiler.hermes import compile_script, step_call
 from bicentennial.director.routes import RouteTable
@@ -46,6 +47,12 @@ from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
 from bicentennial.runner.lock import LockMismatch
+from bicentennial.runner.probe_live import (
+    LiveCredentialStop,
+    ProbeLiveLeg,
+    ProbeLiveRouter,
+    live_probe_code,
+)
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.surfaces import clone_tree, install_hash, swap_in
@@ -191,10 +198,12 @@ def _earlier(root, session):
                  if r["cursor"]["turn"] < highest for key in ("req", "resp") if r.get(key))
 
 
-def _probe_code(rows, attempt_id):
+def _probe_code(rows, attempt_id, *, probe_live=False):
     for r in rows:
         if r.get("attempt_id") != attempt_id:
             continue
+        if probe_live and (code := live_probe_code(r)):
+            return code
         for upstream in r.get("upstream", []):
             if upstream.get("error") in PROBE_INFRA_CODES:
                 return upstream["error"]
@@ -255,7 +264,8 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm):
 
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
-             worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None) -> LifeRun:
+             worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
+             live=None, live_model=None) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -273,7 +283,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         seed, genre = db.execute("SELECT seed, genre FROM meta").fetchone()
         if seed != life["seed"]:
             raise ValueError("world seed mismatch")
-        compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=STEP_S)
+        compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=STEP_S,
+                                  answer_contract=answer_contract if live is not None else None)
         script = compiled.script
         if arm == "no_memory":
             script = dict(script, sessions=[s for s in script["sessions"] if s["kind"] == "probe"])
@@ -289,6 +300,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             {iid: (p.index, n) for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)},
             {iid: (reader_view(by_id[iid]), keys[iid]) for iid in sorted(by_id)},
             earlier=lambda run_key, session: _earlier(root / "run" / "ledger", session), step_call=step_call)
+        leg = ProbeLiveLeg(live, live_model, responder, answer_contract) if live is not None else None
+        results = leg if leg is not None else responder
+        if leg is not None:
+            evidence.envelopes.update((i["item_id"], None) for i in items if i["stage"] != "act")
         clock = SimClock(root / "clock.json", schedule.sessions[0].turn_t[0] - TURN_S, TURN_S)
         seeds = ({p.index: envseed(db, p.index).seed for p in schedule.sessions} | {
             p.index: probe_envseed(db, p.index, p.checkpoint).seed for p in compiled.probes}) if genre == "G2" else {}
@@ -297,7 +312,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         hook = (PluginWake() if plugin else WipeOnWake(entry, {"HERMES_HOME": root / "run" / "hermes-home"},
                 root / "control")) if arm == "wiped" else None
         hooks = (hook,) if hook is not None else ()
-        common = dict(script=script, route_table=table, schedule=faults, responder=responder, clock=clock,
+        common = dict(script=script, route_table=table, schedule=faults,
+            responder=ProbeLiveRouter(responder, leg) if leg is not None else responder, clock=clock,
             root=root / "run", scratch=scratch, life=life["life"], branch=branch, run=run,
             checkout=hermes, harness_pin=harness_pin, worker_argv=worker_argv,
             toolsets=HERMES_TOOLSETS, env_server=wiring)
@@ -351,8 +367,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     evidence.classes.update((iid, ("SYSTEM_FAILURE", "unsettled"))
                         for iid in sorted(by_id) if by_id[iid]["probe_point"] == checkpoint)
 
+            previous_session = None
             for session in script["sessions"]:
+                if leg is not None:
+                    leg.check_session(previous_session)
                 index, probe = session["index"], probes.get(session["index"])
+                previous_session = index
                 attempt_id = None
                 try:
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
@@ -409,16 +429,19 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 evidence.act[iid] = read_state(paths["workspace"]) if genre == "G1" else {
                                     "records": wiring.records(index)}
                     if probe:
-                        code = _probe_code(adapter.records(), attempt_id)
+                        code = _probe_code(adapter.records(), attempt_id, probe_live=leg is not None)
                         for n, final in result.finals:
                             iid = probe.item_ids[n - 1]
-                            if iid in responder.results() and responder.results()[iid].kind == "qa":
+                            if ((leg is not None and by_id[iid]["stage"] != "act") or
+                                    (iid in results.results() and results.results()[iid].kind == "qa")):
                                 env = evidence.envelopes[iid] = parse_envelope(final)
-                                if env != responder.results()[iid].envelope:
+                                if leg is not None:
+                                    leg.final_items.add(iid)
+                                if leg is None and env != results.results()[iid].envelope:
                                     transforms.append(iid)
                             if code:
                                 evidence.classes[iid] = ("INFRA_FAILURE", code)
-                            if probe.checkpoint in unsettled:
+                            if probe.checkpoint in unsettled and not (leg is not None and code):
                                 evidence.classes[iid] = ("SYSTEM_FAILURE", "unsettled")
                     else:
                         needed = [r["item_id"] for r in records if r["evidence_session"] == index]
@@ -432,11 +455,11 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             evidence.stored_roots.update((iid, tuple(stored)) for iid in needed)
                         if any(p.checkpoint == index for p in compiled.probes):
                             settle_checkpoint(index)
-                except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+                except (SystemRefused, PinMismatch, LockMismatch, GateRefused, LiveCredentialStop):
                     raise
                 except Exception as error:
                     cause = _cause(error)
-                    code = _probe_code(adapter.records(), attempt_id) if probe else None
+                    code = _probe_code(adapter.records(), attempt_id, probe_live=leg is not None) if probe else None
                     if code:
                         cause = ("INFRA_FAILURE", code)
                     stopped = (*cause, index)
@@ -446,10 +469,14 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 evidence.classes[iid] = cause
                             else:
                                 evidence.classes.setdefault(iid, cause)
-                        elif iid not in responder.results():
+                        elif iid not in results.results() and not (leg is not None and code):
                             evidence.classes.setdefault(iid, cause)
+                    if leg is not None and code:
+                        continue
                     break
-        except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+            if leg is not None:
+                leg.check_session(previous_session)
+        except (SystemRefused, PinMismatch, LockMismatch, GateRefused, LiveCredentialStop):
             raise
         except Exception as error:
             cause = _cause(error)
@@ -459,8 +486,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             if adapter is not None:
                 egress = adapter.close()
         if adapter is None:
+            if leg is not None:
+                leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, schedule, records)
             return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
+        if leg is not None:
+            leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, schedule, records)
         ids, requests = _pair_inputs(root / "run" / "ledger", rows, kill, genre)
         timings = {"pin_check_ms": adapter.pin_check_ms, "sessions": [{
             "session": s.session, "kind": s.kind, "workspace": workspace_ms.get(s.session),
@@ -468,7 +499,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 "gate", "egress_wait", "spawn", "import", "open", "turn", "drain", "resume")},
             **{k: s.timings_ms.get(k) for k in ("wall", "shutdown_hook", "close", "finish")},
         } for s in sessions]}
-        return replace(evidence, results=dict(sorted(responder.results().items())), transforms=tuple(sorted(transforms)),
+        return replace(evidence, results=dict(sorted(results.results().items())), transforms=tuple(sorted(transforms)),
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
             post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin, arm),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),

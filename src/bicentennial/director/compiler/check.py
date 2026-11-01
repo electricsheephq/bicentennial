@@ -98,7 +98,8 @@ def _compare(adapter, calls):
     return mismatches
 
 
-def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None):
+def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None,
+                  answer_contract=None):
     """Hold scratch exclusively for the call: its job roots have fixed names (#282)."""
     import fcntl
     import os
@@ -117,12 +118,33 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
             raise ValueError("scratch_busy") from None
         with holding(fd):  # workers inherit the lock, so a killed caller's live workers keep scratch busy
             return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
-                                  checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv)
+                                  checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv,
+                                  answer_contract=answer_contract)
     finally:
         os.close(fd)
 
 
-def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s, worker_argv):
+def _check_contract(compiled, items, answer_contract):
+    from . import answer_contract as fixed
+
+    by_id = {i["item_id"]: i for i in items}
+    cursors = {(p.index, n): by_id[iid] for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)}
+    for session in compiled.script["sessions"]:
+        for turn in session["turns"]:
+            item = cursors.get((session["index"], turn["n"]))
+            suffix = (answer_contract.render([o["envelope"] for o in item["options"]])
+                      if item and item["stage"] != "act" and answer_contract is not None else "")
+            if suffix:
+                valid = turn["user"].endswith(suffix)
+            else:
+                valid = not any(fixed.CONTRACT["template"].replace("<<TYPE>>", kind).replace(
+                    "<<VALUE>>", form) in turn["user"] for kind, form in fixed.CONTRACT["value_forms"].items())
+            if not valid:
+                raise ValueError("answer_contract_suffix")
+
+
+def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s, worker_argv,
+                   answer_contract=None):
     """Execute each check session in a fresh home and compare its durable tool-result receipts."""
     import sqlite3
     from pathlib import Path
@@ -158,7 +180,9 @@ def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scrat
             if tuple(db.execute("SELECT seed FROM meta").fetchone()) != (meta["seed"],):
                 raise ValueError("world seed differs")
             items = json.loads((life_dir / f"items.{branch}.json").read_bytes())
-            compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=step_s)
+            compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=step_s,
+                                      answer_contract=answer_contract)
+            _check_contract(compiled, items, answer_contract)
             if meta["canary"] != compiled.script["canary"]:
                 raise ValueError("life canary differs")
             if genre is not None and genre != compiled.script["genre"]:

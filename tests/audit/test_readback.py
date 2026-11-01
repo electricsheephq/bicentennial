@@ -117,6 +117,31 @@ def test_matching_both_wires():
         assert "discarded draft" not in json.dumps(result)
 
 
+@pytest.mark.parametrize("role", ["probe_main", "replay_main", "summariser", "aux", "memory_write", "embeddings"])
+def test_kit_live_exception_is_probe_only(role):
+    data = fixture("chat")
+    rows, blobs, life, _ = data
+    # Use just the final, text-only row so this unit test needs no socket or write effect.
+    row = rows[-1]
+    row.update(role=role, upstream=[dict(role=role, served_by="live")])
+    blobs[row["resp"]]["choices"][0]["message"]["content"] = "live answer"
+    result = rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
+                      suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {})
+    assert (result["A5"]["script_failures"] == []) == (role == "probe_main")
+    row["upstream"][0]["served_by"] = "scripted"
+    result = rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
+                      suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {})
+    assert result["A5"]["script_failures"] == [row["seq"]]
+
+
+def test_live_probe_upstream_must_also_be_probe_main():
+    rows, blobs, life, _ = fixture("chat")
+    row = dict(rows[-1], role="probe_main", upstream=[dict(role="summariser", served_by="live")])
+    result = rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
+                      suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {})
+    assert result["A5"]["script_failures"] == [row["seq"]]
+
+
 def test_mismatch_kinds_both_wires():
     for wire in MODELS:
         key = "messages" if wire == "chat" else "input"

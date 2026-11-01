@@ -326,6 +326,10 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     last_k, served_ids = {}, set()  # each namespace's last served counter; ids served once in the ledger
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
+        live = [u for u in r.get("upstream", []) if u.get("served_by") == "live"] if fmt == "kit" else []
+        live_probe = bool(live) and r.get("role") == "probe_main" and all(u.get("role") == "probe_main" for u in live)
+        if live and not live_probe:
+            a5["script_failures"].append(seq)
         attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
         if bad and (attempts or r.get("served") in {"write_tool_calls", "script", "script_retry"}):
             a3["failures"].append({"record": seq, "kind": "served_refusal"})  # the turn served no completion
@@ -439,7 +443,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 if tc["id"] in new_results and tc["name"] in write_tools:
                     a3["executed"] += 1
                     calls.append(dict(tc, record=seq, session=cursor["session"], result=new_results[tc["id"]]))
-        if r.get("served") in {"script", "script_retry"} and not bad:
+        if r.get("served") in {"script", "script_retry"} and not bad and not live_probe:
             script_calls, texts = output(blobs[r["resp"]], wire)
             script = turns[turn_index(seq, cursor)][2].get("assistant")
             a5["scripted"] += 1

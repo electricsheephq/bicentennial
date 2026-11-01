@@ -134,6 +134,83 @@ def compiled(world, **kwargs):
     return compile_script(root, "B0", schedule, db, items=kwargs.pop("items", items), **(dict(step_s=60) | kwargs))
 
 
+@pytest.mark.parametrize("genre", ["G1", "G2"])
+def test_answer_contract_suffix_and_applied_hash(worlds, genre, monkeypatch):
+    from bicentennial.director.compiler import answer_contract
+    from bicentennial.director.compiler.check import _check_contract
+
+    world = worlds[genre]
+    plain = compiled(world, answer_contract=None)
+    contracted = compiled(world, answer_contract=answer_contract)
+    _check_contract(plain, world[4], None)
+    _check_contract(contracted, world[4], answer_contract)
+    assert plain.answer_contract_sha256 is None
+    assert contracted.answer_contract_sha256 == answer_contract.contract_hash()
+    plain_turns = {(s["index"], t["n"]): t for s in plain.script["sessions"] for t in s["turns"]}
+    items = {i["item_id"]: i for i in world[4]}
+    for probe in contracted.probes:
+        for n, iid in enumerate(probe.item_ids, 1):
+            turn = next(t for s in contracted.script["sessions"] if s["index"] == probe.index for t in s["turns"] if t["n"] == n)
+            item = items[iid]
+            suffix = answer_contract.render([o["envelope"] for o in item["options"]]) if item["stage"] != "act" else ""
+            assert turn["user"] == plain_turns[probe.index, n]["user"] + suffix
+    changed = copy.deepcopy(answer_contract.CONTRACT)
+    changed["template"] += " Applied contract variant."
+    monkeypatch.setattr(answer_contract, "CONTRACT", changed)
+    variant = compiled(world, answer_contract=answer_contract)
+    assert variant.answer_contract_sha256 == answer_contract.contract_hash() != contracted.answer_contract_sha256
+    _check_contract(variant, world[4], answer_contract)
+
+
+@pytest.mark.parametrize("mutation", ["qa_missing", "act_added", "none_added"])
+def test_check_contract_rejects_suffix_mutants(worlds, mutation):
+    from bicentennial.director.compiler import answer_contract
+    from bicentennial.director.compiler.check import _check_contract
+
+    world = worlds["G1"]
+    contract = None if mutation == "none_added" else answer_contract
+    result = compiled(world, answer_contract=contract)
+    probe = result.probes[0 if mutation != "act_added" else 1]
+    turn = next(s for s in result.script["sessions"] if s["index"] == probe.index)["turns"][0]
+    suffix = answer_contract.render([o["envelope"] for o in world[4][0]["options"]])
+    turn["user"] = turn["user"].removesuffix(suffix) if mutation == "qa_missing" else turn["user"] + suffix
+    with pytest.raises(ValueError, match="answer_contract_suffix"):
+        _check_contract(result, world[4], contract)
+
+
+@pytest.mark.parametrize("kinds,reason", [(["unknown"], "missing"), (["entity", "number"], "mixed"),
+                                         (["env_state"], "unsupported:env_state")])
+def test_compile_answer_type_refusals(worlds, kinds, reason):
+    from bicentennial.director.compiler import answer_contract
+
+    items = copy.deepcopy(worlds["G1"][4])
+    options = []
+    for n, kind in enumerate(kinds):
+        option = copy.deepcopy(items[0]["options"][0])
+        option["option_id"] += f"-{n}"
+        option["envelope"] = dict(type=kind, value={"unknown": None, "number": 1, "env_state": {}}.get(kind, "value"),
+                                   confidence_milli=0 if kind == "unknown" else 1000)
+        if kind == "unknown":
+            option["tokens"] = []
+        options.append(option)
+    items[0]["options"], items[0]["gold"]["option_id"] = options, options[0]["option_id"]
+    items[0]["gold"]["never_observed"] = kinds == ["unknown"]
+    with pytest.raises(ValueError, match=f"answer_contract_type:{reason}"):
+        compiled(worlds["G1"], items=items, answer_contract=answer_contract)
+
+
+@pytest.mark.parametrize("genre", ["G1", "G2"])
+def test_check_compile_with_answer_contract(worlds, tmp_path, fast_check, genre):
+    from bicentennial.director.compiler import answer_contract
+
+    life = life_directory(worlds[genre], tmp_path / "life")
+    try:
+        report = check_life(life, tmp_path / "runs", answer_contract=answer_contract)
+    except PermissionError as error:
+        pytest.skip(f"sandbox denies loopback operation: {error}")
+    assert report["ok"], report
+
+
 @pytest.fixture(autouse=True)
 def ring0_equivalence(monkeypatch):
     def checked(*args, **kwargs):
