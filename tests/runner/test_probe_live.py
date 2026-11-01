@@ -283,11 +283,17 @@ def test_shadow_error_stays_infra_after_later_failure(lives, tmp_path, unit_sess
         iid: ("INFRA_FAILURE", "shadow_error") for iid in first.item_ids}
 
 
+@pytest.mark.parametrize("shadow_fails", [False, True])
 @pytest.mark.parametrize("status", [200, 503])
-def test_unsettled_checkpoint_wins_over_live_failure(lives, tmp_path, unit_sessions, monkeypatch, status):
+def test_unsettled_checkpoint_wins_over_live_failure(lives, tmp_path, unit_sessions, monkeypatch, status, shadow_fails):
     # The store settles, or not, before its probe runs, and only scripted roles reach it, as at T1.
     source, entry = HELPERS["plugin_source"](tmp_path)
     monkeypatch.setattr(PluginCell, "settle", lambda self: SimpleNamespace(settled=False))
+    if shadow_fails:
+        # A failed shadow read is pinned only where nothing has classed the item, so unsettled still wins.
+        def broken(view, *args, **kwargs):
+            raise ArithmeticError("synthetic")
+        monkeypatch.setattr(probe_live, "read", broken)
     case = lives["t1-g1", "B0"]
     live = FakeLive(lambda call: Reply(status, "live_unavailable", "live", call.model, text=canon(UNKNOWN).decode()))
     # A 200 completes the session with the failure in its row; a 503 fails the turn.
