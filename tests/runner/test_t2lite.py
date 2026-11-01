@@ -518,6 +518,38 @@ def test_aa_of_different_baseline_has_no_band(scenario, tmp_path, copied):
     assert len(report["rows"]) == 4 and all(r["unstable"] is None for r in report["rows"])
 
 
+def test_aa_of_band_decided_before_any_send(scenario, tmp_path, monkeypatch):
+    from shutil import copytree
+    s = scenario
+    baseline, other, alias = tmp_path / "baseline", tmp_path / "other", tmp_path / "alias"
+    assert s.invoke("baseline") == 0
+    copytree(baseline, other)
+    alias.symlink_to(baseline, target_is_directory=True)
+    score = runner.score_item
+    def scoring(item, **kw):
+        # Once the run is sending, the alias names the copy instead; the band was already decided.
+        if alias.resolve() != other.resolve():
+            alias.unlink()
+            alias.symlink_to(other, target_is_directory=True)
+        return score(item, **kw)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    assert s.invoke(aa_of=alias, baseline=baseline) == 0
+    assert alias.resolve() == other.resolve()
+    report = runner._read(s.out, "flips.json")
+    assert report["q0"] is not None and "no A/A′ band" not in report["labels"]
+
+
+def test_aa_of_band_follows_file_identity(scenario, tmp_path):
+    s = scenario
+    assert s.invoke("baseline") == 0
+    other_spelling = tmp_path / "BASELINE"
+    if not other_spelling.exists():
+        pytest.skip("case-sensitive file system: the directory has one spelling")
+    assert s.invoke(aa_of=other_spelling, baseline=tmp_path / "baseline") == 0
+    report = runner._read(s.out, "flips.json")
+    assert report["q0"] is not None and "no A/A′ band" not in report["labels"]
+
+
 def test_aa_of_with_aa_prime_refused_before_output(scenario, tmp_path, capsys):
     s = scenario
     baseline = tmp_path / "baseline"

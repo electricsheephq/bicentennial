@@ -380,6 +380,10 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         selection, keep = _select(ctx, only)
         references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
                                            aa_of, aa_prime)
+        # A run whose --aa-of and --baseline name one directory is that run's A′, and its own outcomes are the band.
+        # Decided before any send, by file identity: a symlink or another spelling on a case-insensitive disk is the
+        # same directory, a copy at another path is not.
+        self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
         # The benchmark commit stands for the director, reader and scorer code the floor ran.
         key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
                             ctx.pins["benchmark_commit"]])
@@ -440,7 +444,6 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
                 for key, arm in (("t1.transforms", "system"), ("no_memory.transforms", "no_memory"))}})
             if baseline:
-                self_band = aa_of is not None and Path(aa_of).resolve() == Path(baseline).resolve()
                 report = flip_report(card, references["baseline"], outcomes["baseline"], repetitions[-1],
                     aa_prime=repetitions[-1] if self_band else outcomes.get("prime"),
                     aa_prime_card=card if self_band else references.get("prime"))

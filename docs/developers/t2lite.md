@@ -21,7 +21,7 @@ Use a separate developer login home. The operator identity cannot run `lcm-x`; a
 
 ## Run it
 
-Run from the clone root. In these examples, set `PACK_HASH` to the installed T1 pack's hash, and replace the relative checkout and login directories with your own. Each output directory must be new. Run A first, then repeat the same system and pins as A′ with `--aa-of A --baseline A`. A′'s flips are noise, and its q₀ is the noise rate. Both references must resolve to the same directory; a copy at another path does not supply this band. Then run a change B with `--baseline A --aa-prime A′` to compare it with A using that measured noise.
+Run from the clone root. In these examples, set `PACK_HASH` to the installed T1 pack's hash, and replace the relative checkout and login directories with your own. Each output directory must be new. Run A first, then repeat the same system and pins as A′ with `--aa-of A --baseline A`. A′'s flips are noise, and its q₀ is the noise rate. Both references must name the same directory, which is checked before the first send: a symlink to A, or another spelling of A on a case-insensitive disk, counts; a copy at another path does not supply this band. Then run a change B with `--baseline A --aa-prime A′` to compare it with A using that measured noise.
 
 ```sh
 export PYTHONHASHSEED=0
