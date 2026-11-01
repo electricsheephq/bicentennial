@@ -194,25 +194,42 @@ def test_failed_login_releases_its_hold(make_stack, home):
     custody.HOME_HOLDERS.pop((home / "holder.lock").resolve())
 
 
+class ObservedLock:
+    """Stands in for runner.live._BUILD and reports when a second caller has to wait for it."""
+
+    def __init__(self):
+        self.lock, self.contended = threading.Lock(), threading.Event()
+
+    def __enter__(self):
+        if not self.lock.acquire(blocking=False):
+            self.contended.set()
+            self.lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.lock.release()
+
+
 def gate_first_build(monkeypatch):
     """The first build waits inside open_login until released, then fails; later builds go through."""
-    entered, inside, go = [], threading.Event(), threading.Event()
+    entered, inside, go, lock = [], threading.Event(), threading.Event(), ObservedLock()
     real = custody.open_login
 
     def gated(*args, **kwargs):
         entered.append(threading.current_thread().name)
         if len(entered) == 1:
             inside.set()
-            go.wait(5)
+            go.wait()
             raise custody.Stop("login_error:Synthetic")
         return real(*args, **kwargs)
 
     monkeypatch.setattr(custody, "open_login", gated)
-    return entered, inside, go
+    monkeypatch.setattr(stack, "_BUILD", lock)
+    return entered, inside, go, lock
 
 
 def test_builds_serialise_so_a_failed_build_keeps_another_hold(make_stack, home, monkeypatch):
-    entered, inside, go = gate_first_build(monkeypatch)
+    entered, inside, go, lock = gate_first_build(monkeypatch)
     results = {}
 
     def build(name):
@@ -221,16 +238,17 @@ def test_builds_serialise_so_a_failed_build_keeps_another_hold(make_stack, home,
         except custody.Stop as exc:
             results[name] = exc
 
-    first = threading.Thread(target=build, args=("A",), name="A")
-    first.start()
-    assert inside.wait(5)
-    second = threading.Thread(target=build, args=("B",), name="B")
-    second.start()
-    second.join(0.3)
-    assert second.is_alive() and entered == ["A"]
-    go.set()
-    first.join(5)
-    second.join(5)
+    first = threading.Thread(target=build, args=("A",), name="A", daemon=True)
+    second = threading.Thread(target=build, args=("B",), name="B", daemon=True)
+    try:
+        first.start()
+        assert inside.wait(5)
+        second.start()
+        assert lock.contended.wait(5) and entered == ["A"]
+    finally:  # release the gate and join, so no worker outlives the test
+        go.set()
+        first.join(5)
+        second.join(5)
     assert entered == ["A", "B"] and isinstance(results["A"], custody.Stop)
     path = (home / "holder.lock").resolve()
     assert custody.HOME_HOLDERS[path] is not None
@@ -240,18 +258,28 @@ def test_builds_serialise_so_a_failed_build_keeps_another_hold(make_stack, home,
 
 def test_close_waits_for_a_build_in_flight(make_stack, home, monkeypatch):
     active = make_stack()
-    entered, inside, go = gate_first_build(monkeypatch)
-    failed = threading.Thread(target=lambda: pytest.raises(custody.Stop, make_stack), name="A")
-    failed.start()
-    assert inside.wait(5)
-    closer = threading.Thread(target=active.close)
-    closer.start()
-    closer.join(0.3)
-    assert closer.is_alive() and not active.closed
-    go.set()
-    failed.join(5)
-    closer.join(5)
-    assert active.closed and (home / "holder.lock").resolve() not in custody.HOME_HOLDERS
+    entered, inside, go, lock = gate_first_build(monkeypatch)
+    errors = []
+
+    def failing_build():
+        try:
+            make_stack()
+        except custody.Stop as exc:
+            errors.append(exc)
+
+    failed = threading.Thread(target=failing_build, name="A", daemon=True)
+    closer = threading.Thread(target=active.close, daemon=True)
+    try:
+        failed.start()
+        assert inside.wait(5)
+        closer.start()
+        assert lock.contended.wait(5) and not active.closed
+    finally:
+        go.set()
+        failed.join(5)
+        closer.join(5)
+    assert len(errors) == 1 and active.closed
+    assert (home / "holder.lock").resolve() not in custody.HOME_HOLDERS
 
 
 def test_bridge_failure_stops_the_real_stack(make_stack):
