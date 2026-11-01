@@ -4,7 +4,7 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 
 ## Ring 0 contract change, 2026-11-01: v0.1's third official run (#29, #328)
 - **RING0 §13 E18:** v0.1's maintenance kit r2 also carries SQLite's simulated clock (#270, from #297), so that Holographic's stored dates follow the life's clock and its T1 masked ledger digest can repeat. The next kit's file-time disclosures are not carried.
-- **RING0 §13 E21 and §4:** the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file in body text (`random-uuid-hex-file`), the name Hermes gives an oversized memory recall's spill file, so that Mem0's T1 masked ledger digest can repeat. Every card's `masks_hash` changes. The main branch records the same erratum for the next kit.
+- **RING0 §13 E21 and §4:** the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file after a slash in body text (`random-uuid-hex-file`), the name Hermes gives an oversized memory recall's spill file, so that Mem0's T1 masked ledger digest can repeat. Every card's `masks_hash` changes. The main branch records the same erratum for the next kit.
 - The second official run, on 6a612d4, ran without E18 and E21; its results are to be published with their repeatability verdict and #328's diagnosis. No PREREG version change; PREREG-v0.4 remains frozen.
 
 ## Ring 0 contract change, 2026-10-30: v0.1's second official run (#29)
