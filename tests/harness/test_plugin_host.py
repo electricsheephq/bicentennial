@@ -543,6 +543,7 @@ def regression_host(request, factory, tmp_path, monkeypatch):
         host.name, host.entry = name, load(REGISTRY / f"{name}.toml")
         host.events, host.session, host.turn = {}, 1, 0
         host.forget_kept, host.forget_kept_texts, host._store_generation = {}, {}, 0
+        host._forget_deleted = set()
         host.write_clipped, host.write_max_length = 0, None
         host._worker, host.settled, host._blocks, host._cache = None, True, (), None
         host.paths = dict(hermes_home=surface)
@@ -779,6 +780,34 @@ def test_forget_record_counts_a_reused_row_id_after_a_wipe(regression_host, monk
     delivery.add([host])
     assert delivery.properties("t1")[-1] == (
         "t1.forget_kept", '{"ambiguous":0,"same_text":0,"unattributed":2}')
+
+
+def test_forget_does_not_record_a_row_the_system_kept_after_its_delete(regression_host, monkeypatch):
+    # A system that ignores a delete keeps the row: a later search that returns it is no host keep.
+    host = regression_host("holographic")
+    real = host._call
+
+    def ignores_deletes(kind, **args):
+        action = args.get("arguments", {}).get("action")
+        if kind == "tool" and action == "remove":
+            return dict(result=json.dumps(dict(removed=False)))
+        if kind == "tool" and action == "search":
+            return dict(result=json.dumps(dict(results=[dict(fact_id="zombie", content="quartz")])))
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", ignores_deletes)
+    host.ingest(event())
+    host.forget(dict(event_ids=["e1"]))
+    for i, text in ((2, "mineral"), (3, "granite")):
+        host.ingest(event(i, text))
+        host.forget(dict(event_ids=[f"e{i}"]))
+        assert host.forget_kept == {}
+        assert host.settle(5)
+        host.restore(host.checkpoint())  # a checkpoint may hold the kept row, so the host's delete counts on
+    host.reset()  # a fresh store's row with that text is new, so keeping it is the host's decision
+    host.ingest(event(4, "granite"))
+    host.forget(dict(event_ids=["e4"]))
+    assert host.forget_kept == {("row", host._store_generation, "zombie"): "unattributed"}
 
 
 @pytest.mark.parametrize("failure", ["gate", "call"])

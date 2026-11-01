@@ -133,6 +133,7 @@ class HermesMemoryHost(Adapter):
         self._worker, self.pids, self.gate, self.active_memory_providers = None, [], [], []
         self.events, self.session, self.turn, self.latency_ms = {}, 1, 0, 0
         self.forget_kept, self.forget_kept_texts, self._store_generation = {}, {}, 0
+        self._forget_deleted = set()  # texts of rows this host deleted since its last reset
         self.write_clipped, self.write_max_length = 0, None
         self.settled, self._blocks, self._cache = True, (), None
         self.script = script = dict(canary=CANARY, life_id=life, genre="t0", harness="hermes", sessions=[])
@@ -385,6 +386,7 @@ class HermesMemoryHost(Adapter):
     def reset(self):
         self._wipe()
         self.events, self.turn, self.settled = {}, 0, True
+        self._forget_deleted = set()  # a fresh store holds none of the rows deleted before
 
     @property
     def forget_ambiguous(self):
@@ -405,7 +407,7 @@ class HermesMemoryHost(Adapter):
                    if r["event"]["event_id"] in ids or r["event"].get("call_id") in ids]
         selected = {e["event_id"] for e in targets}
         written = {i: r["written"] for i, r in self.events.items()}
-        kept, seen = {}, set()
+        kept, seen, owned = {}, set(), {}
 
         def record(key, reason, text):
             if key not in self.forget_kept:
@@ -424,13 +426,17 @@ class HermesMemoryHost(Adapter):
                     kept[hit] = kept.get(hit, 0) + 1
                     record(("row", self._store_generation, row_id), "ambiguous", hit)
                     return False
+                owned[row_id] = hit
                 return True
             candidates = {i for i, text in written.items() if text and (hit in text or text in hit)}
             if candidates & selected and candidates - selected:
                 record(("row", self._store_generation, row_id), "ambiguous", hit)
-            elif not candidates:
+            elif not candidates and hit not in self._forget_deleted:  # else the system kept a deleted row
                 record(("row", self._store_generation, row_id), "unattributed", hit)
-            return bool(candidates) and candidates <= selected
+            if candidates and candidates <= selected:
+                owned[row_id] = hit
+                return True
+            return False
 
         search, args, query, listing, text_key, id_key, delete, fixed, key = FORGET[self.name]
         for text in dict.fromkeys(written[event["event_id"]] for event in targets):
@@ -453,6 +459,8 @@ class HermesMemoryHost(Adapter):
                         values = []
                 for value in values:
                     self._call("tool", name=delete, arguments={**fixed, key: value})
+                    if value in owned:
+                        self._forget_deleted.add(owned[value])
                 if not search or not values:
                     break
         for event in targets:
