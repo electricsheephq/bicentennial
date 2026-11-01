@@ -81,7 +81,8 @@ def scenario(tmp_path, monkeypatch):
         items = {b: [dict(row(life + b), probe_point=2)] for b in ("B0", "B1")}
         records = {i["item_id"]: dict(item_id=i["item_id"], template_id="synthetic", template_version=1)
                    for branch in items.values() for i in branch}
-        packs.append(runner.t1._Pack(rel=life, dir=tmp_path, manifest={}, schedule=None,
+        packs.append(runner.t1._Pack(rel=life, dir=tmp_path, manifest={}, schedule=SimpleNamespace(
+            scale=SimpleNamespace(swap=15)),
             life=life, items=items, records=records, genre="G1",
             records_b={b: [records[i["item_id"]] for i in items[b]] for b in items},
             keys={iid: {} for iid in records}, cases={i["item_id"]: SimpleNamespace(item=i)
@@ -146,7 +147,11 @@ def scenario(tmp_path, monkeypatch):
             audit={"status": "INFRA_FAILURE", "failures": ["A5.missing_scripts"]} if state.mode == "audit"
                 else {"status": "OK", "failures": []}, results=results, envelopes=envelopes,
             classes={i["item_id"]: ("INFRA_FAILURE", "responder_live_unavailable") for i in kw["items"]}
-                if state.mode in (429, 503) else {}, records=rows,
+                if state.mode in (429, 503) else {i["item_id"]: ("SYSTEM_FAILURE", "final_mismatch"
+                if i["item_id"] == "t1-g2B1" else "turn_timeout") for i in kw["items"]}
+                if state.mode in ("relabel", "relabel_alone") else {}, records=rows,
+            stopped=(5, "turn_timeout") if state.mode == "relabel" or state.mode == "relabel_alone"
+                and kw["arm"] == "system" else None,
             timings={"pin_check_ms": 1, "sessions": []}, tokens_by_role={"probe_main": (2, 1)})
     def score(item, **kw):
         if kw["cls"] == "INFRA_FAILURE":
@@ -193,7 +198,7 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
 
 
-@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "damaged"])
+@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "commit", "damaged"])
 def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     entry, = (tmp_path / "cache").iterdir()
@@ -203,6 +208,8 @@ def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
         scenario.ctx.pins["harness_hash"] = "c" * 64
     elif changed == "pack":
         scenario.ctx.pack_hash = "c" * 64
+    elif changed == "commit":
+        scenario.ctx.pins["benchmark_commit"] = "c" * 40
     else:
         entry.write_bytes(b"{")
     assert scenario.invoke("changed", cache=tmp_path / "cache") == 0
@@ -363,10 +370,12 @@ def test_planted_flip_rerun_command_repeats_checkpoint(scenario, tmp_path, monke
     assert s.invoke(baseline=tmp_path / "baseline", cache=tmp_path / "cache") == 0
     flip = runner._read(s.out, "flips.json")["rows"][0]
     command = flip["rerun"]
+    # Filling the placeholders alone makes a command the parser accepts.
     for old, new in (("<packs>", str(tmp_path / "packs")), ("<hermes checkout>", "unused"),
-                     ("<new dir>", str(tmp_path / "rerun"))):
+                     ("<login home>", str(s.home)), ("<max sends>", "30"), ("<new dir>", str(tmp_path / "rerun"))):
         command = command.replace(old, new)
-    argv = shlex.split(command)[2:] + ["--login-home", str(s.home), "--max-sends", "30", "--cache", str(tmp_path / "cache")]
+    assert "<" not in command
+    argv = shlex.split(command)[2:]
     monkeypatch.setenv("PYTHONHASHSEED", "0")
     monkeypatch.setattr(cli, "reexec_niced", lambda *args: None)
     assert cli.main(argv) == 0
@@ -446,6 +455,36 @@ def test_shadow_reading_kept_off_the_live_score(scenario, mode, shadow):
     assert scenario.invoke() == 0
     items = runner._read(scenario.out, "card.json")["items"]
     assert {(i["selected_option"], tuple(i["competing_present"])) for i in items} == {shadow}
+
+
+@pytest.mark.parametrize("mode,blocked", [("relabel", {"t1-g1B0", "t1-g1B1", "t1-g2B0"}), ("relabel_alone", set())])
+def test_relabel_follows_t1(scenario, monkeypatch, mode, blocked):
+    # A plug-in's stop that the floor shared is the harness's. An item's own different stop code, or a stop
+    # the floor did not share, stays the system's.
+    scenario.mode = mode
+    monkeypatch.setattr(runner, "is_plugin", lambda name: True)
+    monkeypatch.setattr(runner, "resolve_worker_env", lambda *args: None)
+    assert scenario.invoke() == 0
+    classes = {i["item_id"]: i["failure_class"] for i in runner._read(scenario.out, "card.json")["items"]}
+    assert {iid for iid, c in classes.items() if c == "BLOCKED"} == blocked and len(classes) == 4
+
+
+def test_swap_position_follows_the_schedule(scenario):
+    scenario.ctx.packs[0].schedule.scale.swap = 2
+    assert scenario.invoke() == 0
+    rows = runner._read(scenario.out, "outcomes.json")
+    assert {iid: r["swap_position"] for iid, r in rows.items()} == {
+        "t1-g1B0": "after", "t1-g1B1": "after", "t1-g2B0": "before", "t1-g2B1": "before"}
+
+
+def test_failure_while_refusing_removes_output(scenario, monkeypatch):
+    scenario.mode = "credential"
+    def broken(out, needles):
+        raise OSError("synthetic read failure")
+    monkeypatch.setattr(runner, "_scan", broken)
+    assert scenario.invoke() == 70
+    assert sorted(p.name for p in scenario.out.iterdir()) == ["refusal.json"]
+    assert runner._read(scenario.out, "refusal.json") == {"code": "tool_failure"}
 
 
 def test_refusal_codes_follow_t1(scenario, monkeypatch):

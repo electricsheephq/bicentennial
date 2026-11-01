@@ -185,6 +185,7 @@ def rerun_command(card, item):
         plugin += " --model-cache <model cache>"
     return (f"PYTHONHASHSEED=0 bicentennial t2lite --system {system} --packs <packs> "
             f"--pack-hash {digest} --hermes <hermes checkout>{plugin} "
+            f"--login-home <login home> --max-sends <max sends> "
             f"--only {life}:{branch}:{item.probe_point} --repeat 3 --out <new dir>")
 
 

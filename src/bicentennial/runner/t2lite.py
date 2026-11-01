@@ -142,12 +142,14 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 raise t1.T1Refused("spend_stop")
             scores = {}
             probes = _read(run._root, "t2lite_probes.json")
+            # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
+            floor_stop = (floor_stops or {}).get(pack.life + branch)
+            relabel = (arm == "system" and is_plugin(ctx.entry["name"]) and run.stopped
+                and run.stopped[1] in t1.RELABEL and floor_stop and list(floor_stop)[1:] == list(run.stopped)[1:])
             for item in pack.items[branch]:
                 iid = item["item_id"]
                 cls, label = run.classes.get(iid, (None, None))
-                if (arm == "system" and is_plugin(ctx.entry["name"]) and run.stopped and
-                        label in t1.RELABEL and list(run.stopped)[1:] ==
-                        ((floor_stops or {}).get(pack.life + branch) or [None])[1:]):
+                if relabel and (cls, label) == ("SYSTEM_FAILURE", run.stopped[1]):
                     cls = "INFRA_FAILURE"
                 if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
                     cls, label = "INFRA_FAILURE", "audit"
@@ -185,7 +187,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
 
 
 def _joined(pack, branch, scores, probes):
-    rows = {}
+    rows, swap = {}, pack.schedule.scale.swap
     for probe in probes:
         iid = probe["item_id"]
         item = next(i for i in pack.items[branch] if i["item_id"] == iid)
@@ -196,7 +198,7 @@ def _joined(pack, branch, scores, probes):
             genre=pack.genre, twin_bundle=None if bundle is None else bundle["bundle_id"], twin_flip=None,
             in_context=probe["shadow"]["in_context"], value_match=probe["envelope"]["value_match"],
             citation_match=probe["envelope"]["citation_match"], crosses_cold_restart=t1._crosses(pack, item),
-            swap_position="before" if item["probe_point"] < 15 else "after")
+            swap_position="none" if swap is None else "before" if item["probe_point"] < swap else "after")
     return rows
 
 
@@ -236,6 +238,16 @@ def _select(ctx, only):
             if keep:
                 return [(pack, branch)], keep
     raise t1.T1Refused("only")
+
+
+def _tool_failure(out, created):
+    if created:
+        fixedroot.remove_tree(out)
+        out.mkdir()
+        _write(out, "refusal.json", dict(code="tool_failure"))
+    print("tool_failure", file=sys.stderr)
+    traceback.print_exc()
+    return 70
 
 
 def _cached_floor(path):
@@ -319,7 +331,9 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         selection, keep = _select(ctx, only)
         references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
                                            aa_of, aa_prime)
-        key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"]])
+        # The benchmark commit stands for the director, reader and scorer code the floor ran.
+        key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
+                            ctx.pins["benchmark_commit"]])
         floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
         floor = _cached_floor(floor_path)
         cached = floor is not None
@@ -399,33 +413,31 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
         if code in ("credential_stop", "spend_stop") and live is not None and live.canary:
             code = "canary"  # INVALID outranks a stop: the guard latched a canary body
-        if created:
-            try:
-                _scan(out, needles)
-            except t1.T1Refused:
-                code = "credential_scan"
-            fixedroot.remove_tree(out)
-            out.mkdir()
-            if code in ("credential_stop", "spend_stop"):
-                # L1's custody rows say why: the drained log, and a Stop's own records.
-                files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE")),
-                         "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
-                if any(n in data for data in files.values() for n in needles):
+        try:
+            if created:
+                try:
+                    _scan(out, needles)
+                except t1.T1Refused:
                     code = "credential_scan"
-                else:
-                    for name, data in files.items():
-                        (out / name).write_bytes(data)
-            _write(out, "refusal.json", dict(code=code))
+                fixedroot.remove_tree(out)
+                out.mkdir()
+                if code in ("credential_stop", "spend_stop"):
+                    # L1's custody rows say why: the drained log, and a Stop's own records.
+                    files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE")),
+                             "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
+                    if any(n in data for data in files.values() for n in needles):
+                        code = "credential_scan"
+                    else:
+                        for name, data in files.items():
+                            (out / name).write_bytes(data)
+                _write(out, "refusal.json", dict(code=code))
+        except Exception:
+            # A failure while refusing goes the tool_failure way, which removes everything written.
+            return _tool_failure(out, created)
         print(code, file=sys.stderr)
         return 3
     except Exception:
-        if created:
-            fixedroot.remove_tree(out)
-            out.mkdir()
-            _write(out, "refusal.json", dict(code="tool_failure"))
-        print("tool_failure", file=sys.stderr)
-        traceback.print_exc()
-        return 70
+        return _tool_failure(out, created)
     finally:
         if account is not None:
             os.close(account)
