@@ -2,6 +2,9 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-01: host keep decisions are disclosed (#135 part 2)
+- **RING0 §7 and §13 E22:** from the next kit, host keep decisions survive reset and restore, each tier's JUnit discloses canonical counts as `<tier>.forget_kept`, and a failing `store_hit` also carries `host_kept` when a kept text contains a searched needle. Statuses and member counts stay unchanged; kept texts stay in memory only. The scorer pin moves (`score/invariants.py`), so packs built before this change are rebuilt. v0.1's frozen kit keeps its rule. No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-11-01: spill-file names are masked (#328)
 - **RING0 §13 E21 and §4:** from the next kit, the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file after a slash in body text (`random-uuid-hex-file`). That is the name Hermes gives an oversized memory recall's spill file, which made Mem0's two T1 runs differ. Every card's `masks_hash` changes. v0.1's maintenance kit carries E18 and E21 from its third official run (#329). No PREREG version change; PREREG-v0.5 remains frozen.
 

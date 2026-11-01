@@ -105,7 +105,7 @@ def test_installed_reference_branch_drives(installed, tmp_path):
     for pack in packs(installed):
         start = time.monotonic_ns()
         for branch in ("B0", "B1"):
-            results, outcomes, roots = t0.drive_branch(pack, branch, ReferenceStore,
+            results, outcomes, roots, _ = t0.drive_branch(pack, branch, ReferenceStore,
                 bound_s=t0.REFERENCE_BOUND_S, snapshot=snapshotter(tmp_path / pack.pack["pack_id"] / branch))
             expected = {i["item_id"] for i in pack.pack["items"]
                         if pack.records[i["item_id"]]["branch"] == branch}
@@ -188,7 +188,7 @@ def test_settle_false_is_system_failure(installed, tmp_path):
             return False
 
     pack = packs(installed)[0]
-    results, outcomes, _ = t0.drive_branch(pack, "B0", Unsettled,
+    results, outcomes, _, _ = t0.drive_branch(pack, "B0", Unsettled,
         bound_s=5, snapshot=snapshotter(tmp_path))
     assert not results
     assert outcomes and all(i["failure_class"] == "SYSTEM_FAILURE" for i in outcomes.values())
@@ -317,7 +317,7 @@ def test_corpus_equality_deferred(installed, tmp_path):
             assert [e for _, e in pack.events[branch]] == build.api_events(worlds[branch][1])
             expected = corpus.drive(life, branch, worlds, keys, items, ReferenceStore,
                                      oracle=False, forget=True, bound_s=5)
-            results, _, _ = t0.drive_branch(pack, branch, ReferenceStore, bound_s=5,
+            results, _, _, _ = t0.drive_branch(pack, branch, ReferenceStore, bound_s=5,
                                             snapshot=snapshotter(tmp_path / "snap" / branch))
             assert [corpus.outcome(results[i]) for i in sorted(results)] == expected
 
@@ -354,7 +354,7 @@ def test_retry_classification(installed, tmp_path, monkeypatch):
             return super().query(task, now)
 
     monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Intermittent)
-    results, outcomes, roots, factories = t0._attempts(installed[1], pack, "B0",
+    results, outcomes, roots, factories, _ = t0._attempts(installed[1], pack, "B0",
         dict(name="reference_store", surfaces=[]), installed[2], False, tmp_path, 0,
         bound_s=5, host_options={})
     try:
@@ -372,7 +372,7 @@ def test_exhausted_or_system_cause(installed, tmp_path, monkeypatch, system):
             raise HarnessFailed("query_failed" if system else "ipc")
 
     monkeypatch.setitem(t0.REFERENCE_SYSTEMS, "reference_store", Broken)
-    results, outcomes, _, factories = t0._attempts(installed[1], packs(installed)[0], "B0",
+    results, outcomes, _, factories, _ = t0._attempts(installed[1], packs(installed)[0], "B0",
         dict(name="reference_store", surfaces=[]), installed[2], False, tmp_path, 0,
         bound_s=5, host_options={})
     try:
@@ -452,7 +452,7 @@ def fake_hosts(installed, tmp_path, monkeypatch):
 
 def test_owned_host_drive(fake_hosts):
     factory, created = fake_hosts
-    results, outcomes, roots = t0.drive_branch(factory.pack, "B0", factory,
+    results, outcomes, roots, _ = t0.drive_branch(factory.pack, "B0", factory,
         bound_s=5, snapshot=factory.snapshot)
     factory.close()
     assert results and outcomes and roots
@@ -468,6 +468,33 @@ def test_invariant_hosts_closed(fake_hosts):
     verdicts = factory.invariants(5)
     assert all(v.status == "PASS" for v in verdicts.values())
     assert created and all(h.closed == 1 for h in created)
+
+
+def test_host_kept_run_and_pack(fake_hosts, installed, tmp_path, monkeypatch):
+    factory, _ = fake_hosts
+
+    def forget(host, selector):
+        host.forget_kept_texts = {i: host.events[i]["text"] for i in selector["event_ids"]}
+        ReferenceStore.forget(host, selector)
+
+    original = t0.HermesMemoryHost.surfaces
+
+    def surfaces(host):
+        roots = original(host)
+        (host.store / "retained").write_text(" ".join(getattr(host, "forget_kept_texts", {}).values()))
+        return roots
+
+    monkeypatch.setattr(t0.HermesMemoryHost, "forget", forget)
+    monkeypatch.setattr(t0.HermesMemoryHost, "surfaces", surfaces)
+    adapter = factory.invariants(5)
+    assert adapter["INV-FORGET"].reasons == ("host_kept", "store_hit")
+    results, outcomes, roots, made, texts = t0._branches(installed[1], factory.pack, factory.entry,
+        installed[2], True, tmp_path / "branches", 1, bound_s=5, host_options={})
+    try:
+        verdicts = t0._pack_invariants(factory.pack, results, outcomes, roots, {}, adapter, kept_texts=texts)
+        assert next(v for v in verdicts if v["invariant"] == "INV-FORGET")["reasons"] == ["host_kept", "store_hit"]
+    finally:
+        t0._remove_units(made)
 
 
 def test_invariant_injected_context(fake_hosts, monkeypatch):
@@ -639,13 +666,13 @@ def test_parallel_pack_invariants_and_baseline(installed, tmp_path):
     for pack in selected:
         factories = []
         try:
-            results, outcomes, roots, made = t0._branches(index, pack, entry, installed[2], False,
+            results, outcomes, roots, made, _ = t0._branches(index, pack, entry, installed[2], False,
                 tmp_path / pack.pack["pack_id"] / "main", 2, bound_s=bound_s, host_options={})
             factories.extend(made)
             baseline = {}
             if any(t0._verb_member(pack, i) for i in pack.pack["items"]):
                 twin = by_row[pack.meta["row"]["baseline"]]
-                twin_results, _, _, made = t0._branches(index, twin, entry, installed[2], False,
+                twin_results, _, _, made, _ = t0._branches(index, twin, entry, installed[2], False,
                     tmp_path / pack.pack["pack_id"] / "baseline", 1, bound_s=bound_s, host_options={})
                 factories.extend(made)
                 baseline = t0._baseline_context(pack, twin, twin_results)
@@ -1761,6 +1788,9 @@ def test_t0_delivery_properties_count_all_hosts_and_repeat(installed, tmp_path, 
             suite = ET.parse(out / rel / "junit.xml").getroot()[0]
             props = {p.attrib["name"]: p.attrib["value"] for p in suite.findall("properties/property")}
             assert props["t0.write_clipped"] == str(expected)
+            assert props["t0.forget_kept"] == canon({reason: sum(
+                list(h.forget_kept.values()).count(reason) for h in hosts)
+                for reason in ("ambiguous", "same_text", "unattributed")}).decode()
             assert props["t0.fields"] == canon({"actor": "not_delivered", "text":
                 "full" if limit is None else f"clipped:{limit}", "time": "session_clock"}).decode()
             if limit is None:
@@ -1810,7 +1840,7 @@ def test_close_error_preserves_system_cause(installed, tmp_path):
         def close(self):
             raise HarnessFailed("cleanup")
 
-    results, outcomes, _ = t0.drive_branch(packs(installed)[0], "B0", Broken, bound_s=5,
+    results, outcomes, _, _ = t0.drive_branch(packs(installed)[0], "B0", Broken, bound_s=5,
                                           snapshot=snapshotter(tmp_path))
     assert not results and all(o["failure_class"] == "SYSTEM_FAILURE" for o in outcomes.values())
 
