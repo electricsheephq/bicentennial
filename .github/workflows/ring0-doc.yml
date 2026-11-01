@@ -33,3 +33,13 @@ jobs:
           python -m bicentennial.packs.install verify runs/ring0-t0-packs --pack-hash "$PACK_HASH"
           bicentennial t0 --system reference_store --pack all --packs runs/ring0-t0-packs --pack-hash "$PACK_HASH" --out runs/ring0-t0-reference_store
           python -c 'import json, pathlib; from bicentennial.report.receipt import loop_time; times = [(loop_time(json.loads(p.read_bytes()))[0], p.parent.as_posix()) for p in sorted(pathlib.Path("runs/ring0-t0-reference_store").rglob("receipt.json"))]; [print(ms, "ms", pack) for ms, pack in times]; print("maximum per-pack loop_time:", max(ms for ms, pack in times), "ms")'
+      - name: Run the developer guide's T2-lite offline path
+        shell: bash
+        run: |
+          set -e
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install -e .[dev]
+          export PYTHONHASHSEED=0
+          python -m pytest -q tests/runner/test_t2lite.py::test_full_fake_worker_and_rerun_store_hashes --junitxml=build/t2lite-offline.xml
+          python -c 'import xml.etree.ElementTree as E; root = E.parse("build/t2lite-offline.xml").getroot(); assert len(root.findall(".//testcase")) == 1 and not root.findall(".//skipped"), "offline acceptance must pass without skips"'

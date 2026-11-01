@@ -42,6 +42,11 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
   - **Sessions of 10-200 turns** (G1 line 32). A scripted session has about 5 assistant turns (PREREG §6, §10).
 - **What stays:** the world processes, entities and channels in both documents remain the genre design.
 
+**E15. Developer regression sets do not stock the public corpus (T2-lite, #338).**
+- **The text:** [DESIGN §9.1](DESIGN.md#91-developer-rings-and-tiers-no-decision-bar) says a result's repro bundle "joins the regression corpus run in T1".
+- **What governs:** [PREREG-v0.5 §6](../prereg/PREREG-v0.5.md#6-tiers-rings-subsets-and-branches) stocks the public corpus "never from one system's failures"; PREREG governs.
+- **The correction:** T2-lite flip lists and rerun commands form the developer's own regression set and never stock the public regression corpus. Public stocking remains from controls, reference stubs and equal runs over every board system.
+
 ## Spike criteria
 
 **E8. S7 A2 passes on introduced hits.**
