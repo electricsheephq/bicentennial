@@ -581,6 +581,23 @@ def test_random_uuids_in_body_text_are_masked():
     assert apply_masks(kept, RUN_VALUES) == kept
 
 
+def test_spill_file_uuid_hex_is_masked():
+    # Hermes's hook output spill saves an oversized memory recall as <session>/<uuid4 hex>.txt and replays
+    # the path with the user turn, so two identical runs differ in that name (#328, E21).
+    def body(session, name):
+        return {"messages": [{"role": "user", "content": (
+            f"[mem0 memory prefetch was 12,345 chars; full text saved to {RUN_VALUES['sandbox_root']}"
+            f"/hermes-home/hook_outputs/{session}/{name}.txt]\n## Mem0 Memory\n- fact")}]}
+    a = apply_masks(body("b466f50d-3add-467d-b497-d47aa3c58973", "0d5023e69e4f4ea59a2a0832bd7a739d"), RUN_VALUES)
+    b = apply_masks(body("ba4a28a4-b4e4-4c61-95ca-e583993134e1", "13732fb5545c4d39b24589181dfd14cc"), RUN_VALUES)
+    assert a == b and "hook_outputs/{UUID}/{UUID}.txt]" in a["messages"][0]["content"]
+    # Only a version-4 UUID's hex that names a .txt file after a slash: other hex runs stay.
+    for text in ("/0d5023e69e4f1ea59a2a0832bd7a739d.txt", "/0d5023e69e4f4ea5ca2a0832bd7a739d.txt",
+                 "/" + "0" * 12 + "4000" + "8" + "0" * 47 + ".txt", "x0d5023e69e4f4ea59a2a0832bd7a739d.txt",
+                 "/0d5023e69e4f4ea59a2a0832bd7a739d.json"):
+        assert apply_masks({"text": text}, RUN_VALUES) == {"text": text}
+
+
 def test_a_mask_pattern_that_matches_empty_text_is_refused(monkeypatch):
     from bicentennial.ledger import stable
     monkeypatch.setattr(stable, "_MASKS", [{"kind": "pattern", "name": "m", "placeholder": "{X}",

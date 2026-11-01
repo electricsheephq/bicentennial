@@ -298,7 +298,8 @@ def test_masks_cover_required_categories_and_exclude_director_tool_ids():
     names = {m["name"] for m in masks}
     assert {"hermes-session", "harness-tool-call", "harness-function-call",
             "harness-response", "harness-root-response", "harness-stream-response",
-            "wall-clock-t", "wall-clock-created", "random-uuid", "sandbox-root", "director-port"} <= names
+            "wall-clock-t", "wall-clock-created", "random-uuid", "random-uuid-hex-file", "sandbox-root",
+            "director-port"} <= names
     for entry in masks:
         if entry["placeholder"] in {"{HERMES_SESSION_ID}", "{HARNESS_TOOL_CALL_ID}",
                                     "{HARNESS_RESPONSE_ID}"}:
