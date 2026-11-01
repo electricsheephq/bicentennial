@@ -107,9 +107,12 @@ def test_t2lite_rerun_command_roundtrip(ready, monkeypatch):
     helpers = runpy.run_path(str(Path(__file__).parent / "report/test_t2lite_flips.py"))
     item = helpers["item"]("synthetic")
     command = rerun_command(helpers["card"](), item)
-    for placeholder, path in (("<packs>", "packs"), ("<hermes checkout>", "hermes"), ("<new dir>", "out")):
-        command = command.replace(placeholder, path)
-    argv = shlex.split(command)[2:] + ["--login-home", "fake-login", "--max-sends", "30"]
+    # Filling the placeholders alone makes a command the parser accepts.
+    for placeholder, value in (("<packs>", "packs"), ("<hermes checkout>", "hermes"), ("<login home>", "fake-login"),
+                               ("<max sends>", "30"), ("<new dir>", "out")):
+        command = command.replace(placeholder, value)
+    assert "<" not in command
+    argv = shlex.split(command)[2:]
     captured = []
     monkeypatch.setattr(cli, "run_t2lite", lambda **kw: captured.append(kw) or 0)
     assert cli.main(argv) == 0
