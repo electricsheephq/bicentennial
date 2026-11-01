@@ -49,6 +49,7 @@ def inputs():
                 pins={name: old["pins"][name] for name in pin_names},
                 model="synthetic-model", effort="medium", served_identity="synthetic-identity",
                 aa_prime=False, items=old["items"], counts=dict(assigned=len(old["items"])),
+                not_scored_live=[],
                 answer_contract_sha256=CONTRACT_SHA256)
 
 
@@ -129,6 +130,7 @@ def test_schema_copies_items_pins_and_inherited_labels():
                                              for name in inputs()["pins"]}
     inherited = {k: v for k, v in old["labels"]["properties"].items() if k != "scripted_model"}
     extra = {
+        "act": {"enum": ["Act: G1 actions are the live model's, scored by T1's action predicates"]},
         "t2lite": {"enum": ["T2-lite: live probe answers; not predictive of the full tier; never certifies"]},
         "act_g2": {"enum": ["G2 actions not scored live"]},
         "entity_match": {"enum": ["entity answers match exactly"]},
@@ -210,6 +212,58 @@ def test_each_item_carries_item_outcome_semantics(path, bad, reason):
 
 def live_row(**fields):
     return dict(inputs()["items"][0], **fields)
+
+
+def unscored_row(iid="unscored"):
+    return live_row(item_id=iid, stage="act", base_verdict=None, score_milli=None,
+                    worst_case_milli=None, accuracy_correct=None, tuesday_class=None,
+                    envelope=None, failure_class=None, stage_attribution=None,
+                    benign_extra=False, carry_over=False)
+
+
+def test_unscored_action_requires_listing():
+    row = unscored_row()
+    card = cards.build_t2lite_card(**dict(inputs(), items=[row], not_scored_live=[row["item_id"]]))
+    assert card["items"] == [row] and card["not_scored_live"] == [row["item_id"]]
+    card["not_scored_live"] = []
+    with pytest.raises(ValueError, match="non-result must have null score"):
+        cards.validate_t2lite_card(card)
+
+
+@pytest.mark.parametrize("fields", [
+    dict(score_milli=0), dict(worst_case_milli=0), dict(base_verdict="PASS"),
+    dict(accuracy_correct=False), dict(tuesday_class="late"), dict(envelope=inputs()["items"][0]["envelope"]),
+    dict(failure_class="BLOCKED"), dict(stage_attribution="used"), dict(benign_extra=True),
+    dict(carry_over=True), dict(stage="remember"), dict(infra_reruns=3),
+])
+def test_listed_row_requires_unscored_action_form(fields):
+    with pytest.raises(ValueError, match="^t2lite_card:not_scored_live$"):
+        cards.build_t2lite_card(**dict(inputs(), items=[dict(unscored_row(), **fields)],
+                                      not_scored_live=["unscored"]))
+
+
+@pytest.mark.parametrize("listed", [["missing"], ["b", "a"], ["a", "a"]])
+def test_unscored_list_requires_existing_sorted_unique_ids(listed):
+    with pytest.raises(ValueError, match="^t2lite_card:not_scored_live$"):
+        cards.build_t2lite_card(**dict(inputs(), items=[unscored_row("a"), unscored_row("b")],
+                                      not_scored_live=listed))
+
+
+def test_list_cannot_hide_a_scored_action_or_qa_row():
+    scored = dict(unscored_row(), score_milli=1000, worst_case_milli=1000,
+                  base_verdict="PASS", accuracy_correct=True)
+    for row in (scored, live_row()):
+        validate("item_outcome", row)
+        with pytest.raises(ValueError, match="^t2lite_card:not_scored_live$"):
+            cards.build_t2lite_card(**dict(inputs(), items=[row], not_scored_live=[row["item_id"]]))
+
+
+@pytest.mark.parametrize("fields", [dict(competing_present=["z", "y"]),
+    dict(competing_present=["option-a"]), dict(selected_option=None, competing_present=["z"])])
+def test_unscored_row_keeps_shadow_invariants(fields):
+    with pytest.raises(ValueError, match="^t2lite_card:shadow$"):
+        cards.build_t2lite_card(**dict(inputs(), items=[dict(unscored_row(), **fields)],
+                                      not_scored_live=["unscored"]))
 
 
 @pytest.mark.parametrize("fields", [

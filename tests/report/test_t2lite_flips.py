@@ -22,6 +22,8 @@ def card(system="hermes-native", *, run=None, aa_prime=False):
               "harness_hash": "c" * 64},
         model="synthetic-model", effort="medium", served_identity="synthetic-identity",
         aa_prime=aa_prime, items=card_items(run or {}), counts={},
+        not_scored_live=sorted(iid for iid, r in (run or {}).items()
+                               if r["stage"] == "act" and r["genre"] == "G2" and r["failure_class"] is None),
         answer_contract_sha256="d" * 64)
 
 
@@ -69,6 +71,22 @@ def test_each_comparability_field_refuses_with_its_path(side, field, value):
 
 def test_identical_valid_cards_pass():
     assert flips.check_baseline_t2lite(card(), card()) is None
+
+
+def test_baseline_without_unscored_list_is_invalid():
+    current, baseline = card(), card()
+    del baseline["not_scored_live"]
+    with pytest.raises(flips.BaselineRefused, match="^invalid_card:baseline$"):
+        flips.check_baseline_t2lite(current, baseline)
+
+
+def test_unscored_actions_vouch_and_stay_excluded():
+    run = {"g2-act": item(item_id="g2-act", stage="act", genre="G2", score_milli=None,
+                          base_verdict=None, failure_class=None, envelope="missing", stage_attribution=None)}
+    current = card(run=run)
+    report = flips.flip_report(current, current, run, run)
+    assert report["rows"] == [] and report["counts"]["scored"] == 0
+    assert [(r["item_id"], r["reason"]) for r in report["excluded"]] == [("g2-act", "not_scored_live")]
 
 
 @pytest.mark.parametrize("side", ["current", "baseline"])
