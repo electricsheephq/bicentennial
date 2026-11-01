@@ -142,6 +142,26 @@ def test_shadow_carry_over_ignores_earlier_contracts():
     assert result.in_context is True and result.carry_over is False
 
 
+@pytest.mark.parametrize("token,carried", [("confidence_milli", False), ("ANSWER-TOKEN", True)])
+def test_shadow_reads_earlier_answers_by_their_content(tmp_path, token, carried):
+    # The shadow reads the reader's earlier exchanges, so an earlier envelope's field names never carry over and its
+    # value does (#355).
+    item, leg, live, call = unit_leg(token)
+    store = BlobStore(tmp_path / "blobs", Guard([]))
+    answer = canon(dict(type="entity", value="ANSWER-TOKEN", confidence_milli=500, citation=None)).decode()
+    row = dict(seq=1, role="probe_main", cursor=dict(session=21, turn=1),
+               req=store.put(dict(messages=[dict(role="user", content="An earlier synthetic question?")])),
+               resp=store.put(dict(choices=[dict(message=dict(role="assistant", content=answer))])))
+    (tmp_path / "ledger.jsonl").write_bytes(canon(row) + b"\n")
+    leg.scripted.cursors = {(21, 2): item["item_id"]}
+    leg.scripted.earlier = runner._probe_earlier(tmp_path)
+    body = dict(call.body, messages=call.body["messages"] + [
+        dict(role="tool", tool_call_id="synthetic-call", content=token)])
+    leg.respond(replace(call, subrole="tool_results", body=body, cursor=dict(session=21, turn=2)))
+    result = leg.results()[item["item_id"]]
+    assert result.in_context is True and result.carry_over is carried
+
+
 def test_shadow_first_last_earlier_and_error(monkeypatch):
     item, leg, live, call = unit_leg()
     iid = item["item_id"]

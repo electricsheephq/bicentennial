@@ -272,7 +272,7 @@ def entry():
     return load(ROOT / "systems/registry/hermes-native.toml")
 
 
-def responder(iids=("qf0",), *, system=None, earlier=lambda run, session: (), step_call=plain_step):
+def responder(iids=("qf0",), *, system=None, earlier=lambda run, session, turn: (), step_call=plain_step):
     items, keys, _ = fixtures()
     system = entry() if system is None else system
     return ProbeResponder(ScriptedResponder(system), system,
@@ -387,8 +387,8 @@ def carry_rows(wire):
     items, _, _ = fixtures()
     history, accesses, rows = [], [], []
 
-    def earlier(run, session):
-        accesses.append((run, session))
+    def earlier(run, session, turn):
+        accesses.append((run, session, turn))
         return tuple(history)
 
     probe = responder(("qf0", "kf1"), earlier=earlier)
@@ -406,13 +406,25 @@ def carry_rows(wire):
     append_exchange(request, wire, reply.tool_calls[0], "WINDOW-7401")
     probe.respond(call_for(wire, request, "tool_results", run="next-run"))
     assert probe.results()["qf0"].carry_over is True
-    assert accesses == [("s04-run", 1), ("s04-run", 1), ("next-run", 1)]
+    assert accesses == [("s04-run", 1, 1), ("s04-run", 1, 2), ("next-run", 1, 1)]
     return [*rows, asdict(probe.results()["qf0"])]
 
 
 @pytest.mark.parametrize("wire", ["chat", "responses"])
 def test_ledger_carry_over_survives_compaction(wire):
     carry_rows(wire)
+
+
+def test_no_recall_reader_names_its_turn():
+    # Without a recall tool the decision comes at the turn's first request, before that turn's ledger row exists,
+    # so the responder names the turn instead of letting the ledger infer it (#352).
+    items, _, _ = fixtures()
+    seen = []
+    probe = responder(("qf0", "kf1"), system=dict(entry(), recall=None),
+                      earlier=lambda run, session, turn: seen.append((run, session, turn)) or ())
+    for iid, turn in (("qf0", 1), ("kf1", 2)):
+        probe.respond(call_for("chat", body("chat", items[iid]["prompt"]), turn=turn))
+    assert seen == [("s04-run", 1, 1), ("s04-run", 1, 2)]
 
 
 @pytest.mark.parametrize("encoded", [False, True])
@@ -434,7 +446,7 @@ def test_ledger_carry_over_excludes_prompt_memory(wire, field, role, encoded):
     history = [prior, {"text": "Earlier answer."}]
     if encoded:
         history = [canon(record) for record in history]
-    probe = responder(earlier=lambda run, session: tuple(history))
+    probe = responder(earlier=lambda run, session, turn: tuple(history))
     request = body(wire, items["qf0"]["prompt"])
     reply = probe.respond(call_for(wire, request))
     append_exchange(request, wire, reply.tool_calls[0], "WINDOW-7401")
@@ -458,7 +470,7 @@ def test_ledger_carry_over_excludes_prompt_memory(wire, field, role, encoded):
 def test_ledger_carry_over_keeps_exchange_content(prior):
     items, _, _ = fixtures()
     original = copy(prior)
-    probe = responder(earlier=lambda run, session: (prior,))
+    probe = responder(earlier=lambda run, session, turn: (prior,))
     request = body("chat", items["qf0"]["prompt"])
     reply = probe.respond(call_for("chat", request))
     append_exchange(request, "chat", reply.tool_calls[0], "WINDOW-7401")
@@ -735,7 +747,7 @@ def test_keyed_policy_properties():
         wire = choice("s04", unit, 0, "wire", ("chat", "responses"))
         system = entry()
         probe = ProbeResponder(ScriptedResponder(system), system, {"qf0": (1, 1)},
-                               {"qf0": (view, keys["qf0"])}, earlier=lambda r, s: ())
+                               {"qf0": (view, keys["qf0"])}, earlier=lambda r, s, t: ())
         request = body(wire, view["prompt"])
         first = probe.respond(call_for(wire, request))
         append_exchange(request, wire, first.tool_calls[0], text)
