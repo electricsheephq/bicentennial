@@ -3,7 +3,9 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 contract change, 2026-11-01: v0.1's third official run (#29, #328)
-- **RING0 §13 E18:** v0.1's maintenance kit r2 also carries SQLite's simulated clock (#270, from #297), so that Holographic's stored dates follow the life's clock and its T1 masked ledger digest can repeat. The next kit's file-time disclosures are not carried. The second official run, on 6a612d4, is published as rejected on repeatability. No PREREG version change; PREREG-v0.4 remains frozen.
+- **RING0 §13 E18:** v0.1's maintenance kit r2 also carries SQLite's simulated clock (#270, from #297), so that Holographic's stored dates follow the life's clock and its T1 masked ledger digest can repeat. The next kit's file-time disclosures are not carried.
+- **RING0 §13 E21 and §4:** the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file in body text (`random-uuid-hex-file`), the name Hermes gives an oversized memory recall's spill file, so that Mem0's T1 masked ledger digest can repeat. Every card's `masks_hash` changes. The main branch records the same erratum for the next kit.
+- The second official run, on 6a612d4, ran without E18 and E21; its results are to be published with their repeatability verdict and #328's diagnosis. No PREREG version change; PREREG-v0.4 remains frozen.
 
 ## Ring 0 contract change, 2026-10-30: v0.1's second official run (#29)
 - **RING0 §13 E13, E15, E17, E19:** v0.1's maintenance kit carries the unbound-socket rule (#205), the whole-number port mask (#278), the cursor-less `sim_now` projection (#287) and the MCP discovery wait (#71), so that its second official run can repeat byte for byte. The first official run, on db9c0c5, is published as rejected on repeatability. E12, E14, E16 and E18 stay next-kit errata. No PREREG version change; PREREG-v0.4 remains frozen.
