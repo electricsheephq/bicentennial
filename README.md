@@ -13,7 +13,7 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 > - **The run-time rule:** the full-tier runs (the board with its seasonal study, each delta board and the Image board) execute in locked, resumable segments from the same commit and stores. Every replaying arm's run of a life finishes within a day, and each system's work fits a work bound in each of its board, study and Image board runs. It is sized by the measured capacity of each model lane, per account. Paid-lane spend is capped at $100 per full-tier run, all systems together. The Image board, when it runs, is a run separate from the Text board, under the same rule. The pilot's runs of record run contiguously, within wall-time ceilings.
 > - **Agents run the benchmark end to end, with no human graders.** Gold comes from the world state, mechanical checks come first, agent panels from different model families judge what is left, and pre-registered rules settle every disagreement (DV48).
 > - Spikes S1-S7 are under way, and S8 (images) is specified.
-> - The v0.1 developer kit (Ring 0 T0 and T1) runs from a source checkout. Its first official run is published, rejected on repeatability: [results/v0.1-kit](results/v0.1-kit/README.md).
+> - The v0.1 developer kit (Ring 0 T0 and T1) runs from a source checkout. Its first official run is published, rejected on repeatability, and so is its second, on the maintenance kit, rejected on `t1_identical`: [results/v0.1-kit](results/v0.1-kit/README.md).
 
 ## The capability map
 
