@@ -74,8 +74,9 @@
   - a route the vendor binds to a fixed model stays on that model: Mem0's extraction on `gpt-5-mini`, and its embedder.
 - **Why.** PREREG §10 gives each system and segment "the summariser (the vendor's documented default)" (PREREG-v0.5 line 688). Mem0's vendor default is `gpt-5-mini` whatever the main model is.
   - DESIGN §6.2c says the swap "moves the probe model, the summariser and the alias". That sentence assumes a summariser on the main model. That holds for Hermes's host compaction under every Hermes stack and for LCM-X, but not for Mem0's extraction. Whether host compaction counts as a plug-in system's "own compaction" (§6.2c) is open. That question does not change what moves: host compaction is bound to the main model, so it moves under the reading above either way. The same DESIGN erratum settles the wording.
-  - PREREG governs DESIGN (DESIGN, Precedence), so the difference goes to a DESIGN erratum.
+  - PREREG governs DESIGN (DESIGN, Precedence), so the difference goes to a DESIGN erratum. The erratum covers every place DESIGN repeats the sentence: §6.2c, §3's Wake row and §13's swap-lane count. §13 puts all of a life's requests on the swap lane from the swap session on, so under this reading it overstates Mem0's share of that lane and stays an upper bound.
   - The other reading, in which every summariser moves, would need that erratum the other way, or a PREREG-v0.6 rule. Either is settled before the first live swap.
+- **Disclosure.** Swap bundles are confirmatory only on the swap subset (DESIGN §3), and the moved routes differ by system, so swap-subset results list, for each system, the routes that moved and the routes that stayed.
 - **Vision never moves.** The route table refuses a row that moves it (`src/bicentennial/director/routes.py:36-37`).
 - **Embeddings must not move,** so a store keeps one embedding space for the whole life. This follows from §6.2c, which moves only the probe model, the summariser and the alias. Today the director serves embeddings with the route's probe model, which does move (Still open).
 
@@ -187,6 +188,7 @@
   - S6d checks the title calls at the pinned effort, on the account pool it uses.
 - **The Anthropic endpoint.** Z.ai's GLM-5.3 page says previous or expired coding-plan subscribers reach the model API only over chat-completions. The Claude Code sub-row needs the Anthropic endpoint on the account it uses.
 - **The served effort level,** which no run has recorded.
+- **The auxiliary routes' effort.** C-2's terms hold only for the configuration the board runs, and "at `high`" covers the probe route alone. S6d runs the auxiliary routes at the effort the per-route rule settles (#343), or measures both that and the vendor default. In r6, which sent them no effort, the two compaction calls in `write` took 79 s and 119 s, with completions that were mostly reasoning (`spikes/s6a/REPORT.md:33`).
 
 ## C-5: the developer-tier window (provisional)
 
