@@ -56,8 +56,13 @@ def to_responses(body, *, effort):
         if tool.get("type") != "function":
             raise ValueError("bridge_unsupported_tool")
         function = tool["function"]
+        # Chat functions are non-strict unless they say so; Responses is strict when strict is omitted.
+        strict = function.get("strict", False)
+        if strict is not None and type(strict) is not bool:
+            raise ValueError("bridge_unsupported_tool")
         tools.append({"type": "function", "name": function["name"],
-                      "description": function.get("description", ""), "parameters": function.get("parameters", {})})
+                      "description": function.get("description", ""), "parameters": function.get("parameters", {}),
+                      "strict": strict is True})
     if tools:
         out["tools"] = tools
     if "tool_choice" in body:

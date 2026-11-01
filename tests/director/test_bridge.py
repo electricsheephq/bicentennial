@@ -74,8 +74,8 @@ def test_literal_message_tool_parity():
         ],
         "tools": [
             {"type": "function", "name": "lookup", "description": "Look up", "parameters": {
-                "type": "object", "properties": {"q": {"type": "integer"}}}},
-            {"type": "function", "name": "finish", "description": "", "parameters": {}},
+                "type": "object", "properties": {"q": {"type": "integer"}}}, "strict": False},
+            {"type": "function", "name": "finish", "description": "", "parameters": {}, "strict": False},
         ],
         "tool_choice": {"type": "function", "name": "lookup"}, "parallel_tool_calls": False,
     }
@@ -94,6 +94,7 @@ def test_literal_string_tool_choice(choice):
     ({"z_extra": 1, "a_extra": 2}, "bridge_unmapped_key:a_extra"),
     ({"messages": [{"role": "alien", "content": "text"}]}, "bridge_unsupported_role"),
     ({"tools": [{"type": "web_search"}]}, "bridge_unsupported_tool"),
+    ({"tools": [{"type": "function", "function": {"name": "f", "strict": "yes"}}]}, "bridge_unsupported_tool"),
     ({"messages": [{"role": "user", "content": "text", "tool_calls": [
         {"type": "function"}]}]}, "bridge_unsupported_tool_call"),
     ({"messages": [{"role": "assistant", "content": None, "tool_calls": [
@@ -181,6 +182,15 @@ def test_structural_failure_latches_like_any_other():
     reply = bridge.respond(call({"messages": [{"role": "user", "content": "hello"}]}))
     assert (reply.status, reply.served) == (503, "live_stopped")
     assert inner.calls == [] and inner.stops == ["bridge_malformed"]
+
+
+@pytest.mark.parametrize("strict,expected", [(True, True), (False, False), (None, False)])
+def test_tool_strictness_keeps_chat_semantics(strict, expected):
+    function = {"name": "lookup", "parameters": {"type": "object", "properties": {"q": {"type": "integer"}}}}
+    if strict is not None:
+        function["strict"] = strict
+    tools = to_responses({"tools": [{"type": "function", "function": function}]}, effort="medium")["tools"]
+    assert tools[0]["strict"] is expected
 
 
 def test_null_collections_are_empty_ones():
