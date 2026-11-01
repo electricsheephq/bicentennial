@@ -441,8 +441,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     transforms.append(iid)
                             if code:
                                 evidence.classes[iid] = ("INFRA_FAILURE", code)
-                            if probe.checkpoint in unsettled and not (leg is not None and code):
+                            if probe.checkpoint in unsettled:
                                 evidence.classes[iid] = ("SYSTEM_FAILURE", "unsettled")
+                        if leg is not None:
+                            # A failed shadow read leaves no result, so a later session's failure must not class it.
+                            for iid in probe.item_ids:
+                                if iid in leg.errors:
+                                    evidence.classes.setdefault(iid, ("INFRA_FAILURE", "shadow_error"))
                     else:
                         needed = [r["item_id"] for r in records if r["evidence_session"] == index]
                         if needed:

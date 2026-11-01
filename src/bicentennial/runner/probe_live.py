@@ -95,6 +95,8 @@ class ProbeLiveLeg:
         iid = self.scripted.cursors[position]
         view, keys = self.scripted.readers[iid]
         key = (call.run_key, *position)
+        # The body is the one the live model sent: like T1's reader, the shadow sees the model's own earlier
+        # messages in this session, but never this item's answer, which is the reply.
         try:
             suffix = self.contract.render([o["envelope"] for o in view["options"]]) if "envelope" in view["options"][0] else ""
             body = strip_contract(call.body, view["prompt"], suffix)
@@ -137,6 +139,10 @@ class ProbeLiveLeg:
         blobs = BlobStore(root / "run/ledger/blobs", Guard([]))
         by_id, records = {i["item_id"]: i for i in items}, []
         metadata = {r["item_id"]: r for r in item_records}
+        # The stack's identity_drift holds only the first drift; each off-baseline reply is marked in its row.
+        changed = {(r.get("cursor") or {}).get("session") for r in rows if r.get("role") == "probe_main" and any(
+            isinstance(d, dict) and d.get("identity_changed") is True
+            for u in r.get("upstream", []) for d in u.get("diagnostics", []))}
         for probe in compiled.probes:
             for n, iid in enumerate(probe.item_ids, 1):
                 item, result = by_id[iid], self.latest.get(iid)
@@ -165,5 +171,5 @@ class ProbeLiveLeg:
                         value_match_normalised=value_match_normalised(gold, env) if qa else None,
                         citation_match=citation_match(env["citation"], texts) if env else None),
                     live=dict(served_by=final.get("served_by"), served=final.get("served"),
-                              identity_flag=probe.index in self.identity_flags)))
+                              identity_flag=probe.index in self.identity_flags or probe.index in changed)))
         (root / "t2lite_probes.json").write_bytes(canon(sorted(records, key=lambda r: r["item_id"])))

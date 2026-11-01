@@ -443,7 +443,7 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
                 if tc["id"] in new_results and tc["name"] in write_tools:
                     a3["executed"] += 1
                     calls.append(dict(tc, record=seq, session=cursor["session"], result=new_results[tc["id"]]))
-        if r.get("served") in {"script", "script_retry"} and not bad and not live_probe:
+        if r.get("served") in {"script", "script_retry"} and not bad:
             script_calls, texts = output(blobs[r["resp"]], wire)
             script = turns[turn_index(seq, cursor)][2].get("assistant")
             a5["scripted"] += 1

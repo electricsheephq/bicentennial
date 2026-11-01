@@ -40,6 +40,7 @@ from bicentennial.runner.probe_live import (
 )
 from bicentennial.sandbox.surfaces import surface_hash
 from bicentennial.score.check_selftest import g2_cases
+from bicentennial.systems.hermes_plugin import PluginCell
 from bicentennial.world.db import open_world
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -127,9 +128,10 @@ def test_shadow_first_last_earlier_and_error(monkeypatch):
 
 def test_model_ambiguity_explicit_override_and_chat_pin():
     _, leg, live, call = unit_leg()
-    live.upstreams = {}
-    with pytest.raises(ValueError, match="probe_live_model_ambiguous"):
-        ProbeLiveLeg(live, None, leg.scripted, answer_contract)
+    for upstreams in ({}, {"model-a": SimpleNamespace(effort="medium"), "model-b": SimpleNamespace(effort="medium")}):
+        live.upstreams = upstreams
+        with pytest.raises(ValueError, match="probe_live_model_ambiguous"):
+            ProbeLiveLeg(live, None, leg.scripted, answer_contract)
     explicit = ProbeLiveLeg(live, "explicit", leg.scripted, answer_contract)
     explicit.respond(call)
     assert live.calls[-1].model == "explicit"
@@ -256,6 +258,43 @@ def test_shadow_error_still_sends_and_is_no_result_infra(lives, tmp_path, unit_s
         (result._root / "t2lite_probes.json").read_bytes()))
 
 
+def test_shadow_error_stays_infra_after_later_failure(lives, tmp_path, unit_sessions, monkeypatch):
+    case = lives["t1-g1", "B0"]
+    first = case["compiled"].probes[0]
+    later = next((s["index"] for s in case["compiled"].script["sessions"]
+                  if s["kind"] != "probe" and s["index"] > first.index), None)
+    assert later is not None
+    read, run_session = probe_live.read, adapter.HermesAdapter.run_session
+    def broken(view, *args, **kwargs):
+        if view["item_id"] in first.item_ids:
+            raise ArithmeticError("synthetic")
+        return read(view, *args, **kwargs)
+    def run(self, index, **kwargs):
+        if index == later:
+            raise HarnessFailed("turn_failed")
+        return run_session(self, index, **kwargs)
+    monkeypatch.setattr(probe_live, "read", broken)
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", run)
+    result = drive(case, tmp_path, live=FakeLive())
+    # The replay failure stops the life, but cannot turn the earlier shadow error into a system failure.
+    assert result.stopped == ("SYSTEM_FAILURE", "turn_failed", later)
+    assert {iid: result.classes[iid] for iid in first.item_ids} == {
+        iid: ("INFRA_FAILURE", "shadow_error") for iid in first.item_ids}
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_unsettled_checkpoint_wins_over_live_failure(lives, tmp_path, unit_sessions, monkeypatch, status):
+    # The store settles, or not, before its probe runs, and only scripted roles reach it, as at T1.
+    source, entry = HELPERS["plugin_source"](tmp_path)
+    monkeypatch.setattr(PluginCell, "settle", lambda self: SimpleNamespace(settled=False))
+    case = lives["t1-g1", "B0"]
+    live = FakeLive(lambda call: Reply(status, "live_unavailable", "live", call.model, text=canon(UNKNOWN).decode()))
+    # A 200 completes the session with the failure in its row; a 503 fails the turn.
+    result = drive(case, tmp_path / "run", entry=entry, plugin_source=source, live=live)
+    assert live.calls
+    assert result.classes == {i["item_id"]: ("SYSTEM_FAILURE", "unsettled") for i in case["items"]}
+
+
 def test_record_bytes_fields_and_live_answer_independence(lives, tmp_path, unit_sessions):
     case = lives["t1-g1", "B0"]
     by_cursor = {(p.index, n): next(i for i in case["items"] if i["item_id"] == iid)
@@ -301,6 +340,23 @@ def test_last_session_identity_is_recorded(lives, tmp_path, unit_sessions):
     result = drive(case, tmp_path, live=live)
     rows = json.loads((result._root / "t2lite_probes.json").read_bytes())
     assert all(row["live"]["identity_flag"] == (row["probe_session"] == last) for row in rows)
+
+
+def test_each_identity_change_flags_its_session(lives, tmp_path, unit_sessions):
+    case, live = lives["t1-g1", "B0"], FakeLive()
+    first, last = case["compiled"].probes[0].index, case["compiled"].probes[-1].index
+    assert first != last
+    def answer(call):
+        changed = call.cursor["session"] in (first, last)
+        if changed:
+            # As L1 does, the stack's state keeps only the first drift; each reply's diagnostics mark its own.
+            live.values.setdefault("identity_drift", {"served": "first-change"})
+        return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode(),
+                     upstream=(dict(identity_changed=True),) if changed else ())
+    live.reply = answer
+    result = drive(case, tmp_path, live=live)
+    rows = json.loads((result._root / "t2lite_probes.json").read_bytes())
+    assert {row["probe_session"] for row in rows if row["live"]["identity_flag"]} == {first, last}
 
 
 @pytest.mark.parametrize("life", ["t1-g1", "t1-g2"])
@@ -396,6 +452,7 @@ def test_oracle_matches_t1(lives, tmp_path, harness, loopback, life):
             case["t"].schedule, _templates(case["t"], case["t"].twin.compiled.records), life=life)
     cases = {c.item["item_id"]: c for c in cases}
     stream = [json.loads(line) for line in (case["t"].out_dir / "stream.B0.jsonl").read_bytes().splitlines()]
+    shadow = {r["item_id"]: r["shadow"] for r in json.loads((actual._root / "t2lite_probes.json").read_bytes())}
     for item in case["items"]:
         iid = item["item_id"]
         outcomes = [score_item(item, cls=None, label=None, result=r.results[iid], envelope=r.envelopes.get(iid, MISSING),
@@ -405,6 +462,9 @@ def test_oracle_matches_t1(lives, tmp_path, harness, loopback, life):
         assert all(isinstance(o, dict) for o in outcomes)
         assert [(o["score_milli"], o["failure_class"]) for o in outcomes] == [
             (outcomes[0]["score_milli"], outcomes[0]["failure_class"])] * 2, iid
+        # The record's attribution is the scorer's, for QA and action items alike, and here equals T1's.
+        assert shadow[iid]["stage_attribution"] == outcomes[1]["stage_attribution"] == outcomes[0]["stage_attribution"], iid
+    assert any(s["stage_attribution"] for s in shadow.values())
     again_root = tmp_path / "live-b"
     again = drive(live_case, again_root, live=Oracle(case, again_root))
     record = (actual._root / "t2lite_probes.json").read_bytes()

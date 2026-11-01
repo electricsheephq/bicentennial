@@ -123,15 +123,20 @@ def test_kit_live_exception_is_probe_only(role):
     rows, blobs, life, _ = data
     # Use just the final, text-only row so this unit test needs no socket or write effect.
     row = rows[-1]
-    row.update(role=role, upstream=[dict(role=role, served_by="live")])
+    scripted = row["served"]
+    assert scripted == "script"
+    def failures():
+        return rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
+                        suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {})["A5"]["script_failures"]
+    # A live reply is served by the responder, never as a script, so only the role decides.
+    row.update(role=role, served="responder_live", upstream=[dict(role=role, served_by="live")])
     blobs[row["resp"]]["choices"][0]["message"]["content"] = "live answer"
-    result = rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
-                      suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {})
-    assert (result["A5"]["script_failures"] == []) == (role == "probe_main")
+    assert (failures() == []) == (role == "probe_main")
+    # A row still marked as served from the script is checked against it, whatever its upstream says.
+    row["served"] = scripted
+    assert row["seq"] in failures()
     row["upstream"][0]["served_by"] = "scripted"
-    result = rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
-                      suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {})
-    assert result["A5"]["script_failures"] == [row["seq"]]
+    assert failures() == [row["seq"]]
 
 
 def test_live_probe_upstream_must_also_be_probe_main():
