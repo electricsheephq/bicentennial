@@ -476,4 +476,3 @@ def test_existing_pack_trees_are_unchanged(tmp_path):
         db_path.write_bytes(bytes(data))
     assert manifest.tree_sha256(tmp_path / "T0" / rel) != packs[rel]["tree_sha256"]
     assert host_free_tree_sha256(tmp_path / "T0" / rel) == LEGACY_PACK_HASHES[rel]
-
