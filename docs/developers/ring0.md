@@ -235,6 +235,8 @@ Exit-3 codes and causes, including registry reasons above:
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `settle_unmapped` | Hook settle has no `SETTLE_THREADS` mapping. |
 | `surface_not_empty` | A sandbox-home memory surface already holds files before install. |
+| `visible_pack_overlaps_surface` | The agent-visible pack directory overlaps the workspace or a memory surface. |
+| `visible_path_escape` | An agent-visible file would be written outside the pack directory. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
 | `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |
