@@ -295,8 +295,10 @@ def life_ids(obj, path="life"):
     return found
 
 
-def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_needles, effects=None):
-    """-> {"A1".."A5"}; A4 is None without an effects hook. Raises on a ledger this audit cannot read."""
+def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_needles, effects=None,
+          probe_live=False):
+    """-> {"A1".."A5"}; A4 is None without an effects hook. Raises on a ledger this audit cannot read.
+    probe_live: a T2-lite kit ledger, where only probe answers may be live; S7 Part B's live routes are its own."""
     if fmt not in FORMATS:
         raise ValueError(f"unknown_format:{fmt}")
     write_tools = tuple(write_tools)
@@ -326,6 +328,10 @@ def audit(rows, blobs, turns, wire, *, fmt, model_for, suffix, write_tools, id_n
     last_k, served_ids = {}, set()  # each namespace's last served counter; ids served once in the ledger
     for r, body in requests:
         seq, cursor = r["seq"], r.get("cursor")
+        live = [u for u in r.get("upstream", []) if u.get("served_by") == "live"] if fmt == "kit" and probe_live else []
+        live_probe = bool(live) and r.get("role") == "probe_main" and all(u.get("role") == "probe_main" for u in live)
+        if live and not live_probe:
+            a5["script_failures"].append(seq)
         attempts, bad = attempts_of(r), refused(r, blobs.get(r.get("resp")))
         if bad and (attempts or r.get("served") in {"write_tool_calls", "script", "script_retry"}):
             a3["failures"].append({"record": seq, "kind": "served_refusal"})  # the turn served no completion

@@ -117,6 +117,39 @@ def test_matching_both_wires():
         assert "discarded draft" not in json.dumps(result)
 
 
+@pytest.mark.parametrize("role", ["probe_main", "replay_main", "summariser", "aux", "memory_write", "embeddings"])
+def test_kit_live_exception_is_probe_only(role):
+    data = fixture("chat")
+    rows, blobs, life, _ = data
+    # Use just the final, text-only row so this unit test needs no socket or write effect.
+    row = rows[-1]
+    scripted = row["served"]
+    assert scripted == "script"
+    def failures(probe_live=True):
+        return rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
+                        suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {},
+                        probe_live=probe_live)["A5"]["script_failures"]
+    # A live reply is served by the responder, never as a script, so only the role decides.
+    row.update(role=role, served="responder_live", upstream=[dict(role=role, served_by="live")])
+    blobs[row["resp"]]["choices"][0]["message"]["content"] = "live answer"
+    assert (failures() == []) == (role == "probe_main")
+    # Off the probe-live path (S7 Part B routes write turns live on purpose), a live role is not a script failure.
+    assert failures(probe_live=False) == []
+    # A row still marked as served from the script is checked against it, whatever its upstream says.
+    row["served"] = scripted
+    assert row["seq"] in failures()
+    row["upstream"][0]["served_by"] = "scripted"
+    assert failures() == [row["seq"]]
+
+
+def test_live_probe_upstream_must_also_be_probe_main():
+    rows, blobs, life, _ = fixture("chat")
+    row = dict(rows[-1], role="probe_main", upstream=[dict(role="summariser", served_by="live")])
+    result = rb.audit([row], blobs, rb.turns_from_life(life), "chat", fmt="kit", model_for=lambda s: "probe-model",
+                      suffix=None, write_tools=(), id_needles=[], effects=lambda *args: {}, probe_live=True)
+    assert result["A5"]["script_failures"] == [row["seq"]]
+
+
 def test_mismatch_kinds_both_wires():
     for wire in MODELS:
         key = "messages" if wire == "chat" else "input"
