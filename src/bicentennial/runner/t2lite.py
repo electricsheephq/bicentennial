@@ -213,6 +213,26 @@ def _joined(pack, branch, scores, probes):
     return rows
 
 
+def _holds(rows):
+    waits, held_ms, reasons = 0, 0, set()
+    for row in rows:
+        for upstream in row.get("upstream", ()):
+            if upstream.get("served_by") != "live":
+                continue
+            holding = False
+            for diagnostic in upstream.get("diagnostics", ()):
+                if diagnostic.get("kind") == "hold":
+                    # One wait emits consecutive reasons, followed by a try (or the reply ends).
+                    if not holding:
+                        waits += 1
+                        held_ms += diagnostic["held_ms"]
+                    reasons.add(diagnostic["reason"])
+                    holding = True
+                else:
+                    holding = False
+    return dict(waits=waits, held_ms=held_ms, reasons=sorted(reasons))
+
+
 def _receipt(runs, start, status):
     rows = [r for run in runs for r in run.records]
     tokens, runtime, failed = {}, {}, {}
@@ -415,12 +435,15 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "repetitions.json", repetitions)
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
-            _write(out, "disclosures.json", {"live": stack.state(), **{
+            _write(out, "disclosures.json", {"live": dict(stack.state(),
+                holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
                 for key, arm in (("t1.transforms", "system"), ("no_memory.transforms", "no_memory"))}})
             if baseline:
+                self_band = aa_of is not None and Path(aa_of).resolve() == Path(baseline).resolve()
                 report = flip_report(card, references["baseline"], outcomes["baseline"], repetitions[-1],
-                    aa_prime=outcomes.get("prime"), aa_prime_card=references.get("prime"))
+                    aa_prime=repetitions[-1] if self_band else outcomes.get("prime"),
+                    aa_prime_card=card if self_band else references.get("prime"))
                 report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
                     current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
                 _write(out, "flips.json", report)
