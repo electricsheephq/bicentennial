@@ -281,6 +281,15 @@ def test_live_shadow_carry_over_sees_the_previous_turn(lives, tmp_path, unit_ses
     assert calls == [(n, 2 * (n - 1)) for n in range(1, len(batch.item_ids) + 1)]
 
 
+def test_both_readers_read_the_reduced_earlier_exchanges(lives, tmp_path, unit_sessions, monkeypatch):
+    # run_life hands T1's reader, and through it the live shadow, the earlier exchanges with answers reduced (#355).
+    seen, original = [], runner._probe_earlier
+    monkeypatch.setattr(runner, "_probe_earlier", lambda ledger: seen.append(ledger) or original(ledger))
+    drive(lives["t1-g1", "B0"], tmp_path / "live", live=FakeLive())
+    drive(lives["t1-g1", "B0"], tmp_path / "t1")
+    assert len(seen) >= 2 and all(path.name == "ledger" for path in seen)
+
+
 def test_scripted_director_error_keeps_t1_class(lives, tmp_path, unit_sessions, monkeypatch):
     def broken(self, call):
         raise ValueError("synthetic scripted failure")
