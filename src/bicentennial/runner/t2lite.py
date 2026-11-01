@@ -107,9 +107,13 @@ def _scan(out, needles):
 
 
 def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):
+    g2_actions = {i["item_id"] for p in ctx.packs if p.genre == "G2"
+                  for items in p.items.values() for i in items if i["stage"] == "act"}
     return build_t2lite_card(system=ctx.entry["name"], pack_hash=ctx.pack_hash,
         seed_hash=ctx.pins["seed_hash"], pins={k: ctx.pins[k] for k in PIN_FIELDS},
         model=MODEL, effort=EFFORT, served_identity=identity, aa_prime=prime, items=rows,
+        not_scored_live=sorted({r["item_id"] for r in rows
+                               if r["item_id"] in g2_actions and r["failure_class"] is None}),
         # The null-citation escape on an answer; an unknown reply always has a null citation.
         counts=dict(floor_cached=int(cached), null_citation=sum(r["envelope"] is not None and
             r["envelope"]["type"] != "unknown" and r["envelope"]["citation"] is None for r in rows)),
@@ -154,21 +158,28 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
                     cls, label = "INFRA_FAILURE", "audit"
                 shadow, answer = run.results.get(iid, MISSING), run.envelopes.get(iid, MISSING)
+                not_scored_live = (pack.genre == "G2" and item["stage"] == "act"
+                                  and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"))
                 result = shadow
                 if isinstance(shadow, ReaderResult):
                     # The answer is the live model's; the selection and competitors are the shadow's. Ring 0
                     # ties the two, which does not hold here, so score the answer as L4's card check reads it.
                     asserted = isinstance(answer, dict) and answer.get("type") != "unknown"
                     result = replace(shadow, selected_option=_LIVE_ANSWER if asserted else None, competing_present=())
-                scores[iid] = score_item(item, cls=cls, label=label,
-                    result=result, envelope=answer,
-                    act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
-                    scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
-                    stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
+                if not_scored_live:
+                    scores[iid] = dict(identity0(item), infra_reruns=attempt, base_verdict=None,
+                        score_milli=None, worst_case_milli=None, accuracy_correct=None,
+                        tuesday_class=None, envelope=None, failure_class=None, benign_extra=False)
+                else:
+                    scores[iid] = score_item(item, cls=cls, label=label,
+                        result=result, envelope=answer,
+                        act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
+                        scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
+                        stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
                 if isinstance(shadow, ReaderResult) and cls != "SYSTEM_FAILURE" and not isinstance(scores[iid], Infra):
                     scores[iid].update(selected_option=shadow.selected_option,
                                        competing_present=list(shadow.competing_present))
-                if cls or isinstance(scores[iid], Infra):
+                if cls or isinstance(scores[iid], Infra) or not_scored_live:
                     next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
             _write(out, "t2lite_probes.json", probes)
         finally:
