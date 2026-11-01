@@ -272,6 +272,7 @@ class Context:
     aliases: dict[str, tuple[str, frozenset]] = field(default_factory=dict)  # model -> (default, allowed)
     path_aliases: dict[str, tuple[str, frozenset]] = field(default_factory=dict)  # path prefix -> same
     signatures: tuple = SIGNATURES
+    session: int | None = None
 
     @classmethod
     def of(cls, c: dict) -> Context:
@@ -319,7 +320,9 @@ def classify_shape(s: dict, ctx: Context) -> tuple[str, str, dict]:
         if s["last_is"] == "user_text" and s["n_tools"] > 0:
             # the exact text first, then the text before Hermes's memory block: an exact retry stays a retry
             for hashes in (s["user_hashes"], s.get("own_hashes", ())):
-                if ctx.cursor < len(ctx.expected) and ctx.expected[ctx.cursor]["hash"] in hashes:
+                if (ctx.cursor < len(ctx.expected) and ctx.expected[ctx.cursor]["hash"] in hashes
+                        and (ctx.session is None or ctx.expected[ctx.cursor].get("session") is None
+                             or ctx.expected[ctx.cursor].get("session") == ctx.session)):
                     return done(_turn_role(ctx.expected[ctx.cursor]), "cursor", turn=ctx.cursor)
                 if ctx.current and ctx.current["hash"] in hashes:
                     return done(_turn_role(ctx.current), "cursor", turn="retry")

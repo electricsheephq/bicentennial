@@ -7,6 +7,8 @@ every one must classify to its expected role, and deliberately unseen shapes mus
 import json
 import re
 import runpy
+from functools import lru_cache
+from hashlib import sha1
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,33 @@ HERE = Path(__file__).resolve().parent
 FIX = json.loads((HERE / "fixtures" / "shapes.json").read_text())
 SOURCES = {s["source"]: s for s in FIX["sources"]}
 TOOLS = [{"type": "function", "function": {"name": "memory"}}]
+
+
+@lru_cache
+def base_rule():
+    # Reconstruct the pinned base for shallow CI checkouts; verify its complete Git blob identity.
+    source = Path(roles.__file__).read_text().replace("    session: int | None = None\n", "")
+    source = re.sub(r'if \(ctx.cursor ([^\n]+) in hashes\n[^\n]+\n[^\n]+== ctx.session\)\):',
+                    r'if ctx.cursor \1 in hashes:', source)
+    raw = source.encode()
+    assert sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest() == "67598c8e4331b0ff4d2682b8ed53aff08a8dc902"
+    namespace = {"__name__": roles.__name__}
+    exec(compile(source, "base/roles.py", "exec"), namespace)
+    return namespace["classify_shape"]
+
+
+def check_base(monkeypatch):
+    head, base = roles.classify_shape, base_rule()
+    def checked(shape, ctx):
+        result = head(shape, ctx)
+        assert result == base(shape, ctx)
+        return result
+    monkeypatch.setattr(roles, "classify_shape", checked)
+
+
+@pytest.fixture(autouse=True)
+def unchanged_classifications(monkeypatch):
+    check_base(monkeypatch)
 
 
 @pytest.mark.parametrize("name", sorted(SOURCES))
@@ -70,6 +99,16 @@ def chat(*msgs, tools=TOOLS, path="/main/v1/chat/completions", model="m"):
 
 def ctx1(text="scripted turn one", **kw):
     return roles.Context(expected=[{"kind": "replay", "hash": roles.h16(text)}], **kw)
+
+
+@pytest.mark.parametrize("session,entry", [(None, 1), (None, None), (1, None), (1, "missing")])
+def test_unset_session_is_unscoped(session, entry):
+    ctx = ctx1(session=session)
+    if entry != "missing":
+        ctx.expected[0]["session"] = entry
+    assert roles.classify(chat({"role": "user", "content": "scripted turn one"}), ctx) == (
+        "replay_main", "cursor", {"turn": 0})
+    assert roles.Context.of({"expected": ctx.expected}).session is None
 
 
 @pytest.mark.parametrize("req", [

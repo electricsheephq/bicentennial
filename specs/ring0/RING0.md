@@ -183,6 +183,7 @@ The determinism check names the first stable field that differs.
 - at least two scored bundles per life have their evidence in session 1 or 2, so a store whose budget fills early still has wake-crossing items.
 
 **The probe budget** per (life, branch, checkpoint): at most 6 QA items and 2 action items.
+These Ring 0 caps reflect per-checkpoint isolation and fixed order; the full tier compiles one session per item (`probe_mode="per_item"`, #310), so a per_item probe has no earlier exchange of its own session as context.
 - **The QA items** run in one probe session, in the pack's fixed item order, on a clone of every declared surface that is discarded afterwards.
   - **Isolation is per checkpoint, not per item** (DESIGN §6.7), and the card says so.
   - **Carry-over:** an earlier probe's recall result or answer can stay in the session, or be captured by the system's store, and make a later option present. The reader's context is still the one §1 defines, so this is measured, not removed.
