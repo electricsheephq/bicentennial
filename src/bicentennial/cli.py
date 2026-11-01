@@ -28,6 +28,26 @@ def run_t1(**kwargs):
     return run(**kwargs)
 
 
+def run_t2lite(**kwargs):
+    from bicentennial.runner.t2lite import run_t2lite as run
+    return run(**kwargs)
+
+
+def _only(value):
+    parts = value.split(":")
+    if (len(parts) != 3 or not parts[0] or parts[1] not in ("B0", "B1")
+            or not parts[2].isdigit() or int(parts[2]) < 1):
+        raise argparse.ArgumentTypeError("only must be LIFE:B0|B1:CHECKPOINT")
+    return parts[0], parts[1], int(parts[2])
+
+
+def _sends(value):
+    result = int(value)
+    if result < 0:
+        raise argparse.ArgumentTypeError("max-sends must be non-negative")
+    return result
+
+
 def run_build(*, tier, out):
     try:
         from bicentennial.packs.build import build_tier
@@ -98,6 +118,16 @@ def main(argv=None) -> int:
     for name in ("baseline", "hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command.add_argument("--sandbox-slot", type=int, default=0)
+    command = commands.add_parser("t2lite")
+    for name in ("system", "pack-hash", "out", "login-home"):
+        command.add_argument("--" + name, required=True)
+    command.add_argument("--packs", dest="packs_dir", required=True)
+    command.add_argument("--max-sends", type=_sends, required=True)
+    for name in ("baseline", "aa-of", "aa-prime", "hermes", "plugin-source", "model-cache", "cache"):
+        command.add_argument("--" + name)
+    command.add_argument("--sandbox-slot", type=int, default=0)
+    command.add_argument("--only", type=_only)
+    command.add_argument("--repeat", type=_workers, default=1)
     command = commands.add_parser("build")
     command.add_argument("--tier", choices=("T0", "T1"), required=True)
     command.add_argument("--out", required=True)
@@ -111,6 +141,8 @@ def main(argv=None) -> int:
         return run_t0(**args)
     if selected == "t1":
         return run_t1(**args)
+    if selected == "t2lite":
+        return run_t2lite(**args)
     return run_build(**args)
 
 

@@ -299,7 +299,7 @@ def test_rerun_exact_published_format_and_plugin_presence(system, plugin):
     assert command == (
         f"PYTHONHASHSEED=0 bicentennial t2lite --system {system} --packs <packs> "
         f"--pack-hash {'a' * 64} --hermes <hermes checkout>{expected_plugin} "
-        "--only life-1:B0:10 --repeat 3 --out <new dir>")
+        "--login-home <login home> --max-sends <max sends> --only life-1:B0:10 --repeat 3 --out <new dir>")
     assert all(path not in command for path in local_paths.values())
 
 
