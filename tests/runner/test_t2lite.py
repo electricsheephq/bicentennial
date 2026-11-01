@@ -105,7 +105,8 @@ def scenario(tmp_path, monkeypatch):
               for k in (*runner.PIN_FIELDS, "seed_hash")}, packs=packs, run_id="synthetic",
         harness_pin={}, hermes=None, plugin_source=None, worker_argv=None, model_cache=None,
         gate=None, current_lock=None)
-    state = SimpleNamespace(ctx=ctx, stacks=[], seen=[], mode=None, score=1000, home=home)
+    # scores and matches plant one item's score or probe match flags over the defaults.
+    state = SimpleNamespace(ctx=ctx, stacks=[], seen=[], mode=None, score=1000, home=home, scores={}, matches={})
     def build(*args, **kw):
         stack = Stack()
         if state.mode == "identity":
@@ -132,7 +133,8 @@ def scenario(tmp_path, monkeypatch):
         probes = [dict(item_id=i["item_id"], checkpoint=i["probe_point"], probe_session=21,
             stage="remember", shadow=dict(selected_option="opt-a" if state.mode == "competing" else None, in_context=True,
                 in_context_initial=True, carry_over=False, stage_attribution="used", shadow_error=None),
-            envelope=dict(parsed=UNKNOWN, value_match=True, value_match_normalised=True, citation_match=None),
+            envelope=dict(parsed=UNKNOWN, value_match=True, value_match_normalised=True, citation_match=None)
+                | state.matches.get(i["item_id"], {}),
             live=dict(served_by="live", served="responder_live", identity_flag=state.mode == "identity"))
             for i in kw["items"]]
         runner._write(root, "t2lite_probes.json", probes)
@@ -175,7 +177,7 @@ def scenario(tmp_path, monkeypatch):
     def score(item, **kw):
         if kw["cls"] == "INFRA_FAILURE":
             return Infra("synthetic")
-        scored = row(item["item_id"], state.score)
+        scored = row(item["item_id"], state.scores.get(item["item_id"], state.score))
         if state.mode in ("competing", "asserted"):
             # The real scorer's Ring 0 checks, applied as hermes_score applies them to the reader result.
             assert kw["envelope"] == (ANSWER if state.mode == "asserted" else UNKNOWN)  # the live answer, not the shadow's
@@ -746,6 +748,67 @@ def test_relabel_follows_t1(scenario, monkeypatch, mode, blocked):
     assert {iid for iid, c in classes.items() if c == "BLOCKED"} == blocked and len(classes) == 4
 
 
+def test_twin_flip_is_a_flip_row_field(scenario, tmp_path):
+    s = scenario
+    for pack in s.ctx.packs:
+        pack.pack["bundles"] = [dict(bundle_id=pack.life + "-twins", items=[pack.life + "B0", pack.life + "B1"])]
+    assert s.invoke("baseline") == 0
+    # t1-g1B0 flips beside a steady twin; both t1-g2 items flip.
+    s.scores = {"t1-g1B0": 0, "t1-g2B0": 0, "t1-g2B1": 0}
+    assert s.invoke(baseline=tmp_path / "baseline") == 0
+    report = runner._read(s.out, "flips.json")
+    assert {r["item_id"]: r["twin_flip"] for r in report["rows"]} == {
+        "t1-g1B0": False, "t1-g2B0": True, "t1-g2B1": True}
+    assert report["excluded"] == []
+    assert all("twin_flip" not in r[side] for r in report["rows"] for side in ("baseline", "current"))
+    outcomes = runner._read(s.out, "outcomes.json")
+    assert {iid: r["twin_bundle"] for iid, r in outcomes.items()} == {
+        "t1-g1B0": "t1-g1-twins", "t1-g1B1": "t1-g1-twins", "t1-g2B0": "t1-g2-twins", "t1-g2B1": "t1-g2-twins"}
+    for rows in (outcomes, *runner._read(s.out, "repetitions.json")):
+        assert rows and all("twin_flip" not in r for r in rows.values())
+    # The card is built from the scores alone: the same run without bundles writes the same bytes.
+    for pack in s.ctx.packs:
+        pack.pack["bundles"] = []
+    assert s.invoke("plain") == 0
+    assert (tmp_path / "plain/card.json").read_bytes() == (s.out / "card.json").read_bytes()
+
+
+def test_match_fields_follow_the_scored_envelope(scenario, tmp_path, monkeypatch):
+    s = scenario
+    s.matches = {"t1-g1B0": dict(value_match=False, citation_match=False)}
+    assert s.invoke("baseline") == 0
+    drive, score = runner.run_life, runner.score_item
+    # An unsettled checkpoint is the system's class; an infrastructure stop becomes BLOCKED after its reruns.
+    planted = {"t1-g2B0": ("SYSTEM_FAILURE", "turn_timeout"), "t1-g2B1": ("INFRA_FAILURE", "synthetic")}
+    def life(**kw):
+        run = drive(**kw)
+        if kw["arm"] != "system":
+            return run
+        return replace(run, classes={i["item_id"]: planted[i["item_id"]] for i in kw["items"] if i["item_id"] in planted})
+    def scoring(item, **kw):
+        from bicentennial.runner.hermes_score import score_item
+        return score_item(item, **kw) if kw["cls"] == "SYSTEM_FAILURE" else score(item, **kw)
+    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    assert s.invoke(baseline=tmp_path / "baseline") == 0
+    outcomes = runner._read(s.out, "outcomes.json")
+    report = runner._read(s.out, "flips.json")
+    entries = {r["item_id"]: r for r in report["rows"] + report["excluded"]}
+    assert entries.keys() == planted.keys()
+    for iid, cls in (("t1-g2B0", "SYSTEM_FAILURE"), ("t1-g2B1", "BLOCKED")):
+        current = entries[iid]["current"]
+        assert outcomes[iid]["failure_class"] == current["failure_class"] == cls
+        assert outcomes[iid]["envelope"] is None and current["envelope"] == "missing"
+        for target in (outcomes[iid], current):
+            assert target["value_match"] is None and target["citation_match"] is None
+        # The baseline scored the same probe, so its side keeps the probe's values.
+        assert entries[iid]["baseline"]["value_match"] is True
+        probe, = runner._read(s.out / "repetitions/0/t1-g2" / iid[-2:], "t2lite_probes.json")
+        assert probe["envelope"]["value_match"] is True and probe["envelope"]["parsed"] == UNKNOWN
+    assert outcomes["t1-g1B0"]["value_match"] is False and outcomes["t1-g1B0"]["citation_match"] is False
+    assert outcomes["t1-g1B1"]["value_match"] is True and outcomes["t1-g1B1"]["citation_match"] is None
+
+
 def test_swap_position_follows_the_schedule(scenario):
     scenario.ctx.packs[0].schedule.scale.swap = 2
     assert scenario.invoke() == 0
@@ -888,6 +951,7 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     for target in (outcomes, floor):
         assert all(target[iid]["score_milli"] is None and target[iid]["accuracy_correct"] is None
                    for iid in g2_actions)
+    assert all("twin_flip" not in r for r in outcomes.values())
     outcome = next(r for r in outcomes.values() if r["stage"] != "act")
     assert runner._read(tmp_path / "full", "disclosures.json")["live"]["holds"] == {
         "waits": 0, "held_ms": 0, "reasons": []}
@@ -896,6 +960,8 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     noise = runner._read(tmp_path / "prime", "flips.json")
     assert noise["q0"]["numerator"] == 0 and noise["counts"]["aa_prime_scored"] > 0
     assert noise["rows"] == [] and "no A/A′ band" not in noise["labels"]
+    # A G2 action's twin is a G2 action, which is never compared.
+    assert all(e["twin_flip"] is None for e in noise["excluded"] if e["item_id"] in g2_actions)
     only = outcome["life"], outcome["branch"], outcome["probe_point"]
     assert runner.run_t2lite(out=tmp_path / "rerun", only=only, repeat=3, **args) == 0
     repetitions = runner._read(tmp_path / "rerun", "repetitions.json")

@@ -204,11 +204,14 @@ def _joined(pack, branch, scores, probes):
         item = next(i for i in pack.items[branch] if i["item_id"] == iid)
         record = pack.records[iid]
         bundle = next((b for b in pack.pack["bundles"] if iid in b["items"]), None)
+        # The match fields describe the scored envelope; the live answer's own parse and matches stay in t2lite_probes.json.
+        scored = scores[iid]["envelope"] is not None
         rows[iid] = dict(scores[iid], life=pack.life, branch=branch, probe_point=probe["checkpoint"],
             probe_session=probe["probe_session"], template_ref=f"{record['template_id']}-v{record['template_version']}",
-            genre=pack.genre, twin_bundle=None if bundle is None else bundle["bundle_id"], twin_flip=None,
-            in_context=probe["shadow"]["in_context"], value_match=probe["envelope"]["value_match"],
-            citation_match=probe["envelope"]["citation_match"], crosses_cold_restart=t1._crosses(pack, item),
+            genre=pack.genre, twin_bundle=None if bundle is None else bundle["bundle_id"],
+            in_context=probe["shadow"]["in_context"], value_match=probe["envelope"]["value_match"] if scored else None,
+            citation_match=probe["envelope"]["citation_match"] if scored else None,
+            crosses_cold_restart=t1._crosses(pack, item),
             swap_position="none" if swap is None else "before" if item["probe_point"] < swap else "after")
     return rows
 

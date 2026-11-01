@@ -72,7 +72,6 @@ class ItemOutcome:
     template_ref: str
     genre: str
     twin_bundle: str | None
-    twin_flip: bool | None
     in_context: bool | None
     stage_attribution: str | None
     envelope: str
@@ -122,6 +121,23 @@ def _differs(a, b):
     return (a.score_milli, a.failure_class) != (b.score_milli, b.failure_class)
 
 
+def _twin_flips(baseline, current):
+    # Bundles group by the current side; anything but a pair, or an excluded twin, has no value.
+    # A malformed bundle id counts as none, so a baseline file can never make this raise.
+    bundles = {iid: r.twin_bundle for iid, r in current.items() if type(r.twin_bundle) is str}
+    groups = {}
+    for iid in sorted(bundles):
+        groups.setdefault(bundles[iid], []).append(iid)
+    flags = dict.fromkeys(current)
+    for iid, bundle in bundles.items():
+        group = groups[bundle]
+        if len(group) == 2:
+            twin = group[1] if group[0] == iid else group[0]
+            a, b = baseline[twin], current[twin]
+            flags[iid] = None if _exclusion(a, b) else _differs(a, b)
+    return flags
+
+
 def flip_list(baseline_outcomes, current_outcomes, *, aa_prime=None, rerun=None):
     """Return rows, exclusions, exact q0, q0_milli, labels and counts.
 
@@ -132,6 +148,10 @@ def flip_list(baseline_outcomes, current_outcomes, *, aa_prime=None, rerun=None)
     A/A′ outcomes of every item measured in both; it is None where either is
     INFRA, BLOCKED or a G2 act, and without A′. counts.unstable is the scored
     numerator used by q0. rerun is a pure ItemOutcome-to-string callable.
+    Every row and excluded entry has twin_flip: whether the other member of its
+    current-side twin bundle changed outcome between baseline and current. It is
+    None without a bundle, for a bundle that is not exactly a pair, and when the
+    twin is INFRA, BLOCKED or a G2 act; it never decides a row, exclusion or count.
     """
     baseline, current = _outcomes(baseline_outcomes), _outcomes(current_outcomes)
     prime = None if aa_prime is None else _outcomes(aa_prime)
@@ -143,12 +163,13 @@ def flip_list(baseline_outcomes, current_outcomes, *, aa_prime=None, rerun=None)
     scored_band = [] if prime is None else [
         unstable[iid] for iid, a in baseline.items() if _scored(a, prime[iid])]
     q0 = Fraction(sum(scored_band), len(scored_band)) if scored_band else None
+    twin_flip = _twin_flips(baseline, current)
     rows, excluded = [], []
     for iid in sorted(baseline, key=lambda i: (
             baseline[i].life, baseline[i].branch, baseline[i].probe_point, i)):
         a, b = baseline[iid], current[iid]
         reason = _exclusion(a, b)
-        pair = dict(item_id=iid, baseline=asdict(a), current=asdict(b))
+        pair = dict(item_id=iid, twin_flip=twin_flip[iid], baseline=asdict(a), current=asdict(b))
         if reason is not None:
             excluded.append(dict(pair, reason=reason))
         elif _differs(a, b):
