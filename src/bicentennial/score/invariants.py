@@ -24,7 +24,7 @@ NEW_CELLS = ("DRIFT-CUR", "DRIFT-PART", "DRIFT-PROC", "FAULT-NEWEST")
 VERBATIM = "verbatim retention"
 STRESSES = ("compaction", "crash")
 _REASONS = ("absent_after_fault", "not_newest", "orphan_result", "surfaced", "store_hit",
-            "opaque_store", "no_snapshot", "system_failure", "blocked", "infra")
+            "opaque_store", "no_snapshot", "system_failure", "blocked", "infra", "host_kept")
 
 
 class SystemFault(Exception):
@@ -55,8 +55,9 @@ class Verdict:
 
 
 def _verdict(invariant, rows):
-    members = sum(status != "uninformative" for _, status, _ in rows)
-    uninformative = len(rows) - members
+    counted = [row for row in rows if row[2] != "host_kept"]  # host_kept only adds a reason (RING0 E22)
+    members = sum(status != "uninformative" for _, status, _ in counted)
+    uninformative = len(counted) - members
     groups = [tuple(sorted({i for i, status, _ in rows if status == target}))
               for target in ("FAIL", "INCONCLUSIVE", "INFRA_FAILURE")]
     failed, inconclusive, infra = groups
@@ -122,6 +123,10 @@ def search_store(root, needles) -> StoreSearch:
 def needles_for(tokens) -> tuple[bytes, ...]:
     normalized = [unicodedata.normalize("NFC", t) for t in tokens]
     return tuple(sorted({v.encode() for t in normalized for v in (t, t.casefold())}))
+
+
+def _host_kept(texts, needles):
+    return any(n in text.encode() for text in texts for n in needles)
 
 
 def _call(fn, *args):
@@ -248,12 +253,15 @@ def _api_script(factory, invariant, bound, snapshot):
     ingest([_event("g1", 1, "Gate code for the loading yard is GATE-4410."),
             _event("g2", 2, "Please forget the gate code."), _event("g3", 3, "Yard opening hours are posted.")])
     _call(holder[0].forget, {"event_ids": ["g1"]})
+    kept_texts = tuple(getattr(holder[0], "forget_kept_texts", {}).values())
     yield from ((i, "FAIL" if probe(i, q, "GATE-4410", forbidden=True).forbidden_in_context is True else "PASS", "")
                 for i, q in (("forget-1", "yard gate code"), ("forget-2", "loading")))
     data = _checkpoint(holder[0], bound)
     needles = needles_for(["GATE-4410"])
     if any(n in data for n in needles):
         yield ("forget-store", "FAIL", "store_hit")
+        if _host_kept(kept_texts, needles):
+            yield ("forget-store", "FAIL", "host_kept")
         return
     scans = []
     if snapshot:
@@ -261,6 +269,8 @@ def _api_script(factory, invariant, bound, snapshot):
             scan = search_store(root, needles).verdict
             if scan == "found":
                 yield ("forget-store", "FAIL", "store_hit")
+                if _host_kept(kept_texts, needles):
+                    yield ("forget-store", "FAIL", "host_kept")
                 return
             scans.append(scan)
     opaque = not searchable_bytes(data) or "inconclusive" in scans
@@ -309,6 +319,7 @@ class ItemEvidence:
     crosses_restart: bool
     baseline_in_context: bool | None = None
     roots: tuple | None = None
+    kept_texts: tuple[str, ...] = ()
 
 
 def run_invariants(evidence, *, tier, requests=None, expected_call_ids=()) -> dict[str, Verdict]:
@@ -355,6 +366,8 @@ def run_invariants(evidence, *, tier, requests=None, expected_call_ids=()) -> di
                         scan = search_store(root, needles_for(e.keys["forbidden"])).verdict
                         if scan == "found":
                             status, reason = "FAIL", "store_hit"
+                            if _host_kept(e.kept_texts, needles_for(e.keys["forbidden"])):
+                                rows[inv].append((i, "FAIL", "host_kept"))
                             break
                         if scan == "inconclusive":
                             status, reason = "INCONCLUSIVE", "opaque_store"

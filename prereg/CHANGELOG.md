@@ -8,6 +8,9 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 - **The OC base document's rule registry** names the version of every PREREG line it cites, `PREREG-v0.4 l.N`, the version the #245 ruling cites. Since PREREG-v0.5 froze, some of those line numbers hold other text in v0.5. Two cites written after that freeze used v0.5's numbers: l.463 (the bar-2 run's full pilot roster) and l.548 (σ_d's scale difference). They now point at the same text in v0.4, l.417 and l.502. The base document's provenance bytes change, and so does the C-8 hash, whose file set holds `ocsim/`, `world/scale.py` and their tests; no checked-in file records either.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
+## Ring 0 contract change, 2026-11-01: host keep decisions are disclosed (#135 part 2)
+- **RING0 §7 and §13 E22:** from the next kit, host keep decisions survive reset and restore, each tier's JUnit discloses canonical counts as `<tier>.forget_kept`, and a failing `store_hit` also carries `host_kept` when a kept text contains a searched needle. Statuses and member counts stay unchanged; kept texts stay in memory only. The scorer pin moves (`score/invariants.py`), so packs built before this change are rebuilt. v0.1's frozen kit keeps its rule. No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-11-01: spill-file names are masked (#328)
 - **RING0 §13 E21 and §4:** from the next kit, the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file after a slash in body text (`random-uuid-hex-file`). That is the name Hermes gives an oversized memory recall's spill file, which made Mem0's two T1 runs differ. Every card's `masks_hash` changes. v0.1's maintenance kit carries E18 and E21 from its third official run (#329). No PREREG version change; PREREG-v0.5 remains frozen.
 
