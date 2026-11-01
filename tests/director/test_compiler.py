@@ -339,11 +339,14 @@ def test_per_item(worlds):
             compiled(world, probe_mode=mode)
 
 
-@pytest.mark.parametrize("mutation,error", [("duplicates", ValueError), ("time", AssertionError)])
+@pytest.mark.parametrize("mutation,error", [("duplicates", ValueError), ("replay", pytest.fail.Exception),
+                                            ("time", AssertionError)])
 def test_per_item_mutants(worlds, monkeypatch, mutation, error):
     source = Path(compiler.__file__).read_text()
-    old, new = (("set() if probe_mode == \"per_item\" else users", "users") if mutation == "duplicates"
-                else ("p.t_end - len(batch) * step_s", "p.t_end - len(group) * step_s"))
+    old, new = {"duplicates": ("set(users) if probe_mode == \"per_item\" else users", "users"),
+                "replay": ("set(users) if probe_mode == \"per_item\" else users",
+                           "set() if probe_mode == \"per_item\" else users"),
+                "time": ("p.t_end - len(batch) * step_s", "p.t_end - len(group) * step_s")}[mutation]
     assert source.count(old) == 1
     namespace = dict(vars(compiler))
     exec(compile(source.replace(old, new), "mutant/hermes.py", "exec"), namespace)
