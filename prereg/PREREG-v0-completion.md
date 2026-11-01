@@ -8,12 +8,83 @@
 - each slot's own rule in PREREG-v0.4;
 - spike measurements of harness overhead (the Freezes allow these);
 - vendor documentation, for the tool lists;
+- vendor documentation and shipped source defaults, for the route table;
 - the track design, for the cells.
 
-**Slots C-1 to C-4 and C-8 to C-15 are open.** Ring 0 v0.1 needs none of them:
-- it runs with no model, so C-1, C-2 and C-3 are unused;
+**Slots C-3, C-4 and C-8 to C-15 are open, and C-1 and C-2 are partly filled.** Ring 0 v0.1 needs none of them:
+- it runs with no model, so C-1, C-2 and C-3 are unused. C-1's and C-2's provisional entries prepare the live tiers;
 - it has no full tier, so C-4 is unused;
 - it has no board, so C-8 to C-15 are unused.
+
+## C-1: the pinned agent family and the route table (provisional, partial)
+
+**The rule** (PREREG-v0.4 line 16): each system's vendor-documented defaults. The pinned model must be servable through the director on a subscription lane (S1, S4). The vision reader is pinned once for every row (S8), and S8 chooses the vision-capable main model from the census, pinned here before any Image board.
+
+**How it was read.** From each system's shipped source defaults and documentation at its registry pin, read at that commit, with no system run. Paths are in each vendor's repository at the pin named.
+
+**The pinned model** (DV42): OpenAI `gpt-6.1-sol` at reasoning effort `medium`, on the Codex Responses wire through the director, on dedicated benchmark accounts. S6b served it end to end on that subscription lane: a 64-turn write run with no auth failure, rate refusal or overload. Outside runners use the public Responses API with the same model and effort. It is every system's **probe model** in segment `seg0`, under the alias `bicentennial-main`, and so the pinned reader.
+
+**The summariser per system** (DESIGN §6.2c: the model the system's own compaction or extraction uses, at its vendor's documented default):
+
+| System and pin | Calls | Vendor default | `seg0` route | Source |
+|---|---|---|---|---|
+| hermes-native: Hermes v0.22.2 (`d923a5e`) | context compression and its summary: one call, task `compression` | `auxiliary.compression`: provider `auto` and model `""`, which is the main chat model; reasoning effort `""`, the provider's default | the pinned model, alias `bicentennial-summariser` | `hermes_cli/config_defaults.py:20-30`, `:755-765`; `agent/auxiliary_client.py:4677-4700`; `agent/context_compressor.py:3890-3924`; `website/docs/user-guide/configuration.md:1014-1015`, `:1386` |
+| lcm-x v0.28.1 (unchanged at v0.29.0 and v0.29.1-rc4) | summaries and rollups; the synthesis in `lcm_expand_query` | `LCM_SUMMARY_MODEL` `""`: LCM-X sends no model, so Hermes's auxiliary route for task `compression` picks the main chat model, as above. `LCM_EXPANSION_MODEL` `""` falls back to it | the pinned model, alias `bicentennial-summariser` | `config.py:1048`; `model_routing.py:76-78`; `escalation.py:681-693`; `expand_query_tools.py:308`, `:604`; `skills/hermes-lcm/references/configuration.md:195` |
+| mem0-oss: plug-in 1.3.0 (`43849c6`), mem0ai 2.2.1 | memory extraction: one call per synced turn (`add` with `infer=True`) | OpenAI `gpt-5-mini` with `is_reasoning_model: true`; no reasoning effort sent; chat-completions with a JSON response format | `gpt-5-mini`, alias `bicentennial-extraction` | `integrations/hermes-plugin-mem0/_oss_providers.py:11`, `_setup.py:111-144`, `_openai_llm.py:30-59`; `docs/integrations/hermes.mdx:155`, `:178`; mem0ai `mem0/llms/openai.py:39-40`, `mem0/memory/main.py:958-963` |
+| holographic 0.13.0 | none | no model call | none | the registry entry (`own_model_routes = []`) |
+| omega 1.5.20 | none through the director | it reads a staged local model cache (four SHA-256-checked bge-small ONNX files), whose digest the run discloses | none | the registry entry; the developer guide §§6-7 |
+
+**Calls the vendor defaults switch off:**
+- lcm-x's extraction, assertion extraction and selective compiler (`config.py:978-980`, `:996-999`, `:1198` at v0.28.1). So the registry's `bicentennial-extraction` alias for lcm-x goes unused at these defaults.
+- Hermes's `session_search`, which uses no model (`hermes_cli/config_defaults.py:760`; `website/docs/user-guide/sessions.md:847`).
+- Mem0's reranker, vision and procedural memory (mem0ai `mem0/configs/base.py:46-48`, `mem0/configs/llms/base.py:24`).
+
+**Other model calls the vendor defaults make,** on the probe model:
+- Hermes's title generation, task `title_generation`, alias `bicentennial-aux-title_generation`: the main model, with reasoning off and a JSON response, once per untitled session (`hermes_cli/config_defaults.py:772-786`; `agent/title_generator.py:514-530`).
+- Hermes's memory background review: a fork of the agent on the main route, every 10 user turns while the built-in memory is on (`hermes_cli/config_defaults.py:801-811`, `:1311-1324`; `agent/background_review.py:242-256`).
+
+**Embeddings,** for which the route table has no field yet:
+- mem0-oss: OpenAI `text-embedding-3-small`, 1536 dimensions, on `/v1/embeddings`, alias `bicentennial-embeddings` (`_oss_providers.py:16`, `_setup.py:145-148`; mem0ai `mem0/embeddings/openai.py:15-19`). Its spend is the labelled embedding row (DV47).
+- lcm-x: none at v0.28.1 (`config.py:1083`). At v0.29.1-rc4 its default turns on local embeddings, which run in-process and reach no route (`skills/hermes-lcm/references/configuration.md:66-75`).
+
+**After the swap (segment `seg1`):** the probe model, the summariser and the alias move to the swap model (C-2), under the alias `bicentennial-swap`, for every system, Mem0's extraction included (DESIGN §6.2c, §13). Vision never moves, and the route table refuses a row that moves it (`src/bicentennial/director/routes.py`). Embeddings do not move either, so a store keeps one embedding space for the whole life.
+
+**Reasoning effort per route** (open, settled before the first live run). The route table has no effort field. The director holds one effort per upstream and checks it only on the Responses wire (`src/bicentennial/director/upstream/forward.py`, `src/bicentennial/director/upstream/__init__.py:175`). The harness sets no effort today, and the vendor defaults send none on Hermes's and LCM-X's summary calls or on Mem0's extraction. **The provisional reading:**
+- every route served by the pinned model runs at `medium`, and every route served by the swap model runs at C-2's effort, since DV42 and C-2 pin each model with its effort;
+- S6a's replay set the agent and every auxiliary task to `medium` (`spikes/s6a/replay.py:78-82`), so the measurements on record assume this;
+- a fixed vendor model (Mem0's `gpt-5-mini`) keeps its vendor default.
+
+**Still open:**
+- **The vision provider and the pinned vision reader** (S8, not yet run), and **S8's vision-capable main model**.
+- **The pinned model's tokenizer** (RING0 §9, K02). C-5 counts with `o200k_base` until it is named. The check: count a recorded Sol request with `o200k_base`, and compare with the input tokens the provider reported for it.
+- **Director support before the live tiers:**
+  - the director serves the embeddings wire with the route's probe model (`src/bicentennial/director/core.py:331-334`), so Mem0's embedder needs its own route;
+  - the effort reading above needs a pinned effort on every route and wire.
+- **External memory providers:** whether Hermes's memory background review also fires when an external provider holds the memory slot is unchecked.
+
+## C-2: the swap model (provisional)
+
+**The rule** (PREREG-v0.4 line 17): a model from a family other than the pinned family, servable through the director; named after S4. Its effort is pinned with it, and its cost and run-time terms are measured at that effort (S6).
+
+**The provisional entry: Zhipu `glm-5.3` at reasoning effort `high`,** under the alias `bicentennial-swap`. DV42 names GLM (Zhipu) the swap model and the replication family. S4 chose and served this model id (`spikes/s4/anthropic_director.py:334`; `spikes/s4/results/summary.json:2-4`). It is a named choice, not a vendor default.
+- **Another family:** Zhipu, not OpenAI. Met.
+- **Servable through the director:** met on two wires.
+  - Anthropic Messages, for the Claude Code sub-row. S4 ran Claude Code 2.1.306 with 9 of 9 steps valid, no field stripped, and every reply served as `glm-5.3` (`spikes/s4/REPORT.md:3`, `:29`, `:48`). That run predates the director's credential fixes (`:90`).
+  - OpenAI chat-completions, for Hermes: S6a (`spikes/s6a/REPORT.md:12`).
+  - No GLM route uses the Responses wire, and none was tested on it.
+- **Named after S4:** S4 proposed GLM (`spikes/s4/REPORT.md:83`), DV42 named the family, and this entry names the model.
+- **The effort, `high`** (provisional).
+  - Z.ai documents three levels for GLM-5.3: `low`, `high` and `max`, with `max` the default. Its direct API rejects any other value, and its coding plan maps `medium` and `high` to `high` (Z.ai's thinking guide and GLM-5.3 page, read on 2026-11-01).
+  - Every GLM figure on record was taken with `reasoning_effort: medium` sent on the plan (S6a's run of record, r6), which that mapping serves as `high`. No served level was recorded.
+  - Against r3, which sent no effort and so ran at the default `max`, r6 cut mean write-turn latency by 59% and completion tokens by 86% (`spikes/s6a/REPORT.md:15`, `:49-51`). At `max`, none of the run-time figures on record would hold.
+- **Cost and run-time terms at that effort: not met.**
+  - S6 has no results yet: every result section waits for its part (b) (`spikes/s6/REPORT.md`). S6d, the GLM lane soak, has not started (#25).
+  - On record are desk projections from S6a r6's token counts: $0 at the margin on the plan; 338.061 lane-hours for the swap's share at ×1 latency, or 42.3 h at concurrency 8 (`spikes/s4/results/model_b.json:132-137`); and 52.8 h on one plan for a swap at session 100 (DV47).
+  - S6d measures them at `high`.
+- **Context window:** Z.ai documents 1M tokens of context and 128K of output. Which window the plan's endpoints serve is unchecked; S4's Claude Code assumed 200K for an unknown alias (`spikes/s4/REPORT.md:46`).
+- **For S6d to check:**
+  - GLM-5.3 cannot turn thinking off (Z.ai's thinking guide), while Hermes's title call turns reasoning off (`agent/title_generator.py:514-530`). Check that the swap segment's title calls are served.
+  - Z.ai's GLM-5.3 page says previous or expired coding-plan subscribers reach the model only over chat-completions. The Claude Code sub-row needs the Anthropic endpoint on the account it uses.
 
 ## C-5: the developer-tier window (provisional)
 
