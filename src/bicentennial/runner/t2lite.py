@@ -18,13 +18,14 @@ from bicentennial.director.responder import Reply
 from bicentennial.director.upstream import login as custody
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
+from bicentennial.probe.scripted_reader import ReaderResult
 from bicentennial.report.receipt import (
     build_receipt,
     ledger_latencies,
     load_milli,
     raw_body_digest,
 )
-from bicentennial.report.t2lite_card import build_t2lite_card
+from bicentennial.report.t2lite_card import _LIVE_ANSWER, build_t2lite_card
 from bicentennial.report.t2lite_flips import (
     BaselineRefused,
     check_baseline_t2lite,
@@ -150,19 +151,21 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                     cls = "INFRA_FAILURE"
                 if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
                     cls, label = "INFRA_FAILURE", "audit"
-                result = run.results.get(iid, MISSING)
-                shadow = getattr(result, "competing_present", ())
-                if shadow:
-                    # The answer is the live model's and these competitors are the shadow's, so the Ring 0
-                    # tie between them does not hold here (report/t2lite_card.py): score without them.
-                    result = replace(result, competing_present=())
+                shadow, answer = run.results.get(iid, MISSING), run.envelopes.get(iid, MISSING)
+                result = shadow
+                if isinstance(shadow, ReaderResult):
+                    # The answer is the live model's; the selection and competitors are the shadow's. Ring 0
+                    # ties the two, which does not hold here, so score the answer as L4's card check reads it.
+                    asserted = isinstance(answer, dict) and answer.get("type") != "unknown"
+                    result = replace(shadow, selected_option=_LIVE_ANSWER if asserted else None, competing_present=())
                 scores[iid] = score_item(item, cls=cls, label=label,
-                    result=result, envelope=run.envelopes.get(iid, MISSING),
+                    result=result, envelope=answer,
                     act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
                     scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
                     stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
-                if shadow and cls != "SYSTEM_FAILURE" and not isinstance(scores[iid], Infra):
-                    scores[iid]["competing_present"] = list(shadow)
+                if isinstance(shadow, ReaderResult) and cls != "SYSTEM_FAILURE" and not isinstance(scores[iid], Infra):
+                    scores[iid].update(selected_option=shadow.selected_option,
+                                       competing_present=list(shadow.competing_present))
                 if cls or isinstance(scores[iid], Infra):
                     next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
             _write(out, "t2lite_probes.json", probes)
