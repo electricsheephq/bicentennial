@@ -341,8 +341,12 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     import sys
     from contextlib import closing
 
-    from bicentennial.director.compiler.hermes import compile_script
+    from bicentennial.contracts.items import reader_view
+    from bicentennial.director.compiler.hermes import compile_script, step_call
+    from bicentennial.director.scripted import ScriptedResponder
+    from bicentennial.probe.probe_responder import ProbeResponder
     from bicentennial.runner import life
+    from bicentennial.systems.registry import REGISTRY, load
     from bicentennial.sandbox.surfaces import surface_hash
     from bicentennial.world.db import open_world
 
@@ -375,6 +379,13 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
         kw["worker_argv"] = [sys.executable, str(Path(__file__).with_name("fake_life_worker.py")), "--timeline", str(timeline)]
         case = dict(items=kw["items"], keys=kw["keys"], compiled=compiled)
         oracle = PROBE["Oracle"](case, kw["scratch"])
+        if kw["arm"] == "no_memory":
+            # The floor reads as no-memory, which offers no recall tool (run_life's reader rule).
+            reader = load(REGISTRY / "no-memory.toml")
+            oracle.scripted = ProbeResponder(ScriptedResponder(reader), reader,
+                {iid: (p.index, n) for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)},
+                {i["item_id"]: (reader_view(i), kw["keys"][i["item_id"]]) for i in kw["items"]},
+                earlier=None, step_call=step_call)
         oracle.scripted.earlier = lambda key, session, before=None: life._earlier(
             kw["scratch"] / kw["branch"] / "run/ledger", session, before)
         stacks[-1].oracle = oracle
