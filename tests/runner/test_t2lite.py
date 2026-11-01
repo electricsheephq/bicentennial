@@ -13,8 +13,9 @@ import pytest
 from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.director.responder import Call, Reply
+from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
-from bicentennial.probe.scripted_reader import UNKNOWN
+from bicentennial.probe.scripted_reader import UNKNOWN, ReaderResult
 from bicentennial.report.t2lite_card import validate_t2lite_card
 from bicentennial.runner import t2lite as runner
 from bicentennial.runner.hermes_score import Infra
@@ -42,6 +43,7 @@ class Stack:
     def drain(self):
         assert self.closed
         self.drained = True
+        return [{"type": "holder"}]
 
     def close(self):
         assert not self.closed
@@ -100,18 +102,20 @@ def scenario(tmp_path, monkeypatch):
         live = kw["live"]
         assert not live.closed
         state.seen.append((kw["arm"], kw["attempt"]))
+        if state.mode == "gate":
+            raise GateRefused("machine guard refused")
         call = Call("probe_main", "", "chat", {"messages": [{"role": "user", "content":
-            CANARY if state.mode == "canary" else "synthetic prompt"}]}, runner.MODEL,
+            CANARY if state.mode in ("canary", "canary_credential") else "synthetic prompt"}]}, runner.MODEL,
             {"session": 21, "turn": 1}, "synthetic")
         live.respond(call)
-        if state.mode == "credential":
+        if state.mode in ("credential", "canary_credential"):
             raise LiveCredentialStop("upstream_401")
         if state.mode == "spend":
             live.stack.values["spend_stopped"] = True
         root = kw["scratch"] / kw["branch"]
         root.mkdir(parents=True)
         probes = [dict(item_id=i["item_id"], checkpoint=i["probe_point"], probe_session=21,
-            stage="remember", shadow=dict(selected_option=None, in_context=True,
+            stage="remember", shadow=dict(selected_option="opt-a" if state.mode == "competing" else None, in_context=True,
                 in_context_initial=True, carry_over=False, stage_attribution="used", shadow_error=None),
             envelope=dict(parsed=UNKNOWN, value_match=True, value_match_normalised=True, citation_match=None),
             live=dict(served_by="live", served="responder_live", identity_flag=state.mode == "identity"))
@@ -120,6 +124,12 @@ def scenario(tmp_path, monkeypatch):
         rows = ({"role": "probe_main", "served_by": "live"},)
         if state.mode == "live_replay":
             rows = ({"role": "replay_main", "served_by": "live"},)
+        if state.mode == "live_upstream":
+            rows = ({"role": "probe_main", "upstream": [{"role": "replay_main", "served_by": "live"}]},)
+        results = {i["item_id"]: ReaderResult(item_id=i["item_id"], mode="hermes", kind="qa", selected_option="opt-a",
+            envelope=UNKNOWN, plan=None, competing_present=("opt-b",), carry_over=False, in_context=True,
+            missing_required=0, competing={}, forbidden_in_context=None, recall=None)
+            for i in kw["items"]} if state.mode == "competing" else {}
         if state.mode == "token":
             runner._write(tmp_path / "out", "planted.json", "synthetic-access-token")
         if state.mode == "authbytes":
@@ -128,12 +138,20 @@ def scenario(tmp_path, monkeypatch):
             target.write_bytes((home / "auth.json").read_bytes())
         return LifeRun(kw["arm"], kw["life_dir"].name, kw["branch"], kw["attempt"], _root=root,
             egress={"non_loopback": ["203.0.113.1:443"] if state.mode == "socket" else []},
-            audit={"status": "INFRA_FAILURE" if state.mode == "audit" else "OK", "failures": []},
+            audit={"status": "INFRA_FAILURE", "failures": ["A5.missing_scripts"]} if state.mode == "audit"
+                else {"status": "OK", "failures": []}, results=results,
             classes={i["item_id"]: ("INFRA_FAILURE", "responder_live_unavailable") for i in kw["items"]}
                 if state.mode in (429, 503) else {}, records=rows,
             timings={"pin_check_ms": 1, "sessions": []}, tokens_by_role={"probe_main": (2, 1)})
     def score(item, **kw):
-        return Infra("synthetic") if kw["cls"] == "INFRA_FAILURE" else row(item["item_id"], state.score)
+        if kw["cls"] == "INFRA_FAILURE":
+            return Infra("synthetic")
+        scored = row(item["item_id"], state.score)
+        if state.mode == "competing":
+            # The real scorer's Ring 0 check, applied as hermes_score applies it to the reader result.
+            validate("item_outcome", dict(scored, selected_option=kw["result"].selected_option,
+                                          competing_present=list(kw["result"].competing_present)))
+        return scored
     monkeypatch.setattr(runner.t1, "prepare", lambda **kw: ctx)
     monkeypatch.setattr(runner.t1, "_crosses", lambda *args: False)
     monkeypatch.setattr(runner, "build_live_stack", build)
@@ -155,7 +173,9 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     receipt = runner._read(s.out, "receipt.json")
     assert {t["arm"] for t in receipt["timings"]} == {"system", "no_memory"}
     assert receipt["tokens"] == {"input": 16, "output": 8}
-    assert card["counts"] == {"floor_cached": 0, "null_citation": 4}
+    assert card["counts"] == {"floor_cached": 0, "null_citation": 0}
+    assert card["answer_contract_sha256"] == runner.answer_contract.contract_hash()
+    assert runner._read(s.out, "custody.json") == [{"type": "holder"}]
     assert len(s.seen) == 8 and s.stacks[0].closed and s.stacks[0].drained
     assert s.invoke("second", cache=tmp_path / "cache") == 0
     assert runner._read(tmp_path / "second", "card.json")["counts"]["floor_cached"] == 1
@@ -167,39 +187,54 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
 
 
-@pytest.mark.parametrize("changed", ["contract", "harness"])
+@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "damaged"])
 def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
     assert scenario.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
     if changed == "contract":
         monkeypatch.setattr(runner.answer_contract, "contract_hash", lambda: "c" * 64)
-    else:
+    elif changed == "harness":
         scenario.ctx.pins["harness_hash"] = "c" * 64
+    elif changed == "pack":
+        scenario.ctx.pack_hash = "c" * 64
+    else:
+        entry.write_bytes(b"{")
     assert scenario.invoke("changed", cache=tmp_path / "cache") == 0
     assert runner._read(tmp_path / "changed", "card.json")["counts"]["floor_cached"] == 0
     assert len(scenario.seen) == 16
+    assert json.loads(entry.read_bytes())["outcomes"]
+    assert all(p.name.endswith(".t2lite-floor.json") for p in (tmp_path / "cache").iterdir())
 
 
 @pytest.mark.parametrize("mode,code", [("credential", "credential_stop"), ("spend", "spend_stop"),
-    ("canary", "canary"), ("token", "credential_scan"), ("authbytes", "credential_scan"),
-    ("socket", "isolation"), ("live_replay", "isolation")])
+    ("canary", "canary"), ("canary_credential", "canary"), ("token", "credential_scan"),
+    ("authbytes", "credential_scan"), ("socket", "isolation"), ("live_replay", "isolation"),
+    ("live_upstream", "isolation"), ("gate", "gate_refused")])
 def test_stops_and_invalid_cleanup(scenario, mode, code):
     scenario.mode = mode
     assert scenario.invoke() == 3
     assert runner._read(scenario.out, "refusal.json") == {"code": code}
     infra = code in ("credential_stop", "spend_stop")
-    assert sorted(p.name for p in scenario.out.iterdir()) == (["receipt.json", "refusal.json"] if infra else ["refusal.json"])
+    assert sorted(p.name for p in scenario.out.iterdir()) == (
+        ["custody.json", "receipt.json", "refusal.json"] if infra else ["refusal.json"])
     if infra:
         assert runner._read(scenario.out, "receipt.json")["run_status"] == "INFRA_FAILURE"
+        assert runner._read(scenario.out, "custody.json") == [{"type": "holder"}]
     assert scenario.stacks[0].closed and scenario.stacks[0].drained
-    if mode == "canary":
+    if mode in ("canary", "canary_credential"):
         assert not scenario.stacks[0].calls
+    if mode == "credential":
+        # A credential stop ends the run at once: one life, one send, no retry.
+        assert len(scenario.seen) == 1 and len(scenario.stacks[0].calls) == 1
     assert all(b"synthetic-access-token" not in p.read_bytes() for p in scenario.out.iterdir())
 
 
 @pytest.mark.parametrize("mode", [429, 503, "audit"])
-def test_infra_reruns_use_scorer_class_and_null_attribution(scenario, mode):
+def test_infra_reruns_use_scorer_class_and_null_attribution(scenario, tmp_path, mode):
     scenario.mode = mode
-    assert scenario.invoke() == 0
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    # A BLOCKED floor is never cached.
+    assert not (tmp_path / "cache").exists() or not any((tmp_path / "cache").iterdir())
     card = runner._read(scenario.out, "card.json")
     assert {r["failure_class"] for r in card["items"]} == {"BLOCKED"}
     assert len(scenario.seen) == 24
@@ -265,7 +300,7 @@ def test_baseline_checked_before_build_or_send(scenario, tmp_path, field):
     runner._write(tmp_path / "baseline", "outcomes.json", {})
     assert scenario.invoke(baseline=tmp_path / "baseline") == 3
     assert scenario.stacks == [] and scenario.seen == []
-    assert runner._read(scenario.out, "refusal.json") == {"code": "invalid_card:baseline" if field == "tier" else field}
+    assert runner._read(scenario.out, "refusal.json") == {"code": "invalid_card:baseline" if field in ("tier", "profile") else field}
 
 
 def test_flip_identities_and_prime_card(scenario, tmp_path):
@@ -303,11 +338,13 @@ def test_publication_waits_for_scan_and_discloses_transforms(scenario, monkeypat
         checked.append(out)
         return scan(out, needles)
     def transformed(**kw):
-        return replace(drive(**kw), transforms=("synthetic-transformed-item",))
+        return replace(drive(**kw), transforms=(kw["arm"] + "-transformed",))
     monkeypatch.setattr(runner, "_scan", verify)
     monkeypatch.setattr(runner, "run_life", transformed)
     assert scenario.invoke() == 0 and checked == [scenario.out]
-    assert runner._read(scenario.out, "disclosures.json")["t1.transforms"] == ["synthetic-transformed-item"]
+    disclosures = runner._read(scenario.out, "disclosures.json")
+    assert disclosures["t1.transforms"] == ["system-transformed"]
+    assert disclosures["no_memory.transforms"] == ["no_memory-transformed"]
 
 
 def test_planted_flip_rerun_command_repeats_checkpoint(scenario, tmp_path, monkeypatch):
@@ -374,12 +411,13 @@ def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
 def test_rerun_replays_the_branch_and_keeps_the_checkpoint(scenario, monkeypatch):
     s = scenario
     pack = s.ctx.packs[0]
-    extra = dict(row("t1-g1B0-later"), probe_point=3)
-    pack.items["B0"].append(extra)
-    pack.records[extra["item_id"]] = dict(item_id=extra["item_id"], template_id="synthetic", template_version=1)
-    pack.records_b["B0"].append(pack.records[extra["item_id"]])
-    pack.keys[extra["item_id"]] = {}
-    pack.cases[extra["item_id"]] = SimpleNamespace(item=extra)
+    for iid, point in (("t1-g1B0-same", 2), ("t1-g1B0-later", 3)):
+        extra = dict(row(iid), probe_point=point)
+        pack.items["B0"].append(extra)
+        pack.records[iid] = dict(item_id=iid, template_id="synthetic", template_version=1)
+        pack.records_b["B0"].append(pack.records[iid])
+        pack.keys[iid] = {}
+        pack.cases[iid] = SimpleNamespace(item=extra)
     drive, ran = runner.run_life, []
     def capture(**kw):
         ran.append((kw["arm"], sorted(i["item_id"] for i in kw["items"])))
@@ -387,12 +425,36 @@ def test_rerun_replays_the_branch_and_keeps_the_checkpoint(scenario, monkeypatch
     monkeypatch.setattr(runner, "run_life", capture)
     assert s.invoke(only=("t1-g1", "B0", 2), repeat=2) == 0
     # Each repetition replays the whole branch, so both items run; only the checkpoint's are kept.
-    assert [ids for arm, ids in ran if arm == "system"] == [["t1-g1B0", "t1-g1B0-later"]] * 2
-    assert {i["item_id"] for i in runner._read(s.out, "card.json")["items"]} == {"t1-g1B0"}
+    assert [ids for arm, ids in ran if arm == "system"] == [["t1-g1B0", "t1-g1B0-later", "t1-g1B0-same"]] * 2
+    # Every item at the checkpoint is kept, and only those.
+    assert {i["item_id"] for i in runner._read(s.out, "card.json")["items"]} == {"t1-g1B0", "t1-g1B0-same"}
     repetitions = runner._read(s.out, "repetitions.json")
-    assert [set(rep) for rep in repetitions] == [{"t1-g1B0"}] * 2
+    assert [set(rep) for rep in repetitions] == [{"t1-g1B0", "t1-g1B0-same"}] * 2
     assert s.invoke("missing", only=("t1-g1", "B0", 9), repeat=2) == 3
     assert runner._read(s.out.parent / "missing", "refusal.json") == {"code": "only"}
+
+
+def test_shadow_competitors_kept_off_the_live_score(scenario):
+    scenario.mode = "competing"
+    assert scenario.invoke() == 0
+    items = runner._read(scenario.out, "card.json")["items"]
+    assert {(i["selected_option"], tuple(i["competing_present"])) for i in items} == {("opt-a", ("opt-b",))}
+
+
+def test_refusal_codes_follow_t1(scenario, monkeypatch):
+    from bicentennial.systems.registry import SystemRefused
+    def refuse(**kw):
+        raise SystemRefused(("b_reason", "a_reason"))
+    monkeypatch.setattr(runner.t1, "prepare", refuse)
+    assert scenario.invoke() == 3
+    assert runner._read(scenario.out, "refusal.json") == {"code": "a_reason,b_reason"}
+
+
+def test_null_citation_counts_only_answers(scenario):
+    answer = dict(type="entity", value="synthetic", confidence_milli=900, citation=None)
+    rows = [row("a"), dict(row("b"), envelope=answer),
+            dict(row("c"), envelope=dict(answer, citation=dict(quote="synthetic", context_offset=0)))]
+    assert runner._card(scenario.ctx, rows)["counts"]["null_citation"] == 1
 
 
 SHARED = runpy.run_path(str(Path(__file__).with_name("test_t1.py")))

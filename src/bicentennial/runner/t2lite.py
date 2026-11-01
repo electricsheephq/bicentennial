@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -15,6 +16,7 @@ from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.responder import Reply
 from bicentennial.director.upstream import login as custody
+from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
 from bicentennial.report.receipt import (
     build_receipt,
@@ -70,16 +72,17 @@ class _Guard:
 
 
 def _isolation(run):
-    # Worker sockets use T1's check; provider rows instead use L2's probe-live audit.
+    # Worker sockets use T1's check. Provider rows use A5's live predicate (audit/readback.py) and only
+    # that: A5's other failures are scripted-reply checks, which the audit status makes INFRA, as in T1.
     try:
         t0._check_egress([([], run.egress)], t1.T1Refused)
     except t1.T1Refused:
         raise t1.T1Refused("isolation") from None
-    if any(r.get("served_by") == "live" and r.get("role") != "probe_main" or any(
-            a.get("served_by") == "live" and r.get("role") != "probe_main"
-            for a in r.get("upstream", ())) for r in run.records) or any(
-            f.startswith("A5") for f in run.audit.get("failures", ())):
-        raise t1.T1Refused("isolation")
+    for r in run.records:
+        live = [u for u in r.get("upstream", ()) if u.get("served_by") == "live"]
+        if (r.get("served_by") == "live" or live) and not (
+                r.get("role") == "probe_main" and all(u.get("role") == "probe_main" for u in live)):
+            raise t1.T1Refused("isolation")
 
 
 def _secrets(home, login=None):
@@ -106,8 +109,9 @@ def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):
     return build_t2lite_card(system=ctx.entry["name"], pack_hash=ctx.pack_hash,
         seed_hash=ctx.pins["seed_hash"], pins={k: ctx.pins[k] for k in PIN_FIELDS},
         model=MODEL, effort=EFFORT, served_identity=identity, aa_prime=prime, items=rows,
+        # The null-citation escape on an answer; an unknown reply always has a null citation.
         counts=dict(floor_cached=int(cached), null_citation=sum(r["envelope"] is not None and
-            r["envelope"]["citation"] is None for r in rows)),
+            r["envelope"]["type"] != "unknown" and r["envelope"]["citation"] is None for r in rows)),
         answer_contract_sha256=answer_contract.contract_hash())
 
 
@@ -146,11 +150,19 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                     cls = "INFRA_FAILURE"
                 if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
                     cls, label = "INFRA_FAILURE", "audit"
+                result = run.results.get(iid, MISSING)
+                shadow = getattr(result, "competing_present", ())
+                if shadow:
+                    # The answer is the live model's and these competitors are the shadow's, so the Ring 0
+                    # tie between them does not hold here (report/t2lite_card.py): score without them.
+                    result = replace(result, competing_present=())
                 scores[iid] = score_item(item, cls=cls, label=label,
-                    result=run.results.get(iid, MISSING), envelope=run.envelopes.get(iid, MISSING),
+                    result=result, envelope=run.envelopes.get(iid, MISSING),
                     act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
                     scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
                     stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
+                if shadow and cls != "SYSTEM_FAILURE" and not isinstance(scores[iid], Infra):
+                    scores[iid]["competing_present"] = list(shadow)
                 if cls or isinstance(scores[iid], Infra):
                     next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
             _write(out, "t2lite_probes.json", probes)
@@ -223,6 +235,17 @@ def _select(ctx, only):
     raise t1.T1Refused("only")
 
 
+def _cached_floor(path):
+    """A damaged entry is a miss: the floor runs live, and the run writes a whole entry again."""
+    try:
+        floor = _read(path.parent, path.name) if path is not None and path.is_file() else None
+    except (OSError, ValueError):
+        return None
+    if isinstance(floor, dict) and isinstance(floor.get("outcomes"), dict) and isinstance(floor.get("stops"), dict):
+        return floor
+    return None
+
+
 def _references(prospective, selection, baseline, aa_of, aa_prime):
     """Read and check every earlier run before anything is sent, so a bad one never costs a live run."""
     cards, outcomes = {}, {}
@@ -257,7 +280,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None):
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
-    needles, pending_cache = set(), None
+    needles, pending_cache, live, custody_rows = set(), None, None, []
     try:
         # Arguments and settings first: these refusals create no output, so the same command can run again.
         if (repeat < 1 or max_sends < 0 or repeat != 1 and only is None
@@ -295,8 +318,8 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                                            aa_of, aa_prime)
         key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"]])
         floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
-        cached = floor_path is not None and floor_path.is_file()
-        floor = _read(floor_path.parent, floor_path.name) if cached else None
+        floor = _cached_floor(floor_path)
+        cached = floor is not None
         floor_stops = floor["stops"] if cached else {}
         needles = _secrets(home)
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
@@ -340,12 +363,14 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     stack.close()
                     needles.update(_secrets(home, login))
                 finally:
-                    login.drain()
+                    custody_rows.extend(login.drain())
             _write(out, "outcomes.json", repetitions[-1])
             _write(out, "repetitions.json", repetitions)
             _write(out, "no_memory.json", floor)
-            _write(out, "disclosures.json", {"t1.transforms": sorted({i for r in runs for i in r.transforms}),
-                "live": stack.state()})
+            _write(out, "custody.json", custody_rows)
+            _write(out, "disclosures.json", {"live": stack.state(), **{
+                key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
+                for key, arm in (("t1.transforms", "system"), ("no_memory.transforms", "no_memory"))}})
             if baseline:
                 report = flip_report(card, references["baseline"], outcomes["baseline"], repetitions[-1],
                     aa_prime=outcomes.get("prime"), aa_prime_card=references.get("prime"))
@@ -356,13 +381,21 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, ".card.json", card)
             _scan(out, needles)
             if pending_cache:
-                _write(pending_cache[0].parent, pending_cache[0].name, pending_cache[1])
+                # Written whole, then renamed into place, so no reader sees a partial entry.
+                temp = pending_cache[0].with_name(pending_cache[0].name + "." + ctx.run_id)
+                _write(temp.parent, temp.name, pending_cache[1])
+                temp.replace(pending_cache[0])
             (out / ".receipt.json").replace(out / "receipt.json")
             (out / ".card.json").replace(out / "card.json")
         return 0
     except (LiveCredentialStop, custody.Stop, BaselineRefused, *t1.REFUSALS) as error:
+        reasons = getattr(error, "reasons", ())
         code = ("credential_stop" if isinstance(error, (LiveCredentialStop, custody.Stop)) else
-            error.reason if isinstance(error, BaselineRefused) else getattr(error, "code", None) or "pin_mismatch")
+            error.reason if isinstance(error, BaselineRefused) else getattr(error, "code", None) or (
+                ",".join(sorted(reasons)) if reasons else
+                "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
+        if code in ("credential_stop", "spend_stop") and live is not None and live.canary:
+            code = "canary"  # INVALID outranks a stop: the guard latched a canary body
         if created:
             try:
                 _scan(out, needles)
@@ -371,11 +404,14 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             fixedroot.remove_tree(out)
             out.mkdir()
             if code in ("credential_stop", "spend_stop"):
-                receipt = canon(_receipt(runs, start, "INFRA_FAILURE"))
-                if any(n in receipt for n in needles):
+                # L1's custody rows say why: the drained log, and a Stop's own records.
+                files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE")),
+                         "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
+                if any(n in data for data in files.values() for n in needles):
                     code = "credential_scan"
                 else:
-                    (out / "receipt.json").write_bytes(receipt)
+                    for name, data in files.items():
+                        (out / name).write_bytes(data)
             _write(out, "refusal.json", dict(code=code))
         print(code, file=sys.stderr)
         return 3
