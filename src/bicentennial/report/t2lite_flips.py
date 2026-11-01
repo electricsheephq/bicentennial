@@ -16,6 +16,8 @@ BASELINE_FIELDS = (
 PLUGIN_SYSTEMS = frozenset({"holographic", "mem0-oss", "omega"})
 MODEL_CACHE_SYSTEMS = frozenset({"omega"})  # its worker settings name {model_cache}
 NO_BAND = "no A/A′ band"
+# The fields both a card row and an outcome record carry that decide a row's flip or exclusion.
+VOUCHED_FIELDS = ("score_milli", "failure_class", "base_verdict", "stage")
 
 
 class BaselineRefused(ValueError):
@@ -24,19 +26,27 @@ class BaselineRefused(ValueError):
         super().__init__(reason)
 
 
+def _validate(card, side):
+    try:
+        validate_t2lite_card(card)
+    except (ValueError, TypeError, KeyError) as error:
+        raise BaselineRefused(f"invalid_card:{side}") from error
+
+
+def _compare(card, baseline_card, prefix):
+    for field in BASELINE_FIELDS:
+        value, baseline = card, baseline_card
+        for part in field.split("."):
+            value, baseline = value[part], baseline[part]
+        if value != baseline:
+            raise BaselineRefused(prefix + field)
+
+
 def check_baseline_t2lite(current_card, baseline_card) -> None:
     """Validate both cards before comparing the frozen comparability fields."""
-    for side, card in (("current", current_card), ("baseline", baseline_card)):
-        try:
-            validate_t2lite_card(card)
-        except (ValueError, TypeError, KeyError) as error:
-            raise BaselineRefused(f"invalid_card:{side}") from error
-    for field in BASELINE_FIELDS:
-        current, baseline = current_card, baseline_card
-        for part in field.split("."):
-            current, baseline = current[part], baseline[part]
-        if current != baseline:
-            raise BaselineRefused(field)
+    _validate(current_card, "current")
+    _validate(baseline_card, "baseline")
+    _compare(current_card, baseline_card, "")
 
 
 @dataclass(frozen=True)
@@ -116,7 +126,7 @@ def flip_list(baseline_outcomes, current_outcomes, *, aa_prime=None, rerun=None)
     """Return rows, exclusions, exact q0, q0_milli, labels and counts.
 
     Runs must cover identical item ids; missing results must be explicit records.
-    A/A′ pins are the caller's responsibility: aa_prime contains only outcomes.
+    aa_prime contains only outcomes; flip_report checks its card against the baseline.
     q0 uses items scored in both A and A′, independently of the current run.
     An empty scored A/A′ intersection has q0=None. Row instability compares the
     A/A′ outcomes of every item measured in both; it is None where either is
@@ -178,9 +188,38 @@ def rerun_command(card, item):
             f"--only {life}:{branch}:{item.probe_point} --repeat 3 --out <new dir>")
 
 
-def flip_report(current_card, baseline_card, baseline_outcomes, current_outcomes, *, aa_prime=None):
-    """Return a fresh JSON object, ready for canon; no files are written."""
+def _vouch(card, outcomes, side):
+    """A card vouches only for its own run: the same ids and the same decision fields."""
+    items = {item["item_id"]: item for item in card["items"]}
+    if items.keys() != outcomes.keys() or any(
+            (type(getattr(record, key)), getattr(record, key))
+            != (type(items[iid][key]), items[iid][key])
+            for iid, record in outcomes.items() for key in VOUCHED_FIELDS):
+        raise BaselineRefused(f"items:{side}")
+
+
+def flip_report(current_card, baseline_card, baseline_outcomes, current_outcomes, *,
+                aa_prime=None, aa_prime_card=None):
+    """Return a fresh JSON object, ready for canon; no files are written.
+
+    A′ outcomes come with their card, which records aa_prime: true and is checked
+    against the baseline card like the current one. Each card vouches for its outcomes.
+    """
     check_baseline_t2lite(current_card, baseline_card)
+    if aa_prime is not None and aa_prime_card is None:
+        raise BaselineRefused("aa_prime:no_card")
+    if aa_prime_card is not None:
+        if aa_prime is None:
+            raise BaselineRefused("aa_prime:no_outcomes")
+        _validate(aa_prime_card, "aa_prime")
+        _compare(aa_prime_card, baseline_card, "aa_prime:")
+        if aa_prime_card["aa_prime"] is not True:
+            raise BaselineRefused("aa_prime:flag")
+    runs = [("current", current_card, current_outcomes), ("baseline", baseline_card, baseline_outcomes)]
+    if aa_prime is not None:
+        runs.append(("aa_prime", aa_prime_card, aa_prime))
+    for side, card, outcomes in runs:
+        _vouch(card, _outcomes(outcomes), side)
     result = flip_list(baseline_outcomes, current_outcomes, aa_prime=aa_prime,
                        rerun=lambda item: rerun_command(current_card, item))
     q0 = result.pop("q0")
