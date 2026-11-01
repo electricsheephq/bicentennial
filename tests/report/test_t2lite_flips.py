@@ -236,8 +236,10 @@ def test_q0_denominator_is_scored_in_a_and_prime_only():
     assert result["counts"]["aa_prime_scored"] == 10
     assert result["counts"]["unstable"] == 2
     flags = {r["item_id"]: r["unstable"] for r in result["rows"]}
-    # Instability still reports an outcome difference outside the q0 population.
+    # Instability still reports an outcome difference outside the q0 population,
+    # but an item whose A′ never measured it has none.
     assert flags["na-a"] is True and flags["na-prime"] is True
+    assert flags["blocked-prime"] is None and flags["infra-prime"] is None
 
 
 def test_zero_instability_and_empty_scored_intersection():
@@ -270,6 +272,8 @@ def test_rerun_exact_published_format_and_plugin_presence(system, plugin):
     record = dict(item(), **local_paths)
     command = flips.rerun_command(source_card, record)
     expected_plugin = " --plugin-source <plugin checkout>" if plugin else ""
+    if system == "omega":
+        expected_plugin += " --model-cache <model cache>"
     assert command == (
         f"PYTHONHASHSEED=0 bicentennial t2lite --system {system} --packs <packs> "
         f"--pack-hash {'a' * 64} --hermes <hermes checkout>{expected_plugin} "
@@ -339,3 +343,12 @@ def test_mapping_ids_must_match_and_dataclass_inputs_are_supported():
         flips.flip_list({"item-0": record}, {})
     with pytest.raises(ValueError, match="identical item ids"):
         flips.flip_list({"item-0": record}, {"item-0": record}, aa_prime={})
+
+
+def test_plugin_lists_equal_the_registry():
+    from bicentennial.systems import hermes_plugin
+
+    assert flips.PLUGIN_SYSTEMS == hermes_plugin.PROVIDERS.keys() | hermes_plugin.ENGINES.keys()
+    assert flips.MODEL_CACHE_SYSTEMS == {
+        name for name, env in hermes_plugin.WORKER_ENV.items()
+        if any("{model_cache}" in value for value in env.values())}

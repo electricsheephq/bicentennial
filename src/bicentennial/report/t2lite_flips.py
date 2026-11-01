@@ -12,8 +12,9 @@ BASELINE_FIELDS = (
     "pins.director_commit", "pins.scorer_commit", "profile",
 )
 # The card records the registered system name, not a local checkout or registry object.
-# Keep this report-only list aligned with the registered plug-in systems.
+# report/ may not import systems/, so a test keeps both lists equal to the registry.
 PLUGIN_SYSTEMS = frozenset({"holographic", "mem0-oss", "omega"})
+MODEL_CACHE_SYSTEMS = frozenset({"omega"})  # its worker settings name {model_cache}
 NO_BAND = "no A/A′ band"
 
 
@@ -117,16 +118,18 @@ def flip_list(baseline_outcomes, current_outcomes, *, aa_prime=None, rerun=None)
     Runs must cover identical item ids; missing results must be explicit records.
     A/A′ pins are the caller's responsibility: aa_prime contains only outcomes.
     q0 uses items scored in both A and A′, independently of the current run.
-    An empty scored A/A′ intersection has q0=None. Row instability compares all
-    A/A′ outcomes; counts.unstable is the scored numerator used by q0. Without
-    A′, row instability is None. rerun is a pure ItemOutcome-to-string callable.
+    An empty scored A/A′ intersection has q0=None. Row instability compares the
+    A/A′ outcomes of every item measured in both; it is None where either is
+    INFRA, BLOCKED or a G2 act, and without A′. counts.unstable is the scored
+    numerator used by q0. rerun is a pure ItemOutcome-to-string callable.
     """
     baseline, current = _outcomes(baseline_outcomes), _outcomes(current_outcomes)
     prime = None if aa_prime is None else _outcomes(aa_prime)
     if baseline.keys() != current.keys() or prime is not None and baseline.keys() != prime.keys():
         raise ValueError("runs must have identical item ids")
     unstable = {} if prime is None else {
-        iid: _differs(a, prime[iid]) for iid, a in baseline.items()}
+        iid: None if _exclusion(a, prime[iid]) else _differs(a, prime[iid])
+        for iid, a in baseline.items()}
     scored_band = [] if prime is None else [
         unstable[iid] for iid, a in baseline.items() if _scored(a, prime[iid])]
     q0 = Fraction(sum(scored_band), len(scored_band)) if scored_band else None
@@ -168,6 +171,8 @@ def rerun_command(card, item):
     if type(item.probe_point) is not int or item.probe_point < 1:
         raise ValueError("invalid probe_point")
     plugin = " --plugin-source <plugin checkout>" if system in PLUGIN_SYSTEMS else ""
+    if system in MODEL_CACHE_SYSTEMS:
+        plugin += " --model-cache <model cache>"
     return (f"PYTHONHASHSEED=0 bicentennial t2lite --system {system} --packs <packs> "
             f"--pack-hash {digest} --hermes <hermes checkout>{plugin} "
             f"--only {life}:{branch}:{item.probe_point} --repeat 3 --out <new dir>")
