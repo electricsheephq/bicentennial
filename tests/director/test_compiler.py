@@ -134,6 +134,25 @@ def compiled(world, **kwargs):
     return compile_script(root, "B0", schedule, db, items=kwargs.pop("items", items), **(dict(step_s=60) | kwargs))
 
 
+@pytest.fixture(autouse=True)
+def ring0_equivalence(monkeypatch):
+    def checked(*args, **kwargs):
+        mode = kwargs.pop("probe_mode", "ring0")
+        if mode != "ring0":
+            return compiler.compile_script(*args, **kwargs, probe_mode=mode)
+        try:
+            result = compiler.compile_script(*args, **kwargs)
+        except ValueError as error:
+            with pytest.raises(ValueError) as explicit:
+                compiler.compile_script(*args, **kwargs, probe_mode="ring0")
+            assert explicit.value.args == error.args
+            raise
+        explicit = compiler.compile_script(*args, **kwargs, probe_mode="ring0")
+        assert explicit == result and canon(explicit.script) == canon(result.script)
+        return result
+    monkeypatch.setitem(globals(), "compile_script", checked)
+
+
 def rewrite(root, branch, rows=None, sessions=None):
     for name, value in (("stream", rows), ("sessions", sessions)):
         if value is not None:
@@ -224,6 +243,7 @@ root = Path(sys.argv[1])
 db = sqlite3.connect(f"file:{root / 'world.db'}?mode=ro", uri=True)
 schedule = build_schedule(sys.argv[2], "life-a", named("t1"))
 sys.stdout.buffer.write(canon(compile_script(root, "B0", schedule, db, step_s=60).script))
+assert compile_script(root, "B0", schedule, db, step_s=60) == compile_script(root, "B0", schedule, db, step_s=60, probe_mode="ring0")
 '''
         outputs = [subprocess.run([sys.executable, "-c", code, str(root), f"r14-{genre.lower()}"],
                                   env=dict(os.environ, PYTHONHASHSEED=seed), check=True, capture_output=True,
@@ -232,7 +252,8 @@ sys.stdout.buffer.write(canon(compile_script(root, "B0", schedule, db, step_s=60
 
 
 @pytest.mark.parametrize("bad", ["empty", "duplicate", "audience", "turn_key", "payload", "sealed", "unknown", "git"])
-def test_stream_refusals(worlds, tmp_path, bad):
+@pytest.mark.parametrize("probe_mode", ["ring0", "per_item"])
+def test_stream_refusals(worlds, tmp_path, bad, probe_mode):
     root, db, schedule, cuts, items = worlds["G1"]
     write_branch(tmp_path, cuts[0])
     rows = copy.deepcopy(list(cuts[0].rows))
@@ -263,7 +284,7 @@ def test_stream_refusals(worlds, tmp_path, bad):
             tool["tool"] = {"name": "git", "args": {"argv": ["status"]}}
     rewrite(tmp_path, "B0", [seal(r) for r in rows])
     with pytest.raises(ValueError) as error:
-        compile_script(tmp_path, "B0", schedule, db, items=items, step_s=60)
+        compile_script(tmp_path, "B0", schedule, db, items=items, step_s=60, probe_mode=probe_mode)
     if bad == "sealed":
         assert '$["sessions"]' in str(error.value) and text["event_id"] not in str(error.value)
 
@@ -290,6 +311,48 @@ def test_schedule_and_probe_refusals(worlds):
     bad["sessions"][0]["turns"][0]["tool_calls"] = [{"name": "book", "args": {"fact_id": "hidden"}}]
     with pytest.raises(ValueError, match="forbidden"):
         validate("script", bad)
+
+
+def test_per_item(worlds):
+    world = worlds["G2"]
+    many = [item(world[3][0], 20, n + 10, n % 3 == 2) for n in range(10)]
+    result = compiled(world, items=many, probe_mode="per_item")
+    assert [p.item_ids for p in result.probes] == [(i["item_id"],) for i in many]
+    assert [p.index for p in result.probes] == list(range(21, 31))
+    assert all(p.sim_t_s == world[2].sessions[19].t_end - 60 for p in result.probes)
+    assert all(len(s["turns"]) == 1 for s in result.script["sessions"] if s["kind"] == "probe")
+    with pytest.raises(ValueError, match="too many"):
+        compiled(world, items=many)
+    replay = result.script["sessions"][0]["turns"][0]["user"]
+    shared = [dict(i, prompt=many[0]["prompt"]) for i in many[:2]]
+    assert len(compiled(world, items=shared, probe_mode="per_item").probes) == 2
+    for prompt in (many[0]["prompt"], replay):
+        with pytest.raises(ValueError, match="duplicate user"):
+            compiled(world, items=[dict(i, prompt=prompt) for i in many[:2]])
+    # #310's condition 2: no probe prompt equals a replay turn's text in the same life.
+    with pytest.raises(ValueError, match="duplicate user"):
+        compiled(world, items=[dict(many[0], prompt=replay)], probe_mode="per_item")
+    with pytest.raises(ValueError, match="before checkpoint"):
+        compiled(world, items=many, probe_mode="per_item", step_s=4000)
+    for mode in (None, "full", "", 1):
+        with pytest.raises(ValueError, match="probe mode"):
+            compiled(world, probe_mode=mode)
+
+
+@pytest.mark.parametrize("mutation,error", [("duplicates", ValueError), ("replay", pytest.fail.Exception),
+                                            ("time", AssertionError)])
+def test_per_item_mutants(worlds, monkeypatch, mutation, error):
+    source = Path(compiler.__file__).read_text()
+    old, new = {"duplicates": ("set(users) if probe_mode == \"per_item\" else users", "users"),
+                "replay": ("set(users) if probe_mode == \"per_item\" else users",
+                           "set() if probe_mode == \"per_item\" else users"),
+                "time": ("p.t_end - len(batch) * step_s", "p.t_end - len(group) * step_s")}[mutation]
+    assert source.count(old) == 1
+    namespace = dict(vars(compiler))
+    exec(compile(source.replace(old, new), "mutant/hermes.py", "exec"), namespace)
+    monkeypatch.setattr(compiler, "compile_script", namespace["compile_script"])
+    with pytest.raises(error):
+        test_per_item(worlds)
 
 
 def untrusted_result(content, source="mcp__envserver__book"):
