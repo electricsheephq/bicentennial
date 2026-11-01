@@ -192,7 +192,7 @@
 
 ## C-3, C-16, C-17 and C-18: the outside families (provisional procedure)
 
-**What the slots are for.** Each names model families from outside Anthropic (the benchmark's own family), the tested systems' families and LCM-X's development lanes, so that no tested system's family checks the benchmark and the benchmark's own family is never the only check:
+**What the slots are for.** Each names model families from outside Anthropic, the benchmark's own family, so that the benchmark's own family is never the only check. Their other exclusions differ by slot (the rules below): unlike C-17 and C-18, C-3 and C-16 do not exclude every tested family, and the blind panel includes Zhipu.
 - **C-3,** the blind panel's paid third family. The panel answers each bundle without its evidence, in a single call, and a bundle that at least two of its three families pass is dropped (§4).
 - **C-16,** the validation families. They calibrate the phrase bank, annotate each template version in the Stage A census and audit releases in Stage B; the A1 family's agent writes a second gold from the plain-language world rules (§5).
 - **C-17,** the image readers, which decide whether each image entry is legible (§5).
@@ -211,7 +211,7 @@
 
 **Two inputs that are not slots:**
 - **The second judge family.** The judge rule gives two pinned judges from different families, neither used by any tested agent: Anthropic and one more (DESIGN §7.5; PREREG-v0.5 line 909). No slot names the second. C-16 and C-18 exclude it, so the procedure picks it first. A pending proposal below gives it a slot.
-- **The LCM-X lane registry,** as LCM-X's release manager declared it on 2026-10-31, before this procedure's provisional answer was public: Anthropic, OpenAI, Zhipu and xAI. That declaration binds this fill, and this record pins it: a family LCM-X's lanes add later moves no slot. The SVP's completeness check (line 52) still compares the registry with LCM-X's public development record at every freeze, so such a family is raised there, never refilled silently.
+- **The LCM-X lane registry,** as LCM-X's release manager declared it on 2026-10-31, before this procedure's provisional answer was public: Anthropic, OpenAI, Zhipu and xAI. That declaration binds this fill, and this record pins it: a family LCM-X's lanes add later moves no slot. The SVP's completeness check (line 52) still compares the registry with LCM-X's public development record at every freeze, so such a family is raised there, never refilled silently. The family is then added to the registry for disclosure, its slot stays filled, and the completeness item is answered by the dated declaration and the record-date recomputation, which show the slot was filled before the family entered the lanes. The cards disclose the overlap.
   - NeonDiff, which reviews LCM-X pull requests, runs on OpenAI.
   - CodeRabbit, which also reviews them, is vendor-managed and pins no model, so it adds no family. It holds no role here.
 
@@ -246,7 +246,7 @@
 3. **C-3:** the family with the highest C-3 rank outside C-16's four.
 4. **C-18:** C-16's first three, minus any tested family; the next C-16 family fills a gap. Every listed family reviews every freeze; two is the quorum, not a cap.
 5. **C-17:** the first two image-capable families in C-16's list, outside the tested families and the pinned vision reader's family; plus Tesseract (5.5.4 today), pinned on the record date by `tesseract --version`, the binary's sha256 and the sha256 of `eng.traineddata`.
-6. **The red team:** the second judge family. It writes Stage A's seeded variants (line 391), Stage B's plants (line 407) and the panel's calibration catalogue (line 54). C-16 and C-18 both exclude the judge families, so it never annotates, audits or reviews anything it wrote, whichever families the pair or the panel end up with. It is fixed with the second judge, before any census, and keeps the role if a later replacement (step 1) takes the judging from it. It never sees the operator list.
+6. **The red team:** the second judge family. It writes Stage A's seeded variants (line 391), Stage B's plants (line 407) and the panel's calibration catalogue (line 54). It is never listed in C-16 or C-18, including any later addition, whether or not it still judges, so it never annotates, audits or reviews anything it wrote; while it judges, both slots' own rules exclude it too. It is fixed with the second judge, before any census, and keeps the role if a later replacement (step 1) takes the judging from it. It never sees the operator list.
 
 **What it gives today** (provisional: C-1 is open, and every cost is projected from unmeasured token counts):
 
@@ -281,7 +281,7 @@
 - **[RISK]** The judge's screen fails if its billed output exceeds about 7.3 times the visible output, that is, if its reasoning tokens exceed about 6.3 times the visible output (the projection assumes 3 times).
 
 **Before the procedure binds:**
-- C-1 names the tested families and the pinned vision reader (S8, #312). Both set C-17's and C-18's exclusions.
+- C-1 names the tested families and the pinned vision reader (S8, #312). Both set C-17's and C-18's exclusions. If C-1 names a tested family that C-3 or C-16 lists, the record says so, and the benchmark owner decides in writing, before the fill, whether to propose that exclusion for PREREG-v0.6.
 - A measuring batch (at most $2, public material only, nothing scored) replaces the ×4 factor and the per-call sizes.
 - The record date's index page, price lists and host terms are saved and hashed, and a script recomputes every slot from them.
 - Each family meets its slot's own bars before use: Stage A for C-16, judge validation for the second judge, C-17's legibility bars, and the panel's calibration for C-18.
