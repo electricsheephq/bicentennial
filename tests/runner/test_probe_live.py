@@ -260,9 +260,10 @@ def test_shadow_error_still_sends_and_is_no_result_infra(lives, tmp_path, unit_s
 
 def test_shadow_error_stays_infra_after_later_failure(lives, tmp_path, unit_sessions, monkeypatch):
     case = lives["t1-g1", "B0"]
-    first = case["compiled"].probes[0]
-    later = next((s["index"] for s in case["compiled"].script["sessions"]
-                  if s["kind"] != "probe" and s["index"] > first.index), None)
+    first, sessions = case["compiled"].probes[0], case["compiled"].script["sessions"]
+    # Probe indices follow the replay indices, so take the next replay in script order.
+    at = next(n for n, s in enumerate(sessions) if s["index"] == first.index)
+    later = next((s["index"] for s in sessions[at + 1:] if s["kind"] != "probe"), None)
     assert later is not None
     read, run_session = probe_live.read, adapter.HermesAdapter.run_session
     def broken(view, *args, **kwargs):
@@ -325,6 +326,11 @@ def test_record_bytes_fields_and_live_answer_independence(lives, tmp_path, unit_
             assert row["shadow"]["in_context_initial"] == row["shadow"]["in_context"]
         assert row["live"] == dict(served_by="live", served="responder_live", identity_flag=False)
     assert any(r["envelope"]["value_match"] is True and r["shadow"]["in_context"] is False for r in rows)
+    # A bad citation or an action never taken fails items of both stages, so attributions are set, and each is the scorer's.
+    attribution = {iid: o["stage_attribution"] if isinstance(o, dict) else None
+                   for iid, o in scored(case, "t1-g1", first).items()}
+    assert all(row["shadow"]["stage_attribution"] == attribution[row["item_id"]] for row in rows)
+    assert {row["stage"] == "act" for row in rows if row["shadow"]["stage_attribution"]} == {True, False}
     baseline = drive(case, tmp_path / "plain")
     assert not (baseline._root / "t2lite_probes.json").exists()
 
@@ -407,6 +413,22 @@ def contract_timeline(case, path):
     return dict(case, timeline=path)
 
 
+def scored(case, life, result):
+    """Score every item of one run as the tier runners do."""
+    with ExitStack() as stack:
+        worlds = {b: (stack.enter_context(closing(open_world(case["t"].out_dir / f"world.{b}.db"))), cut)
+                  for b, cut in zip(("B0", "B1"), case["t"].twin.cuts, strict=True)}
+        cases = (g1_cases if life == "t1-g1" else g2_cases)(case["t"].twin.compiled, worlds,
+            case["t"].schedule, _templates(case["t"], case["t"].twin.compiled.records), life=life)
+    cases = {c.item["item_id"]: c for c in cases}
+    stream = [json.loads(line) for line in (case["t"].out_dir / "stream.B0.jsonl").read_bytes().splitlines()]
+    return {item["item_id"]: score_item(item, cls=None, label=None, result=result.results[item["item_id"]],
+        envelope=result.envelopes.get(item["item_id"], MISSING), act=result.act.get(item["item_id"], MISSING),
+        case=cases[item["item_id"]], scoring_evidence=[content(s) for s in stream if s["event_id"] in item["gold_spans"]],
+        keys=case["keys"][item["item_id"]], stored_roots=result.stored_roots.get(item["item_id"]),
+        retained_roots=result.retained_roots.get(item["item_id"]), attempt=0) for item in case["items"]}
+
+
 def replay_rows(result):
     # As in T1's determinism test: raw chains/wall time differ; stable fields and masked bodies must agree.
     schema = json.loads((SCHEMAS / "ledger-record.schema.json").read_bytes())["properties"]
@@ -445,26 +467,15 @@ def test_oracle_matches_t1(lives, tmp_path, harness, loopback, life):
                 for p in case["compiled"].probes}
     assert checkpoints(baseline) == checkpoints(actual)
     assert replay_rows(baseline) == replay_rows(actual)
-    with ExitStack() as stack:
-        worlds = {b: (stack.enter_context(closing(open_world(case["t"].out_dir / f"world.{b}.db"))), cut)
-                  for b, cut in zip(("B0", "B1"), case["t"].twin.cuts, strict=True)}
-        cases = (g1_cases if life == "t1-g1" else g2_cases)(case["t"].twin.compiled, worlds,
-            case["t"].schedule, _templates(case["t"], case["t"].twin.compiled.records), life=life)
-    cases = {c.item["item_id"]: c for c in cases}
-    stream = [json.loads(line) for line in (case["t"].out_dir / "stream.B0.jsonl").read_bytes().splitlines()]
+    expected, observed = scored(case, life, baseline), scored(case, life, actual)
     shadow = {r["item_id"]: r["shadow"] for r in json.loads((actual._root / "t2lite_probes.json").read_bytes())}
     for item in case["items"]:
         iid = item["item_id"]
-        outcomes = [score_item(item, cls=None, label=None, result=r.results[iid], envelope=r.envelopes.get(iid, MISSING),
-            act=r.act.get(iid, MISSING), case=cases[iid], scoring_evidence=[content(s) for s in stream if s["event_id"] in item["gold_spans"]],
-            keys=case["keys"][iid], stored_roots=r.stored_roots.get(iid), retained_roots=r.retained_roots.get(iid), attempt=0)
-            for r in (baseline, actual)]
+        outcomes = [expected[iid], observed[iid]]
         assert all(isinstance(o, dict) for o in outcomes)
         assert [(o["score_milli"], o["failure_class"]) for o in outcomes] == [
             (outcomes[0]["score_milli"], outcomes[0]["failure_class"])] * 2, iid
-        # The record's attribution is the scorer's, for QA and action items alike, and here equals T1's.
         assert shadow[iid]["stage_attribution"] == outcomes[1]["stage_attribution"] == outcomes[0]["stage_attribution"], iid
-    assert any(s["stage_attribution"] for s in shadow.values())
     again_root = tmp_path / "live-b"
     again = drive(live_case, again_root, live=Oracle(case, again_root))
     record = (actual._root / "t2lite_probes.json").read_bytes()
