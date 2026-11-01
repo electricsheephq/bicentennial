@@ -23,6 +23,7 @@ from bicentennial.runner.life import LifeRun
 from bicentennial.runner.probe_live import LiveCredentialStop
 
 ANSWER = dict(type="entity", value="synthetic", confidence_milli=900, citation=None)
+SHADOW_ANSWER = dict(type="entity", value="shadow-only", confidence_milli=800, citation=None)
 
 
 def row(iid, score=1000):
@@ -132,10 +133,11 @@ def scenario(tmp_path, monkeypatch):
         if state.mode == "live_upstream_mixed":
             rows = ({"role": "probe_main", "upstream": [{"role": "probe_main", "served_by": "live"},
                                                         {"role": "replay_main", "served_by": "live"}]},)
-        # The shadow saw two options and the live model said unknown, or it saw none and the model answered.
-        shadow = {"competing": ("opt-a", ("opt-b",)), "asserted": (None, ())}.get(state.mode)
+        # The shadow saw two options and the live model said unknown, or it saw none and the model answered. The
+        # shadow's own envelope differs from the live one in both modes, so a scorer handed the wrong one is caught.
+        shadow = {"competing": ("opt-a", ("opt-b",), SHADOW_ANSWER), "asserted": (None, (), UNKNOWN)}.get(state.mode)
         results = {i["item_id"]: ReaderResult(item_id=i["item_id"], mode="hermes", kind="qa",
-            selected_option=shadow[0], envelope=UNKNOWN, plan=None, competing_present=shadow[1], carry_over=False,
+            selected_option=shadow[0], envelope=shadow[2], plan=None, competing_present=shadow[1], carry_over=False,
             in_context=True, missing_required=0, competing={}, forbidden_in_context=None, recall=None)
             for i in kw["items"]} if shadow else {}
         envelopes = {i["item_id"]: ANSWER if state.mode == "asserted" else UNKNOWN for i in kw["items"]} if shadow else {}
@@ -163,7 +165,7 @@ def scenario(tmp_path, monkeypatch):
         scored = row(item["item_id"], state.score)
         if state.mode in ("competing", "asserted"):
             # The real scorer's Ring 0 checks, applied as hermes_score applies them to the reader result.
-            assert isinstance(kw["envelope"], dict)  # the live answer reaches the scorer
+            assert kw["envelope"] == (ANSWER if state.mode == "asserted" else UNKNOWN)  # the live answer, not the shadow's
             validate("item_outcome", dict(scored, envelope=kw["envelope"], selected_option=kw["result"].selected_option,
                 competing_present=list(kw["result"].competing_present)))
         return scored
@@ -202,7 +204,7 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
 
 
-@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "commit", "damaged", "incomplete"])
+@pytest.mark.parametrize("changed", ["contract", "harness", "pack", "commit", "damaged", "no_outcome", "no_stop"])
 def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     entry, = (tmp_path / "cache").iterdir()
@@ -217,7 +219,11 @@ def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
     elif changed == "damaged":
         entry.write_bytes(b"{")
     else:
-        entry.write_bytes(canon({"outcomes": {}, "stops": {}}))
+        # A whole entry less one floor item, or less one unit's stop: each half of the coverage check must hold.
+        cached = json.loads(entry.read_bytes())
+        part = cached["outcomes" if changed == "no_outcome" else "stops"]
+        part.pop(next(iter(part)))
+        entry.write_bytes(canon(cached))
     assert scenario.invoke("changed", cache=tmp_path / "cache") == 0
     assert runner._read(tmp_path / "changed", "card.json")["counts"]["floor_cached"] == 0
     assert len(scenario.seen) == 16
@@ -409,7 +415,8 @@ def test_live_settings_and_login_home_refuse_first(scenario, monkeypatch, capsys
     assert capsys.readouterr().err.split() == ["login_home"] and scenario.stacks == []
 
 
-@pytest.mark.parametrize("damage", ["items", "outcome", "place", "prime_flag", "prime_invalid", "prime_field"])
+@pytest.mark.parametrize("damage", ["items", "outcome", "place", "place_life", "place_branch", "prime_flag",
+                                    "prime_invalid", "prime_field"])
 def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
     s = scenario
     assert s.invoke("baseline") == 0 and s.invoke("prime", aa_of=tmp_path / "baseline") == 0
@@ -420,8 +427,9 @@ def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
         runner._write(tmp_path / "baseline", "card.json", card)
     elif damage == "outcome":
         next(iter(outcomes.values()))["score_milli"] = 7
-    elif damage == "place":
-        next(iter(outcomes.values()))["probe_point"] = 9
+    elif damage.startswith("place"):
+        field, value = {"place": ("probe_point", 9), "place_life": ("life", "t1-g9"), "place_branch": ("branch", "B9")}[damage]
+        next(iter(outcomes.values()))[field] = value
     elif damage in ("prime_invalid", "prime_field"):
         prime_card = runner._read(tmp_path / "prime", "card.json")
         if damage == "prime_invalid":
@@ -435,18 +443,23 @@ def test_baseline_files_checked_before_any_send(scenario, tmp_path, damage):
     assert s.invoke(baseline=tmp_path / "baseline", aa_prime=prime) == 3
     assert s.stacks == [] and s.seen == []
     expected = {"items": "baseline_items", "outcome": "items:baseline", "place": "baseline_items",
+                "place_life": "baseline_items", "place_branch": "baseline_items",
                 "prime_flag": "aa_prime:flag", "prime_invalid": "invalid_card:aa_prime",
                 "prime_field": "aa_prime:pins.benchmark_commit"}[damage]
     assert runner._read(s.out, "refusal.json") == {"code": expected}
 
 
-def test_aa_of_card_refused_by_its_own_name(scenario, tmp_path):
+@pytest.mark.parametrize("damage,code", [("tier", "invalid_card:aa_of"), ("commit", "aa_of:pins.benchmark_commit")])
+def test_aa_of_card_refused_by_its_own_name(scenario, tmp_path, damage, code):
     assert scenario.invoke("baseline") == 0
     card = runner._read(tmp_path / "baseline", "card.json")
-    card["tier"] = "T1"
+    if damage == "tier":
+        card["tier"] = "T1"
+    else:
+        card["pins"]["benchmark_commit"] = "f" * 40
     runner._write(tmp_path / "baseline", "card.json", card)
     assert scenario.invoke(aa_of=tmp_path / "baseline") == 3
-    assert runner._read(scenario.out, "refusal.json") == {"code": "invalid_card:aa_of"}
+    assert runner._read(scenario.out, "refusal.json") == {"code": code}
 
 
 def test_rerun_replays_the_branch_and_keeps_the_checkpoint(scenario, monkeypatch):
