@@ -274,7 +274,7 @@ def test_complete(fake):
                             "sha256": sha256((fake.root / artifact["path"]).read_bytes()).hexdigest()}
     assert provenance["pending_disclosures"] == [
         "B-4 recovered INFRA attempts: pending; sources C5a's container (B-4) and the bar-2 runner",
-        "B-9 sigma_d's scale difference from the full tier (PREREG-v0.4 l.548): the card",
+        "B-9 sigma_d's scale difference from the full tier (PREREG-v0.4 l.502): the card",
         "B-8 the anchor's rate: C's measured pinned-lane rate, a proxy for the swap lane, since bar 2 never runs the swap model: the card"]
     paths = {"rows": {base.ROSTER}, "required": {base.C12}, "lanes": {base.C11, base.C1, base.C2},
              "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY},
