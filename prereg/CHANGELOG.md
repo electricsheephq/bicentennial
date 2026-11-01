@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 erratum, 2026-11-01: the carry-over diagnostic reads earlier answers by their content (#352, #355)
-- **RING0 §13 E23 (§6):** from the next kit, T1's reader bounds the earlier probe exchanges by the turn it answers, and an earlier answer counts by its value and its citation's quote, not by its envelope's field names and confidence numbers. T2-lite's shadow reads the same exchanges. `carry_over` is a reporting flag: no answer, score or class changes. T1 cards' `carry_over` and `carry_over_milli`, and T2-lite's `t2lite_probes.json`, can change. The reader pin moves, so packs built before this change no longer verify and are rebuilt.
+- **RING0 §13 E23 (§6):** from the next kit, T1's reader bounds the earlier probe exchanges by the turn it answers, and an earlier answer counts by its value and its citation's quote, not by its envelope's field names and confidence numbers. T2-lite's shadow reads the same exchanges. `carry_over` is a reporting flag: no answer, score or class changes. T1 cards' `carry_over` and `carry_over_milli` can change, and so can T2-lite's `carry_over` on its cards, its item rows and `t2lite_probes.json`. The reader pin moves, so packs built before this change no longer verify and are rebuilt.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Labels, 2026-11-01: the two provisional generator values name PREREG-v0.6 (#318)
