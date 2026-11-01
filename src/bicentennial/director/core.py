@@ -94,6 +94,12 @@ class Director:
             self.ctx.session = index
             self.clock.set_session(sim_t_s)
 
+    def skip_session(self, index) -> None:
+        """After the harness abandons session index, the cursor moves past the turns it never sent."""
+        with self._lock:
+            while self.ctx.cursor < len(self.ctx.expected) and self.ctx.expected[self.ctx.cursor]["session"] == index:
+                self.ctx.cursor += 1
+
     def bind_port(self, port: int) -> None:  # serve() names the bound port, so the masks remove the real one
         self.run_values["director_port"] = str(port)
 

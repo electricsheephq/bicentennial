@@ -189,10 +189,12 @@ def _tokens(root, rows):
     return tokens
 
 
-def _earlier(root, session):
+def _earlier(root, session, before=None):
     rows = [r for r in _rows(root) if r.get("role") == "probe_main"
             and (r.get("cursor") or {}).get("session") == session]
-    highest = max((r["cursor"]["turn"] for r in rows), default=0)
+    # The live leg names its turn: a turn's row is written only after its reply, so the ledger's highest turn can
+    # be the previous one. T1's reader keeps the inferred bound.
+    highest = before if before is not None else max((r["cursor"]["turn"] for r in rows), default=0)
     store = BlobStore(root / "blobs", Guard([]))
     return tuple(store.get(r[key]) for r in sorted(rows, key=lambda r: r["seq"])
                  if r["cursor"]["turn"] < highest for key in ("req", "resp") if r.get(key))
@@ -232,14 +234,14 @@ def _pair_inputs(root, rows, kill, genre):
     return tuple(sorted(ids)), tuple(requests)
 
 
-def _audit(adapter, table, faults, script, items, records, plugin, arm):
+def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=False):
     try:
         rows, blobs, _ = load_ledger(adapter.paths["root"] / "ledger", "kit")
         model_for, mode = route_models(table, adapter.entry["name"], faults)
         report = audit(rows, blobs, turns_from_script(script), "chat", fmt="kit", model_for=model_for,
                        suffix=None, write_tools=tuple(t["tool"] for t in adapter.entry["write_tools"]),
                        id_needles=life_ids({"items": list(items), "records": list(records)}),
-                       effects=None if plugin else hermes_effects(adapter.paths["hermes_home"]))
+                       effects=None if plugin else hermes_effects(adapter.paths["hermes_home"]), probe_live=probe_live)
         codes = failures(report)
         ignored = ("A4.no_effects_hook",) if plugin else ()
         if arm == "wiped":
@@ -299,7 +301,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         responder = ProbeResponder(ScriptedResponder(entry_r), reader,
             {iid: (p.index, n) for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)},
             {iid: (reader_view(by_id[iid]), keys[iid]) for iid in sorted(by_id)},
-            earlier=lambda run_key, session: _earlier(root / "run" / "ledger", session), step_call=step_call)
+            earlier=lambda run_key, session, before=None: _earlier(root / "run" / "ledger", session, before),
+            step_call=step_call)
         leg = ProbeLiveLeg(live, live_model, responder, answer_contract) if live is not None else None
         results = leg if leg is not None else responder
         if leg is not None:
@@ -484,6 +487,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             evidence.classes.setdefault(iid, cause)
                     if leg is not None and code:
                         live_cut = True
+                        # Its unsent turns would hold the cursor, so no later request could match a scripted turn.
+                        adapter.director.skip_session(index)
                         continue
                     break
             if leg is not None:
@@ -504,6 +509,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         rows = tuple(adapter.records())
         if leg is not None:
             leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, schedule, records)
+            transforms.extend(sorted(leg.transforms))
         ids, requests = _pair_inputs(root / "run" / "ledger", rows, kill, genre)
         timings = {"pin_check_ms": adapter.pin_check_ms, "sessions": [{
             "session": s.session, "kind": s.kind, "workspace": workspace_ms.get(s.session),
@@ -513,7 +519,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         } for s in sessions]}
         return replace(evidence, results=dict(sorted(results.results().items())), transforms=tuple(sorted(transforms)),
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
-            post_restart_requests=requests, audit=_audit(adapter, table, faults, script, items, records, plugin, arm),
+            post_restart_requests=requests,
+            audit=_audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=leg is not None),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
             egress=egress, timings=timings, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified,

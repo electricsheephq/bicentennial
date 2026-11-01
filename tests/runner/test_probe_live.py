@@ -4,7 +4,6 @@ import copy
 import json
 import runpy
 import socket
-import subprocess
 from contextlib import ExitStack, closing
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from bicentennial.audit import readback
-from bicentennial.canon import canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.run import SCHEMAS
 from bicentennial.director.compiler import answer_contract
@@ -78,7 +77,8 @@ def scripted(case, root):
     return ProbeResponder(ScriptedResponder(ENTRY), ENTRY,
         {iid: (p.index, n) for p in case["compiled"].probes for n, iid in enumerate(p.item_ids, 1)},
         {i["item_id"]: (reader_view(i), case["keys"][i["item_id"]]) for i in case["items"]},
-        earlier=lambda key, session: runner._earlier(root / "B0/run/ledger", session), step_call=step_call)
+        earlier=lambda key, session, before=None: runner._earlier(root / "B0/run/ledger", session, before),
+        step_call=step_call)
 
 
 def unit_leg(token="ANSWER-TOKEN"):
@@ -107,6 +107,21 @@ def test_shadow_suffix_model_and_immutable_body():
     assert live.calls[0].body == before == call.body
     assert live.calls[0].model == "synthetic-live-model" and reply.model == "probe-model"
     assert leg.served_identities() == live.served_identities()
+
+
+def test_shadow_strips_every_contract_in_its_session():
+    # An earlier QA turn of the same batched session still carries its contract in the body the model sent.
+    item, leg, live, call = unit_leg("confidence_milli")
+    earlier = dict(copy.deepcopy(item), item_id="synthetic-earlier-qa", prompt="An earlier synthetic question?")
+    view = reader_view(earlier)
+    leg.scripted.cursors = {(21, 1): earlier["item_id"], (21, 2): item["item_id"]}
+    leg.scripted.readers[earlier["item_id"]] = (view, leg.scripted.readers[item["item_id"]][1])
+    suffix = answer_contract.render([o["envelope"] for o in view["options"]])
+    system, user = call.body["messages"]
+    body = dict(call.body, messages=[system, dict(role="user", content=earlier["prompt"] + suffix),
+                                     dict(role="assistant", content="earlier answer"), user])
+    leg.respond(replace(call, body=body, cursor=dict(session=21, turn=2)))
+    assert leg.results()[item["item_id"]].in_context is False
 
 
 def test_shadow_first_last_earlier_and_error(monkeypatch):
@@ -169,9 +184,10 @@ def unit_sessions(monkeypatch):
     def run_session(self, index, *, sim_t_s, lock_hash, attempt_id):
         session = next(s for s in self.script["sessions"] if s["index"] == index)
         self.director.start_session(index, sim_t_s, lock_hash, attempt_id, self.paths["root"] / "ledger")
-        self.director.ctx.cursor = next(n for n, t in enumerate(self.director.turns) if t["session"] == index)
         finals = []
-        if session["kind"] == "probe":
+        if session["kind"] != "probe":  # a replay is not sent: its matched turns would move the cursor past it
+            self.director.skip_session(index)
+        else:
             for turn in session["turns"]:
                 body = dict(model=self.director.route["alias"], messages=[dict(role="user", content=turn["user"])],
                             tools=[dict(type="function", function=dict(name="terminal"))])
@@ -194,8 +210,37 @@ def test_live_failures_infra_and_continue(lives, tmp_path, unit_sessions, served
     result = drive(lives["t1-g1", "B0"], tmp_path, live=FakeLive(fail))
     assert set(c[0] for c in result.classes.values()) == {"INFRA_FAILURE"}
     assert set(c[1] for c in result.classes.values()) == {served}
+    # The shadow read each item before its live call failed, but a classed item has no stage attribution.
+    rows = json.loads((result._root / "t2lite_probes.json").read_bytes())
+    assert any(r["shadow"]["in_context"] is not None for r in rows)
+    assert all(r["shadow"]["stage_attribution"] is None for r in rows)
     assert len({r["cursor"]["session"] for r in result.records if r.get("role") == "probe_main"}) == len(
         lives["t1-g1", "B0"]["compiled"].probes)
+
+
+def test_only_a_live_run_audits_with_the_probe_live_rule(lives, tmp_path, unit_sessions, monkeypatch):
+    seen, original = [], runner.audit
+    monkeypatch.setattr(runner, "audit", lambda *args, **kwargs: seen.append(kwargs["probe_live"]) or original(
+        *args, **kwargs))
+    drive(lives["t1-g1", "B0"], tmp_path / "live", live=FakeLive())
+    drive(lives["t1-g1", "B0"], tmp_path / "t1")
+    assert seen == [True, False]
+
+
+def test_live_shadow_carry_over_sees_the_previous_turn(lives, tmp_path, unit_sessions, monkeypatch):
+    # A turn's row is written only after its reply, so the leg names its turn rather than trust the ledger's highest.
+    seen, original = [], runner._earlier
+    def earlier(root, session, before=None):
+        found = original(root, session, before)
+        seen.append((session, before, len(found)))
+        return found
+    monkeypatch.setattr(runner, "_earlier", earlier)
+    case = second_qa_case(lives)
+    drive(case, tmp_path, live=FakeLive())
+    batch = case["compiled"].probes[0]
+    calls = [(before, found) for session, before, found in seen if session == batch.index]
+    # One exchange per turn here: each earlier turn gives its request and its reply.
+    assert calls == [(n, 2 * (n - 1)) for n in range(1, len(batch.item_ids) + 1)]
 
 
 def test_scripted_director_error_keeps_t1_class(lives, tmp_path, unit_sessions, monkeypatch):
@@ -397,19 +442,19 @@ def test_each_identity_change_flags_its_session(lives, tmp_path, unit_sessions):
     assert {row["probe_session"] for row in rows if row["live"]["identity_flag"]} == {first, last}
 
 
+# Script digests from the dispatched base's compiler (dd5fcf58), so a suffix added with None is detected byte for
+# byte without the base in the checkout. A change that moves compile bytes on purpose updates them and says so.
+BASE_SCRIPT_SHA256 = {"t1-g1": "4f0560be220f41b1947e6432795b70635134bdebba5d1a5a92752db1ae76bfcc",
+                      "t1-g2": "721be29d9735bc204f6de1d6fa33025754e55429e58472af4427a112567c01bc"}
+
+
 @pytest.mark.parametrize("life", ["t1-g1", "t1-g2"])
 def test_default_compile_matches_base_bytes(lives, life):
     case = lives[life, "B0"]
-    # Read the dispatched implementation, so adding a suffix with None is detected byte for byte.
-    source = subprocess.run(["git", "show", "dd5fcf58:src/bicentennial/director/compiler/hermes.py"],
-        check=True, capture_output=True, text=True).stdout
-    scope = dict(__name__="bicentennial.director.compiler.hermes")
-    exec(compile(source, "base-hermes.py", "exec"), scope)
     with closing(open_world(case["t"].out_dir / "world.B0.db", readonly=True)) as db:
         args = (case["t"].out_dir, "B0", case["t"].schedule, db)
-        base = scope["compile_script"](*args, items=case["items"], step_s=STEP_S)
         current = compile_script(*args, items=case["items"], step_s=STEP_S, answer_contract=None)
-    assert canon(base.script) == canon(current.script)
+    assert sha256_canon(current.script) == BASE_SCRIPT_SHA256[life]
 
 
 @pytest.fixture
@@ -520,11 +565,14 @@ def test_oracle_matches_t1(lives, tmp_path, harness, loopback, life):
     assert set(rows[0]["live"]) == {"served_by", "served", "identity_flag"}
     # A replay reply is still audited in full even when probe rows are live.
     ledger, blobs, _ = readback.load(actual._root / "run/ledger", "kit")
+    def script_failures():
+        return readback.audit(ledger, blobs, readback.turns_from_script(case["compiled"].script), "chat", fmt="kit",
+            model_for=lambda s: "probe-model", suffix=None, write_tools=("memory",), id_needles=[],
+            effects=lambda *args: {}, probe_live=True)["A5"]["script_failures"]
+    assert script_failures() == []
     replay = next(r for r in ledger if r.get("served") == "script")
     blobs[replay["resp"]]["choices"][0]["message"]["content"] = "tampered"
-    report = readback.audit(ledger, blobs, readback.turns_from_script(case["compiled"].script), "chat", fmt="kit",
-        model_for=lambda s: "probe-model", suffix=None, write_tools=("memory",), id_needles=[], effects=lambda *args: {})
-    assert replay["seq"] in report["A5"]["script_failures"]
+    assert replay["seq"] in script_failures()
 
 
 def test_missing_envelope_uses_delivered_final(lives, tmp_path, unit_sessions, monkeypatch):
@@ -533,19 +581,17 @@ def test_missing_envelope_uses_delivered_final(lives, tmp_path, unit_sessions, m
         result = original(self, index, **kwargs)
         return replace(result, finals=tuple((n, "not JSON") for n, _ in result.finals))
     monkeypatch.setattr(adapter.HermesAdapter, "run_session", changed)
-    result = drive(lives["t1-g1", "B0"], tmp_path, live=FakeLive())
-    assert result.transforms == ()
+    case = lives["t1-g1", "B0"]
+    result = drive(case, tmp_path, live=FakeLive())
+    # No delivered final is the live model's answer, so the tamper check names every QA item.
+    assert set(result.transforms) == {i["item_id"] for i in case["items"] if i["stage"] != "act"}
     assert result.envelopes and all(env is None for env in result.envelopes.values())
     rows = json.loads((result._root / "t2lite_probes.json").read_bytes())
     assert all(row["envelope"]["parsed"] is None for row in rows)
 
 
-def test_earlier_final_survives_later_live_failure(lives, tmp_path, unit_sessions):
-    live = FakeLive()
-    def answer(call):
-        return (Reply(503, "live_unavailable", "live", call.model) if len(live.calls) == 2 else
-                Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode()))
-    live.reply = answer
+def second_qa_case(lives):
+    """The first probe session holds a second, synthetic QA item, so it is a batch of two."""
     case = dict(lives["t1-g1", "B0"])
     case["items"] = copy.deepcopy(case["items"])
     first_id = case["compiled"].probes[0].item_ids[0]
@@ -560,9 +606,35 @@ def test_earlier_final_survives_later_live_failure(lives, tmp_path, unit_session
     with closing(open_world(case["t"].out_dir / "world.B0.db", readonly=True)) as db:
         case["compiled"] = compile_script(case["t"].out_dir, "B0", case["t"].schedule, db,
                                           items=case["items"], step_s=STEP_S)
+    assert len(case["compiled"].probes[0].item_ids) > 1
+    return case
+
+
+def test_earlier_final_survives_later_live_failure(lives, tmp_path, unit_sessions):
+    live = FakeLive()
+    def answer(call):
+        return (Reply(503, "live_unavailable", "live", call.model) if len(live.calls) == 2 else
+                Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode()))
+    live.reply = answer
+    case = second_qa_case(lives)
     result = drive(case, tmp_path, live=live)
     first = case["compiled"].probes[0]
-    assert len(first.item_ids) > 1
     assert result.envelopes[first.item_ids[0]] == UNKNOWN
     assert result.envelopes[first.item_ids[1]] is None
     assert all(iid not in result.classes for p in case["compiled"].probes[1:] for iid in p.item_ids)
+
+
+def test_live_failure_before_a_batch_ends_keeps_later_sessions_aligned(lives, tmp_path, unit_sessions):
+    # The batch's second turn is never sent, so it must not hold the director's cursor for the sessions after it.
+    case = second_qa_case(lives)
+    first = case["compiled"].probes[0]
+    def answer(call):
+        if (call.cursor["session"], call.cursor["turn"]) == (first.index, 1):
+            return Reply(503, "live_unavailable", "live", call.model)
+        return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
+    result = drive(case, tmp_path, live=FakeLive(answer))
+    assert {iid: result.classes.get(iid) for iid in first.item_ids} == {
+        iid: ("INFRA_FAILURE", "responder_live_unavailable") for iid in first.item_ids}
+    assert all(iid not in result.classes for p in case["compiled"].probes[1:] for iid in p.item_ids)
+    assert {r["cursor"]["session"] for r in result.records if r.get("role") == "probe_main" and r.get(
+        "status") == 200} == {p.index for p in case["compiled"].probes[1:]}

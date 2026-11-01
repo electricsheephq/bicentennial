@@ -65,7 +65,7 @@ class ProbeLiveLeg:
         self.live, self.model, self.scripted, self.contract = live, live_model, scripted, answer_contract
         self.wire = live.wire
         self.latest, self.initial, self.errors, self.identity_flags = {}, {}, {}, set()
-        self.final_items = set()
+        self.final_items, self.transforms = set(), set()
         self.drift = deepcopy(self.state().get("identity_drift"))
 
     def state(self):
@@ -98,10 +98,15 @@ class ProbeLiveLeg:
         # The body is the one the live model sent: like T1's reader, the shadow sees the model's own earlier
         # messages in this session, but never this item's answer, which is the reply.
         try:
-            suffix = self.contract.render([o["envelope"] for o in view["options"]]) if "envelope" in view["options"][0] else ""
-            body = strip_contract(call.body, view["prompt"], suffix)
+            # Every QA turn of this session carries the contract, and the shadow reads none of them: T1 has none.
+            body = call.body
+            for (session, _), other in sorted(self.scripted.cursors.items()):
+                shown = self.scripted.readers[other][0]
+                if session == position[0] and "envelope" in shown["options"][0]:
+                    body = strip_contract(body, shown["prompt"], self.contract.render(
+                        [o["envelope"] for o in shown["options"]]))
             result = read(view, keys, context_text(body), mode="hermes", earlier=context_text([
-                _earlier_body(v) for v in self.scripted.earlier(call.run_key, position[0])]))
+                _earlier_body(v) for v in self.scripted.earlier(call.run_key, *position)]))
             self.initial.setdefault(key, result.in_context)
             if iid not in self.errors:
                 self.latest[iid] = result
@@ -151,16 +156,21 @@ class ProbeLiveLeg:
                 gold = next(o.get("envelope") for o in item["options"] if o["option_id"] == item["gold"]["option_id"])
                 final = next((r for r in reversed(rows) if r.get("role") == "probe_main" and
                               r.get("cursor") == dict(session=probe.index, turn=n)), {})
-                if qa and iid not in self.final_items and final.get("status") == 200:
+                if qa and final.get("status") == 200:
                     calls, reply_texts = output(json.loads(blobs.get(final["resp"])), "chat")
                     if not calls:
-                        evidence.envelopes[iid] = parse_envelope("".join(reply_texts))
+                        served = parse_envelope("".join(reply_texts))
+                        if iid not in self.final_items:
+                            evidence.envelopes[iid] = served
+                        elif served != evidence.envelopes[iid]:
+                            self.transforms.add(iid)  # the delivered final is not the live model's answer (DESIGN §14)
                 env = evidence.envelopes.get(iid)
+                # A classed item has no stage attribution, as in the scorer.
                 attribution = (failing_stage(result, self.scripted.readers[iid][1],
                     failed=score_qa(item, env, evidence_texts=texts).score_milli != 1000,
                     stored_roots=evidence.stored_roots.get(iid), retained_roots=evidence.retained_roots.get(iid))
-                    if qa and result else self._act_stage(item, result, evidence, probe, metadata[iid], db, schedule)
-                    if not qa else None)
+                    if qa and result and iid not in evidence.classes else
+                    self._act_stage(item, result, evidence, probe, metadata[iid], db, schedule) if not qa else None)
                 initial = next((value for key, value in self.initial.items() if key[1:] == (probe.index, n)), None)
                 records.append(dict(item_id=iid, probe_session=probe.index, checkpoint=probe.checkpoint, stage=item["stage"],
                     shadow=dict(selected_option=result.selected_option if result else None,
