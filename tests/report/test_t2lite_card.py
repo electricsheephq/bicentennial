@@ -194,6 +194,7 @@ def test_items_need_one_order_with_unique_ids():
     (("infra_reruns",), 3, "infra_reruns: at most two"),
     (("envelope", "confidence_milli"), 1001, "confidence exceeds 1000"),
     (("worst_case_milli",), 1001, "worst-case row mismatch"),
+    (("envelope", "confidence_milli"), 400, "QA score disagrees with PREREG §3"),
 ])
 def test_each_item_carries_item_outcome_semantics(path, bad, reason):
     # The project checker applies no schema maximum; item_outcome's own checks hold every bound.
@@ -205,6 +206,35 @@ def test_each_item_carries_item_outcome_semantics(path, bad, reason):
     target[field] = bad
     with pytest.raises(ValueError, match=reason):
         cards.validate_t2lite_card(card)
+
+
+def live_row(**fields):
+    return dict(inputs()["items"][0], **fields)
+
+
+@pytest.mark.parametrize("fields", [
+    # The shadow found nothing in context, and the model asserted a wrong value anyway.
+    dict(selected_option=None, envelope=dict(type="entity", value="Other", confidence_milli=1000, citation=None),
+         score_milli=-1000, worst_case_milli=-1000),
+    # Competing options were in context, and the model answered unknown.
+    dict(competing_present=["option-z"], score_milli=0, worst_case_milli=0,
+         envelope=dict(type="unknown", value=None, confidence_milli=0, citation=None)),
+])
+def test_a_live_answer_stands_apart_from_the_shadow_selection(fields):
+    row = live_row(**fields)
+    with pytest.raises(ValueError):
+        validate("item_outcome", row)  # Ring 0 ties the answer to the reader's selection
+    assert cards.build_t2lite_card(**dict(inputs(), items=[row]))["items"] == [row]
+
+
+@pytest.mark.parametrize("fields", [
+    dict(competing_present=["option-z", "option-y"]),
+    dict(competing_present=["option-a"]),  # the row's own selection
+    dict(selected_option=None, competing_present=["option-z"]),
+])
+def test_the_shadow_keeps_its_own_invariants(fields):
+    with pytest.raises(ValueError, match="^t2lite_card:shadow$"):
+        cards.build_t2lite_card(**dict(inputs(), items=[live_row(**fields)]))
 
 
 def test_t1_baseline_refuses_a_complete_t2lite_card():

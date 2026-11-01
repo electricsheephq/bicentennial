@@ -33,6 +33,7 @@ FIX = {s["source"]: s for s in json.loads((ROOT / "tests/director/fixtures/shape
 LIFE = json.loads((ROOT / "spikes/s6a/micro_life.json").read_bytes())
 compile_micro_life = runpy.run_path(str(ROOT / "tests/contracts/test_run_contracts.py"))["compile_micro_life"]
 SCRIPT = compile_micro_life(LIFE)
+CHECK_BASE = runpy.run_path(str(ROOT / "tests/director/test_roles.py"))["check_base"]
 TEXTS = {roles.h16(t["user"].strip()): t["user"] for s in (*LIFE["sessions"], *LIFE["probes"]) for t in s["turns"]}
 LOCK, BASE, STEP, DAY = "ab" * 32, 1_600_000_000, 60, 86400
 ROUTES = {"routes": [{"system": "hermes", "segment": "seg0", "probe_model": "probe-model", "alias": "bicentennial-main",
@@ -201,6 +202,7 @@ def replay(source, d, fake, tmp, port):
 @pytest.fixture
 def no_egress(monkeypatch):
     """Refuse and count any connection to a non-loopback address; count loopback ones."""
+    CHECK_BASE(monkeypatch)
     seen = {"loopback": 0, "outbound": 0}
     real_create, real_connect = socket.create_connection, socket.socket.connect
 
@@ -296,6 +298,49 @@ def test_two_runs_give_the_same_stable_digest(tmp_path):
 
 # ---- synthetic Hermes-like bodies ------------------------------------------------------------------------------
 TURN1 = LIFE["sessions"][0]["turns"][0]
+
+
+@pytest.mark.parametrize("kinds", [("probe", "probe"), ("replay", "probe"), ("probe", "replay")])
+def test_session_cursor(tmp_path, kinds):
+    script = deepcopy(SCRIPT)
+    script["sessions"] = [dict(index=n, kind=kind, turns=[dict(n=1, kind=kind, user="Same prompt.",
+        assistant="Noted." if kind == "replay" else None, tool_calls=[])]) for n, kind in enumerate(kinds, 1)]
+    d = make(tmp_path, Fake(), script=script)
+    path, body = "/main/v1/chat/completions", turn_body("Same prompt.", tools=("terminal",))
+    try:
+        start(d, tmp_path)
+        assert d.ctx.session == d.session_index == 1
+        assert post(d, path, body)[0] == 200
+        instant = d.clock.sim_t_s
+        assert d._classify(path, body)[0][2] == {"turn": "retry"}
+        assert post(d, path, body)[0] == 200 and d.clock.sim_t_s == instant
+        assert records(tmp_path)[-1]["cursor"] == {"session": 1, "turn": 1}
+        start(d, tmp_path, session=2)
+        assert d.ctx.session == d.session_index == 2
+        assert d._classify(path, body)[0][2] == {"turn": 1}
+        assert post(d, path, body)[0] == 200 and d.ctx.cursor == 2
+        assert records(tmp_path)[-1]["cursor"] == {"session": 2, "turn": 1}
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("mutation", ["drop_session", "strict_unset"])
+def test_session_mutants(tmp_path, monkeypatch, mutation):
+    source = Path(roles.__file__).read_text()
+    old = ('ctx.session is None or ctx.expected[ctx.cursor].get("session") is None\n'
+           '                             or ctx.expected[ctx.cursor].get("session") == ctx.session')
+    new = "True" if mutation == "drop_session" else (
+        'ctx.session is not None and ctx.expected[ctx.cursor].get("session") == ctx.session')
+    assert source.count(old) == 1
+    namespace = dict(vars(roles))
+    exec(compile(source.replace(old, new), "mutant/roles.py", "exec"), namespace)
+    monkeypatch.setattr(roles, "classify_shape", namespace["classify_shape"])
+    with pytest.raises(AssertionError):
+        if mutation == "drop_session":
+            test_session_cursor(tmp_path, ("probe", "probe"))
+        else:
+            frozen = runpy.run_path(str(ROOT / "tests/director/test_roles.py"))
+            frozen["test_every_recorded_request_classifies_to_its_role"]("s6a-r6-write")
 
 
 def turn_body(text=TURN1["user"], tools=("memory", "session_search"), **kw):

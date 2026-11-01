@@ -62,7 +62,7 @@ class Director:
         self.turns = tuple({"session": s["index"], "turn": t["n"], "kind": t["kind"], "user": t["user"],
                             "assistant": t["assistant"], "tool_calls": t["tool_calls"]}
                            for s in script["sessions"] for t in s["turns"])
-        self.ctx = roles.Context(expected=[{"kind": t["kind"], "hash": roles.h16(t["user"].strip())}
+        self.ctx = roles.Context(expected=[{"kind": t["kind"], "hash": roles.h16(t["user"].strip()), "session": t["session"]}
                                            for t in self.turns])
         for task in AUX_TASKS:
             self.ctx.path_aliases[f"/aux/{task}/"] = self.ctx.aliases[f"bicentennial-aux-{task}"] = _alias(task)
@@ -91,6 +91,7 @@ class Director:
             self.attempt_id, self.n_ids = attempt_id, 0
             self.role_ids = {}
             self.session_index, self.session_sim_t_s = index, sim_t_s
+            self.ctx.session = index
             self.clock.set_session(sim_t_s)
 
     def bind_port(self, port: int) -> None:  # serve() names the bound port, so the masks remove the real one

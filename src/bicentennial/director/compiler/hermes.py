@@ -97,7 +97,9 @@ def step_call(step):
     return wire_call(name, args)
 
 
-def compile_script(out_dir, branch, schedule, db, *, items=(), step_s):
+def compile_script(out_dir, branch, schedule, db, *, items=(), step_s, probe_mode="ring0"):
+    if probe_mode not in ("ring0", "per_item"):
+        raise ValueError("invalid probe mode")
     manifest = verify_branch(out_dir, branch)
     with (out_dir / f"stream.{branch}.jsonl").open("rb") as file:
         rows = [json.loads(line) for line in file]
@@ -122,7 +124,7 @@ def compile_script(out_dir, branch, schedule, db, *, items=(), step_s):
         slots[slot].append(row)
     script_sessions, calls, probes, users = [], [], [], set()
 
-    def turn(n, kind, user, tool_calls):
+    def turn(n, kind, user, tool_calls, users=users):
         key = user.strip()
         if not key or key in users:
             raise ValueError("empty or duplicate user text")
@@ -158,14 +160,17 @@ def compile_script(out_dir, branch, schedule, db, *, items=(), step_s):
     index, checkpoint_probes = len(plans) + 1, {}
     for k, group in sorted(groups.items()):
         qa, acts = [i for i in group if i["stage"] != "act"], [i for i in group if i["stage"] == "act"]
-        if len(qa) > 6 or len(acts) > 2:
+        if probe_mode == "ring0" and (len(qa) > 6 or len(acts) > 2):
             raise ValueError("too many probe items")
-        for batch in ([qa] if qa else []) + [[i] for i in acts]:
+        batches = [[i] for i in group] if probe_mode == "per_item" else ([qa] if qa else []) + [[i] for i in acts]
+        for batch in batches:
             p = plans[k - 1]
             sim_t_s = p.t_end - len(batch) * step_s
             if sim_t_s < p.t_start:
                 raise ValueError("probe starts before checkpoint")
-            turns = [turn(n, "probe", i["prompt"], []) for n, i in enumerate(batch, 1)]
+            # per_item: each probe session checks its own turns and every replay turn (#310, condition 2).
+            probe_users = set(users) if probe_mode == "per_item" else users
+            turns = [turn(n, "probe", i["prompt"], [], probe_users) for n, i in enumerate(batch, 1)]
             probes.append(ProbeSession(index, k, tuple(i["item_id"] for i in batch), sim_t_s))
             checkpoint_probes.setdefault(k, []).append(dict(index=index, kind="probe", turns=turns))
             index += 1
