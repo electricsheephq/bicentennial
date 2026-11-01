@@ -71,7 +71,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 
 | File | Meaning |
 |---|---|
-| `card.json` | Verdict-free T2-lite card, pins, labels, scored rows and counters. |
+| `card.json` | Verdict-free T2-lite card: pins, labels, item rows, counters, and `not_scored_live`, the ids of G2 action rows that carry no score. |
 | `outcomes.json` | Joined per-item outcomes from the last repetition. |
 | `repetitions.json` | Joined outcomes for every repetition. |
 | `no_memory.json` | Floor outcomes and per-unit stops, possibly reused. |
@@ -167,7 +167,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `refused` | Install CLI filesystem or value error. |
 | `rerun_arguments` | Incompatible references, checkpoint or repetition arguments. |
 | `route_unroutable` | Registered model route cannot be resolved. |
-| `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
+| `sandbox_busy` | The selected slot is locked; exit 3. |
 | `sandbox_overlap` | An input, login, reference, output or cache overlaps a destructive sandbox slot. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
@@ -190,6 +190,8 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `upstream_record` | Isolation audit found a forbidden upstream record or egress. |
 | `usage` | Invalid or missing CLI argument; stderr includes usage. |
 | `visible_canary` | Canary found in agent-visible input. |
+| `visible_pack_overlaps_surface` | The agent-visible pack directory overlaps the workspace or a memory surface. |
+| `visible_path_escape` | An agent-visible file would be written outside the pack directory. |
 
 ## Exit codes
 
@@ -197,6 +199,6 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 
 ## Limits
 
-T2-lite is not predictive of the full tier. Only `probe_main` is live; everything else is scripted as at T1. Entity matching is strict, not semantic. G2 actions are not scored live; until [#358](https://github.com/electricsheephq/bicentennial/issues/358) lands, their card and outcome rows still show T1's predicate result, which is not a live measurement. The inherited Act label also describes G1 actions as scripted; read it with that issue's caveat.
+T2-lite is not predictive of the full tier. Only `probe_main` is live; everything else is scripted as at T1. Entity matching is strict, not semantic. G2 actions are not scored live ([#358](https://github.com/electricsheephq/bicentennial/issues/358)): their card and outcome rows carry no score, and the card lists their ids in `not_scored_live`. A G2 action that fails for a system or infrastructure reason keeps that failure class instead. The card's `act` label reads "Act: G1 actions are the live model's, scored by T1's action predicates".
 
 Probes can write memory; isolation is per checkpoint, not per question. The window W = 16K is provisional. Results never feed boards, gates, admission, rungs or the public regression corpus. The flip list is the developer's own regression set, never public-corpus stock ([erratum](../ERRATA-v2.2.md#design-text-where-prereg-governs)). This offline acceptance proves the guide matches the code; it proves no live run.

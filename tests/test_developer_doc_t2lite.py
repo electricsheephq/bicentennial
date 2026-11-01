@@ -68,6 +68,11 @@ def _code_refusals():
             codes.add(arg.value)
         elif isinstance(arg, ast.BinOp):
             codes.update(_evaluate(arg, role=role) for role in t2lite.ROLES.values())
+    # run_life's own refusals reach refusal.json as their sorted, comma-joined reasons.
+    life = ast.parse((REPO / "src/bicentennial/runner/life.py").read_text())
+    for call in _calls(life, "SystemRefused"):
+        codes.update(n.value for n in ast.walk(call.args[0])
+                     if isinstance(n, ast.Constant) and isinstance(n.value, str))
     # Literal branches of the runner's code mapping and tool-failure publication.
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "code" for t in node.targets):
