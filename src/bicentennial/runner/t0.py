@@ -215,7 +215,7 @@ def _identity(item, result=None, stage=None):
 
 def drive_branch(pack, branch, factory, *, bound_s, snapshot):
     """Drive one attempt, retaining completed probes when a system call fails."""
-    results, outcomes, ingested, roots = {}, {}, [], ()
+    results, outcomes, ingested, roots, kept_texts = {}, {}, [], (), ()
     items = sorted((i for i in pack.pack["items"] if pack.records[i["item_id"]]["branch"] == branch),
                    key=lambda i: i["item_id"])
     a, system_failed = None, False
@@ -265,6 +265,8 @@ def drive_branch(pack, branch, factory, *, bound_s, snapshot):
                 a.settle(bound_s)
                 if not roots:
                     roots = snapshot(a.adapter)
+                    kept_texts = tuple(text for host in getattr(factory, "hosts", ())
+                                       for text in getattr(host, "forget_kept_texts", {}).values())
                 iid = item["item_id"]
                 view, key, now = reader_view(item), pack.keys[iid], pack.meta["now"][iid]
                 blocks = a.probe(api_task(view, key), now) if hasattr(a.adapter, "probe") else ()
@@ -288,7 +290,7 @@ def drive_branch(pack, branch, factory, *, bound_s, snapshot):
                     active.add_note(f"cleanup: {type(error).__name__}")
                 elif not system_failed:
                     raise
-    return results, outcomes, roots
+    return results, outcomes, roots, kept_texts
 
 
 def _lock(index, pack, entry, pack_hash, real):
@@ -503,13 +505,13 @@ def _attempts(index, pack, branch, entry, pack_hash, real, work, worker, *, boun
             factories.append(factory)
             try:
                 try:
-                    results, outcomes, roots = drive_branch(pack, branch, factory,
+                    results, outcomes, roots, kept_texts = drive_branch(pack, branch, factory,
                         bound_s=bound_s, snapshot=factory.snapshot)
                 finally:
                     factory.close()
                 for row in outcomes.values():
                     row["infra_reruns"] = attempt
-                return results, outcomes, roots, factories
+                return results, outcomes, roots, factories, kept_texts
             except (*REFUSALS, T0Refused):
                 raise
             except Exception:
@@ -517,7 +519,7 @@ def _attempts(index, pack, branch, entry, pack_hash, real, work, worker, *, boun
                     outcomes = {i["item_id"]: outcome(_identity(i), None, cause="INFRA_FAILURE",
                                 infra_reruns=2) for i in pack.pack["items"]
                                 if pack.records[i["item_id"]]["branch"] == branch}
-                    return {}, outcomes, (), factories
+                    return {}, outcomes, (), factories, ()
         raise AssertionError("unreachable attempts")
     except BaseException:
         _remove_units(factories)
@@ -530,7 +532,7 @@ def _verb_member(pack, item):
 
 
 def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts, *,
-                     baseline_infra=(), session_wakes=False):
+                     baseline_infra=(), session_wakes=False, kept_texts=None):
     evidence = []
     intrinsic = pack.template.fault if hasattr(pack.template, "fault") else False
     for item in sorted(pack.pack["items"], key=lambda i: i["item_id"]):
@@ -542,7 +544,7 @@ def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
                 for kind, session, _ in pack.schedule.wakes()))
         evidence.append(ItemEvidence(item, record, pack.keys[iid], results.get(iid),
             outcomes[iid]["failure_class"], crosses, False if intrinsic else baseline.get(iid),
-            roots[record["branch"]]))
+            roots[record["branch"]], (kept_texts or {}).get(record["branch"], ())))
     for _ in range(3):
         verdicts = run_invariants(evidence, tier="T0")
         # A known failure stands: a later attempt's scan fault must not mask it (RING0 E3).
@@ -582,7 +584,8 @@ def _branches(index, pack, entry, pack_hash, real, work, workers, *, bound_s, ho
     results = {i: result for row in rows for i, result in sorted(row[0].items())}
     outcomes = {i: result for row in rows for i, result in sorted(row[1].items())}
     return results, outcomes, {b: row[2] for b, row in zip(("B0", "B1"), rows, strict=True)}, [
-        f for row in rows for f in row[3]]
+        f for row in rows for f in row[3]], {
+        b: row[4] for b, row in zip(("B0", "B1"), rows, strict=True)}
 
 
 def _baseline_members(pack, baseline):
@@ -919,7 +922,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
             start = run_start if pack is first else time.time_ns() // 1_000_000
             factories = []
             try:
-                results, outcomes, roots, made = _branches(index, pack, entry, pack_hash, real,
+                results, outcomes, roots, made, kept_texts = _branches(index, pack, entry, pack_hash, real,
                     work / pack.pack["pack_id"] / "main", count, bound_s=bound_s, host_options=options,
                     expected_lock=locks[pack.rel])
                 factories.extend(made)
@@ -928,7 +931,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                 if (not getattr(pack.template, "fault", False) and
                         any(_verb_member(pack, i) for i in pack.pack["items"])):
                     twin = by_row[pack.meta["row"]["baseline"]]
-                    base_results, base_outcomes, _, baseline_factories = _branches(index, twin, entry, pack_hash,
+                    base_results, base_outcomes, _, baseline_factories, _ = _branches(index, twin, entry, pack_hash,
                         real, work / pack.pack["pack_id"] / "baseline", count,
                         bound_s=bound_s, host_options=options,
                         expected_lock=_lock(index, twin, entry, pack_hash, real))
@@ -937,7 +940,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                     baseline_infra = [i for i, twin_id in _baseline_members(pack, twin).items()
                                       if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
                 verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
-                                           baseline_infra=baseline_infra, session_wakes=real)
+                    baseline_infra=baseline_infra, session_wakes=real, kept_texts=kept_texts)
                 evidence = {id(h): (h.records(), h.egress.summary()) for f in factories for h in f.hosts}
                 _check_egress(list(evidence.values()))
                 audit = _audit(made, evidence)

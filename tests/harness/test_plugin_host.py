@@ -204,9 +204,10 @@ def test_written_fields_and_clip_count(factory, name, limit, expected):
     delivery.add([host])
     assert delivery.properties("t0") == [
         ("t0.write_clipped", expected), ("t0.fields", canon(fields).decode())] + (
-        [] if limit is None else [("t0.write_max_length", limit)])
+        [] if limit is None else [("t0.write_max_length", limit)]) + [
+        ("t0.forget_kept", canon(dict(ambiguous=0, same_text=0, unattributed=0)).decode())]
     assert vars(delivery) == dict(clipped=expected, limits=set() if limit is None else {limit},
-                                 delivered=fields)
+                                 delivered=fields, forget_kept=dict(ambiguous=0, same_text=0, unattributed=0))
     for e in events:
         assert host.events[e["event_id"]] == {"event": e, "session": 1, "written": e["text"][:limit]}
     assert host.settle(5)
@@ -541,7 +542,9 @@ def regression_host(request, factory, tmp_path, monkeypatch):
         stub["tool"].__globals__["path"] = lambda: surface / "stub_store.json"
         host = HermesMemoryHost.__new__(HermesMemoryHost)
         host.name, host.entry = name, load(REGISTRY / f"{name}.toml")
-        host.events, host.session, host.turn, host.forget_ambiguous = {}, 1, 0, 0
+        host.events, host.session, host.turn = {}, 1, 0
+        host.forget_kept, host.forget_kept_texts, host._store_generation = {}, {}, 0
+        host._forget_deleted = set()
         host.write_clipped, host.write_max_length = 0, None
         host._worker, host.settled, host._blocks, host._cache = None, True, (), None
         host.paths = dict(hermes_home=surface)
@@ -596,6 +599,7 @@ def test_forget_keeps_identical_unselected_owner(regression_host, monkeypatch, n
     assert [r["text"] for r in rows] == [text]
     assert host.query(task("quartz"), 100) == answer([event(2, text)])
     assert host.forget_ambiguous == 1
+    assert list(host.forget_kept.values()) == ["same_text" if name == "hermes-native" else "ambiguous"]
     if name == "hermes-native":
         assert tool_calls == []
 
@@ -699,6 +703,7 @@ def test_forget_respects_exact_hit_owner(regression_host, selected):
     rows = json.loads((host.surfaces()[0][0] / "stub_store.json").read_text())
     assert [r["text"] for r in rows] == [kept["text"]]
     assert host.query(task(kept["text"]), 100) == answer([kept])
+    assert host.forget_kept == {}
 
 
 @pytest.mark.parametrize("other,hit", [("quartz notes", "old quartz notes"),
@@ -714,11 +719,96 @@ def test_forget_keeps_ambiguous_hit(regression_host, other, hit):
     rows = json.loads((host.surfaces()[0][0] / "stub_store.json").read_text())
     assert [r["text"] for r in rows] == [other, hit]
     assert host.forget_ambiguous == 1
+    recorded = dict(host.forget_kept)
+    host.ingest(event(3))
+    host.forget(dict(event_ids=["e3"]))
+    assert host.forget_kept == recorded
+    assert host.settle(5)
     host.restore(host.checkpoint())
-    assert host.forget_ambiguous == 0
-    host.forget_ambiguous = 3
+    assert host.forget_ambiguous == 1
+    with pytest.raises(AttributeError):
+        host.forget_ambiguous = 3
     host.reset()
-    assert host.forget_ambiguous == 0 and host.events == {}
+    assert host.forget_ambiguous == 1 and host.events == {}
+    assert hit.encode() not in host.checkpoint()
+
+
+def test_forget_unattributed_and_delivery(regression_host, monkeypatch):
+    host = regression_host("holographic")
+    host.ingest(event())
+    real = host._call
+
+    def paraphrase(kind, **args):  # only the search answers with an unowned paraphrase row
+        if kind == "tool" and args.get("arguments", {}).get("action") == "search":
+            return dict(result=json.dumps(
+                dict(results=[dict(fact_id="paraphrase", content="a mineral recollection")])))
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", paraphrase)
+    for _ in range(2):
+        host.forget(dict(event_ids=["e1"]))
+        host.ingest(event())
+    assert host.forget_kept == {("row", host._store_generation, "paraphrase"): "unattributed"}
+    assert host.forget_ambiguous == 0
+    delivery = plugin_host.WriteDelivery()
+    delivery.add([host, host])
+    assert delivery.properties("t1")[-1] == (
+        "t1.forget_kept", '{"ambiguous":0,"same_text":0,"unattributed":2}')
+    host.ingest(event(2, "a mineral"))
+    host.ingest(event(3, "recollection"))
+    host.forget(dict(event_ids=["e2"]))
+    assert host.forget_kept[("row", host._store_generation, "paraphrase")] == "unattributed"
+
+
+def test_forget_record_counts_a_reused_row_id_after_a_wipe(regression_host, monkeypatch):
+    # A fresh store may hand out the same row id again (Holographic's AUTOINCREMENT restarts).
+    host = regression_host("holographic")
+    real = host._call
+
+    def reused(kind, **args):
+        if kind == "tool" and args.get("arguments", {}).get("action") == "search":
+            return dict(result=json.dumps(dict(results=[dict(fact_id=1, content="a mineral recollection")])))
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", reused)
+    for _ in range(2):
+        host.ingest(event())
+        host.forget(dict(event_ids=["e1"]))
+        host.reset()
+    assert list(host.forget_kept.values()) == ["unattributed", "unattributed"]
+    assert len(host.forget_kept_texts) == 2
+    delivery = plugin_host.WriteDelivery()
+    delivery.add([host])
+    assert delivery.properties("t1")[-1] == (
+        "t1.forget_kept", '{"ambiguous":0,"same_text":0,"unattributed":2}')
+
+
+def test_forget_does_not_record_a_row_the_system_kept_after_its_delete(regression_host, monkeypatch):
+    # A system that ignores a delete keeps the row: a later search that returns it is no host keep.
+    host = regression_host("holographic")
+    real = host._call
+
+    def ignores_deletes(kind, **args):
+        action = args.get("arguments", {}).get("action")
+        if kind == "tool" and action == "remove":
+            return dict(result=json.dumps(dict(removed=False)))
+        if kind == "tool" and action == "search":
+            return dict(result=json.dumps(dict(results=[dict(fact_id="zombie", content="quartz")])))
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", ignores_deletes)
+    host.ingest(event())
+    host.forget(dict(event_ids=["e1"]))
+    for i, text in ((2, "mineral"), (3, "granite")):
+        host.ingest(event(i, text))
+        host.forget(dict(event_ids=[f"e{i}"]))
+        assert host.forget_kept == {}
+        assert host.settle(5)
+        host.restore(host.checkpoint())  # a checkpoint may hold the kept row, so the host's delete counts on
+    host.reset()  # a fresh store's row with that text is new, so keeping it is the host's decision
+    host.ingest(event(4, "granite"))
+    host.forget(dict(event_ids=["e4"]))
+    assert host.forget_kept == {("row", host._store_generation, "zombie"): "unattributed"}
 
 
 @pytest.mark.parametrize("failure", ["gate", "call"])

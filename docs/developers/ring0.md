@@ -235,6 +235,8 @@ Exit-3 codes and causes, including registry reasons above:
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `settle_unmapped` | Hook settle has no `SETTLE_THREADS` mapping. |
 | `surface_not_empty` | A sandbox-home memory surface already holds files before install. |
+| `visible_pack_overlaps_surface` | The agent-visible pack directory overlaps the workspace or a memory surface. |
+| `visible_path_escape` | An agent-visible file would be written outside the pack directory. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
 | `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |
@@ -278,6 +280,8 @@ Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. C
 `stage_attribution`, the reader's `failing_stage`, is stored, retained, retrieved, used or unknown. The reader uses whatever is present, so "used" never fails at Ring 0 ([RING0 §1](../../specs/ring0/RING0.md#1-the-scripted-reader)). Remember, Survive and Act are reported separately; never sum them.
 
 ## 10. Reading the outputs
+
+Ring 0 contract change, 2026-11-01: memory hosts add `t0.forget_kept` and `t1.forget_kept` to their delivery properties, as canonical JSON counts for `ambiguous`, `same_text` and `unattributed`, zeros included. Counts follow the host lifetime across reset and restore; the first reason per row id (or text hash without search) wins within a store generation, and each wipe starts a new generation because a fresh store may reuse row ids. T0 sums all invocation hosts and T1 sums corpus hosts per gated arm; a row kept by two hosts counts twice. A row with no candidate owner whose text the host deleted since its last reset counts nowhere: the system kept it. A replacement host after a crash starts without that memory, so such a row can still count as `unattributed`. Reference adapters disclose nothing. `forget_ambiguous` reads the `ambiguous` plus `same_text` count. INV-FORGET adds reason `host_kept` beside `store_hit` only when a kept text contains a searched needle; the status and the member counts stay those of the check without it. The scorer pin moves with this change, so earlier packs are rebuilt. Kept texts remain in memory and never enter outputs or checkpoints ([RING0 E22](../../specs/ring0/RING0.md#13-v01-errata)). No PREREG version change; PREREG-v0.5 remains frozen.
 
 Also inspect `t0.sandbox_slot` for registry T0 runs (reference runs disclose no slot), and `t1.sandbox_slot` for T1. The value is the selected slot, default 0; it is a run property outside the frozen disclosure tuple.
 
