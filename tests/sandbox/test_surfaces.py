@@ -399,9 +399,10 @@ def test_unreadable_subtree_is_an_error_not_an_empty_result(tmp_path, monkeypatc
             raise PermissionError("synthetic unreadable subtree")
         return scandir(path)
 
-    monkeypatch.setattr(os, "scandir", denied)
-    with pytest.raises(PermissionError, match="synthetic"):
-        operation(root)
+    with monkeypatch.context() as patch:  # undone before tmp_path's cleanup, which scans by descriptor (#348)
+        patch.setattr(os, "scandir", denied)
+        with pytest.raises(PermissionError, match="synthetic"):
+            operation(root)
 
 
 @pytest.mark.parametrize("label", ["K30", "K10", "K3"])
