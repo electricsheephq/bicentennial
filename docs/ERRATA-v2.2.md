@@ -22,7 +22,7 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 **E5. Two "(pre-reg)" marks with no PREREG text.**
 - **The text:** DESIGN §4.2 marks two values "(pre-reg)": the simulated span of 3-26 weeks (line 221), and incidental details mixed with decoys at 3 or more times their rate (line 229).
 - **What governs:** PREREG-v0.4 contains neither value, so neither is frozen.
-- **In v0.1:** both are queued for PREREG-v0.6. Until then they are provisional generator configuration, labelled "provisional pending PREREG-v0.5" in the completion record draft (K02); the label keeps its earlier wording. They are never chosen or revised from any real system's results.
+- **In v0.1:** both are queued for PREREG-v0.6. Until then they are provisional generator configuration, labelled "provisional pending PREREG-v0.5" in the completion record draft (K02); the label keeps its earlier wording. From the next kit, the generator's own labels for both values read "provisional pending PREREG-v0.6" (#318). They are never chosen or revised from any real system's results.
 
 **E6. The adapter contract gains a settle step.**
 - **The text:** DESIGN §6.9 (lines 641-647) lists `reset`, `ingest`, `query`, `checkpoint` and `restore`, `forget` and `stats`.
