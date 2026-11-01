@@ -105,9 +105,9 @@
   - C-5 counts with `o200k_base` until the tokenizer is named.
   - The check: count a recorded Sol request with `o200k_base`, and compare the count with the input tokens the provider reported for that request.
 - **Director support before the live tiers:**
-  - The director serves every role except the summariser and vision with the route's probe model (`src/bicentennial/director/core.py:331-334`). That includes embeddings, and Mem0's `bicentennial-extraction` calls, which map to the role `extraction` (`core.py:70`; `route_role.py:43-44`). So Mem0's extraction and its embedder each need their own route, and today the swap would move them.
-  - A pinned effort on every route and wire that the effort rule covers.
-  - Upstream forwarding for embeddings and for Anthropic Messages: the upstream supports only chat-completions and Responses (`src/bicentennial/director/upstream/forward.py:39`, `:97`).
+  - The director serves every role except the summariser and vision with the route's probe model (`src/bicentennial/director/core.py:331-334`). That includes embeddings, and Mem0's `bicentennial-extraction` calls, which map to the role `extraction` (`core.py:70`; `route_role.py:43-44`). So Mem0's extraction and its embedder each need their own route, and today the swap would move them (#344).
+  - A pinned effort on every route and wire that the effort rule covers (#343).
+  - Upstream forwarding for embeddings (#344) and for Anthropic Messages (with the Claude Code adapter, v1.0): the upstream supports only chat-completions and Responses (`src/bicentennial/director/upstream/forward.py:39`, `:97`).
   - Served-identity capture on every wire, including the fixed-vendor routes (`gpt-5-mini`, `text-embedding-3-small`).
 - **The route-table schema** (`schemas/route-table.schema.json`):
   - it has one `alias` per row, while the routes above use one alias per role;
