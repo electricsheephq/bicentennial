@@ -92,7 +92,7 @@ LCM-X, the benchmark's sponsor, is not run by the benchmark. Its own maintainers
   - PASS;
   - OMISSION, 0: nothing usable reached the agent;
   - FAIL_MEMORY, −1000: the agent acted on a wrong memory. A confident false memory costs far more than an honest gap.
-- **Question items** (stages "remember" and "survive") read correct (+1000, or +500 when hedged), unknown (0) or wrong (−1000). Their action verdict is empty by design.
+- **Question items** (stages "remember" and "survive") read correct (+1000), unknown (0) or wrong (−1000). An answer hedged with a stated confidence below 0.5 counts half: +500 when correct, −500 when wrong. Unknown scores +1000 when the life never stated the fact, so that unknown is the right answer. A missing or unparseable answer scores −1000. Their action verdict is empty by design.
 
 **Invariants** are model-free rules every system must keep:
 - **INV-VERB:** stored text survives a crash verbatim.
@@ -103,6 +103,7 @@ LCM-X, the benchmark's sponsor, is not run by the benchmark. Its own maintainers
 An invariant reads INCONCLUSIVE when the kit cannot settle it. For example, the store scan reads every file byte for byte, but a binary file, such as a SQLite database, can hold text in a form a byte scan misses (split across pages, or encoded). So when the scan finds nothing and the store holds such a file, forgetting reads INCONCLUSIVE.
 
 ## Per-track results
+
 Each system's first repeat (run1) is shown. Its other runs have the same scores, item verdicts, invariants and regression-corpus results (see "How repeatable the runs were"). A T0 row averages, rounded down, the aggregates of the pack cards that have that stage and track ("(mean)"; Cards counts them). T1 has one card per arm, and the wiped control must fail.
 
 Each table also carries the four baselines (RING0 §6, PREREG §2), aggregated like its score. At T0 they are the pack cards' cached controls: the no-memory floor scores 0, and the oracle-evidence and full-history ceilings score 1000, on every pack. A T1 card keeps a control's value only for a pack with one track, so the T1 cards show null; the T1 rows give the two T1 packs' cached controls instead. These T1 values, and the count below, are carried from the first run's guide, since every T1 item file is unchanged. Full history has no result at T1: it is bounded by the context window, and no T1 item's history fits (0 of 9 items in G1, 0 of 8 in G2). Naive RAG is not run in v0.1.
@@ -258,6 +259,7 @@ These are measured behaviours under Ring 0's scripted conditions, with the evide
 This run reproduced every score, item verdict and invariant that the findings below rest on, so they carry over from the earlier runs unchanged.
 
 ### Hermes native
+
 1. **Forgetting fails, and that one finding fails all 86 T0 gates.**
    - After `memory remove`, the entry leaves `MEMORY.md`, but the original message stays in Hermes's session database. The store scan still finds it there, and `session_search` returns it in the same session.
    - The run-level forgetting check fails, and it is copied onto every pack's gate. 75 of the 86 packs fail only because of it. The other 11 also fail their own forgetting check: 5 because the text is still in the store, and 6 because it still reaches the agent.
@@ -278,6 +280,7 @@ This run reproduced every score, item verdict and invariant that the findings be
 4. **T1 Recall, 500.** One item is correct, and one is unknown. Why the second one's search, which ends in `?`, did not return all three dates is not established.
 
 ### Holographic
+
 1. **Wake is 0 at T0 and T1 (every Wake item an OMISSION).**
    - Wake items open a fresh session with a deliberately generic question that names nothing in the stored decision.
    - Holographic's keyword search and its prefetch return nothing for it. Its session-start block carries a fact count and usage tips, never fact content.
@@ -291,12 +294,14 @@ This run reproduced every score, item verdict and invariant that the findings be
 3. **Everything else passes.** Drift, Keep and Recall all score 1000 at T0 and T1.
 
 ### The reference adapter (`reference_store`)
+
 - Its lower Keep, Recall and Wake scores follow from its retrieval rule: one event, plus an earlier assertion only when that event is a quote or a hedge. In every miss the evidence was still stored, but another event was returned. The same packs' oracle and full-history controls score 1000.
 - Its gates pass, because T0 gates do not read item scores.
 - No test pins its item outcomes yet, so a scoring change could move this row unnoticed. The next kit pins them (#277).
 - One pack, `G2/Keep/keep-incidental@1/s3-d1-kill/1`, reads INV-VERB INCONCLUSIVE. Its fault-free twin failed both items, so the crash comparison had nothing informative to compare.
 
 ### Mem0 OSS
+
 1. **Forgetting fails in the store, though the text never reaches the agent (T0).**
    - After `mem0_delete`, search no longer returns the forgotten text, and no forgetting probe found it in the agent's context. The store scan still finds it.
    - Mem0 keeps a history database, `.mem0/history.db` in the worker's sandbox home, inside its declared store. A memory's text stays there in the row for its original add, and again as the old value in the row for its delete. The cards record no hit paths, so a diagnostic rerun of Mem0's T0, on the first maintenance kit and these packs, logged them (#135). All 17 pack-level hits were in `history.db`. After the run-level check's forget, the text was in `history.db` and also in the local vector store's file, `qdrant/collection/mem0/storage.sqlite`, though Mem0 had confirmed the delete.
@@ -339,6 +344,7 @@ This run reproduced every score, item verdict and invariant that the findings be
 - **Isolation:** every run passed its isolation check. Outside the kit, the host let the runs' user reach loopback only, where the host's allow-listing proxy listens (127.0.0.1:8888). The runs had the proxy unset, and the proxy, which denies by default, logged no connection during them. No run was refused or rerun.
 
 ## Disclosures to read beside the numbers
+
 - **The maintenance kit (RING0 §13 E13, E15, E17, E18, E19, E21; #302, #329).** The third run's code commit is `maint/v0.1` at `366903e`, not the first run's db9c0c5, not the second run's 6a612d4, and not main. Main has moved on to next-kit and v0.2 work, including E12, E14, E16 and E20, none of which is in this run. A card shows the errata only through its code commit; E19's setting is in each G2 life's harness record, which no card or receipt includes.
 - **Hermes native reads its session-start snapshot (E7, #185).** Pinned Hermes injects a frozen memory snapshot into the system prompt at session open. The memory-layer host renders it with Hermes's own code and gives it to the reader. Other harness prompt injection is not exercised.
 - **The similarity stand-in (E10, #207).** Ring 0's embedding stand-in hashes words into a vector. Its similarity is lexical overlap, reported as (1 + c)/2. That is a declared convention, not a claim about any trained embedder.
@@ -377,6 +383,7 @@ This run reproduced every score, item verdict and invariant that the findings be
   - Where a T1 run's time goes is not yet measured. The runner collects per-session timings but does not write them out. A reading of the code points to the waits for in-flight work after each turn, and to repeated worker start-ups. Measuring it is part of v0.2's developer loop (#267).
 
 ## What these results do not show
+
 - They do not rank systems on real conversations. They show whether each system's plumbing holds under scripted, model-free conditions.
 - They do not show extraction, summarisation or retrieval quality with a trained model.
 - Ring 0's scripted queries are fixed sentences. A system's behaviour on other wordings, such as Hermes's search on queries that end in a period, can differ.
