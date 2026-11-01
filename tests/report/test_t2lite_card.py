@@ -189,12 +189,20 @@ def test_items_need_one_order_with_unique_ids():
         cards.build_t2lite_card(**dict(inputs(), items=second["items"]))
 
 
-@pytest.mark.parametrize("field,bad,reason", [("score_milli", 5000, "score_milli: out of range"),
-                                              ("infra_reruns", 9, "infra_reruns: at most two")])
-def test_each_item_carries_item_outcome_semantics(field, bad, reason):
+@pytest.mark.parametrize("path,bad,reason", [
+    (("score_milli",), 1001, "score_milli: out of range"),
+    (("infra_reruns",), 3, "infra_reruns: at most two"),
+    (("envelope", "confidence_milli"), 1001, "confidence exceeds 1000"),
+    (("worst_case_milli",), 1001, "worst-case row mismatch"),
+])
+def test_each_item_carries_item_outcome_semantics(path, bad, reason):
+    # The project checker applies no schema maximum; item_outcome's own checks hold every bound.
     card = cards.build_t2lite_card(**inputs())
-    card["items"][0][field] = bad
-    validate("card_t2lite", card)
+    *parents, field = path
+    target = card["items"][0]
+    for name in parents:
+        target = target[name]
+    target[field] = bad
     with pytest.raises(ValueError, match=reason):
         cards.validate_t2lite_card(card)
 
@@ -246,12 +254,16 @@ def test_missing_and_unknown_have_no_value_diagnostic(answer):
     assert value_match_normalised(envelope(), answer) is None
 
 
-def test_unknown_gold_has_no_value_diagnostic():
+def test_a_value_asserted_for_unknown_gold_never_matches():
     # A never-observed item's gold is UNKNOWN; a live model may still assert a value for it.
     gold = envelope("unknown", None)
-    assert value_match(gold, envelope()) is None
-    assert value_match(gold, envelope("number", 3)) is None
+    assert value_match(gold, envelope()) is False
+    assert value_match(gold, envelope("number", 3)) is False
+    assert value_match(gold, envelope("unknown", None)) is None
     assert value_match_normalised(gold, envelope()) is None
+    item = dict(stage="remember", gold=dict(option_id="gold", never_observed=True),
+                options=[dict(option_id="gold", envelope=gold)])
+    assert score_qa(item, envelope(), evidence_texts=[]).correct is False
 
 
 @pytest.mark.parametrize("kind,gold,answer,expected", [

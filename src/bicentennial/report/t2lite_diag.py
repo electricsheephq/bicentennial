@@ -6,12 +6,13 @@ from bicentennial.score.answer_types import matches, normalize
 def value_match(gold_envelope, answer_envelope, *, tolerance_s=0):
     """Match type and value only, regardless of confidence or citation.
 
-    Unknown on either side has no value diagnostic: the QA rubric scores abstentions and
-    never-observed items, and matches() refuses an unknown gold.
+    A missing or unknown answer has no value diagnostic. A value asserted where the gold is
+    unknown (a never-observed item) never matches, as in score_qa; matches() refuses that gold.
     """
-    if (answer_envelope is None or answer_envelope["type"] == "unknown"
-            or gold_envelope["type"] == "unknown"):
+    if answer_envelope is None or answer_envelope["type"] == "unknown":
         return None
+    if gold_envelope["type"] == "unknown":
+        return False
     return matches(gold_envelope, answer_envelope, tolerance_s=tolerance_s)
 
 
