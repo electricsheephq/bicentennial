@@ -168,7 +168,8 @@ def compile_script(out_dir, branch, schedule, db, *, items=(), step_s, probe_mod
             sim_t_s = p.t_end - len(batch) * step_s
             if sim_t_s < p.t_start:
                 raise ValueError("probe starts before checkpoint")
-            probe_users = set() if probe_mode == "per_item" else users
+            # per_item: each probe session checks its own turns and every replay turn (#310, condition 2).
+            probe_users = set(users) if probe_mode == "per_item" else users
             turns = [turn(n, "probe", i["prompt"], [], probe_users) for n, i in enumerate(batch, 1)]
             probes.append(ProbeSession(index, k, tuple(i["item_id"] for i in batch), sim_t_s))
             checkpoint_probes.setdefault(k, []).append(dict(index=index, kind="probe", turns=turns))

@@ -30,7 +30,8 @@ def base_rule():
     source = re.sub(r'if \(ctx.cursor ([^\n]+) in hashes\n[^\n]+\n[^\n]+== ctx.session\)\):',
                     r'if ctx.cursor \1 in hashes:', source)
     raw = source.encode()
-    assert sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest() == "67598c8e4331b0ff4d2682b8ed53aff08a8dc902"
+    assert sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest() == "67598c8e4331b0ff4d2682b8ed53aff08a8dc902", (
+        "roles.py changed after #335: retire check_base, or re-derive the base deliberately (#310)")
     namespace = {"__name__": roles.__name__}
     exec(compile(source, "base/roles.py", "exec"), namespace)
     return namespace["classify_shape"]

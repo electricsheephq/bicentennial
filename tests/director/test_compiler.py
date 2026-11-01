@@ -324,11 +324,14 @@ def test_per_item(worlds):
     with pytest.raises(ValueError, match="too many"):
         compiled(world, items=many)
     replay = result.script["sessions"][0]["turns"][0]["user"]
+    shared = [dict(i, prompt=many[0]["prompt"]) for i in many[:2]]
+    assert len(compiled(world, items=shared, probe_mode="per_item").probes) == 2
     for prompt in (many[0]["prompt"], replay):
-        shared = [dict(i, prompt=prompt) for i in many[:2]]
-        assert len(compiled(world, items=shared, probe_mode="per_item").probes) == 2
         with pytest.raises(ValueError, match="duplicate user"):
-            compiled(world, items=shared)
+            compiled(world, items=[dict(i, prompt=prompt) for i in many[:2]])
+    # #310's condition 2: no probe prompt equals a replay turn's text in the same life.
+    with pytest.raises(ValueError, match="duplicate user"):
+        compiled(world, items=[dict(many[0], prompt=replay)], probe_mode="per_item")
     with pytest.raises(ValueError, match="before checkpoint"):
         compiled(world, items=many, probe_mode="per_item", step_s=4000)
     for mode in (None, "full", "", 1):
