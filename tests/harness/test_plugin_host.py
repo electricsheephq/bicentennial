@@ -734,8 +734,15 @@ def test_forget_keeps_ambiguous_hit(regression_host, other, hit):
 def test_forget_unattributed_and_delivery(regression_host, monkeypatch):
     host = regression_host("holographic")
     host.ingest(event())
-    monkeypatch.setattr(host, "_call", lambda *a, **kw: dict(result=json.dumps(
-        dict(results=[dict(fact_id="paraphrase", content="a mineral recollection")]))))
+    real = host._call
+
+    def paraphrase(kind, **args):  # only the search answers with an unowned paraphrase row
+        if kind == "tool" and args.get("arguments", {}).get("action") == "search":
+            return dict(result=json.dumps(
+                dict(results=[dict(fact_id="paraphrase", content="a mineral recollection")])))
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", paraphrase)
     for _ in range(2):
         host.forget(dict(event_ids=["e1"]))
         host.ingest(event())
