@@ -295,11 +295,20 @@ def test_host_kept_disclosure(tmp_path, kept, hit, checkpoint):
     if hit:
         (tmp_path / "store").write_text(TOKEN)
     expected = (("host_kept", "store_hit") if kept == TOKEN else ("store_hit",)) if hit else ()
+    class Bare(Host):
+        forget_kept_texts = {}
+
+    def counts(v):  # every field but the reasons equals the same check without kept texts
+        return {**v.to_obj(), "reasons": None}
+
     verdict = inv.adapter_invariant(Host, "INV-FORGET", bound_s=5, snapshot=lambda a: (tmp_path,))
     assert (verdict.status, verdict.reasons) == ("FAIL" if hit else "PASS", expected)
+    bare = inv.adapter_invariant(Bare, "INV-FORGET", bound_s=5, snapshot=lambda a: (tmp_path,))
+    assert counts(verdict) == counts(bare)
     e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(tmp_path,))
     v = inv.run_invariants([replace(e, kept_texts=(kept,))], tier="T0")["INV-FORGET"]
     assert (v.status, v.reasons) == ("FAIL" if hit else "PASS", expected)
+    assert counts(v) == counts(inv.run_invariants([e], tier="T0")["INV-FORGET"])
 
 
 def test_sqlite_hit_and_encoded_miss(tmp_path):

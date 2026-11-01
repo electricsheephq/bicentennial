@@ -542,7 +542,7 @@ def regression_host(request, factory, tmp_path, monkeypatch):
         host = HermesMemoryHost.__new__(HermesMemoryHost)
         host.name, host.entry = name, load(REGISTRY / f"{name}.toml")
         host.events, host.session, host.turn = {}, 1, 0
-        host.forget_kept, host.forget_kept_texts = {}, {}
+        host.forget_kept, host.forget_kept_texts, host._store_generation = {}, {}, 0
         host.write_clipped, host.write_max_length = 0, None
         host._worker, host.settled, host._blocks, host._cache = None, True, (), None
         host.paths = dict(hermes_home=surface)
@@ -746,7 +746,7 @@ def test_forget_unattributed_and_delivery(regression_host, monkeypatch):
     for _ in range(2):
         host.forget(dict(event_ids=["e1"]))
         host.ingest(event())
-    assert host.forget_kept == {("row", "paraphrase"): "unattributed"}
+    assert host.forget_kept == {("row", host._store_generation, "paraphrase"): "unattributed"}
     assert host.forget_ambiguous == 0
     delivery = plugin_host.WriteDelivery()
     delivery.add([host, host])
@@ -755,7 +755,30 @@ def test_forget_unattributed_and_delivery(regression_host, monkeypatch):
     host.ingest(event(2, "a mineral"))
     host.ingest(event(3, "recollection"))
     host.forget(dict(event_ids=["e2"]))
-    assert host.forget_kept[("row", "paraphrase")] == "unattributed"
+    assert host.forget_kept[("row", host._store_generation, "paraphrase")] == "unattributed"
+
+
+def test_forget_record_counts_a_reused_row_id_after_a_wipe(regression_host, monkeypatch):
+    # A fresh store may hand out the same row id again (Holographic's AUTOINCREMENT restarts).
+    host = regression_host("holographic")
+    real = host._call
+
+    def reused(kind, **args):
+        if kind == "tool" and args.get("arguments", {}).get("action") == "search":
+            return dict(result=json.dumps(dict(results=[dict(fact_id=1, content="a mineral recollection")])))
+        return real(kind, **args)
+
+    monkeypatch.setattr(host, "_call", reused)
+    for _ in range(2):
+        host.ingest(event())
+        host.forget(dict(event_ids=["e1"]))
+        host.reset()
+    assert list(host.forget_kept.values()) == ["unattributed", "unattributed"]
+    assert len(host.forget_kept_texts) == 2
+    delivery = plugin_host.WriteDelivery()
+    delivery.add([host])
+    assert delivery.properties("t1")[-1] == (
+        "t1.forget_kept", '{"ambiguous":0,"same_text":0,"unattributed":2}')
 
 
 @pytest.mark.parametrize("failure", ["gate", "call"])

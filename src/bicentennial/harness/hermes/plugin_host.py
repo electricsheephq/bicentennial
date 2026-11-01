@@ -132,7 +132,7 @@ class HermesMemoryHost(Adapter):
         self.paths = layout(root, scratch)
         self._worker, self.pids, self.gate, self.active_memory_providers = None, [], [], []
         self.events, self.session, self.turn, self.latency_ms = {}, 1, 0, 0
-        self.forget_kept, self.forget_kept_texts = {}, {}
+        self.forget_kept, self.forget_kept_texts, self._store_generation = {}, {}, 0
         self.write_clipped, self.write_max_length = 0, None
         self.settled, self._blocks, self._cache = True, (), None
         self.script = script = dict(canary=CANARY, life_id=life, genre="t0", harness="hermes", sessions=[])
@@ -380,6 +380,7 @@ class HermesMemoryHost(Adapter):
             wipe_to_fresh(directory, fresh)
             verify_empty(directory, volatile, digest)
         self._blocks, self._cache = (), None
+        self._store_generation += 1  # a fresh store may reuse row ids, so keep keys apart
 
     def reset(self):
         self._wipe()
@@ -421,14 +422,14 @@ class HermesMemoryHost(Adapter):
                     return False
                 if kept.get(hit, 0) < len(exact - selected):
                     kept[hit] = kept.get(hit, 0) + 1
-                    record(("row", row_id), "ambiguous", hit)
+                    record(("row", self._store_generation, row_id), "ambiguous", hit)
                     return False
                 return True
             candidates = {i for i, text in written.items() if text and (hit in text or text in hit)}
             if candidates & selected and candidates - selected:
-                record(("row", row_id), "ambiguous", hit)
+                record(("row", self._store_generation, row_id), "ambiguous", hit)
             elif not candidates:
-                record(("row", row_id), "unattributed", hit)
+                record(("row", self._store_generation, row_id), "unattributed", hit)
             return bool(candidates) and candidates <= selected
 
         search, args, query, listing, text_key, id_key, delete, fixed, key = FORGET[self.name]
@@ -436,7 +437,7 @@ class HermesMemoryHost(Adapter):
             if not text:
                 continue
             if not search and any(value == text and i not in selected for i, value in written.items()):
-                record(("text", sha256(text.encode()).hexdigest()), "same_text", text)
+                record(("text", self._store_generation, sha256(text.encode()).hexdigest()), "same_text", text)
                 continue
             # A backend's result page can hide matching rows until deletes free room, so search again
             # while the last pass deleted a row. Rows already decided are skipped, so this ends.

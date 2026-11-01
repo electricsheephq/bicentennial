@@ -55,8 +55,9 @@ class Verdict:
 
 
 def _verdict(invariant, rows):
-    members = sum(status != "uninformative" for _, status, _ in rows)
-    uninformative = len(rows) - members
+    counted = [row for row in rows if row[2] != "host_kept"]  # host_kept only adds a reason (RING0 E22)
+    members = sum(status != "uninformative" for _, status, _ in counted)
+    uninformative = len(counted) - members
     groups = [tuple(sorted({i for i, status, _ in rows if status == target}))
               for target in ("FAIL", "INCONCLUSIVE", "INFRA_FAILURE")]
     failed, inconclusive, infra = groups
