@@ -124,6 +124,24 @@ def test_shadow_strips_every_contract_in_its_session():
     assert leg.results()[item["item_id"]].in_context is False
 
 
+def test_shadow_carry_over_ignores_earlier_contracts():
+    # The earlier request still holds its contract, whose text has the token; only real earlier content carries over.
+    item, leg, live, call = unit_leg("confidence_milli")
+    earlier = dict(copy.deepcopy(item), item_id="synthetic-earlier-qa", prompt="An earlier synthetic question?")
+    view = reader_view(earlier)
+    leg.scripted.cursors = {(21, 1): earlier["item_id"], (21, 2): item["item_id"]}
+    leg.scripted.readers[earlier["item_id"]] = (view, leg.scripted.readers[item["item_id"]][1])
+    asked = dict(model="alias", messages=[dict(role="user", content=earlier["prompt"] + answer_contract.render(
+        [o["envelope"] for o in view["options"]]))])
+    leg.scripted.earlier = lambda *args: (canon(asked), canon(dict(choices=[dict(message=dict(content="earlier answer"))])))
+    system, user = call.body["messages"]
+    body = dict(call.body, messages=[system, *asked["messages"], dict(role="assistant", content="earlier answer"), user,
+                                     dict(role="tool", tool_call_id="synthetic-call", content="confidence_milli")])
+    leg.respond(replace(call, subrole="tool_results", body=body, cursor=dict(session=21, turn=2)))
+    result = leg.results()[item["item_id"]]
+    assert result.in_context is True and result.carry_over is False
+
+
 def test_shadow_first_last_earlier_and_error(monkeypatch):
     item, leg, live, call = unit_leg()
     iid = item["item_id"]

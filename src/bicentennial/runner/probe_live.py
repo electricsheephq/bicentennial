@@ -98,15 +98,10 @@ class ProbeLiveLeg:
         # The body is the one the live model sent: like T1's reader, the shadow sees the model's own earlier
         # messages in this session, but never this item's answer, which is the reply.
         try:
-            # Every QA turn of this session carries the contract, and the shadow reads none of them: T1 has none.
-            body = call.body
-            for (session, _), other in sorted(self.scripted.cursors.items()):
-                shown = self.scripted.readers[other][0]
-                if session == position[0] and "envelope" in shown["options"][0]:
-                    body = strip_contract(body, shown["prompt"], self.contract.render(
-                        [o["envelope"] for o in shown["options"]]))
+            body = self._without_contracts(call.body, position[0])
             result = read(view, keys, context_text(body), mode="hermes", earlier=context_text([
-                _earlier_body(v) for v in self.scripted.earlier(call.run_key, *position)]))
+                self._without_contracts(_earlier_body(v), position[0])
+                for v in self.scripted.earlier(call.run_key, *position)]))
             self.initial.setdefault(key, result.in_context)
             if iid not in self.errors:
                 self.latest[iid] = result
@@ -116,6 +111,18 @@ class ProbeLiveLeg:
             self.latest.pop(iid, None)
         reply = self.live.respond(replace(call, model=self.model))
         return replace(reply, model=call.model)
+
+    def _without_contracts(self, body, session):
+        """Every QA turn of this session carries the contract, in this request and in the earlier ones the shadow reads:
+        it reads none of them, as T1 has none."""
+        if not isinstance(body, dict):
+            return body
+        for (index, _), other in sorted(self.scripted.cursors.items()):
+            shown = self.scripted.readers[other][0]
+            if index == session and "envelope" in shown["options"][0]:
+                body = strip_contract(body, shown["prompt"], self.contract.render(
+                    [o["envelope"] for o in shown["options"]]))
+        return body
 
     def _act_stage(self, item, result, evidence, probe, record, db, schedule):
         if result is None or item["item_id"] not in evidence.act or item["item_id"] in evidence.classes:
