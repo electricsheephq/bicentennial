@@ -108,7 +108,7 @@ def item(item_id="item-0", **changes):
 
 def test_frozen_record_projects_plain_dict_and_envelope_state():
     raw = item(envelope={"type": "span", "value": "synthetic"})
-    raw["hermes"] = "/synthetic/private/hermes"
+    raw["hermes"] = "/synthetic/local/hermes"
     record = flips.ItemOutcome.from_dict(raw)
     assert record.envelope == "parsed"
     assert "hermes" not in asdict(record)
@@ -266,8 +266,8 @@ def test_without_prime_null_instability_q0_and_label():
 ])
 def test_rerun_exact_published_format_and_plugin_presence(system, plugin):
     source_card = card(system)
-    local_paths = dict(packs="/synthetic/private/packs", hermes="/synthetic/private/hermes",
-                       plugin_source="/synthetic/private/plugin", out="/synthetic/private/out")
+    local_paths = dict(packs="/synthetic/local/packs", hermes="/synthetic/local/hermes",
+                       plugin_source="/synthetic/local/plugin", out="/synthetic/local/out")
     source_card.update(local_paths)
     record = dict(item(), **local_paths)
     command = flips.rerun_command(source_card, record)
@@ -282,10 +282,10 @@ def test_rerun_exact_published_format_and_plugin_presence(system, plugin):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("system", "/synthetic/private/system"), ("system", "name;command"),
-    ("life", "/synthetic/private/life"), ("branch", "B0:extra"),
+    ("system", "/synthetic/local/system"), ("system", "name;command"),
+    ("life", "/synthetic/local/life"), ("branch", "B0:extra"),
     ("branch", "--option"), ("pack_hash", "../bad"),
-    ("probe_point", "10 --out /synthetic/private/out"), ("probe_point", True),
+    ("probe_point", "10 --out /synthetic/local/out"), ("probe_point", True),
 ])
 def test_rerun_refuses_path_or_shell_tokens_in_identifiers(field, value):
     source_card, record = card(), item()
@@ -298,8 +298,8 @@ def test_report_canonical_bytes_labels_counts_and_no_fixture_paths():
     baseline, current, prime = band_runs()
     for run in (baseline, current, prime):
         for record in run.values():
-            record["hermes"] = "/synthetic/private/hermes"
-            record["plugin_source"] = "/synthetic/private/plugin"
+            record["hermes"] = "/synthetic/local/hermes"
+            record["plugin_source"] = "/synthetic/local/plugin"
     baseline_card, current_card = card("omega"), card("omega")
     original = copy.deepcopy((baseline_card, current_card, baseline, current, prime))
     result = flips.flip_report(current_card, baseline_card, baseline, current, aa_prime=prime)
@@ -315,7 +315,7 @@ def test_report_canonical_bytes_labels_counts_and_no_fixture_paths():
     reversed_card["labels"] = dict(reversed(list(current_card["labels"].items())))
     again = flips.flip_report(reversed_card, baseline_card, *reordered[:2], aa_prime=reordered[2])
     assert encoded == canon(again)
-    assert b"/synthetic/private/" not in encoded
+    assert b"/synthetic/local/" not in encoded
     assert all("--plugin-source <plugin checkout>" in r["rerun"] for r in result["rows"])
     assert original == (baseline_card, current_card, baseline, current, prime)
     no_band = flips.flip_report(current_card, baseline_card, baseline, current)
