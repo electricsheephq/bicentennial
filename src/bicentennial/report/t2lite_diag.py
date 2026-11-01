@@ -4,8 +4,13 @@ from bicentennial.score.answer_types import matches, normalize
 
 
 def value_match(gold_envelope, answer_envelope, *, tolerance_s=0):
-    """Match type and value only, regardless of confidence or citation."""
-    if answer_envelope is None or answer_envelope["type"] == "unknown":
+    """Match type and value only, regardless of confidence or citation.
+
+    Unknown on either side has no value diagnostic: the QA rubric scores abstentions and
+    never-observed items, and matches() refuses an unknown gold.
+    """
+    if (answer_envelope is None or answer_envelope["type"] == "unknown"
+            or gold_envelope["type"] == "unknown"):
         return None
     return matches(gold_envelope, answer_envelope, tolerance_s=tolerance_s)
 

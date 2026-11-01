@@ -25,6 +25,12 @@ def validate_t2lite_card(card) -> None:
         raise ValueError("t2lite_card:live_roles")
     if not set(_schema()["properties"]["labels"]["required"]) <= card["labels"].keys():
         raise ValueError("t2lite_card:labels")
+    # As on the Ring 0 card: one byte order (strictly increasing ids), and each item's own semantics.
+    ids = [item["item_id"] for item in card["items"]]
+    if any(a >= b for a, b in zip(ids, ids[1:], strict=False)):
+        raise ValueError("t2lite_card:items")
+    for item in card["items"]:
+        run.validate("item_outcome", item)
 
 
 def build_t2lite_card(*, system, pack_hash, seed_hash, pins, model, effort, served_identity,
