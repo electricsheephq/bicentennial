@@ -16,7 +16,7 @@ The packs, the scoring rules and the acceptance checks did not change. The kit, 
   - **E17, arrival time outside the cursor (#287):** the masked ledger digest leaves out `sim_now` on requests without a turn cursor, such as Mem0's background embedding requests. The record keeps it.
   - **E19, the MCP discovery wait (#71):** whenever T1 configures MCP servers (G2's environment server), Hermes waits up to 60 s for them before it builds the agent, instead of the pin's 1.5 s. A life's harness record lists the setting under `config_deviations`.
   - **E13, unbound sockets on macOS (#205):** the egress sampler ignores an unconnected TCP or UDP socket named `*:*`, on macOS only. This run's host is Linux, so E13 changes nothing here.
-  - E12, E14, E16 and E18 stay next-kit errata. None of the four carried errata adds a card field. The pre-registration changelog records them as a Ring 0 contract change with no PREREG version change: PREREG-v0.4 stays frozen.
+  - E12, E14, E16 and E18 stay next-kit errata. None of the four carried errata adds a card field. The pre-registration changelog records them as a Ring 0 contract change with no PREREG version change, so the kit runs under PREREG-v0.4, the version frozen at its commit. PREREG-v0.5, frozen on `main` on 2026-10-31 (DV48), supersedes v0.4 for later work, not for this kit, and the PREREG sections cited in `RESULT.md` and the manifest are v0.4's.
 - **The acceptance script is the same file.** `scripts/v01_acceptance.py` is byte-identical to the first run's, with the same 17 checks.
 - **The packs are the same; their hashes are not.** Every item file is byte-identical to the first run's, and so is every world file apart from two SQLite version fields in its header, which depend on the build host (below). The controls pin moves with the projection code, so the pack hashes change: T0 `737625ebdbee50df990a7b7929fd57eca8a90cdd148c9c0c46aeaacf0d7c5b9d` and T1 `b2e233207ac54115a77d9c0280e3cdb0c809df31e27430a59b401beae1aa4c41`. The T0 hash also depends on the build host: a macOS build of the same pack code gives 392caba9…. The cause is in each world database's header, where SQLite writes its own version number and the change count it was written at: the macOS host links SQLite 3.54.1, and the Linux bench hosts link 3.53.1. With those two fields (8 bytes) zeroed, every file in the two trees hashes equal, so the world content is identical (#327). T1's hash also differs from the macOS build's ece52d64…, for the same reason: with those 8 bytes zeroed, all 49 of its files hash equal.
 - **The host is an x86_64 Linux cloud host with 16 vCPUs (Ubuntu 24.04), dedicated to the benchmark:** nothing else was scheduled on it during the runs. The first run ran on a 14-core macOS machine that also ran other work.
@@ -119,7 +119,9 @@ Each table also carries the four baselines (RING0 §6, PREREG §2), aggregated l
 | remember | Recall | 12 | 666 (mean) | correct 10, wrong 2 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
+
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET PASS
+
 Pack invariants: INV-FORGET NOT_EXERCISED 75, INV-FORGET PASS 11, INV-NEW NOT_EXERCISED 79, INV-NEW PASS 7, INV-PAIR NOT_EXERCISED 86, INV-VERB INCONCLUSIVE 1, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 6
 
 ### Hermes native
@@ -135,7 +137,9 @@ Pack invariants: INV-FORGET NOT_EXERCISED 75, INV-FORGET PASS 11, INV-NEW NOT_EX
 | remember | Recall | 12 | 916 (mean) | correct 11, unknown 1 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
+
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET FAIL
+
 Pack invariants: INV-FORGET FAIL 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EXERCISED 58, INV-NEW PASS 28, INV-PAIR NOT_EXERCISED 86, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 7
 
 **T1, system arm:** 1 card; gates PASS 1.
@@ -147,6 +151,7 @@ Pack invariants: INV-FORGET FAIL 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EX
 | act | Wake | 1 | 1000 | PASS 2 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Recall | 1 | 500 | correct 1, unknown 1 | 0 | 1000 | no result | not run in v0.1 |
+
 Regression corpus: PASS 20
 
 **T1, wiped arm:** 1 card; gates FAIL 1.
@@ -158,6 +163,7 @@ Regression corpus: PASS 20
 | act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Drift | 1 | 0 | unknown 1 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Recall | 1 | 0 | unknown 2 | 0 | 1000 | no result | not run in v0.1 |
+
 Regression corpus: FAIL 20
 
 ### Holographic
@@ -173,7 +179,9 @@ Regression corpus: FAIL 20
 | remember | Recall | 12 | 1000 (mean) | correct 12 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
+
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET INCONCLUSIVE
+
 Pack invariants: INV-FORGET INCONCLUSIVE 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EXERCISED 58, INV-NEW PASS 28, INV-PAIR NOT_EXERCISED 86, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 7
 
 **T1, system arm:** 1 card; gates PASS 1.
@@ -185,6 +193,7 @@ Pack invariants: INV-FORGET INCONCLUSIVE 11, INV-FORGET NOT_EXERCISED 75, INV-NE
 | act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Recall | 1 | 1000 | correct 2 | 0 | 1000 | no result | not run in v0.1 |
+
 Regression corpus: PASS 20
 
 **T1, wiped arm:** 1 card; gates FAIL 1.
@@ -196,6 +205,7 @@ Regression corpus: PASS 20
 | act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Drift | 1 | 0 | unknown 1 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Recall | 1 | 0 | unknown 2 | 0 | 1000 | no result | not run in v0.1 |
+
 Regression corpus: FAIL 20
 
 ### Mem0 OSS
@@ -211,7 +221,9 @@ Regression corpus: FAIL 20
 | remember | Recall | 12 | 1000 (mean) | correct 12 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | 1000 | not run in v0.1 |
 | survive | Recall | 2 | 1000 (mean) | correct 2 | 0 | 1000 | 1000 | not run in v0.1 |
+
 Adapter invariants: INV-VERB PASS, INV-NEW PASS, INV-PAIR PASS, INV-FORGET FAIL
+
 Pack invariants: INV-FORGET FAIL 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EXERCISED 58, INV-NEW PASS 28, INV-PAIR NOT_EXERCISED 86, INV-VERB NOT_EXERCISED 79, INV-VERB PASS 7
 
 **T1, system arm:** 1 card; gates PASS 1.
@@ -223,6 +235,7 @@ Pack invariants: INV-FORGET FAIL 11, INV-FORGET NOT_EXERCISED 75, INV-NEW NOT_EX
 | act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Drift | 1 | 1000 | correct 1 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Recall | 1 | 1000 | correct 2 | 0 | 1000 | no result | not run in v0.1 |
+
 Regression corpus: PASS 20
 
 **T1, wiped arm:** 1 card; gates FAIL 1.
@@ -234,6 +247,7 @@ Regression corpus: PASS 20
 | act | Wake | 1 | 0 | OMISSION 2 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Drift | 1 | 0 | unknown 1 | 0 | 1000 | no result | not run in v0.1 |
 | survive | Recall | 1 | 0 | unknown 2 | 0 | 1000 | no result | not run in v0.1 |
+
 Regression corpus: FAIL 20
 
 ## What each system's results point to
@@ -315,7 +329,7 @@ This run reproduced every score, item verdict and invariant that the findings be
 
 ## How repeatable the runs were
 
-- **What differs:** only Holographic's and Mem0's T1 system arms differ. For each of the two, the base run and both repeats each have a different masked ledger digest: the second repeat differs from the first (`t1_not_identical`), and the first from the base run (`t1_base_differs`). No other card field differs, apart from the base run's gate, by design, so every item verdict, score, gate verdict and run status is identical. Their wiped arms, all of Hermes native's T1 cards and every system's T0 runs are byte-identical across repeats. An independent comparison of each system's full repeat output trees found no other differing file, apart from the base run's gate, by design: between the base run and the first repeat, every system's system card and both arms' JUnit files record it. The run receipts differ only in fields that change on every run: timings, ports, process ids, temporary paths and load, and at T1 also the busy readings and the digest of the unmasked request bodies.
+- **What differs:** only Holographic's and Mem0's T1 system arms differ. For each of the two, the base run and both repeats each have a different masked ledger digest, as their three system cards show. The acceptance compares two of the pairs: the second repeat differs from the first (`t1_not_identical`), and the first from the base run (`t1_base_differs`). No other card field differs, apart from the base run's gate, by design, so every item verdict, score, gate verdict and run status is identical. Their wiped arms, all of Hermes native's T1 cards and every system's T0 runs are byte-identical across repeats. An independent comparison of each system's full repeat output trees found no other differing file, apart from the base run's gate, by design: between the base run and the first repeat, every system's system card and both arms' JUnit files record it. The run receipts differ only in fields that change on every run: timings, ports, process ids, temporary paths and load, and at T1 also the busy readings and the digest of the unmasked request bodies.
 - **The first run's causes, one by one:**
   - Mem0's T0 runs (#287, E17): fixed: its two runs are byte-identical on all 86 cards.
   - hermes-native's busy T1 repeat (#71, E19): fixed: the busy repeat, under induced load on all 16 CPUs, is byte-identical to the first repeat in both arms.
