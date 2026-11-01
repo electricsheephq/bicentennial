@@ -84,7 +84,8 @@ def plugin_repo(dest, name):
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, request):
-    if request.node.originalname in ("test_live", "test_native_session_start_snapshot_live"):
+    if request.node.originalname in ("test_live", "test_native_session_start_snapshot_live",
+                                     "test_holographic_sqlite_dates_live"):
         return
     for name in ("BICENTENNIAL_BUSY_CMD", "BICENTENNIAL_OPERATOR"):
         monkeypatch.delenv(name, raising=False)
@@ -1127,6 +1128,10 @@ def test_holographic_sqlite_dates_live(tmp_path):
         responder=ScriptedResponder(entry), clock=SimClock(root / "clock.json", BASE, 60),
         root=root, scratch=tmp_path, life="t0-pack", branch="B0", run="live-dates", lock_hash=LOCK)
     try:
+        try:
+            host._start()
+        except GateRefused:
+            pytest.skip("machine gate refused")
         host.ingest(event(text="The amber flute rests in the blue cabinet"))
         assert host.settle(5)
         with sqlite3.connect(host.paths["hermes_home"] / "memory_store.db") as connection:

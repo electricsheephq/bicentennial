@@ -243,9 +243,10 @@ def test_verify_never_reads_links_and_collects_other_failures(installed, tmp_pat
         assert path != target and target not in path.parents
         return original(path, flags)
 
-    monkeypatch.setattr(installer.os, "open", no_link_reads)
-    with pytest.raises(PinnedArtifactChanged) as error:
-        installer.verify(root, pack_hash=digest)
+    with monkeypatch.context() as patch:  # undone before tmp_path's cleanup, which opens by descriptor (#348)
+        patch.setattr(installer.os, "open", no_link_reads)
+        with pytest.raises(PinnedArtifactChanged) as error:
+            installer.verify(root, pack_hash=digest)
     assert "mode:" + target.relative_to(root).as_posix() in error.value.fields
     assert "pack_hash" in error.value.fields
     assert (external / "index.json").read_bytes() == b"invalid"
@@ -363,8 +364,9 @@ def test_unreadable_entry_still_collects_modes_and_file_failures(installed, monk
             raise PermissionError("unreadable")
         return original(path, flags)
 
-    monkeypatch.setattr(installer.os, "open", unreadable)
-    with pytest.raises(PinnedArtifactChanged) as error:
-        installer.verify(root, pack_hash=digest)
+    with monkeypatch.context() as patch:  # undone before tmp_path's cleanup, which opens by descriptor (#348)
+        patch.setattr(installer.os, "open", unreadable)
+        with pytest.raises(PinnedArtifactChanged) as error:
+            installer.verify(root, pack_hash=digest)
     rel = target.relative_to(root).as_posix()
     assert error.value.fields == tuple(sorted(("mode:" + rel, rel, "pack_hash")))

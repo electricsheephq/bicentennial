@@ -74,10 +74,10 @@ def _on_block(text):
 def test_workflow_shape():
     text = WORKFLOW.read_text()
     ci = (REPO / ".github/workflows/ci.yml").read_text()
-    assert len(re.findall(r"^      - ", text, re.MULTILINE)) == 3
+    assert len(re.findall(r"^      - ", text, re.MULTILINE)) == 4
     assert set(re.findall(r"uses: (\S+)", text)) == set(re.findall(r"uses: (\S+)", ci))
     assert not re.search(r"^\s*env:", text, re.MULTILINE)
-    assert len(re.findall(r"^\s*(?:- )?run:", text, re.MULTILINE)) == 1
+    assert len(re.findall(r"^\s*(?:- )?run:", text, re.MULTILINE)) == 2
     assert _on_block(text) == _on_block(ci)
     assert "persist-credentials: false" in text
     assert 'python-version: "3.14"' in text

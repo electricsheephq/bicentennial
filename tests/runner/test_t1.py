@@ -2,6 +2,7 @@
 
 import ast
 import json
+import runpy
 import sys
 import time
 from dataclasses import asdict, replace
@@ -105,6 +106,7 @@ def installed(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def environment(monkeypatch):
+    runpy.run_path(str(Path(__file__).resolve().parents[2] / "tests/director/test_roles.py"))["check_base"](monkeypatch)
     monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
@@ -362,6 +364,7 @@ def action_score(case, ev):
 def completed(installed, tmp_path_factory):
     root = tmp_path_factory.mktemp("t1-runs")
     patch = pytest.MonkeyPatch()
+    runpy.run_path(str(Path(__file__).resolve().parents[2] / "tests/director/test_roles.py"))["check_base"](patch)
     patch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     patch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     patch.setattr(adapter, "assert_niced", lambda pid: None)

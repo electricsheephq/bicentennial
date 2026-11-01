@@ -1,5 +1,7 @@
 # Run Ring 0 on your system (v0.1 kit)
 
+For the v0.2 probe-live developer loop, see [T2-lite](t2lite.md).
+
 ## 1. What the v0.1 kit is
 
 The kit ships T0 probe packs and T1 CI smoke only. T0 runs micro-lives through the memory-layer adapter; T1 drives two public lives through the harness with a scripted model, regression corpus and controls. See [RING0 §§6–7](../../specs/ring0/RING0.md#6-t1-composition-and-the-probe-budget).
@@ -28,7 +30,7 @@ Every card carries these labels verbatim from `card_ring0`:
 
 Nothing in a developer ring certifies ([PREREG §6](../../prereg/PREREG-v0.4.md#6-tiers-rings-subsets-and-branches)). The reader measures evidence availability at probe time, not a model's judgement. It selects among options whose locked tokens are present, preferring gold when competing evidence is also present. Act at T0/T1 is evidence-conditioned scripted action ([RING0 §§1–3](../../specs/ring0/RING0.md#1-the-scripted-reader)).
 
-Forgetting is exercised at T0 only. KEEP-FORGET and KEEP-NEIGH read "not exercised at T1" and sit outside its gate. The ≤ 60 s per pack T0 target and ≤ 10 min T1 target are engineering targets, not bars. v0.1's first official run measured both and lists its target misses ([its results](../../results/v0.1-kit/2026-10-30/READING.md)). Disclose target misses ([RING0 §6](../../specs/ring0/RING0.md#6-t1-composition-and-the-probe-budget), [PREREG §8 bar 5](../../prereg/PREREG-v0.4.md#8-pilot-acceptance-bars-all-required)). Determinism is claimed only per machine and pin set ([RING0 §4](../../specs/ring0/RING0.md#4-stable-and-volatile-result-fields)).
+Forgetting is exercised at T0 only. KEEP-FORGET and KEEP-NEIGH read "not exercised at T1" and sit outside its gate. The ≤ 60 s per pack T0 target and ≤ 10 min T1 target are engineering targets, not bars. v0.1's three official runs measured both and list their target misses ([the first](../../results/v0.1-kit/2026-10-30/READING.md), [the second](../../results/v0.1-kit/2026-11-01-run2/READING.md), [the third, accepted](../../results/v0.1-kit/2026-11-01-run3/READING.md)). Disclose target misses ([RING0 §6](../../specs/ring0/RING0.md#6-t1-composition-and-the-probe-budget), [PREREG §8 bar 5](../../prereg/PREREG-v0.4.md#8-pilot-acceptance-bars-all-required)). Determinism is claimed only per machine and pin set ([RING0 §4](../../specs/ring0/RING0.md#4-stable-and-volatile-result-fields)).
 
 LCM-X's developers use this public kit on equal terms. The benchmark never runs LCM-X: the runners refuse it under the benchmark operator's identity ([RING0 §12](../../specs/ring0/RING0.md#12-lcm-x)).
 
@@ -84,7 +86,7 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 | `--model-cache` | Staged model directory. Give it exactly when the system's worker environment uses one (only `omega`); a missing or unneeded one refuses the run with `missing_input`. |
 | `--cache` | Optional control cache; default `<out>/cache`. |
 
-The Hermes-replay fallback ships in v0.2 ([RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata)). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
+The Hermes-replay fallback ships in v0.3 (the [ROADMAP](../../ROADMAP.md)'s v0.3 row; [RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata) predates the 2026-11-01 re-plan). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
 
 For Hermes native, the memory-layer host calls `memory` and `session_search` and also reads the session-start memory snapshot rendered by pinned Hermes's own code at session open. Enabled, non-empty memory and user-profile blocks appear in that order, before recall and prefetch context. The snapshot stays frozen through mid-session writes and adds no recall citations. T1's regression corpus uses the same host. The `t0.injection` JUnit property says: "The session-start memory snapshot is read; other harness prompt injection is not exercised." ([RING0 §13 E7](../../specs/ring0/RING0.md#13-v01-errata)).
 

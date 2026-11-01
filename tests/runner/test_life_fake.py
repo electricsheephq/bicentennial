@@ -3,6 +3,7 @@
 import ast
 import json
 import os
+import runpy
 import subprocess
 import sys
 import time
@@ -74,6 +75,7 @@ def lives(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def harness(monkeypatch):
+    runpy.run_path(str(ROOT / "tests/director/test_roles.py"))["check_base"](monkeypatch)
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
     made, calls, closed = [], [], []

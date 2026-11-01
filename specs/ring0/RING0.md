@@ -60,7 +60,7 @@ At T1 every request the harness or the system sends is answered by a determinist
 | `aux` | an empty assistant message with no tool call |
 | `unknown` | refused, as the director does on every tier |
 
-A request reaches `replay_main` or `probe_main` by the cursor rule: its last user text equals the scripted turn's. Pinned Hermes appends a turn's prefetched memory to that text: a blank line, then a `<memory-context>` fence that opens with Hermes's system note. A script whose user text holds the wrapper is refused, so the first such wrapper is Hermes's own block. If the exact text matches no turn, the rule compares the text before it. So an exact retry is never read as the next turn. The block, and anything after it, stays in the request, so it is part of the Hermes-mode context (§1). Text appended without that wrapper still fails closed.
+A request reaches `replay_main` or `probe_main` by the cursor rule: its last user text equals the scripted turn's, and that turn belongs to the session the director is in, when both sessions are known (#310). A retry of the current turn matches in any session. Pinned Hermes appends a turn's prefetched memory to that text: a blank line, then a `<memory-context>` fence that opens with Hermes's system note. A script whose user text holds the wrapper is refused, so the first such wrapper is Hermes's own block. If the exact text matches no turn, the rule compares the text before it. So an exact retry is never read as the next turn. The block, and anything after it, stays in the request, so it is part of the Hermes-mode context (§1). Text appended without that wrapper still fails closed.
 
 Embedding requests (an embeddings endpoint on a declared alias) go to the hashed-vector stub.
 
@@ -183,6 +183,7 @@ The determinism check names the first stable field that differs.
 - at least two scored bundles per life have their evidence in session 1 or 2, so a store whose budget fills early still has wake-crossing items.
 
 **The probe budget** per (life, branch, checkpoint): at most 6 QA items and 2 action items.
+These Ring 0 caps reflect per-checkpoint isolation and fixed order; the full tier compiles one session per item (`probe_mode="per_item"`, #310), so a per_item probe has no earlier exchange of its own session as context.
 - **The QA items** run in one probe session, in the pack's fixed item order, on a clone of every declared surface that is discarded afterwards.
   - **Isolation is per checkpoint, not per item** (DESIGN §6.7), and the card says so.
   - **Carry-over:** an earlier probe's recall result or answer can stay in the session, or be captured by the system's store, and make a later option present. The reader's context is still the one §1 defines, so this is measured, not removed.

@@ -14,11 +14,14 @@ import pytest
 
 from bicentennial.canon import canon
 from bicentennial.controls.cache import CONTROL_FILES
+from bicentennial.director.compiler.hermes import compile_script
 from bicentennial.items.bindings import Binding
+from bicentennial.ocsim import base
 from bicentennial.render.stream import stream_hash
 from bicentennial.world import fixtureplan as fp
 from bicentennial.world import fulltwin as full
 from bicentennial.world import planned
+from bicentennial.world.db import open_world
 from bicentennial.world.processes import mint
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +32,32 @@ def budget(genre, n=1):
     registry = full.G1 if genre == "G1" else full.G2
     return [[cell, k, n] for cell in sorted({t.cell_id for t in registry})
             for k in full.named("full").checkpoints if fp.eligible(genre, cell, k)]
+
+
+def test_per_item_b300(tmp_path, capsys):
+    cells = sorted({t.cell_id for t in (*full.G1, *full.G2)})
+    cover = [[cell, k, 180] for cell in cells for k in (20, 60, 120, 200)]
+    context = SimpleNamespace(provenance={}, artifact=lambda path: {"required": cells} if path == base.C12
+                              else {"lives": [{"bundles": cover}]})
+    all_cells = base._alloc(context)["300"]
+    assert sum(n for _, _, n in all_cells) == 180
+    allocation = [row for row in all_cells if row[0] in {t.cell_id for t in full.G1}]
+    root, started = tmp_path / "full", monotonic()
+    result = full.build("G1", "probe310-full", 1, allocation, root)
+    try:
+        schedule = full.build_schedule(full.seed_text(1), "probe310-full", full.named("full"))
+        for branch in ("B0", "B1"):
+            ids = {r["item_id"] for r in result.twin.compiled.records if r["branch"] == branch}
+            items = [i for i in result.twin.compiled.items if i["item_id"] in ids]
+            with open_world(root / f"world.{branch}.db", readonly=True) as db:
+                compiled = compile_script(root / "branches", branch, schedule, db, items=items,
+                                          step_s=60, probe_mode="per_item")
+            assert len(compiled.probes) == len(items) == sum(n for _, _, n in allocation)
+            assert {p.checkpoint for p in compiled.probes} == {20, 60, 120, 200}
+    finally:
+        result.twin.b1.close()
+    with capsys.disabled():
+        print(f"\nPROBE310_B300 G1 one life, both branches: {monotonic() - started:.3f}s", flush=True)
 
 
 @pytest.mark.parametrize("budget", [None, (), {}, [None], [[]], [["DRIFT-CUR", 20]],
