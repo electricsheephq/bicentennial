@@ -760,7 +760,8 @@ def _n_lives_floor(context):
     _need(len(lives) == 16, "n_lives_floor:bar2_lives")
     subset = _keep_subset(bundles, tracks)
     flags = {s["id"]: s["lcmx"] for s in roster["systems"]}
-    # Bar 2 runs the full pilot roster (PREREG l.463); without the reference, its contrasts are missing from the family.
+    # Bar 2 runs the full pilot roster (PREREG-v0.4 l.463); without the reference, its contrasts are missing
+    # from the family.
     _need(roster["reference"] in arms, "n_lives_floor:no_reference")
     pairs = list(combinations([a for a in arms if not flags[a]], 2))
     _need(bool(pairs), "n_lives_floor:no_pairs")
@@ -867,18 +868,18 @@ class Rule:
 RULES = {
     field: Rule(rule, (RULING, *sources), function)
     for field, rule, sources, function in (
-        ("rows", "B-1", ("PREREG l.40,435,452,566,718", "B-2"), _rows),
-        ("passover", "B-3", ("PREREG l.40,441", CLARIFICATION), _passover_rule),
-        ("control_failure", "B-4", ("PREREG l.549,777",), _control_rule),
-        ("lanes", "B-5, B-15, B-16", ("PREREG l.26,716", *STAGE_B), _lanes),
-        ("alloc_by_b", "B-6", ("PREREG l.418", *STAGE_B), _alloc),
-        ("checkpoints", "B-7", ("PREREG l.418",), _checkpoints),
-        ("lives", "B-7, B-17, B-17a, B-17b, B-18, B-19", ("PREREG l.431,734,795", *STAGE_B), _lives),
+        ("rows", "B-1", ("PREREG-v0.4 l.40,435,452,566,718", "B-2"), _rows),
+        ("passover", "B-3", ("PREREG-v0.4 l.40,441", CLARIFICATION), _passover_rule),
+        ("control_failure", "B-4", ("PREREG-v0.4 l.549,777",), _control_rule),
+        ("lanes", "B-5, B-15, B-16", ("PREREG-v0.4 l.26,716", *STAGE_B), _lanes),
+        ("alloc_by_b", "B-6", ("PREREG-v0.4 l.418", *STAGE_B), _alloc),
+        ("checkpoints", "B-7", ("PREREG-v0.4 l.418",), _checkpoints),
+        ("lives", "B-7, B-17, B-17a, B-17b, B-18, B-19", ("PREREG-v0.4 l.431,734,795", *STAGE_B), _lives),
         ("probe_only", "B-8, B-21 to B-25",
-         ("PREREG l.453,759", CLARIFICATION, "#245 issuecomment-6535643668"), _probe_only),
+         ("PREREG-v0.4 l.453,759", CLARIFICATION, "#245 issuecomment-6535643668"), _probe_only),
         ("n_lives_floor", "B-9, B-26, B-27",
-         ("PREREG l.491,498,503", "PREREG l.574", "#245 issuecomment-6535643668"), _n_lives_floor),
-        ("required", "B-10", ("PREREG l.27",), _required),
+         ("PREREG-v0.4 l.491,498,503", "PREREG-v0.4 l.574", "#245 issuecomment-6535643668"), _n_lives_floor),
+        ("required", "B-10", ("PREREG-v0.4 l.27",), _required),
         ("planning", "B-10", (), _planning),
     )}
 
@@ -922,7 +923,7 @@ def build_base(*, bar2: bytes, controls: bytes, history: bytes, root: Path) -> b
     context.provenance.update(
         account_pool=context.get("bar2")["run_lock"]["account_pool"], neutrality=neutrality,
         pending_disclosures=["B-4 recovered INFRA attempts: pending; sources C5a's container (B-4) and the bar-2 runner",
-                             "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card",
+                             "B-9 sigma_d's scale difference from the full tier (PREREG-v0.4 l.548): the card",
                              "B-8 the anchor's rate: C's measured pinned-lane rate, a proxy for the swap lane, since bar 2 never runs the swap model: the card"])
     document["base_provenance"] = context.provenance
     return canon(run._encode(document))

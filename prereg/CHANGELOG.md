@@ -2,6 +2,12 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Labels, 2026-11-01: the two provisional generator values name PREREG-v0.6 (#318)
+- **`world/scale.py`:** from the next kit, the labels of the span and the decoy ratio read "provisional pending PREREG-v0.6", the version `docs/ERRATA-v2.2.md` E5 queues both values for. No output carries these two labels, but the file is in the controls pin's closure, so the controls pin moves with this change and earlier packs are rebuilt.
+- **Kept:** the v1 G1 templates' lever-mix label, "provisional pending PREREG-v0.5", is a recorded field of their C-7 entries (`specs/ring0/c7-partial.json`). Changing it would make new template versions (`prereg/PREREG-v0-completion.md`, How the entries bind), so it keeps its wording until a G1 template's next version. Read it as "provisional, not pre-registered".
+- **The OC base document's rule registry** names the version of every PREREG line it cites, `PREREG-v0.4 l.N`, the version the #245 ruling cites. Since PREREG-v0.5 froze, some of those line numbers hold other text in v0.5.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-11-01: spill-file names are masked (#328)
 - **RING0 §13 E21 and §4:** from the next kit, the stable projection also masks an unhyphenated version-4 UUID that names a `.txt` file after a slash in body text (`random-uuid-hex-file`). That is the name Hermes gives an oversized memory recall's spill file, which made Mem0's two T1 runs differ. Every card's `masks_hash` changes. v0.1's maintenance kit carries E18 and E21 from its third official run (#329). No PREREG version change; PREREG-v0.5 remains frozen.
 

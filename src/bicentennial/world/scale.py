@@ -17,8 +17,8 @@ BLOCK = 25
 DEV_WINDOW = 16_384
 FULL_WINDOW = 131_072
 PROVISIONAL: dict[str, str] = {
-    "span": "provisional pending PREREG-v0.5",
-    "decoy_ratio": "provisional pending PREREG-v0.5",
+    "span": "provisional pending PREREG-v0.6",
+    "decoy_ratio": "provisional pending PREREG-v0.6",
     "dev_window": "provisional C-5",
     "full_window": "illustrative; C-4 open",
     "heartbeat_s": "provisional; no PREREG value",
