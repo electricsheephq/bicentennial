@@ -193,17 +193,17 @@
 ## C-3, C-16, C-17 and C-18: the outside families (provisional procedure)
 
 **What the slots are for.** Each names model families from outside the benchmark's own, so that no family checks its own work:
-- **C-3,** the blind panel's paid third family. The panel answers every item without its evidence, and the items it can answer are filtered out (§4).
-- **C-16,** the validation families. They check each template's gold before any census or audit, and the A1 family's agent writes a second gold from the plain-language world rules (§5).
+- **C-3,** the blind panel's paid third family. The panel answers each bundle without its evidence, in a single call, and a bundle that at least two of its three families pass is dropped (§4).
+- **C-16,** the validation families. They calibrate the phrase bank, annotate each template version in the Stage A census and audit releases in Stage B; the A1 family's agent writes a second gold from the plain-language world rules (§5).
 - **C-17,** the image readers, which decide whether each image entry is legible (§5).
-- **C-18,** the families of the Scoring Veto Panel, which reviews every freeze for rules that favour LCM-X (External veto).
+- **C-18,** the families of the Scoring Veto Panel, which reviews every freeze's stages, verdicts and gates against a fixed checklist, including a test for rules that favour LCM-X (External veto).
 
 **The rules** (PREREG-v0.5 lines 18 and 31-33; C-16 to C-18 came with DV48):
-- **C-3:** one family other than Anthropic, OpenAI and Zhipu, with at most $100 of filter spend per release.
+- **C-3:** one family other than Anthropic, OpenAI and Zhipu, run on a plan lane or as its own capped run with a projected filter spend of at most $100 per release.
 - **C-16:** at least three families other than OpenAI, Zhipu, Anthropic, the C-3 family, the second judge family and the LCM-X lane registry, each with its model, in a fixed order.
   - The validation pair is the first two that pass Stage A's per-family bars.
   - For each template, the pair skips the template author's family.
-  - If no eligible pair passes, the pilot is a feasibility pilot, with no fallback to an excluded family.
+  - If no eligible pair passes, the pilot is a feasibility pilot (§8), with no human fallback and no fallback to an excluded family.
 - **C-17:** at least one cross-platform OCR engine with no language model, pinned by version and hash; and vision models from at least two families outside the tested families, the pinned vision reader's family, Anthropic and the LCM-X lane registry.
 - **C-18:** at least two families outside Anthropic, the judge families, the tested families and the LCM-X lane registry. C-18 may overlap C-16.
 - **Exposure** (line 877): sealed items, keys and images go only to local models, or to hosted families whose API terms exclude training on inputs.
@@ -213,13 +213,13 @@
 - **The second judge family.** The judge rule gives two pinned judges from different families, neither used by any tested agent: Anthropic and one more (DESIGN §7.5; PREREG-v0.5 line 909). No slot names the second. C-16 and C-18 exclude it, so the procedure picks it first. A pending proposal below gives it a slot.
 - **The LCM-X lane registry,** as LCM-X's release manager declared it on 2026-10-31: Anthropic, OpenAI, Zhipu and xAI.
   - NeonDiff, which reviews LCM-X pull requests, runs on OpenAI.
-  - CodeRabbit, which also reviews them, does not disclose its model, so it adds no family. It holds no role here.
+  - CodeRabbit, which also reviews them, is vendor-managed and pins no model, so it adds no family. It holds no role here.
   - The binding record pins the registry by hash.
 
 **When it runs.** Once, on the record date: after C-1 and C-2 are filled, and before any census, audit or freeze review. It is written down now, before any outcome is seen, so that the record-date fill is mechanical. The benchmark owner's remaining choices (the date, the screens and the lists) are fixed in writing first, as C-9 does for competitor selection.
 
 **Its inputs,** saved and hashed on the record date:
-1. **Rank:** the Artificial Analysis Intelligence Index page. A row counts only if it names the build OpenRouter serves: the `canonical_slug` date matches the row's build tag, or the row has no tag and OpenRouter serves one build under that name.
+1. **Rank:** the Artificial Analysis Intelligence Index page. A row counts only if it names the build OpenRouter serves: the `canonical_slug` date matches the row's build tag, or the row has no tag and OpenRouter serves one build under that name. Families with no counting row are unranked, and go after the ranked ones, by price.
 2. **Prices:** OpenRouter's model list and per-host endpoint lists.
 3. **Hosts.** A host passes only if:
    - its own API terms say inputs are not used for training, as two independent readers read them; and
@@ -230,12 +230,13 @@
 
 **Choosing a model and a host.**
 - For each role, a family's model is its highest-ranked served model whose projected cost fits the role's screen. That model's rank is the family's rank for the role.
-- Hosts are taken by precision (bf16 or fp16, then fp8, then undeclared, then 4-bit), then by projected cost for the role's workload, then by endpoint tag.
+- Each model runs at its index row's effort, since the index score belongs to the model at that effort.
+- Hosts are taken by precision (bf16 or fp16, then fp8, then undeclared, then 4-bit), then by projected cost for the role's workload, then by the endpoint tag that sorts first.
 - Every billed output counts as four times the visible output until a measuring batch measures the reasoning tokens.
 
 | Role | Workload | Screen |
 |---|---|---|
-| C-16 family | one family's census, audit and phrase-bank share at release scale: 29M input, 10.032M billed output | ≤ $30 per release |
+| C-16 family | one family's census, audit and phrase-bank share at release scale: 29M input, 10.032M billed output | ≤ $30 per family per release |
 | C-3 | one call per bundle, without evidence, for ~14,400 bundles: 21.6M input, 17.3M billed output | ≤ $100 per release (C-3's own cap) |
 | Second judge | the free-text remainder, under 15% of items (DESIGN §7.5), with three trials and an A/A′ placebo: ~138K calls, 207M input, 55.2M billed output | ≤ $50 per full-tier run, half the owner's $100 limit per test |
 
@@ -244,7 +245,7 @@
 2. **C-16:** the first four families by C-16 rank, in that fixed order. The pair is the first two that pass Stage A; the others are spares, never reordered. The first family is the A1 family.
 3. **C-3:** the family with the highest C-3 rank outside C-16's four.
 4. **C-18:** C-16's first three, minus any tested family; the next C-16 family fills a gap. Every listed family reviews every freeze; two is the quorum, not a cap.
-5. **C-17:** the first two image-capable families in C-16's list, outside the tested families and the pinned vision reader's family; plus Tesseract 5.5.4, pinned by `tesseract --version`, the binary's sha256 and the sha256 of `eng.traineddata`.
+5. **C-17:** the first two image-capable families in C-16's list, outside the tested families and the pinned vision reader's family; plus Tesseract (5.5.4 today), pinned on the record date by `tesseract --version`, the binary's sha256 and the sha256 of `eng.traineddata`.
 6. **The Stage A red team** (line 391): C-16's third family. It never sees the operator list, and it never sits in a pair that audits its own items. If the pair reaches the third family, the red team moves to the fourth.
 7. **The panel's calibration catalogue** (line 54): written by C-16's fourth family, which is outside the benchmark session's family (Anthropic).
 
@@ -268,8 +269,8 @@
   - Meta: Muse Wonder (43.3) lists at $4/$20 and fails every screen. Muse Spark Open (24.7) projects $78.9 for C-16.
   - Kimi: its indexed model, Kimi K3.1 Pro, is served only by Moonshot, whose terms let it train on inputs.
   - Mistral: Mistral Large 4's only host is Mistral, whose terms are opt-out.
-  - Alibaba: Qwen3.8 Max projects $118.19 for C-16, so Alibaba is listed with Qwen3.8 27B.
-  - StepFun serves only a preview, and InclusionAI's indexed build is not the one served.
+  - Alibaba: Qwen3.8 Max ($2/$6) projects $118.19 for C-16 and about $745 as judge, so Alibaba is listed with Qwen3.8 27B.
+  - StepFun serves only a preview, InclusionAI's indexed build is not the one served, and the Institute of Foundation Models' K2 Horizon (17.8) is not on OpenRouter.
 
 **The provisional validation row: about $82 of the $100 cap.**
 - The pair: $29.45. The spares' qualification, at 10% of a member's workload each: $4.68.
@@ -277,7 +278,7 @@
 - Red-team authoring, ~650 items (250 seeded variants and 400 plants): $37.43, on Cerebras, the cheaper host for this workload.
 - Challenge and agent-key re-audits: none filed yet. They take the remainder in filing order, and any overflow waits for the next run.
 - Outside the row, the panel projects about $6 per freeze, against ≤ $25.
-- **[RISK]** Red-team authoring is 45% of the row, so larger outputs or more reasoning would pass the cap. A projection over the cap goes to the owner before the run (line 876).
+- **[RISK]** Red-team authoring is 45% of the row, so larger outputs or more reasoning would put the row over the cap. A projection over the cap goes to the owner before the run (line 876).
 - **[RISK]** The judge's screen fails if reasoning tokens exceed about 7.3 times the visible output.
 
 **Before the procedure binds:**
