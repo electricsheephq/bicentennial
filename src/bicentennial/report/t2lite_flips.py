@@ -7,7 +7,7 @@ from bicentennial.canon import milli
 from bicentennial.report.t2lite_card import validate_t2lite_card
 
 BASELINE_FIELDS = (
-    "pack_hash", "seed_hash", "model", "effort", "pins.harness_hash",
+    "system", "pack_hash", "seed_hash", "model", "effort", "pins.harness_hash",
     "answer_contract_sha256", "pins.benchmark_commit", "pins.generator_commit",
     "pins.director_commit", "pins.scorer_commit", "profile",
 )

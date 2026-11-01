@@ -33,7 +33,7 @@ def test_t1_refuses_t2lite_before_lane_work():
 
 @pytest.mark.parametrize("side", ["current", "baseline"])
 @pytest.mark.parametrize("field,value", [
-    ("pack_hash", "e" * 64), ("seed_hash", "e" * 64),
+    ("system", "no-memory"), ("pack_hash", "e" * 64), ("seed_hash", "e" * 64),
     ("model", "other-model"), ("effort", "high"),
     ("pins.harness_hash", "e" * 64), ("answer_contract_sha256", "e" * 64),
     ("pins.benchmark_commit", "e" * 40), ("pins.generator_commit", "e" * 40),
