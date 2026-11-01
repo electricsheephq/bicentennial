@@ -204,6 +204,106 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
 
 
+@pytest.fixture
+def action_scenario(scenario, monkeypatch):
+    s = scenario
+    s.mode, s.failure, s.scored = "competing", None, []
+    s.ctx.packs[1] = replace(s.ctx.packs[1], genre="G2")
+    for pack in s.ctx.packs:
+        pack.items["B0"][0]["stage"] = "act"
+    pack = s.ctx.packs[1]
+    failed = dict(pack.items["B0"][0], item_id="g2-failed")
+    pack.items["B0"].append(failed)
+    pack.records[failed["item_id"]] = dict(item_id=failed["item_id"], template_id="synthetic", template_version=1)
+    pack.cases[failed["item_id"]] = SimpleNamespace(item=failed)
+    pack.keys[failed["item_id"]] = {}
+    drive, score = runner.run_life, runner.score_item
+    def life(**kw):
+        run = drive(**kw)
+        classes = {i["item_id"]: ("SYSTEM_FAILURE", "final_mismatch")
+                   for i in kw["items"] if i["item_id"] == "g2-failed"}
+        if s.failure == "peer_infra" and "g2-failed" in classes and kw["attempt"] == 0:
+            classes["g2-failed"] = ("INFRA_FAILURE", "synthetic")
+        for i in kw["items"]:
+            if i["item_id"] == "t1-g2B0" and s.failure in ("system", "infra", "relabel"):
+                classes[i["item_id"]] = ("INFRA_FAILURE" if s.failure == "infra" else "SYSTEM_FAILURE", "turn_timeout")
+        return replace(run, classes=classes,
+            audit={"status": "INFRA_FAILURE" if s.failure == "audit" else "OK"},
+            stopped=("SYSTEM_FAILURE", "turn_timeout", 5) if s.failure == "relabel" else None)
+    def scoring(item, **kw):
+        from bicentennial.runner.hermes_score import score_item
+        s.scored.append((item["item_id"], kw["attempt"], kw["cls"]))
+        if kw["cls"]:
+            return score_item(item, **kw)
+        if item["stage"] != "act":
+            return score(item, **kw)
+        result = dict(row(item["item_id"]), stage="act", envelope=None,
+                      base_verdict="PASS", accuracy_correct=True)
+        validate("item_outcome", result)
+        return result
+    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    return s
+
+
+def test_g2_actions_publish_unscored_rows_on_both_arms(action_scenario):
+    s = action_scenario
+    assert s.invoke() == 0
+    card = runner._read(s.out, "card.json")
+    assert card["not_scored_live"] == ["t1-g2B0"]
+    assert "t1-g2B0" not in {iid for iid, _, _ in s.scored}
+    outcomes = runner._read(s.out, "outcomes.json")
+    floor = runner._read(s.out, "no_memory.json")["outcomes"]
+    rows = {r["item_id"]: r for r in card["items"]}
+    for target in (rows, outcomes, floor):
+        unscored = target["t1-g2B0"]
+        assert all(unscored[k] is None for k in ("base_verdict", "score_milli", "worst_case_milli",
+            "accuracy_correct", "tuesday_class", "envelope", "failure_class", "stage_attribution"))
+        assert unscored["stage"] == "act" and unscored["infra_reruns"] == 0
+        assert unscored["benign_extra"] is False and unscored["carry_over"] is False
+        assert unscored["selected_option"] == "opt-a" and unscored["competing_present"] == ["opt-b"]
+        assert target["t1-g1B0"]["score_milli"] == 1000 and target["t1-g1B0"]["accuracy_correct"] is True
+        assert target["t1-g2B1"]["score_milli"] == 1000
+        assert target["g2-failed"]["score_milli"] == 0 and target["g2-failed"]["failure_class"] == "SYSTEM_FAILURE"
+    assert all(outcomes["t1-g2B0"][k] == v for k, v in rows["t1-g2B0"].items())
+    probes = [p for path in s.out.rglob("t2lite_probes.json") for p in json.loads(path.read_bytes())
+              if p["item_id"] in ("t1-g2B0", "g2-failed")]
+    assert len(probes) == 4 and all(p["shadow"]["stage_attribution"] is None for p in probes)
+
+
+def test_unscored_action_keeps_the_unit_retry_attempt(action_scenario):
+    s = action_scenario
+    s.failure = "peer_infra"
+    assert s.invoke() == 0
+    rows = runner._read(s.out, "outcomes.json")
+    floor = runner._read(s.out, "no_memory.json")["outcomes"]
+    for target in (rows, floor):
+        assert target["t1-g2B0"]["infra_reruns"] == 1
+        assert target["t1-g2B0"]["score_milli"] is None
+    assert "t1-g2B0" not in {iid for iid, _, _ in s.scored}
+
+
+@pytest.mark.parametrize("failure,expected", [("system", "SYSTEM_FAILURE"), ("infra", "BLOCKED"),
+                                             ("audit", "BLOCKED"), ("relabel", "BLOCKED")])
+def test_g2_action_failures_keep_t1_handling(action_scenario, monkeypatch, failure, expected):
+    s = action_scenario
+    s.failure = failure
+    if failure == "relabel":
+        monkeypatch.setattr(runner, "is_plugin", lambda name: True)
+        monkeypatch.setattr(runner, "resolve_worker_env", lambda *args: None)
+    assert s.invoke() == 0
+    card = runner._read(s.out, "card.json")
+    assert card["not_scored_live"] == []
+    rows = {r["item_id"]: r for r in card["items"]}
+    floor = runner._read(s.out, "no_memory.json")["outcomes"]
+    for target, cls in ((rows, expected), (floor, "SYSTEM_FAILURE" if failure == "relabel" else expected)):
+        result = target["t1-g2B0"]
+        assert result["failure_class"] == cls
+        assert result["score_milli"] == (0 if cls == "SYSTEM_FAILURE" else None)
+        assert result["infra_reruns"] == (0 if cls == "SYSTEM_FAILURE" else 2)
+    assert any(iid == "t1-g2B0" for iid, _, _ in s.scored)
+
+
 @pytest.mark.parametrize("changed", ["contract", "harness", "pack", "commit", "damaged", "no_outcome", "no_stop"])
 def test_floor_key_mismatch_runs_live(scenario, tmp_path, monkeypatch, changed):
     assert scenario.invoke(cache=tmp_path / "cache") == 0
@@ -644,7 +744,14 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     card = runner._read(tmp_path / "full", "card.json")
     validate_t2lite_card(card)
     assert all(i["failure_class"] != "BLOCKED" for i in card["items"])
-    outcome = next(r for r in runner._read(tmp_path / "full", "outcomes.json").values() if r["stage"] != "act")
+    outcomes = runner._read(tmp_path / "full", "outcomes.json")
+    g2_actions = sorted(iid for iid, r in outcomes.items() if r["genre"] == "G2" and r["stage"] == "act")
+    assert g2_actions and card["not_scored_live"] == g2_actions
+    floor = runner._read(tmp_path / "full", "no_memory.json")["outcomes"]
+    for target in (outcomes, floor):
+        assert all(target[iid]["score_milli"] is None and target[iid]["accuracy_correct"] is None
+                   for iid in g2_actions)
+    outcome = next(r for r in outcomes.values() if r["stage"] != "act")
     only = outcome["life"], outcome["branch"], outcome["probe_point"]
     assert runner.run_t2lite(out=tmp_path / "rerun", only=only, repeat=3, **args) == 0
     repetitions = runner._read(tmp_path / "rerun", "repetitions.json")

@@ -16,11 +16,19 @@ def _schema():
 _LIVE_ANSWER = "live-answer"
 
 
-def _check_item(item):
+def _check_item(item, *, not_scored_live=False):
     envelope = item["envelope"]
     asserted = envelope is not None and envelope["type"] != "unknown"
-    run.validate("item_outcome", dict(item, competing_present=[],
-                                      selected_option=_LIVE_ANSWER if asserted else None))
+    if not_scored_live:
+        if (item["stage"] != "act" or any(item[key] is not None for key in (
+                "base_verdict", "score_milli", "worst_case_milli", "accuracy_correct", "tuesday_class",
+                "envelope", "failure_class", "stage_attribution"))
+                or item["benign_extra"] is not False or item["carry_over"] is not False
+                or item["infra_reruns"] > 2):
+            raise ValueError("t2lite_card:not_scored_live")
+    else:
+        run.validate("item_outcome", dict(item, competing_present=[],
+                                          selected_option=_LIVE_ANSWER if asserted else None))
     # The shadow's own invariants (RING0 §1, §4): one byte order, never selecting a competitor,
     # and a competitor present means the reader selected another token option.
     selected, competing = item["selected_option"], item["competing_present"]
@@ -48,12 +56,15 @@ def validate_t2lite_card(card) -> None:
     ids = [item["item_id"] for item in card["items"]]
     if any(a >= b for a, b in zip(ids, ids[1:], strict=False)):
         raise ValueError("t2lite_card:items")
+    unscored = card["not_scored_live"]
+    if unscored != sorted(set(unscored)) or not set(unscored) <= set(ids):
+        raise ValueError("t2lite_card:not_scored_live")
     for item in card["items"]:
-        _check_item(item)
+        _check_item(item, not_scored_live=item["item_id"] in unscored)
 
 
 def build_t2lite_card(*, system, pack_hash, seed_hash, pins, model, effort, served_identity,
-                      aa_prime, items, counts, answer_contract_sha256) -> dict:
+                      aa_prime, items, counts, answer_contract_sha256, not_scored_live) -> dict:
     """Return a fresh validated card; serialize it with canon(card) for stable bytes.
 
     Only probe_main is live under probe-live; every other role stays scripted.
@@ -65,6 +76,7 @@ def build_t2lite_card(*, system, pack_hash, seed_hash, pins, model, effort, serv
                 pins=pins, model=model, effort=effort, served_identity=served_identity,
                 profile="probe-live", live_roles=["probe_main"],
                 answer_contract_sha256=answer_contract_sha256, aa_prime=aa_prime,
-                labels=labels, items=sorted(items, key=lambda row: row["item_id"]), counts=counts)
+                labels=labels, items=sorted(items, key=lambda row: row["item_id"]), counts=counts,
+                not_scored_live=not_scored_live)
     validate_t2lite_card(card)
     return json.loads(canon(card))
