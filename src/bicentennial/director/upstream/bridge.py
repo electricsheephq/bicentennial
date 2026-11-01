@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from bicentennial.director.responder import Reply
 from bicentennial.director.wire.responses import typed
 
 CHAT_KEYS = frozenset({"model", "messages", "tools", "tool_choice", "stream", "stream_options",
@@ -85,15 +86,20 @@ class ResponsesBridge:
         self.inner, self.failure = inner, None
 
     def respond(self, call):
+        # A translation failure latches: nothing more is forwarded on either wire, and the inner stack stops.
+        if self.failure:
+            return Reply(503, "live_stopped", "live", call.model)
         if call.wire != "chat":
             return self.inner.respond(call)
         try:
             up = self.upstreams.get(call.model)
             if up is None:
-                raise ValueError("bridge_effort_unpinned")
+                raise ValueError("bridge_no_upstream")
             body = to_responses(call.body, effort=up.effort)
         except ValueError as exc:
             self.failure = str(exc)
+            if hasattr(self.inner, "stop"):
+                self.inner.stop(self.failure)
             raise
         reply = self.inner.respond(replace(call, wire="responses", body=body))
         return replace(reply, usage=chat_usage(reply.usage))

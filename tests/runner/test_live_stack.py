@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import runpy
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -191,6 +192,76 @@ def test_failed_login_releases_its_hold(make_stack, home):
     fd = custody.hold_home(home / "auth.json")
     os.close(fd)
     custody.HOME_HOLDERS.pop((home / "holder.lock").resolve())
+
+
+def gate_first_build(monkeypatch):
+    """The first build waits inside open_login until released, then fails; later builds go through."""
+    entered, inside, go = [], threading.Event(), threading.Event()
+    real = custody.open_login
+
+    def gated(*args, **kwargs):
+        entered.append(threading.current_thread().name)
+        if len(entered) == 1:
+            inside.set()
+            go.wait(5)
+            raise custody.Stop("login_error:Synthetic")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(custody, "open_login", gated)
+    return entered, inside, go
+
+
+def test_builds_serialise_so_a_failed_build_keeps_another_hold(make_stack, home, monkeypatch):
+    entered, inside, go = gate_first_build(monkeypatch)
+    results = {}
+
+    def build(name):
+        try:
+            results[name] = make_stack()
+        except custody.Stop as exc:
+            results[name] = exc
+
+    first = threading.Thread(target=build, args=("A",), name="A")
+    first.start()
+    assert inside.wait(5)
+    second = threading.Thread(target=build, args=("B",), name="B")
+    second.start()
+    second.join(0.3)
+    assert second.is_alive() and entered == ["A"]
+    go.set()
+    first.join(5)
+    second.join(5)
+    assert entered == ["A", "B"] and isinstance(results["A"], custody.Stop)
+    path = (home / "holder.lock").resolve()
+    assert custody.HOME_HOLDERS[path] is not None
+    with pytest.raises(custody.Stop, match="^home_busy$"):
+        custody.hold_home(home / "auth.json")
+
+
+def test_close_waits_for_a_build_in_flight(make_stack, home, monkeypatch):
+    active = make_stack()
+    entered, inside, go = gate_first_build(monkeypatch)
+    failed = threading.Thread(target=lambda: pytest.raises(custody.Stop, make_stack), name="A")
+    failed.start()
+    assert inside.wait(5)
+    closer = threading.Thread(target=active.close)
+    closer.start()
+    closer.join(0.3)
+    assert closer.is_alive() and not active.closed
+    go.set()
+    failed.join(5)
+    closer.join(5)
+    assert active.closed and (home / "holder.lock").resolve() not in custody.HOME_HOLDERS
+
+
+def test_bridge_failure_stops_the_real_stack(make_stack):
+    live = make_stack()
+    with pytest.raises(ValueError, match="^bridge_unmapped_key:temperature$"):
+        live.respond(replace(call(), body={"temperature": 0}))
+    assert live.inner.inner.state()["stopped"] is True
+    assert live.inner.inner.state()["stop_reason"] == "bridge_unmapped_key:temperature"
+    reply = live.respond(call())
+    assert (reply.status, reply.served) == (503, "live_stopped") and live.state()["sends"] == 0
 
 
 def test_probe_round_trip_and_max_sends(transport):

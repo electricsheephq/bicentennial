@@ -16,6 +16,9 @@ from bicentennial.director.upstream import login as custody
 from bicentennial.director.upstream.bridge import ResponsesBridge
 from bicentennial.runner.spend import Price, Spend
 
+# One build or close at a time, so a holder entry that changed during a build is that build's own.
+_BUILD = threading.Lock()
+
 
 def _release(holder_path):
     fd = custody.HOME_HOLDERS.pop(holder_path, None)
@@ -29,10 +32,11 @@ class LiveStack(ResponsesBridge):
         self.holder_path, self.closed = holder_path, False
 
     def close(self):
-        if not self.closed:
-            self.inner.stop("closed")
-            _release(self.holder_path)
-            self.closed = True
+        with _BUILD:
+            if not self.closed:
+                self.inner.stop("closed")
+                _release(self.holder_path)
+                self.closed = True
 
 
 def build_live_stack(spend_path, *, login_home, token_url, client_id, run, base_url,
@@ -49,13 +53,14 @@ def build_live_stack(spend_path, *, login_home, token_url, client_id, run, base_
     pacer, holds = Pacer(rate, burst, threading.Event()), Holds()
     store = Path(login_home) / "auth.json"
     holder_path = store.with_name("holder.lock").resolve()
-    previous = custody.HOME_HOLDERS.get(holder_path)
-    try:
-        login = custody.open_login(store, token_url, client_id, run)
-        live = LiveResponder("sol-0", pacer, custody.auth_for(login, pacer), [upstream], holds,
-                             max_sends=max_sends)
-        return LiveStack(custody.CredentialResponder(live, login), holder_path)
-    except Exception:
-        if custody.HOME_HOLDERS.get(holder_path) != previous:
-            _release(holder_path)
-        raise
+    with _BUILD:
+        previous = custody.HOME_HOLDERS.get(holder_path)
+        try:
+            login = custody.open_login(store, token_url, client_id, run)
+            live = LiveResponder("sol-0", pacer, custody.auth_for(login, pacer), [upstream], holds,
+                                 max_sends=max_sends)
+            return LiveStack(custody.CredentialResponder(live, login), holder_path)
+        except Exception:
+            if custody.HOME_HOLDERS.get(holder_path) != previous:
+                _release(holder_path)
+            raise

@@ -139,6 +139,36 @@ def test_unpinned_real_upstream_refused(tmp_path):
         ResponsesBridge(inner)
 
 
+class StoppableLive(RecordingLive):
+    def __init__(self):
+        super().__init__()
+        self.stops = []
+
+    def stop(self, reason):
+        self.stops.append(reason)
+
+
+@pytest.mark.parametrize("wire,body", [("chat", {"messages": [{"role": "user", "content": "hello"}]}),
+                                       ("responses", {"input": "native"})])
+def test_failure_latch_forwards_nothing_more(wire, body):
+    inner = StoppableLive()
+    bridge = ResponsesBridge(inner)
+    with pytest.raises(ValueError, match="^bridge_unmapped_key:temperature$"):
+        bridge.respond(call({"temperature": 0}))
+    reply = bridge.respond(call(body, wire=wire))
+    assert (reply.status, reply.served, reply.served_by, reply.model) == (503, "live_stopped", "live", "probe-model")
+    assert inner.calls == [] and inner.stops == ["bridge_unmapped_key:temperature"]
+
+
+def test_model_without_live_upstream_names_the_route():
+    inner = StoppableLive()
+    bridge = ResponsesBridge(inner)
+    with pytest.raises(ValueError, match="^bridge_no_upstream$"):
+        bridge.respond(replace(call({"messages": []}), model="other-model"))
+    assert inner.calls == [] and inner.stops == ["bridge_no_upstream"]
+    assert bridge.state()["stop_reason"] == "bridge_no_upstream"
+
+
 def test_native_responses_pass_through():
     inner = RecordingLive()
     bridge = ResponsesBridge(inner)
