@@ -187,8 +187,17 @@ def _refusal_codes(path, names=("T0Refused", "T1Refused")):
                 yield PREFIXED[arg.left.value]
 
 
+def _life_refusals():
+    # run_life's own refusals end T1 runs too (#362).
+    tree = ast.parse((REPO / "src/bicentennial/runner/life.py").read_text())
+    return {n.value for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "SystemRefused" and node.args
+            for n in ast.walk(node.args[0]) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+
+
 def _code_refusals():
-    codes = set()
+    codes = _life_refusals()
     for name in ("t0", "t1", "compare"):
         codes.update(_refusal_codes(REPO / f"src/bicentennial/runner/{name}.py"))
     # Helpers raise through the tier's refusal factory, passed as `refused` or `refuse`.
@@ -206,7 +215,7 @@ def _code_refusals():
     # These messages have no class-level code attribute.
     codes.update(("unmeasured:artifact.sha256", "unmeasured:fresh_install_hash", "hashseed",
                   "usage", "source_checkout_required", "gate_refused", "pin_mismatch",
-                  "SpendRefused", "baseline_mismatch", "refused", "surface_not_empty"))
+                  "SpendRefused", "baseline_mismatch", "refused"))
     return codes
 
 
@@ -217,11 +226,23 @@ def test_doc_codes():
     listed = set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE))
     assert listed
     assert not sorted(listed - codes)
+    assert not sorted(_life_refusals() - listed)
     codes.update(name for name, _ in (*compare.DISCLOSURES, *compare.PLUGIN_DISCLOSURES))
     schema = json.loads((REPO / "schemas/card_ring0.schema.json").read_text())
     for label in schema["properties"]["labels"]["properties"].values():
         codes.update(label["enum"])
     assert not sorted(code for code in codes if code not in text)
+
+
+def test_doc_requires_life_refusal_rows(tmp_path, monkeypatch):
+    text = GUIDE.read_text()
+    row = "| `visible_path_escape` |"
+    assert row in text
+    guide = tmp_path / "ring0.md"
+    guide.write_text("\n".join(line for line in text.split("\n") if not line.startswith(row)))
+    monkeypatch.setitem(globals(), "GUIDE", guide)
+    with pytest.raises(AssertionError, match="visible_path_escape"):
+        test_doc_codes()
 
 
 def test_doc_rejects_unknown_refusal_code(tmp_path, monkeypatch):
