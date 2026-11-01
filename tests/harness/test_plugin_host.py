@@ -1038,11 +1038,10 @@ def test_holographic_sqlite_dates_live(tmp_path):
         responder=ScriptedResponder(entry), clock=SimClock(root / "clock.json", BASE, 60),
         root=root, scratch=tmp_path, life="t0-pack", branch="B0", run="live-dates", lock_hash=LOCK)
     try:
-        host._start()
-    except GateRefused:
-        host.close()
-        pytest.skip("machine gate refused")
-    try:
+        try:
+            host._start()
+        except GateRefused:
+            pytest.skip("machine gate refused")
         host.ingest(event(text="The amber flute rests in the blue cabinet"))
         assert host.settle(5)
         with sqlite3.connect(host.paths["hermes_home"] / "memory_store.db") as connection:
