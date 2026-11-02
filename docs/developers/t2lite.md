@@ -58,7 +58,7 @@ Only `probe_main` goes live among director requests; replay, write, extraction, 
 | Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain. |
 | Credential or spend stop | No card; `refusal.json` with `credential_stop` or `spend_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. |
 | INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. Canary and honeypot outrank a stop; canary comes first. |
-| Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later refusals send nothing but can leave `refusal.json`; they come in this order: preparation (pins, packs, system); inside the sandbox lease, the slot (`sandbox_busy`) and the measured install pin (`pin_mismatch`); then the selection, baseline and reference checks. |
+| Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later refusals send nothing but can leave `refusal.json`; they come in this order: the login's operator marker and account lock (`operator_identity`, `account_busy`); preparation (pins, packs, system); inside the sandbox lease, the slot (`sandbox_busy`) and the measured install pin (`pin_mismatch`); then the selection, baseline and reference checks. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
 A card is published only after scanning all outputs for login secrets. A refusal can therefore replace an otherwise complete run. Inspect stderr when no output directory was created.
