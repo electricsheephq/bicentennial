@@ -20,7 +20,7 @@ TEMPLATES_BY_GENRE = {g: {t.template_id: t for t in ts}
                       for g, ts in (("G1", g1.TEMPLATES), ("G2", g2.TEMPLATES))}
 NOT_COVERED = (
     dict(genre="G1", track="Keep", reason="no G1 Keep template in v0.1"),
-    *(dict(genre=g, track="Rachael", reason="Rachael action bundles deferred to the live tiers (v0.2)")
+    *(dict(genre=g, track="Rachael", reason="Rachael action bundles deferred to the live tiers")
       for g in ("G1", "G2")),
     *(dict(genre=g, track="Faults", reason="no FAULT template in v0.1") for g in ("G1", "G2")),
     dict(genre="G2", track="Wake", reason="no G2 Wake template in v0.1"),
@@ -82,7 +82,7 @@ class Catalogue:
         return tuple(sorted({r.seed for r in self.rows}))
 
     def to_obj(self):
-        return dict(canary=CANARY, version=self.version, tier="T0", levers_label="uncalibrated (v0.2)",
+        return dict(canary=CANARY, version=self.version, tier="T0", levers_label="uncalibrated",
                     c7_file="specs/ring0/c7-partial.json", c7_sha256=self.c7_sha256,
                     rows=[asdict(r) for r in self.rows], not_covered=list(self.not_covered),
                     no_baseline=list(self.no_baseline))

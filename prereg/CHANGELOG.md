@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Labels, 2026-11-02: deferred-work labels name no release (#340)
+- **Item records, cards, packs and tier specs:** from the next kit, an item record's `filter_log` reads "not run" and its `rungs` reads "uncalibrated". T0, T1 and T2-lite cards carry "filters: not run" and "rungs: uncalibrated", as do T0 relation rows ("rungs: uncalibrated"). The tier specs' and the T0 catalogue's `levers_label` read "uncalibrated", and the catalogue's Rachael exclusions read "deferred to the live tiers". The 2026-11-01 re-plan moved rungs to v0.3 and Ring 0's item filters to the Pilot, so the old labels named the wrong release; the roadmap, not the data, now says when each ships. `items/bundle.py` and `corpus/format.py` are in the controls pin's closure, so the controls pin moves. Every T0 and T1 pack tree moves (records, manifests and indexes, and the T0 catalogue hash), and packs built before this change no longer verify and are rebuilt.
+- **Kept:** the v1 G1 templates' C-7 values that read "uncalibrated (v0.2)" are recorded fields of their C-7 entries (`specs/ring0/c7-partial.json`), so they keep their wording until a template's next version, as the 2026-11-01 Labels entry below does for their lever-mix label. RING0 §13 E5 keeps its v0.1 wording as a dated record, and `scripts/v01_acceptance.py` stays byte-identical to the script the published v0.1 runs used.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-01: the carry-over diagnostic reads earlier answers by their content (#352, #355)
 - **RING0 §13 E23 (§6):** from the next kit, T1's reader bounds the earlier probe exchanges by the turn it answers, and an earlier answer counts by its value and its citation's quote, not by its envelope's field names and confidence numbers. T2-lite's shadow reads the same exchanges. `carry_over` is a reporting flag: no answer, score or class changes. T1 cards' `carry_over` and `carry_over_milli` can change, and so can T2-lite's `carry_over` on its cards, its item rows and `t2lite_probes.json`. The reader pin moves, so packs built before this change no longer verify and are rebuilt.
 No PREREG version change; PREREG-v0.5 remains frozen.

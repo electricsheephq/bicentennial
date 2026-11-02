@@ -2,13 +2,13 @@
 canary = "c168e5f8-3948-4553-8554-7aa162054723"
 version = 0
 tier = "T0"
-levers_label = "uncalibrated (v0.2)"
+levers_label = "uncalibrated"
 c7_file = "specs/ring0/c7-partial.json"
 c7_sha256 = "64f604f295cc46175617a6eaeaf2a144478acee93301823bdbb009d511108681"
 not_covered = [
 { genre = "G1", track = "Keep", reason = "no G1 Keep template in v0.1" },
-{ genre = "G1", track = "Rachael", reason = "Rachael action bundles deferred to the live tiers (v0.2)" },
-{ genre = "G2", track = "Rachael", reason = "Rachael action bundles deferred to the live tiers (v0.2)" },
+{ genre = "G1", track = "Rachael", reason = "Rachael action bundles deferred to the live tiers" },
+{ genre = "G2", track = "Rachael", reason = "Rachael action bundles deferred to the live tiers" },
 { genre = "G1", track = "Faults", reason = "no FAULT template in v0.1" },
 { genre = "G2", track = "Faults", reason = "no FAULT template in v0.1" },
 { genre = "G2", track = "Wake", reason = "no G2 Wake template in v0.1" },

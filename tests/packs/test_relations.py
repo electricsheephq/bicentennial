@@ -32,7 +32,7 @@ def test_flat_readers(catalogue, score):
     assert len(report.relations) == 54
     assert [r.row for r in report.relations] == sorted(r.row for r in report.relations)
     assert report.to_obj()["labels"] == ["not predictive of the full tier; never certifies",
-                                          "rungs: uncalibrated (v0.2)"]
+                                          "rungs: uncalibrated"]
     assert canon(report.to_obj())
     with pytest.raises((AttributeError, TypeError)):
         report.relations = ()
