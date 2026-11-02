@@ -165,6 +165,16 @@ def test_preconditions_refuse_before_install(system, hermes, code, monkeypatch, 
     assert capsys.readouterr().err.strip() == code
 
 
+def test_other_errors_refuse_with_their_text(monkeypatch, capsys, offline, tmp_path):
+    def unmapped(*args, **kwargs):
+        raise ValueError("no T0 mapping")
+
+    monkeypatch.setattr(pins, "HermesMemoryHost", unmapped)
+    assert pins.run_pins(system="hermes-native", hermes=tmp_path) == 3
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", "refused no T0 mapping\n")
+
+
 def test_busy_slot_refuses_before_install(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(pins, "HermesMemoryHost", lambda *a, **kw: pytest.fail("installed"))
     with fixedroot.lease(0, pins.PinsRefused):

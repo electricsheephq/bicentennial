@@ -111,8 +111,8 @@ def run_pins(*, system, hermes=None, plugin_source=None, sandbox_slot=0):
     except PinMismatch:
         print("pin_mismatch", file=sys.stderr)
         return 3
-    except (OSError, ValueError):
-        print("refused", file=sys.stderr)
+    except (OSError, ValueError) as error:  # the text names the cause, for example "no T0 mapping"
+        print(f"refused {error}".rstrip(), file=sys.stderr)
         return 3
     for field, value in pins.items():
         print(field, value)
