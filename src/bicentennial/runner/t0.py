@@ -625,14 +625,14 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
         admit_system(entry)
         if entry["harness"] != "hermes":
             raise T0Refused("harness_not_hermes")
+        if system in ENGINES and system not in PROVIDERS:  # no T0 host, so no mapping to check
+            raise T0Refused("no_t0_surface:context_engine")
         reason = check_mapping(entry, resolve_mapping(system))
         if reason is not None:
             raise T0Refused(reason)
     else:
         entry = dict(name=system, surfaces=[])
     validate_maps()
-    if system in ENGINES and system not in PROVIDERS:
-        raise T0Refused("no_t0_surface:context_engine")
     from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
     if real and entry["settle"]["kind"] == "hook" and system not in SETTLE_THREADS:
         raise T0Refused("settle_unmapped")

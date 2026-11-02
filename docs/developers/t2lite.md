@@ -134,6 +134,9 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `credential_scan` | Output contains login material: INVALID. |
 | `credential_stop` | Login custody or upstream credentials stopped the run. |
 | `egress_unobserved` | Worker egress sampling could not establish isolation. |
+| `embedding_dim_invalid` | An embeddings role requires an integer `embedding_dim` of at least 2. |
+| `forget_mapping_missing` | A system with write tools lacks a forget mapping; required unless the system is engine-only. |
+| `forget_search_undeclared:<tool>` | The forget search tool is absent from `read_tools`. |
 | `gate_refused` | Host machine gate refused a spawn. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `harness_extra_missing:mcp` | Pinned Hermes environment cannot import mcp. |
@@ -152,7 +155,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `mode_unavailable:hermes` | T0 fallback unavailable. |
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
-| `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
+| `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `only` | No matching checkpoint items. |
 | `operator_identity` | Operator-marked login cannot run lcm-x. |
@@ -192,6 +195,9 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `visible_canary` | Canary found in agent-visible input. |
 | `visible_pack_overlaps_surface` | The agent-visible pack directory overlaps the workspace or a memory surface. |
 | `visible_path_escape` | An agent-visible file would be written outside the pack directory. |
+| `write_mapping_action:<tool>` | A fixed write or forget-delete action is absent from the tool's non-empty declared actions. |
+| `write_mapping_missing:<tool>` | First declared write tool differs from the mapped write tool, or a declared tool has no write, forget-delete or unscripted mapping. |
+| `write_mapping_unknown:<tool>` | A mapped write-side tool is absent from the declared write tools. |
 
 ## Exit codes
 

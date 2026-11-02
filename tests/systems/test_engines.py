@@ -24,7 +24,6 @@ from bicentennial.harness.hermes.config import (
     layout,
     worker_env,
 )
-from bicentennial.harness.hermes.plugin_host import FORGET
 from bicentennial.items.protocol import CANARY
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.runner import compare, t0, t1
@@ -43,7 +42,6 @@ def mapped(monkeypatch):
     monkeypatch.setitem(hp.ENGINES, NAME, ENGINE)
     monkeypatch.setitem(hp.TREES, NAME, ("HEAD",))
     monkeypatch.setitem(WRITE_ARGS, NAME, WRITE_ARGS["hermes-native"])
-    monkeypatch.setitem(FORGET, NAME, FORGET["hermes-native"])
     entry = load(REGISTRY / "hermes-native.toml")
     entry["name"] = NAME
     return entry
