@@ -16,7 +16,10 @@ PYTHONHASHSEED=0 BICENTENNIAL_REGEN_GOLDEN=1 PYTHONPATH=src pytest -q tests/runn
 
 The runner refuses without `PYTHONHASHSEED=0`. A regeneration run rewrites
 the file and skips instead of passing. Review every changed item and
-aggregate. A PR changing the golden JSON must explain why in its body.
+aggregate. A PR changing the golden JSON must explain why in its body. A
+change caused by scoring, retrieval or item generation cites its
+`prereg/CHANGELOG.md` entry (and its erratum if it touches the design);
+otherwise the PR states that the change is test-only.
 
 For release comparison over every pack in two full T0 output directories:
 
@@ -24,5 +27,6 @@ For release comparison over every pack in two full T0 output directories:
 python3 scripts/compare_reference_t0.py OLD_RUN NEW_RUN
 ```
 
-Exit codes: 0 for equal aggregates, 1 for differences (including missing
-packs or aggregate rows), and 2 for unreadable or malformed input.
+It compares each pack's aggregates, gate verdict and run status. Exit
+codes: 0 when all are equal, 1 for differences (including missing packs or
+aggregate rows), and 2 for unreadable or malformed input.

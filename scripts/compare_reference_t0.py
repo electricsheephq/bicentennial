@@ -1,4 +1,4 @@
-"""Compare published reference_store T0 aggregates: OLD_RUN NEW_RUN (exit 0/1/2)."""
+"""Compare published reference_store T0 cards (aggregates, gate verdict, run status): OLD_RUN NEW_RUN (exit 0/1/2)."""
 
 import argparse
 import json
@@ -26,6 +26,8 @@ def read_aggregates(root):
         card = json.loads(path.read_bytes())
         if card["system"] != "reference_store" or card["tier"] != "T0":
             raise ValueError(f"{path}: expected reference_store T0 card")
+        if not isinstance(card["aggregates"], list):
+            raise ValueError(f"{path}: malformed aggregates")
         aggregates = {}
         for row in card["aggregates"]:
             stage, track, score = row["stage"], row["track"], row["score_milli"]
@@ -36,7 +38,11 @@ def read_aggregates(root):
             if key in aggregates:
                 raise ValueError(f"{path}: duplicate aggregate {key}")
             aggregates[key] = score
-        result[path.parent.relative_to(root).as_posix()] = aggregates
+        verdict, status = card["gate_verdict"], card["run_status"]
+        if not isinstance(verdict, str) or not isinstance(status, str):
+            raise ValueError(f"{path}: malformed gate verdict or run status")
+        result[path.parent.relative_to(root).as_posix()] = dict(
+            aggregates=aggregates, gate_verdict=verdict, run_status=status)
     if not result:
         raise ValueError(f"{root}: no reference T0 cards")
     return result

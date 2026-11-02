@@ -14,12 +14,12 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/compare_reference_t0.py"
 def write_card(root, pack, score=1000, **changes):
     path = root / "pack" / pack / "card.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(system="reference_store", tier="T0", aggregates=[
-        dict(stage="remember", track="Keep", score_milli=score)]) | changes))
+    path.write_text(json.dumps(dict(system="reference_store", tier="T0", gate_verdict="PASS",
+        run_status="COMPLETE", aggregates=[dict(stage="remember", track="Keep", score_milli=score)]) | changes))
     return path
 
 
-@pytest.mark.parametrize("change", ["equal", "score", "missing_old", "missing_new", "aggregate"])
+@pytest.mark.parametrize("change", ["equal", "score", "missing_old", "missing_new", "aggregate", "verdict", "status"])
 def test_comparison(tmp_path, change):
     old, new = tmp_path / "old", tmp_path / "new"
     for root in (old, new):
@@ -32,6 +32,10 @@ def test_comparison(tmp_path, change):
         shutil.rmtree(root / "pack/G2")
     elif change == "aggregate":
         write_card(new, "G2/Keep/two@1/s3-d1-none/1", aggregates=[])
+    elif change == "verdict":
+        write_card(new, "G2/Keep/two@1/s3-d1-none/1", gate_verdict="FAIL")
+    elif change == "status":
+        write_card(new, "G2/Keep/two@1/s3-d1-none/1", run_status="BLOCKED")
     result = subprocess.run([sys.executable, str(SCRIPT), str(old), str(new)],
                             capture_output=True, text=True)
     assert result.returncode == (0 if change == "equal" else 1), result.stderr
@@ -41,7 +45,8 @@ def test_comparison(tmp_path, change):
     else:
         assert "pack/G2/Keep/two@1/s3-d1-none/1" in result.stdout
         assert "pack/one" not in result.stdout
-        assert "<missing>" in result.stdout if change != "score" else "1000 -> -1000" in result.stdout
+        assert dict(score="/aggregates/remember/Keep: 1000 -> -1000", verdict='/gate_verdict: "PASS" -> "FAIL"',
+                    status='/run_status: "COMPLETE" -> "BLOCKED"').get(change, "<missing>") in result.stdout
 
 
 def test_lists_every_pack_change(tmp_path):
@@ -55,10 +60,11 @@ def test_lists_every_pack_change(tmp_path):
     assert result.returncode == 1, result.stderr
     assert len(result.stdout.splitlines()) == 86
     for index in range(86):
-        assert f"/{index}/remember/Keep: 1000 -> -1000\n" in result.stdout
+        assert f"/{index}/aggregates/remember/Keep: 1000 -> -1000\n" in result.stdout
 
 
-@pytest.mark.parametrize("invalid", ["absent", "empty", "missing_card", "json", "card", "system", "duplicate"])
+@pytest.mark.parametrize("invalid", ["absent", "empty", "missing_card", "json", "card", "system", "duplicate",
+                                     "aggregates_dict", "aggregates_str", "verdict"])
 def test_unreadable(tmp_path, invalid):
     old, new = tmp_path / "old", tmp_path / "new"
     write_card(old, "one")
@@ -73,6 +79,10 @@ def test_unreadable(tmp_path, invalid):
     elif invalid == "duplicate":
         row = dict(stage="remember", track="Keep", score_milli=1000)
         write_card(new, "one", aggregates=[row, row])
+    elif invalid.startswith("aggregates_"):
+        write_card(new, "one", aggregates={} if invalid == "aggregates_dict" else "")
+    elif invalid == "verdict":
+        write_card(new, "one", gate_verdict=None)
     result = subprocess.run([sys.executable, str(SCRIPT), str(old), str(new)],
                             capture_output=True, text=True)
     assert result.returncode == 2
