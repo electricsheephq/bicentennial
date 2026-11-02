@@ -6,7 +6,7 @@ Claim class: a determinism check of T1 at one commit on two dedicated Linux host
 
 ## Why it is checked
 
-T1 is the CI smoke tier, and it is built to be deterministic: the same commit, pack and system give byte-identical cards, apart from the base run's gate verdict, which differs by design. v0.1's runs showed this on v0.1's kit. Since then, main has changed files that T1 runs: the life runner and the director's compiler gained T2-lite's live path, which keeps T1's path by design, and the labels on item records and cards changed ([#375](https://github.com/electricsheephq/bicentennial/pull/375)), which moved T1's pack. So each release checks determinism again on its own code commit, with one host idle and one kept busy. The v0.2 row of `ROADMAP.md` asks for it: T1 stays deterministic on stable fields, checked by one A/A′ pair per reference system run in parallel.
+T1 is the CI smoke tier, and it is built to be deterministic: the same commit, pack and system give byte-identical cards, apart from the base run's gate verdict, which differs by design. v0.1's runs showed this on v0.1's kit. Since then, main has changed many files that T1 runs. Among them: T1's reader now names its turn and counts earlier answers by their content ([#371](https://github.com/electricsheephq/bicentennial/pull/371)); each probe item gets its own probe session ([#335](https://github.com/electricsheephq/bicentennial/pull/335)); the life runner and the director's compiler gained T2-lite's live path, which keeps T1's path by design; and the labels on item records and cards changed ([#375](https://github.com/electricsheephq/bicentennial/pull/375)), which moved T1's pack. So each release checks determinism again on its own code commit, with one host idle and one kept busy. The v0.2 row of `ROADMAP.md` asks for it: T1 stays deterministic on stable fields, checked by one A/A′ pair per reference system run in parallel.
 
 ## What ran
 
@@ -14,13 +14,13 @@ T1 is the CI smoke tier, and it is built to be deterministic: the same commit, p
 - **Hosts:** two dedicated Linux bench hosts, with 16 and 12 vCPUs, each running nothing else. The kit and every worker ran at the lowest CPU and I/O priority.
   - **Idle host (16 vCPUs):** nothing else ran, and the kit's busy check read the host as idle at every reading.
   - **Loaded host (12 vCPUs):** one `yes` process per CPU at the runs' own priority, for the whole run, as in v0.1's busy run. The kit's busy check read the host as busy at every reading, and all 12 `yes` processes were still alive when the last chain ended.
-- **Layout:** on each host, three chains at once, one per reference system (Hermes native, Holographic, Mem0 OSS). Each chain ran T1 twice, base and then run1, and the kit compared run1's cards with base's.
+- **Layout:** on each host, three chains at once, one per reference system (Hermes native, Holographic, Mem0 OSS). Each chain ran T1 twice, base and then run1, and the run script compared run1's cards with base's.
 - **Pack:** both hosts built the same T1 pack, `278fb65a975ddfed8f75dde34e6fa9fcfc19ea3b205b408705c98e55900afa5c`.
 - **Egress:** each host's allowlisting proxy is the only route out for the runs' user, and the runs ran with it unset. The proxies' logs show no connection during the runs, and the kit's egress sampler recorded no failed sample in any receipt.
 
 ## What the results show
 
-- **Each host, run1 against base:** for every system, run1's cards equal base's, apart from the gate verdict, which differs by design. The kit printed `same` for Hermes native, Holographic and Mem0 OSS, on the idle host and on the loaded host.
+- **Each host, run1 against base:** for every system, run1's cards equal base's, apart from the gate verdict, which differs by design. The run script's card comparison printed `same` for Hermes native, Holographic and Mem0 OSS, on the idle host and on the loaded host.
 - **Idle against loaded:** all 12 cards are equal, and none of their commit pins differ.
 - **Gates:** as designed in every run. The system arm reads CONFORMANCE_PASS on base and PASS on run1, the wiped-store control fails T1's gate in every run, and every run is COMPLETE.
 - So T1 stays deterministic on stable fields on the release commit, idle and under load. This meets the last open condition in the v0.2 row of `ROADMAP.md`.

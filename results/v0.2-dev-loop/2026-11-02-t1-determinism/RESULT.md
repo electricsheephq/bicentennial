@@ -3,12 +3,12 @@
 Claim class: a determinism check of T1 at one commit on two dedicated Linux hosts, one idle and one under induced load; not a developer-machine measurement; not predictive of the full tier; never certifies.
 
 - Release code commit: `436750ecd900631e38fda99bc28cc6ee464b5f40`. T1 pack hash: `278fb65a975ddfed8f75dde34e6fa9fcfc19ea3b205b408705c98e55900afa5c` (idle host), `278fb65a975ddfed8f75dde34e6fa9fcfc19ea3b205b408705c98e55900afa5c` (loaded host).
-- Each host ran three chains at once, one per reference system; each chain ran T1 twice (base, then run1), and the kit compared run1's cards with base's.
+- Each host ran three chains at once, one per reference system; each chain ran T1 twice (base, then run1), and the run script compared run1's cards with base's.
 - Full run trees (cards, receipts, logs and load samples): the private evidence store, tag `bicentennial/t1-determinism-v02-20261102`. Receipts are not published here: they hold machine-local fields.
 
 ## Each host's verdict lines
 
-Printed from each host's own log: the pack it built, the load it held, the kit's run1-against-base comparison per system (`same` allows only the gate verdict, which differs by design: base is CONFORMANCE_PASS and run1 PASS), and the run's end.
+Printed from each host's own log: the pack it built, the load it held, the run script's run1-against-base card comparison per system (`same` allows only the gate verdict, which differs by design: base is CONFORMANCE_PASS and run1 PASS), and the run's end.
 
 Idle host:
 
