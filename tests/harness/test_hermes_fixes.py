@@ -567,7 +567,7 @@ def test_session_timing_boundaries_without_worker(tmp_path, monkeypatch, hook, r
     a.paths = {"root": tmp_path, "home": tmp_path, "hermes_home": tmp_path}
     a.entry = {"surfaces": []}
     a.entrypoint, a.volatile, a.active_memory_providers = "test-double", [], []
-    a.kill_mode = "boundary"
+    a.kill_mode, a.turn_wait_s = "boundary", 3.0
     a.egress = SimpleNamespace(forking=Forking())
     a.director = SimpleNamespace(route={"alias": "main"},
         start_session=lambda *args: advance(0.5),

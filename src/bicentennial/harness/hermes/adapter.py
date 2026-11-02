@@ -44,6 +44,17 @@ STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 360
 _now = time.monotonic
 
 
+def turn_wait_seconds(value) -> float:
+    """Validate the run's ordinary-turn quiet time without changing any run identity."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive") from None
+    if not 0.5 <= seconds <= 3.0:
+        raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive")
+    return seconds
+
+
 class PinMismatch(RuntimeError):
     """The checkout is not the pinned artifact (RING0 §8: exit code 3)."""
 
@@ -200,7 +211,8 @@ class HermesAdapter:
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
                  memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
                  context_engine=None, plugins_enabled=(), extra_env=None, scripted: bool = True,
-                 admission_deadline: float | None = None):
+                 admission_deadline: float | None = None, turn_wait_s=3.0):
+        self.turn_wait_s = turn_wait_seconds(turn_wait_s)
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -275,7 +287,10 @@ class HermesAdapter:
                 self._held, t0 = (index, n) if held else None, _now()
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
-                t["drain"].append(self._drain())
+                # A kill or restart stops the worker next, so its turn keeps the full settle.
+                stops = any(f["kind"] in ("kill", "restart") for f in faults)
+                quiet = min(self.turn_wait_s, DRAIN_QUIET_S)
+                t["drain"].append(self._drain() if stops or quiet == DRAIN_QUIET_S else self._drain(quiet))
                 c, killed, self._held = d.control(), held and out is None and (index, n) in self._fired, None
                 if c["stopped"] or c["write_failures"] > failures:
                     raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")
@@ -410,17 +425,19 @@ class HermesAdapter:
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
 
-    def _drain(self) -> int:
-        """Wait for DRAIN_QUIET_S with nothing in flight (background titles and reviews), as replay.py 169-180."""
+    def _drain(self, quiet=None) -> int:
+        """Wait for `quiet` s (default DRAIN_QUIET_S) with nothing in flight (background titles and reviews), as
+        replay.py 169-180."""
+        quiet = DRAIN_QUIET_S if quiet is None else quiet
         t0, m0, calm = time.monotonic(), _now(), None
         while time.monotonic() - t0 < DRAIN_CAP_S:
             if self.director.control()["inflight"] == 0:
                 calm = calm or time.monotonic()
-                if time.monotonic() - calm >= DRAIN_QUIET_S:
+                if time.monotonic() - calm >= quiet:
                     return _ms(m0)
             else:
                 calm = None
-            time.sleep(min(0.5, DRAIN_QUIET_S / 4))
+            time.sleep(min(0.5, quiet / 4))
         raise HarnessFailed("drain_timeout")
 
     def _on_hold(self, cursor) -> None:

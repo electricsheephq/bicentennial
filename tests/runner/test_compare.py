@@ -306,7 +306,7 @@ def test_write_failure_cleans_results(synth, installed, tmp_path, monkeypatch, c
     monkeypatch.setattr(compare, "write_run", write)
     if error is OSError:
         assert invoke(installed, out) == 70
-        stderr = capsys.readouterr().err
+        stderr = capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
         assert stderr.splitlines()[0] == "tool_failure"
         assert "Traceback (most recent call last):" in stderr and "OSError: second arm" in stderr
     else:
@@ -330,7 +330,7 @@ def test_cache_at_staging_survives_failure(synth, installed, tmp_path, monkeypat
     monkeypatch.setattr(compare, "_controls", controls)
     # The cache occupies the staging path, so staging cannot start; the cache must survive.
     assert invoke(installed, out, cache=cache) == 70
-    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").splitlines()[0] == "tool_failure"
     no_results(out)
     assert (cache / "keep").read_bytes() == b"cache"
 
@@ -375,7 +375,7 @@ def test_system_move_failure_rolls_back(synth, installed, tmp_path, monkeypatch,
     monkeypatch.setattr(compare.os, "replace", move)
     if error is OSError:
         assert invoke(installed, out) == 70
-        assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+        assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").splitlines()[0] == "tool_failure"
     else:
         with pytest.raises(error, match="system move"):
             invoke(installed, out)
@@ -391,7 +391,7 @@ def test_preflight_tool_failure(installed, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(t1, "prepare", broken)
     out = tmp_path / "out"
     assert invoke(installed, out) == 70
-    stderr = capsys.readouterr().err
+    stderr = capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
     assert stderr.splitlines()[0] == "tool_failure"
     assert "RuntimeError: preflight failed" in stderr
     assert not out.exists()
@@ -413,7 +413,7 @@ def test_refusal_write_failure_cleans_results(synth, installed, tmp_path, monkey
     monkeypatch.setattr(compare, "_execute", refused)
     monkeypatch.setattr(Path, "write_bytes", write)
     assert invoke(installed, out) == 70
-    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
+    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").splitlines()[0] == "tool_failure"
     assert not any(out.iterdir())
 
 
@@ -452,7 +452,7 @@ def test_baseline_order_and_refusals(synth, installed, monkeypatch, tmp_path, ca
         order.clear()
         assert invoke(installed, out, baseline=path) == 3
         assert order == ["baseline"] and not out.exists()
-        assert code in capsys.readouterr().err
+        assert code in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
 
 
 @pytest.mark.parametrize("persistent", [False, True])
@@ -563,7 +563,7 @@ def test_spend_preflight(synth, installed, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(compare, "build_receipt", receipt)
     out = tmp_path / "out"
     assert invoke(installed, out) == 3
-    assert "SpendRefused" in capsys.readouterr().err
+    assert "SpendRefused" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
     no_results(out)
 
 
@@ -590,7 +590,7 @@ def test_isolation_refusal(synth, installed, monkeypatch, tmp_path, where, capsy
     assert invoke(installed, out) == (0 if where == "scripted" else 3)
     if where != "scripted":
         no_results(out)
-        assert capsys.readouterr().err == "upstream_record\n"
+        assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n") == "upstream_record\n"
         detail = ("record id=request-7 served_by=scripted diagnostics" if where == "diagnostics" else
                   f"record id={'request-7' if where == 'forwarded' else 0} served_by=live")
         detail = endpoint if where == "egress" else detail
@@ -649,7 +649,7 @@ def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, c
     assert (t0.run_t0(system="reference_store", packs=[], packs_dir=tmp_path, pack_hash="a" * 64, out=out)
             if site == "t0" else invoke(installed, out)) == 3
     no_results(out)
-    assert capsys.readouterr().err == code + "\n"
+    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n") == code + "\n"
     assert json.loads((out / "refusal.json").read_bytes()) == dict(
         code=code, fields=[], detail=expected)
 
@@ -679,17 +679,17 @@ def test_refusal_mapping(synth, installed, monkeypatch, tmp_path, capsys, error,
     monkeypatch.setattr(compare, "run_arms", refused)
     out = tmp_path / "out"
     assert invoke(installed, out) == 3
-    assert code in capsys.readouterr().err
+    assert code in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
     no_results(out)
 
 
 def test_preconditions(installed, tmp_path, capsys):
     out = tmp_path / "out"
     assert invoke(installed, out, system="nomemory", entry=None) == 3
-    assert not out.exists() and "unknown_system" in capsys.readouterr().err
+    assert not out.exists() and "unknown_system" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
     out.mkdir()
     assert invoke(installed, out) == 3
-    assert "out_exists" in capsys.readouterr().err
+    assert "out_exists" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
 
 
 @pytest.mark.parametrize("fault,status,reason,attempts", [
@@ -940,7 +940,7 @@ def test_corpus_held_refusal(synth, installed, monkeypatch, tmp_path, capsys):
     out = tmp_path / "out"
     assert invoke(installed, out) == 3
     assert calls == ["refused", "returned"]
-    assert "gate_refused" in capsys.readouterr().err
+    assert "gate_refused" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
     no_results(out)
 
 
@@ -995,7 +995,7 @@ def test_cli(monkeypatch):
     assert cli.main(args) == 2
     assert calls == [["-m", "bicentennial.cli", *args], dict(system="s", packs_dir="p",
         pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, model_cache=None,
-        cache=None, sandbox_slot=0)]
+        cache=None, sandbox_slot=0, turn_wait_s=3.0)]
     assert cli.main(["t0", "--system", "s", "--pack", "all", "--packs", "p",
                      "--pack-hash", "h", "--out", "o"]) == 0
 
@@ -1075,3 +1075,38 @@ def test_engine_and_cache_disclosures_and_change_refusal(synth, installed, monke
                 "compression.threshold_tokens applies to the built-in compressor only")
             assert props["t1.corpus_engine"] == "corpus runs Hermes built-in memory, the system's memory layer as shipped"
             assert all(props[k] == v for k, v in compare.PLUGIN_DISCLOSURES)
+
+
+def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch, capsys):
+    """The same executed evidence makes identical cards at either timing."""
+    import types
+
+    source = subprocess.run(["git", "show", "f6662e6ac4aa2813057d825e987b89f3122c59ff:src/bicentennial/runner/compare.py"],
+        check=True, capture_output=True, text=True).stdout
+    baseline = types.ModuleType("baseline_compare")
+    baseline.__file__ = compare.__file__
+    exec(compile(source, "<baseline compare>", "exec"), baseline.__dict__)
+    monkeypatch.setattr(baseline, "run_arms", lambda ctx, **kw: replace(synth, ctx=ctx))
+    monkeypatch.setattr(baseline, "run_case", fake_case)
+    monkeypatch.setattr(baseline, "INFRA", compare.INFRA)
+    # Use the already selected corpus cases, without invoking its fixture function.
+    selected = tuple(c for c in compare.load_corpus(compare.CORPUS_PATH) if c.case_id in SUBSET)
+    monkeypatch.setattr(baseline, "load_corpus", lambda path: selected)
+    outputs = []
+    for wait in (3.0, 1.0):
+        ctx = replace(synth.ctx, turn_wait_s=wait)
+        monkeypatch.setattr(t1, "prepare", lambda ctx=ctx, **kw: ctx)
+        out = tmp_path / str(wait)
+        capsys.readouterr()
+        assert invoke(installed, out, turn_wait_s=wait) == 0
+        assert capsys.readouterr().err.startswith(f"turn_wait_s={wait}\n")
+        assert all(properties(out, arm)["t1.turn_wait_s"] == str(wait) for arm in compare.GATED)
+        outputs.append(out)
+    # Run the base commit's publication path against the exact same fake evidence.
+    monkeypatch.setattr(t1, "prepare", lambda **kw: synth.ctx)
+    old = tmp_path / "baseline"
+    assert baseline.run_t1(system="hermes-native", packs_dir=installed.root, pack_hash=installed.digest,
+        out=old, entry=measured(), worker_argv=installed.worker) == 0
+    for arm in compare.GATED:
+        assert (old / arm / "card.json").read_bytes() == (outputs[0] / arm / "card.json").read_bytes()
+        assert (outputs[0] / arm / "card.json").read_bytes() == (outputs[1] / arm / "card.json").read_bytes()

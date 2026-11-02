@@ -620,3 +620,30 @@ def test_before_shutdown_observes_final_turn_before_end(tmp_path, monkeypatch):
         assert "before" not in order and order[-1] == "end"
     finally:
         a.close()
+
+
+@pytest.mark.parametrize("wait", [3.0, 1.0])
+def test_turn_wait_fake_worker_socket(tmp_path, monkeypatch, wait):
+    """Owner-run integration: real worker and director, with only drain sleeping replaced."""
+    import socket
+
+    with socket.socket() as sock:
+        try:
+            sock.bind(("127.0.0.1", 0))
+        except PermissionError:
+            pytest.skip("sandbox cannot bind sockets; rerun fake-worker timing integration")
+    monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 3.0)
+    a = make(tmp_path, "timing", turn_wait_s=wait)
+    drains = []
+    monkeypatch.setattr(a, "_drain", lambda quiet=None: drains.append(quiet) or 0)
+    try:
+        results = [session(a, i) for i in range(1, 5)]
+        assert all(r.turns_ok == 5 for r in results)
+        expected = []
+        for index in range(1, 5):
+            expected.extend(None if wait == 3.0 or (index, n) in ((2, 2), (3, 3)) else wait
+                for n in range(1, 6))
+            expected.append(None)
+        assert drains == expected
+    finally:
+        a.close()

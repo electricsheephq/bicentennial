@@ -296,7 +296,7 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
-             live=None, live_model=None) -> LifeRun:
+             live=None, live_model=None, turn_wait_s=3.0) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -348,7 +348,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             responder=ProbeLiveRouter(responder, leg) if leg is not None else responder, clock=clock,
             root=root / "run", scratch=scratch, life=life["life"], branch=branch, run=run,
             checkout=hermes, harness_pin=harness_pin, worker_argv=worker_argv,
-            toolsets=HERMES_TOOLSETS, env_server=wiring)
+            toolsets=HERMES_TOOLSETS, env_server=wiring, turn_wait_s=turn_wait_s)
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
                 plugin=PROVIDERS.get(entry["name"]), context_engine=ENGINES.get(entry["name"]),

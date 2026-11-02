@@ -40,7 +40,7 @@ def test_t1_stub_disclosures_both_gated_arms_only(tmp_path, monkeypatch):
             props = () if system == "omega" else prepared("t1", tmp_path / system, patch, system)
             entry = load(REGISTRY / f"{system}.toml")
             arm = NS(outcomes={}, bundles=(), transforms=(), units=(), verdicts=())
-            run = NS(ctx=NS(entry=entry, worker_properties=props), arms={a: arm for a in
+            run = NS(ctx=NS(entry=entry, worker_properties=props, turn_wait_s=3.0), arms={a: arm for a in
                 ("system", "wiped", "no_memory")}, not_exercised=(), singleton_lives={}, duty_items=())
             patch.setattr(compare, "_finals", lambda *a: [])
             expected = {"t1.embeddings": EMBEDDINGS, "t1.extraction": EXTRACTION} if system == "mem0-oss" else {}

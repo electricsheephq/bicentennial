@@ -1018,3 +1018,20 @@ def test_engine_relabel_and_model_env(policy, monkeypatch, tmp_path):
         assert unit.stop_reclassified is (arm != "no_memory")
         assert seen[-1]["extra_env"] == (None if arm == "no_memory" else {"MODEL_HOME": str(tmp_path / "models")})
         assert seen[-1]["plugin_source"] == (None if arm == "no_memory" else ctx.plugin_source)
+
+
+def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp_path):
+    full, short = prepare(installed), prepare(installed, turn_wait_s=1.0)
+    assert full.turn_wait_s == 3.0 and short.turn_wait_s == 1.0
+    assert full.lock == short.lock and full.pins == short.pins and full.run_id == short.run_id
+    assert full.current_lock() == short.current_lock() == full.lock
+    assert full.gate.start_session(full.current_lock(), "system", full.packs[0].life, "B0", 1, 0) == (
+        short.gate.start_session(short.current_lock(), "system", short.packs[0].life, "B0", 1, 0))
+    seen = []
+    def drive(**kw):
+        seen.append(kw["turn_wait_s"])
+        return LifeRun(kw["arm"], full.packs[0].life, kw["branch"], kw["attempt"],
+            classes={i["item_id"]: ("SYSTEM_FAILURE", "turn_failed") for i in kw["items"]})
+    monkeypatch.setattr(t1, "run_life", drive)
+    t1._unit(short, short.packs[0], "system", "B0", tmp_path, t1.Voids(), None)
+    assert seen == [1.0]

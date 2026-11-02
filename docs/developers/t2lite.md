@@ -30,6 +30,12 @@ bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-ha
 bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --baseline runs/A --aa-prime runs/A-prime --out runs/B
 ```
 
+| T2-lite flag | Meaning |
+|---|---|
+| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 3.0; invalid values refuse with exit 3 before execution. Session end and turns followed by kill or restart keep 3.0 s. Outside the lock, lock hash, attempt id and card. The default is the published setting until the one-commit A/B passes; results at another value are your own. |
+
+The setting is printed as `turn_wait_s` on stderr at start and recorded in `disclosures.json` as `turn_wait_s`, a decimal string in seconds.
+
 The send limit is an example, not a promised budget. Earlier cards must match system, pack, seed, model, effort, answer contract, profile and all code/harness pins. A candidate can change its implementation while keeping those comparability fields fixed. Checkpoint reruns use `--only LIFE:B0:CHECKPOINT` (or B1) and optionally `--repeat N`, a positive integer. They replay the whole branch and keep all items at that checkpoint. Repeats above one require a checkpoint; checkpoint runs cannot take references. `--aa-prime` requires `--baseline`; `--aa-of` cannot accompany `--aa-prime`. `--sandbox-slot` chooses an available slot from 0 through 9.
 
 To see a complete run offline, use this acceptance with a fake upstream and fake worker. It exercises real preparation, director, shadow, scoring, cards and checkpoint replay, without a live login. The final check makes a socket-related skip fail this path. The fresh-clone CI job runs these exact lines after T0:
