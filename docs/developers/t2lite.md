@@ -63,7 +63,7 @@ Only `probe_main` goes live among director requests; replay, write, extraction, 
 |---|---|
 | Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain from infrastructure failures that did not latch a live stack stop. |
 | Credential, spend or live stop | Exit 3; no card or new floor cache entry; `refusal.json` with `credential_stop`, `spend_stop` or `live_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. For `live_stop`, the stop reason is in `refusal.json` `detail` and on stderr as `live_stop <reason>`; a reason containing login material gives `credential_scan` instead. |
-| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. A canary, a honeypot hit and an isolation breach seen before the stop outrank a stop, in that order; egress the stopped attempt could not sample does not. |
+| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. When a stop ends the run, a canary, a honeypot hit and an isolation breach seen before the stop outrank it, in that order; egress the stopped attempt could not sample does not. A unit that completes with a breach refuses `isolation` at once, ahead of a canary, a honeypot hit or a stop. |
 | Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later preparation/reference refusals send nothing but can leave `refusal.json`. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
