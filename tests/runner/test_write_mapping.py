@@ -82,7 +82,9 @@ def test_engine_only_forget_requirement(tmp_path, monkeypatch, no_start, provide
     with pytest.raises(exception, match=reason):
         t1.prepare(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml"),
                    packs=tmp_path, pack_hash="a" * 64, worker_argv=["unused"], plugin_source=tmp_path)
-    with pytest.raises(t0.T0Refused, match="forget_mapping_missing"):
+    # T0 has no host for an engine-only system, so it refuses that first; an engine with a provider needs FORGET.
+    t0_reason = "forget_mapping_missing" if provider else "^no_t0_surface:context_engine$"
+    with pytest.raises(t0.T0Refused, match=t0_reason):
         t0._preflight(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml"),
                       packs=tmp_path, selected=["all"], pack_hash="a" * 64)
 
