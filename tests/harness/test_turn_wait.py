@@ -45,7 +45,7 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
     drains = []
 
     def drain(*args, upgrade=None):
-        drains.append(args)
+        drains.append(args if upgrade is None else (*args, "upgrade"))
         if upgrade is not None:
             a.director.summariser_requests += len(drains) in compact_drains
             if upgrades is not None:
@@ -78,7 +78,7 @@ def test_default_drain_calls_equal_baseline(tmp_path):
 @pytest.mark.parametrize("mode", ["boundary", "held"])
 def test_fault_turns_and_session_end_keep_full_wait(tmp_path, mode):
     drains, _ = fake_session(tmp_path / mode, 1.0, mode=mode)
-    assert drains == [(1.0,), (), (), (), (1.0,), ()]
+    assert drains == [(1.0, "upgrade"), (), (), (), (1.0, "upgrade"), ()]
 
 
 @pytest.mark.parametrize("wait", [0.5, 1.0, 3.0])
@@ -114,11 +114,11 @@ def test_default_drain_loop_equals_baseline(monkeypatch):
 
 def test_compaction_request_keeps_full_wait(tmp_path):
     # No scheduled fault: T1 and T2-lite compact under sprint pressure. Turn 2 records a compaction request, so its
-    # settle is full; turn 4's arrives during its quiet time, so that short drain's upgrade() turns true.
+    # settle is full; turn 3's arrives during its quiet time, so that short drain's upgrade() turns true.
     upgrades = []
     drains, _ = fake_session(tmp_path / "pressure", 1.0, faults={}, compact_turns={2}, compact_drains={3},
                              upgrades=upgrades)
-    assert drains == [(1.0,), (), (1.0,), (1.0,), (1.0,), ()]
+    assert drains == [(1.0, "upgrade"), (), (1.0, "upgrade"), (1.0, "upgrade"), (1.0, "upgrade"), ()]
     assert upgrades == [False, True, False, False]
     drains, _ = fake_session(tmp_path / "default", 3.0, faults={}, compact_turns={2})
     assert drains == [()] * 6
@@ -139,6 +139,24 @@ def test_drain_upgrade_extends_quiet_to_full(monkeypatch):
     assert adapter.HermesAdapter._drain(a, 0.5, upgrade=lambda: clock.now >= 1.2) == 3250
     assert clock.now == 4.25  # the first 0.5 s sample at or past 4.0 s
     assert clock.sleeps == [0.125, 0.125] + [0.5] * 6
+
+
+def test_drain_reads_inflight_before_upgrade(monkeypatch):
+    clock = SimpleNamespace(now=1.0, sleeps=[])
+    def sleep(seconds):
+        clock.sleeps.append(seconds)
+        clock.now += seconds
+    monkeypatch.setattr(adapter.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(adapter.time, "sleep", sleep)
+    monkeypatch.setattr(adapter, "_now", lambda: clock.now)
+    recorded = []
+    def control():
+        # A compaction request is counted and leaves inflight just before this sample (the director's order).
+        if clock.now >= 1.5 and not recorded:
+            recorded.append(1)
+        return {"inflight": 0}
+    a = SimpleNamespace(director=SimpleNamespace(control=control))
+    assert adapter.HermesAdapter._drain(a, 0.5, upgrade=lambda: bool(recorded)) == 3000
 
 
 def test_turn_wait_never_exceeds_session_end(tmp_path, monkeypatch):

@@ -437,9 +437,12 @@ class HermesAdapter:
         quiet = DRAIN_QUIET_S if quiet is None else quiet
         t0, m0, calm = time.monotonic(), _now(), None
         while time.monotonic() - t0 < DRAIN_CAP_S:
+            # inflight first: the director counts a compaction before the request leaves inflight, so a request
+            # already out of inflight is visible to upgrade() below.
+            idle = self.director.control()["inflight"] == 0
             if upgrade is not None and quiet < DRAIN_QUIET_S and upgrade():
                 quiet = DRAIN_QUIET_S
-            if self.director.control()["inflight"] == 0:
+            if idle:
                 calm = calm or time.monotonic()
                 if time.monotonic() - calm >= quiet:
                     return _ms(m0)

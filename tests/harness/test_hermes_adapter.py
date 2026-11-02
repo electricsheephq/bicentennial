@@ -635,7 +635,7 @@ def test_turn_wait_fake_worker_socket(tmp_path, monkeypatch, wait):
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 3.0)
     a = make(tmp_path, "timing", turn_wait_s=wait)
     drains = []
-    monkeypatch.setattr(a, "_drain", lambda quiet=None: drains.append(quiet) or 0)
+    monkeypatch.setattr(a, "_drain", lambda quiet=None, upgrade=None: drains.append(quiet) or 0)
     try:
         results = [session(a, i) for i in range(1, 5)]
         assert all(r.turns_ok == 5 for r in results)
