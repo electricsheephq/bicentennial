@@ -27,11 +27,12 @@ def test_build_dispatch(ready, monkeypatch, capsys, tier):
         assert kwargs == {"harness_artifacts": [
             registry.load(registry.REGISTRY / "hermes-native.toml")["artifact"]]}
         ready.append("built")
+        return dict(sqlite_version="test-version")
 
     monkeypatch.setattr(build, "build_tier", built)
     assert cli.main(argv) == 0
     assert ready[-1] == "built"
-    assert capsys.readouterr() == ("", "")
+    assert capsys.readouterr() == ("", "sqlite_version test-version\n")
 
 
 def test_build_hash_matches_one_liner_with_existing_parent(ready, tmp_path, monkeypatch, capsys):
@@ -52,7 +53,7 @@ def test_build_hash_matches_one_liner_with_existing_parent(ready, tmp_path, monk
         registry.load(registry.REGISTRY / "hermes-native.toml")["artifact"]])
     assert install.tree_sha256(parent / "T0") == expected["pack_hash"]
     assert len(expected["index"]["packs"]) == 1
-    assert capsys.readouterr() == ("", "")
+    assert capsys.readouterr() == ("", f"sqlite_version {expected['sqlite_version']}\n")
 
 
 @pytest.mark.parametrize("name", ["T0", "T0.staging", "T0.work"])

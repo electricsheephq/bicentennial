@@ -558,9 +558,9 @@ def masked_pack_files(root):
 def host_free_tree_sha256(root):
     """Hash pack content with code pins projected out and logical world DB hashes.
 
-    A DB header records the writing SQLite library's version, so raw pack hashes differ
-    between hosts (#327). The stored DDL text and the export do not, and the manifests carry
-    only those DB hashes.
+    The builder now normalizes writer header metadata (#327). These legacy digests
+    still use stored DDL and logical exports to detect changes to world content,
+    independently of SQLite's byte representation.
     """
     files = manifest.file_manifest(root)
     masked = masked_pack_files(root)

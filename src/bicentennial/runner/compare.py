@@ -340,6 +340,7 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
     extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
         *stub_disclosures(run.ctx.entry, "t1"), *delivery,
         ("t1.sandbox_slot", str(sandbox_slot)),
+        ("t1.turn_wait_s", str(run.ctx.turn_wait_s)),
         ("t1.not_exercised", canon(list(run.not_exercised)).decode()),
         ("t1.transforms", canon(list(a.transforms)).decode()),
         ("t1.reclassified", canon(sorted({i for u in a.units for i in u.reclassified})).decode()),
@@ -448,13 +449,14 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
 
 def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
            plugin_source=None, model_cache=None, cache=None, entry=None, worker_argv=None, corpus_host=None,
-           sandbox_slot=0) -> int:
+           sandbox_slot=0, turn_wait_s=3.0) -> int:
     """Run the two-life comparison, returning the Ring 0 exit code."""
     created, published, publication = False, False, None
     try:
         start = time.time_ns() // 1_000_000
         out = Path(out)
         try:
+            turn_wait_s = t1.validate_turn_wait(turn_wait_s)
             if os.environ.get("PYTHONHASHSEED") != "0":
                 raise T1Refused("hashseed")
             if out.exists() or out.is_symlink():
@@ -463,7 +465,8 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
                    for p in (out, packs_dir, baseline, hermes, plugin_source, model_cache, cache)):
                 raise T1Refused("sandbox_overlap")
             ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
-                plugin_source=plugin_source, entry=entry, worker_argv=worker_argv, model_cache=model_cache)
+                plugin_source=plugin_source, entry=entry, worker_argv=worker_argv, model_cache=model_cache,
+                turn_wait_s=turn_wait_s)
             data = None
             if baseline is not None:
                 try:
