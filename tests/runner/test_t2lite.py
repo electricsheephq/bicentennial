@@ -611,12 +611,35 @@ def test_item3_invalid_outranks_live_stop(scenario, monkeypatch, canary, code):
     assert [p.name for p in s.out.iterdir()] == ["refusal.json"]
 
 
-@pytest.mark.parametrize("secret_in", ["output", "receipt", "custody"])
-def test_item3_live_stop_uses_needle_scan(scenario, monkeypatch, secret_in):
+@pytest.mark.parametrize("stop", ["credential", "live"])
+@pytest.mark.parametrize("seen,code", [("egress", "isolation"), ("records", "isolation"), ("unobserved", None)])
+def test_item3_isolation_seen_before_a_stop_outranks_it(scenario, monkeypatch, stop, seen, code):
+    # run_life hands the stopped attempt's egress over with the stop. A breach seen before the stop outranks it, as a
+    # canary or honeypot does; egress the attempt could not sample is the stop's doing and does not.
+    def stopped(**kw):
+        ledger = kw["scratch"] / kw["branch"] / "run/ledger"
+        BlobStore(ledger / "blobs", Guard([]))
+        rows = [{"type": "response", "role": "replay_main", "served_by": "live"}] if seen == "records" else []
+        (ledger / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows))
+        error = LiveCredentialStop("upstream_401") if stop == "credential" else LiveStop("upstream_invalid_request_4xx")
+        error.egress = ({"non_loopback": ["synthetic:443"]} if seen == "egress" else
+                        {"alive_at_stop": True, "unsampled": ["egress unsampled pid=1 log=worker"]})
+        raise error
+    monkeypatch.setattr(runner, "run_life", stopped)
+    assert scenario.invoke() == 3
+    expected = code or ("credential_stop" if stop == "credential" else "live_stop")
+    assert runner._read(scenario.out, "refusal.json")["code"] == expected
+    assert sorted(p.name for p in scenario.out.iterdir()) == (
+        ["refusal.json"] if code else ["custody.json", "receipt.json", "refusal.json"])
+
+
+@pytest.mark.parametrize("secret_in", ["output", "receipt", "custody", "reason"])
+def test_item3_live_stop_uses_needle_scan(scenario, monkeypatch, capsys, secret_in):
     s, drive = scenario, runner.run_life
     def stop(**kw):
         run = drive(**kw)
-        kw["live"].stack.values.update(stopped=True, stop_reason="responder_error:x")
+        kw["live"].stack.values.update(stopped=True, stop_reason="responder_error:x" if secret_in != "reason" else
+                                       "bridge_unmapped_key:synthetic-access-token")
         if secret_in == "output":
             runner._write(s.out, "planted.json", "synthetic-access-token")
         return run
@@ -629,6 +652,8 @@ def test_item3_live_stop_uses_needle_scan(scenario, monkeypatch, secret_in):
     assert s.invoke() == 3
     assert runner._read(s.out, "refusal.json") == {"code": "credential_scan"}
     assert [p.name for p in s.out.iterdir()] == ["refusal.json"]
+    err = capsys.readouterr().err
+    assert err.splitlines()[-1] == "credential_scan" and "synthetic-access-token" not in err
 
 
 def test_identity_check_absent_without_cache_entry(scenario, tmp_path):

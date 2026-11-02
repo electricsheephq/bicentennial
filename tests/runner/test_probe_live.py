@@ -325,13 +325,14 @@ def test_credential_stops_before_next_session(lives, tmp_path, unit_sessions, mo
         return result
     close = adapter.HermesAdapter.close
     def finish(self):
-        closed.append(True)
-        return close(self)
+        closed.append(close(self))
+        return closed[-1]
     monkeypatch.setattr(adapter.HermesAdapter, "run_session", run)
     monkeypatch.setattr(adapter.HermesAdapter, "close", finish)
-    with pytest.raises(LiveCredentialStop, match="upstream_401"):
+    with pytest.raises(LiveCredentialStop, match="upstream_401") as error:
         drive(lives["t1-g1", "B0"], tmp_path, live=live)
-    assert indices == [1] and closed == [True]
+    # The stop carries the attempt's egress summary, which runner/t2lite.py checks for a breach seen before it.
+    assert indices == [1] and closed == [error.value.egress] and "non_loopback" in error.value.egress
 
 
 @pytest.mark.parametrize("last", [False, True])
@@ -349,16 +350,17 @@ def test_items1_2_live_stop_at_next_session_boundary(lives, tmp_path, unit_sessi
         return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
     close = adapter.HermesAdapter.close
     def finish(self):
-        closed.append(True)
-        return close(self)
+        closed.append(close(self))
+        return closed[-1]
     live.reply = respond
     monkeypatch.setattr(adapter.HermesAdapter, "run_session", run)
     monkeypatch.setattr(adapter.HermesAdapter, "close", finish)
-    with pytest.raises(LiveStop, match="upstream_invalid_request_4xx"):
+    with pytest.raises(LiveStop, match="upstream_invalid_request_4xx") as error:
         drive(case, tmp_path, live=live)
     order = [s["index"] for s in case["compiled"].script["sessions"]]
     expected = order[:order.index(stop_at) + 1]
-    assert indices == expected and len(indices) == len(expected) and closed == [True]
+    assert indices == expected and len(indices) == len(expected) and closed == [error.value.egress]
+    assert "non_loopback" in error.value.egress
     if not last:
         assert len(live.calls) == 1
 

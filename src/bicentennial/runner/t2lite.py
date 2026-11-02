@@ -87,11 +87,23 @@ def _isolation(run):
         t0._check_egress([([], run.egress)], t1.T1Refused)
     except t1.T1Refused:
         raise t1.T1Refused("isolation") from None
-    for r in run.records:
+    if _live_breach(run.records):
+        raise t1.T1Refused("isolation")
+
+
+def _live_breach(records):
+    for r in records:
         live = [u for u in r.get("upstream", ()) if u.get("served_by") == "live"]
         if (r.get("served_by") == "live" or live) and not (
                 r.get("role") == "probe_main" and all(u.get("role") == "probe_main" for u in live)):
-            raise t1.T1Refused("isolation")
+            return True
+    return False
+
+
+def _breached(run):
+    # What outranks a stop: worker egress or a non-probe live role, seen before it. Unobserved egress does not,
+    # since a stopped attempt can end before a worker is sampled.
+    return bool(run.egress.get("non_loopback")) or _live_breach(run.records)
 
 
 def _secrets(home, login=None):
@@ -146,7 +158,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 worker_argv=t1._worker(ctx, pack.life, branch, arm), visible=pack.visible,
                 honeypot_token=pack.meta["honeypot_token"], live=live,
                 extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
-        except LiveCredentialStop:
+        except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
             # The adapter's honeypot count (harness/hermes/adapter.py), over the requests sent before the stop.
@@ -154,7 +166,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
             honeypot = hits(token, [store.get(r["req"]).decode() for r in rows
                                     if r.get("type") == "request"]) if token else 0
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
-                tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot))
+                tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot,
+                egress=getattr(error, "egress", None) or {}))
             raise
         runs.append(run)
         try:
@@ -526,6 +539,10 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 code = "canary"  # INVALID outranks a stop: the guard latched a canary body
             elif any(run.honeypot_hits for run in runs):
                 code = "honeypot"
+            elif any(_breached(run) for run in runs):
+                code = "isolation"
+        if code == "live_stop" and any(n in error.reason.encode() or n in canon([error.reason]) for n in needles):
+            code = "credential_scan"  # the reason is written and printed whole, so it is scanned first
         try:
             if created:
                 try:
