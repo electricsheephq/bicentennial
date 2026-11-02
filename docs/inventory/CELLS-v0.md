@@ -29,7 +29,7 @@ Superseding evidence carries locked tokens of its own: a correction, a cancellat
 A variant whose gold depends only on the **absence** of earlier evidence cannot be read this way. The reader can assert only what is present, and its empty option emits UNKNOWN or refrain.
 - **What it can read:** gold that a present token supports, such as a contradiction, a provenance or authority marker, or a verification result; and "never observed", through the empty option.
 - **What it cannot read:** a plant told apart from its genuine twin only by a missing prior corroboration.
-- **v0.1 deferral:** Ring 0 v0.1 defers Rachael's action bundles to the live tiers (v0.2). Their twins share channel, wording and style, and the v0.1 templates have no positive-token variant of them yet. This is a deferral of the chosen variants, not a property of every Rachael bundle: an authority rule or an exposed contradiction (PREREG §4; DESIGN §5.1b) would give a present token.
+- **v0.1 deferral:** Ring 0 v0.1 defers Rachael's action bundles to the live tiers. Their twins share channel, wording and style, and the v0.1 templates have no positive-token variant of them yet. This is a deferral of the chosen variants, not a property of every Rachael bundle: an authority rule or an exposed contradiction (PREREG §4; DESIGN §5.1b) would give a present token.
 - **Restricted cells:** RACH-SRC and RECALL-PREM run at Ring 0 only on variants whose gold is supported by a present token, or is "never observed". Their absence-only variants are deferred with Rachael's actions.
 
 ## The cells
@@ -87,7 +87,7 @@ Twin kinds:
 | FAULT-NEWEST | Faults | I1, C2 | S | the newest instruction still governs after a restart | G1, G2 | wake events | T0, T1 | no |
 | FAULT-PAIR | Faults | I1 | S | a tool result still sits with its call after the crash | G1 | fault proximity | T1 | no |
 | FAULT-INTERF | Faults | D3 | S | look-alike interference: the near-duplicate does not win | G1, G2 | interference | T0, T1 | no |
-| FAULT-DUP | Faults | I1 | S | "how many times did I tell you X" after a duplicated delivery | G1, G2 | none | live (v0.2 fault injector) | no |
+| FAULT-DUP | Faults | I1 | S | "how many times did I tell you X" after a duplicated delivery | G1, G2 | none | live (fault injector) | no |
 
 **Coverage:**
 - 37 cells.
@@ -95,10 +95,10 @@ Twin kinds:
 - Ring 0 v0.1 runs 34 of them. The three it leaves to later are RACH-PLANT and RACH-PREM (live tiers) and FAULT-DUP (needs delivery faults, which fault-lite lacks).
 
 **Not in v0:**
-- the Learn chains (v0.2, terminal forks in the robustness study);
+- the Learn chains (the Pilot, terminal forks in the robustness study);
 - the erasure-across-derivatives probes (study only);
-- the attestation twins (a Rachael diagnostic, v0.2);
-- standing rules after compaction and a swap (a Survive frontier diagnostic, v0.2);
+- the attestation twins (a Rachael diagnostic);
+- standing rules after compaction and a swap (a Survive frontier diagnostic);
 - Hands and Flatten (not yet built);
 - the Image profile (pending S8).
 

@@ -80,7 +80,7 @@ def compile_life(b0, b1) -> Compiled:
         record = meta | dict(canary=CANARY, item_id=item["item_id"], life=b0.life,
                              branch=branch_ids[item["item_id"]],
                              bundle_id=bid, unfiltered_sample=bid in selected,
-                             filter_log="not run (v0.2)", rungs="uncalibrated (v0.2)")
+                             filter_log="not run", rungs="uncalibrated")
         validate("item_record", record)
         records.append(record)
     return Compiled(b0.life, tuple(i for i, _ in entries), tuple(sorted(bundles, key=lambda b: b["bundle_id"])), tuple(records))

@@ -22,8 +22,8 @@ From the next kit, Python's `sqlite3.connect` and `sqlite3.dbapi2.connect` read 
 Every card carries these labels verbatim from `card_ring0`:
 
 - "Ring 0 developer signal; not predictive of the full tier; never certifies";
-- "filters: not run (v0.2)";
-- "rungs: uncalibrated (v0.2)";
+- "filters: not run";
+- "rungs: uncalibrated";
 - "voice: template";
 - "Act: evidence-conditioned scripted action; not an Act judgement";
 - at T1, "scripted model: wiring-only".

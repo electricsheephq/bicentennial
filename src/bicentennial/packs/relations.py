@@ -44,7 +44,7 @@ class Report(tuple):
         with open(schema, encoding="utf-8") as source:
             canary = canonical.json.load(source)["properties"]["canary"]["enum"][0]
         return dict(canary=canary, catalogue_version=0,
-                    labels=["not predictive of the full tier; never certifies", "rungs: uncalibrated (v0.2)"],
+                    labels=["not predictive of the full tier; never certifies", "rungs: uncalibrated"],
                     relations=[r.to_obj() for r in self.relations], flagged=list(self.flagged),
                     counts={s: sum(r.status == s for r in self.relations)
                             for s in ("holds", "flagged", "unscored", "confounded")})
