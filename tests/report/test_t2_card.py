@@ -194,6 +194,7 @@ def test_item_2_repro_must_be_own_kept_path():
 def test_item_2_failed_item_without_kept_copy_has_null_repro():
     card = complete_card()
     card["items"][0]["repro"] = None
+    card["counts"]["kept_copies"] = 0
     cards.validate_t2_card(card)
 
 
@@ -204,6 +205,7 @@ def test_item_2_blocked_item_cannot_have_repro():
     with pytest.raises(ValueError, match="^t2_card:repro_ineligible$"):
         cards.validate_t2_card(card)
     card["items"][0]["repro"] = None
+    card["counts"]["kept_copies"] = 0
     cards.validate_t2_card(card)
 
 
