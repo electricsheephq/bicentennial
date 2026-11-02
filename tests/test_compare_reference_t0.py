@@ -104,3 +104,19 @@ def test_unreadable(tmp_path, invalid):
     assert result.returncode == 2
     assert "unreadable T0 input:" in result.stderr
     assert result.stdout == ""
+    if invalid.startswith(("stage_", "track_", "row_")):  # refused by the row check, not by a later KeyError
+        assert "malformed aggregate" in result.stderr
+
+
+def test_missing_schema_is_unreadable_input(tmp_path):
+    # The allowed values come from the checkout's card schema; without it the script refuses (exit 2), never exit 1.
+    script = tmp_path / "kit" / "scripts" / SCRIPT.name
+    script.parent.mkdir(parents=True)
+    shutil.copy(SCRIPT, script)
+    old, new = tmp_path / "old", tmp_path / "new"
+    write_card(old, "one")
+    write_card(new, "one")
+    result = subprocess.run([sys.executable, str(script), str(old), str(new)], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "unreadable T0 input:" in result.stderr and "card_ring0.schema.json" in result.stderr
+    assert result.stdout == ""

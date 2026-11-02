@@ -6,15 +6,20 @@ import os
 import sys
 from pathlib import Path
 
-# The compared fields' allowed values, read from the card_ring0 schema so they cannot drift from it.
-CARD = json.loads((Path(__file__).resolve().parents[1] / "schemas/card_ring0.schema.json").read_bytes())["properties"]
-VERDICTS, STATUSES = set(CARD["gate_verdict"]["enum"]), set(CARD["run_status"]["enum"])
-ROW = CARD["aggregates"]["items"]["properties"]
-STAGES, TRACKS = set(ROW["stage"]["enum"]), set(ROW["track"]["enum"])
-LOW, HIGH = ROW["score_milli"]["minimum"], ROW["score_milli"]["maximum"]
+SCHEMA = Path(__file__).resolve().parents[1] / "schemas/card_ring0.schema.json"
+
+
+def allowed():
+    """The compared fields' allowed values, read from the card_ring0 schema so they cannot drift from it."""
+    card = json.loads(SCHEMA.read_bytes())["properties"]
+    row = card["aggregates"]["items"]["properties"]
+    return dict(verdicts=set(card["gate_verdict"]["enum"]), statuses=set(card["run_status"]["enum"]),
+                keys=set(row), stages=set(row["stage"]["enum"]), tracks=set(row["track"]["enum"]),
+                low=row["score_milli"]["minimum"], high=row["score_milli"]["maximum"])
 
 
 def read_aggregates(root):
+    rule = allowed()  # inside main's error handling: a missing or changed schema is unreadable input (exit 2)
     root = Path(root)
     pack_root = root / "pack"
     if not pack_root.is_dir():
@@ -37,18 +42,18 @@ def read_aggregates(root):
             raise ValueError(f"{path}: malformed aggregates")
         aggregates = {}
         for row in card["aggregates"]:
-            if type(row) is not dict or row.keys() != ROW.keys():
+            if type(row) is not dict or row.keys() != rule["keys"]:
                 raise ValueError(f"{path}: malformed aggregate")
             stage, track, score = row["stage"], row["track"], row["score_milli"]
-            if stage not in STAGES or track not in TRACKS or (
-                    score is not None and (type(score) is not int or not LOW <= score <= HIGH)):
+            if stage not in rule["stages"] or track not in rule["tracks"] or (score is not None and (
+                    type(score) is not int or not rule["low"] <= score <= rule["high"])):
                 raise ValueError(f"{path}: malformed aggregate")
             key = f"{stage}/{track}"
             if key in aggregates:
                 raise ValueError(f"{path}: duplicate aggregate {key}")
             aggregates[key] = score
         verdict, status = card["gate_verdict"], card["run_status"]
-        if verdict not in VERDICTS or status not in STATUSES:
+        if verdict not in rule["verdicts"] or status not in rule["statuses"]:
             raise ValueError(f"{path}: malformed gate verdict or run status")
         result[path.parent.relative_to(root).as_posix()] = dict(
             aggregates=aggregates, gate_verdict=verdict, run_status=status)
