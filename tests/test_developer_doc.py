@@ -198,6 +198,15 @@ def _life_refusals():
 
 def _code_refusals():
     codes = _life_refusals()
+    # The shared mapping check returns codes instead of raising a runner exception.
+    mapping_tree = ast.parse((REPO / "src/bicentennial/systems/mapping.py").read_text())
+    for node in ast.walk(mapping_tree):
+        if isinstance(node, ast.Return):
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                codes.add(value.value)
+            elif isinstance(value, ast.JoinedStr) and isinstance(value.values[0], ast.Constant):
+                codes.add(value.values[0].value + "<tool>")
     for name in ("t0", "t1", "compare"):
         codes.update(_refusal_codes(REPO / f"src/bicentennial/runner/{name}.py"))
     # Helpers raise through the tier's refusal factory, passed as `refused` or `refuse`.

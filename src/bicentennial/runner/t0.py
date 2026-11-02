@@ -95,6 +95,7 @@ from bicentennial.systems.hermes_plugin import (
     validate_maps,
     worker_properties,
 )
+from bicentennial.systems.mapping import check_mapping, resolve_mapping
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.targeted import MicroSpec, micro_schedule
@@ -624,6 +625,9 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
         admit_system(entry)
         if entry["harness"] != "hermes":
             raise T0Refused("harness_not_hermes")
+        reason = check_mapping(entry, resolve_mapping(system))
+        if reason is not None:
+            raise T0Refused(reason)
     else:
         entry = dict(name=system, surfaces=[])
     validate_maps()
