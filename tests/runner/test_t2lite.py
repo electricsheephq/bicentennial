@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bicentennial.canon import canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.run import validate
 from bicentennial.director.responder import Call, Reply
 from bicentennial.harness.hermes.plugin_host import GateRefused
@@ -1491,3 +1491,52 @@ def _full_fake_worker(installed, tmp_path, monkeypatch, honeypot_arm=None):
     repetitions = runner._read(tmp_path / "rerun", "repetitions.json")
     assert len(repetitions) == 3 and all(outcome["item_id"] in rep for rep in repetitions)
     assert all(s.closed and s.drained for s in stacks)
+
+
+@pytest.mark.parametrize("wait", [3.0, 1.0, 0.5])
+def test_turn_wait_disclosure_and_every_arm(scenario, monkeypatch, capsys, wait):
+    seen, real = [], runner.run_life
+    def drive(**kw):
+        seen.append((kw["arm"], kw["turn_wait_s"]))
+        return real(**kw)
+    monkeypatch.setattr(runner, "run_life", drive)
+    capsys.readouterr()
+    assert scenario.invoke(turn_wait_s=wait) == 0
+    assert "turn_wait_s" not in capsys.readouterr().err
+    assert runner._read(scenario.out, "disclosures.json")["turn_wait_s"] == str(wait)
+    assert len(seen) == 8 and {arm for arm, _ in seen} == {"no_memory", "system"}
+    assert all(value == wait for _, value in seen)
+
+
+def test_default_floor_key_preserves_literal_formula(scenario, tmp_path):
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    ctx = scenario.ctx
+    expected = sha256_canon([ctx.pack_hash, runner.MODEL, runner.EFFORT, runner.answer_contract.contract_hash(),
+                             ctx.pins["harness_hash"], ctx.pins["benchmark_commit"]])
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == [expected + ".t2lite-floor.json"]
+
+
+@pytest.mark.parametrize("waits", [(0.5, 3.0, 0.5), (3.0, 0.5, 0.5)])
+def test_floor_cache_separates_turn_waits(scenario, tmp_path, waits):
+    for index, (wait, cached) in enumerate(zip(waits, (0, 0, 1), strict=True)):
+        scenario.seen.clear()
+        name = f"run-{index}"
+        assert scenario.invoke(name, cache=tmp_path / "cache", turn_wait_s=wait) == 0
+        out = tmp_path / name
+        assert runner._read(out, "card.json")["counts"]["floor_cached"] == cached
+        assert runner._read(out, "disclosures.json")["turn_wait_s"] == str(wait)
+        assert sum(arm == "no_memory" for arm, _ in scenario.seen) == (0 if cached else 4)
+    ctx = scenario.ctx
+    short_key = sha256_canon([ctx.pack_hash, runner.MODEL, runner.EFFORT, runner.answer_contract.contract_hash(),
+                              ctx.pins["harness_hash"], ctx.pins["benchmark_commit"], "turn_wait_s=0.5"])
+    assert (tmp_path / "cache" / (short_key + ".t2lite-floor.json")).is_file()
+    assert len(list((tmp_path / "cache").iterdir())) == 2
+
+
+def test_flip_rerun_command_keeps_the_runs_turn_wait(scenario, tmp_path):
+    s = scenario
+    assert s.invoke("baseline", cache=tmp_path / "cache") == 0
+    s.score = 0
+    assert s.invoke(baseline=tmp_path / "baseline", cache=tmp_path / "cache", turn_wait_s=0.5) == 0
+    command = runner._read(s.out, "flips.json")["rows"][0]["rerun"]
+    assert " --repeat 3 --turn-wait 0.5 --out <new dir>" in command

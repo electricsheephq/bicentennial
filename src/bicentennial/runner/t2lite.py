@@ -156,7 +156,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 current_lock=ctx.current_lock, voids=Voids(), harness_pin=ctx.harness_pin,
                 hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
                 worker_argv=t1._worker(ctx, pack.life, branch, arm), visible=pack.visible,
-                honeypot_token=pack.meta["honeypot_token"], live=live,
+                honeypot_token=pack.meta["honeypot_token"], live=live, turn_wait_s=ctx.turn_wait_s,
                 extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
         except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
@@ -377,11 +377,12 @@ def _references(prospective, selection, baseline, aa_of, aa_prime):
 
 def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
                plugin_source=None, model_cache=None, cache=None, sandbox_slot=0,
-               baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None):
+               baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None, turn_wait_s=3.0):
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
     needles, pending_cache, live, custody_rows = set(), None, None, []
     try:
+        turn_wait_s = t1.validate_turn_wait(turn_wait_s)
         # Arguments and settings first: these refusals create no output, so the same command can run again.
         if (repeat < 1 or max_sends < 0 or repeat != 1 and only is None
                 or only is not None and (baseline or aa_of or aa_prime)
@@ -411,8 +412,9 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         except OSError:
             raise t1.T1Refused("account_busy") from None
         ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
-            plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv)
-        ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2lite-" + uuid4().hex}))
+            plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv,
+            turn_wait_s=turn_wait_s)
+        ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2lite-" + uuid4().hex, "turn_wait_s": turn_wait_s}))
         selection, keep = _select(ctx, only)
         references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
                                            aa_of, aa_prime)
@@ -421,8 +423,11 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         # same directory, a copy at another path is not.
         self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
         # The benchmark commit stands for the director, reader and scorer code the floor ran.
-        key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
-                            ctx.pins["benchmark_commit"]])
+        key_parts = [ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
+                     ctx.pins["benchmark_commit"]]
+        if turn_wait_s != 3.0:
+            key_parts.append(f"turn_wait_s={turn_wait_s}")
+        key = sha256_canon(key_parts)
         floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
         floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
                               {p.life + b for p in ctx.packs for b in ("B0", "B1")})
@@ -504,7 +509,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "repetitions.json", repetitions)
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
-            _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits,
+            _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits, "turn_wait_s": str(turn_wait_s),
                 "identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
@@ -512,7 +517,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             if baseline:
                 report = flip_report(card, references["baseline"], outcomes["baseline"], repetitions[-1],
                     aa_prime=repetitions[-1] if self_band else outcomes.get("prime"),
-                    aa_prime_card=card if self_band else references.get("prime"))
+                    aa_prime_card=card if self_band else references.get("prime"), turn_wait_s=turn_wait_s)
                 report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
                     current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
                 _write(out, "flips.json", report)
