@@ -618,7 +618,7 @@ def test_item3_isolation_seen_before_a_stop_outranks_it(scenario, monkeypatch, s
     # canary or honeypot does; egress the attempt could not sample is the stop's doing and does not.
     def stopped(**kw):
         ledger = kw["scratch"] / kw["branch"] / "run/ledger"
-        BlobStore(ledger / "blobs", Guard([]))
+        ledger.mkdir(parents=True)
         rows = [{"type": "response", "role": "replay_main", "served_by": "live"}] if seen == "records" else []
         (ledger / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows))
         error = LiveCredentialStop("upstream_401") if stop == "credential" else LiveStop("upstream_invalid_request_4xx")
