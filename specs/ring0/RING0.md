@@ -111,7 +111,7 @@ Act results at T0 and T1 carry the label **"evidence-conditioned scripted action
 - PREREG §3 takes the action class from the trace and the end state;
 - a scripted policy's trace measures whether the evidence was available, not what a model would do with it.
 
-The live tiers carry the Act stage proper: for G1 from T2-lite (v0.2), and for G2 from v0.3, once its action predicates score a live action by meaning (ROADMAP, v0.3 row).
+The live tiers carry the Act stage proper: for G1 from T2-lite (v0.2), and for G2 from v0.4, once its action predicates score a live action by meaning (ROADMAP, v0.4 row; §13 E24).
 
 ## 4. Stable and volatile result fields
 
@@ -225,7 +225,7 @@ A first run has no baseline card. If every other condition holds, it is a labell
 
 **Verdicts** (§13 E3): PASS, or the labelled conformance PASS; FAIL; INVALID, when the wiped control passed; BLOCKED, when benchmark infrastructure failed after its reruns and no known failure exists. A known failure wins over a blocked entry: the verdict is then FAIL, and the run status still lists every blocked entry.
 
-**Budget:** ≤ 10 min and $0. That is an engineering budget, not a bar (PREREG §6). For scale, take S6a's measured fixed time per Hermes session, about 30 s on a shared machine, and its mean probe session, about 26 s. At those figures, 2 × 80 replay sessions and 2 × 24 probe sessions come to about 100 min run serially, and about 25 min across 4 parallel sandbox roots. Scripted responders remove S6a's upstream time, so the real figure should be lower, but it is not measured. Loop time is measured and published idle and busy, and a miss is disclosed. If the measured T1 misses by more than 2×, v0.2 cuts the probe budget first, then B1's full replay.
+**Budget:** ≤ 10 min and $0. That is an engineering budget, not a bar (PREREG §6). For scale, take S6a's measured fixed time per Hermes session, about 30 s on a shared machine, and its mean probe session, about 26 s. At those figures, 2 × 80 replay sessions and 2 × 24 probe sessions come to about 100 min run serially, and about 25 min across 4 parallel sandbox roots. Scripted responders remove S6a's upstream time, so the real figure should be lower, but it is not measured. Loop time is measured and published idle and busy, and a miss is disclosed. If the measured T1 misses by more than 2×, the cuts follow §13 E24's order.
 
 ## 7. T0 surfaces
 
@@ -234,7 +234,7 @@ A first run has no baseline card. If every other condition holds, it is a labell
   - **API systems** go through the adapter contract (§11), settle included.
   - **Hermes plug-in systems** go through an in-process memory host. It calls the provider's documented lifecycle hooks, in their documented order, to ingest each scripted turn. The content-blind write rule (§2) fills its write tools, and the reader's recall call uses its read tools.
   - **Hermes native memory** is driven through its documented agent tools, `memory` and `session_search`, called in process with the arguments an agent would send. The host also gives the reader the session-start memory snapshot that pinned Hermes injects into the system prompt, rendered by Hermes's own code at session open. Other harness prompt injection is not exercised, and the run discloses this in its JUnit properties (§13 E7).
-- **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed. It ships in v0.3 (ROADMAP, v0.3 row; §13 E5 predates the 2026-11-01 re-plan).
+- **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed. It ships in v0.4 (ROADMAP, v0.4 row; §13 E5 and E24).
 - **Forgetting:** at each forget-request event, the runner calls `forget(selector)` with the target's locked tokens as the selector.
   - Each adapter maps the call onto the system's documented deletion surface: Hermes native's `memory` `remove`, Mem0's delete after its own search, Holographic's forget or remove action (C-6).
   - A plug-in host handles each distinct written text once per call, and keeps one row for each unselected event with the same text. With a search backend it searches that text again after each pass that issued a delete, until a pass issues none. A row already decided is not decided again, so the search ends. Rows past one result page are reached only while each pass deletes a row: a page filled with kept or unowned rows ends the search. Systems that record searches see the extra ones: Holographic adds a retrieval to each row a search returns, including rows the forget keeps, and Mem0 makes an embedding request for each search.
@@ -344,6 +344,83 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 - **E22. Host keep decisions are disclosed (#135 part 2)** (§7). From the next kit, every memory host records its first keep decision per row id, or per text hash without search, within each store generation; a wipe starts a new generation, because a fresh store may reuse row ids. The record lasts for the host lifetime: reset and restore preserve it, and checkpoints and replacement hosts do not carry it. JUnit carries `<tier>.forget_kept` among the delivery properties, as canonical JSON with `ambiguous`, `same_text` and `unattributed` counts, including zeros. T0 sums all invocation hosts; T1 sums corpus hosts per gated arm. A row kept by two hosts counts twice. Reference adapters lack the record and disclose nothing. A row with no candidate owner whose text the host deleted since its last reset is not a keep decision, because the system kept it, so the host records nothing. A replacement host starts without that memory, so after a crash such a row can still count as `unattributed`. A store check failing `store_hit` also reports `host_kept` when a kept text contains a searched needle; it remains FAIL, and the verdict's member counts are those of the check without it. Kept texts stay in memory and reach no persisted output. No card, receipt or schema field changes. The scorer pin (`scorer_sha256`, over `score/*.py`) moves, so packs built before this change no longer verify and are rebuilt. v0.1's frozen kit keeps its rule.
 
 - **E23. The carry-over diagnostic reads earlier answers by their content (#352, #355)** (§6). In the v0.1 Kit, the diagnostic departs from §6 in two ways. T1's reader took the turn it answers to be the highest turn in the ledger, but the director writes a turn's row only after its reply. So for an arm that answers at its turn's first request, without a recall tool (LCM-X in the registry, and every T1 run's no-memory floor), the previous turn's exchange was not read, and an answer carried over from it was not counted. And every earlier answer was read as its whole JSON envelope, so a selected option's token that occurs only in the envelope's format, such as a field name or a digit run inside a confidence number (`50` in `500`), counted as carried over. From the next kit, the responder passes the turn it answers, and every earlier string that the scorer parses as an answer envelope reads as its value's text and its citation's quote; an `unknown` answer reads as nothing, and every other string is unchanged. `carry_over` is a reporting flag: no answer, score or class changes, and besides the pins every card records, only `carry_over` and `carry_over_milli` can change on T1 cards. v0.1's published `carry_over_milli` values were computed the old way. The reader pin (`reader_sha256`) moves, so packs built before this change no longer verify and are rebuilt.
+
+- **E24. The v0.3/v0.4 split and T1's cut order** (§3, §6, §7). On 2026-11-02 the ROADMAP's v0.3 row was split (ERRATA-v2.2 E16): live G2 action scoring (#118) and the T0 Hermes-replay fallback (#165) move to v0.4, so §3's "for G2 from v0.3" and §7's "It ships in v0.3" now read v0.4. §6 said a T1 that misses its budget by more than 2× cuts the probe budget first, then B1's full replay. v0.2 measured T1's loop time (#383): the largest cost is the 3 s wait after every scripted turn, which changes nothing on T1's cards. So the order is: first the costs that change nothing on T1's cards, starting with that wait, each checked by an A/B at one commit (#<V3-1>); then the probe budget; then B1's full replay. No frozen quantity changes.
+
+## 14. The v0.3 developer loop
+
+**Status:** written for v0.3 before any run it governs. The bar's declaration (§14.8) cites the commit that fixed this section. PREREG-v0.5 governs every frozen quantity; this section defines terms PREREG §6 and §8 leave open for the developer tiers and changes none of them. Developer tiers carry no decision bar: §14.1-§14.9 define one demonstration, PREREG §8's developer-product acceptance bar, and §14.10 defines the developer report.
+
+### 14.1 The bar
+
+PREREG §8: the benchmark team, acting as developer of its own baseline, shows the loop end to end: a real-stack public failure, reproduced from its bundle, fixed, and confirmed on Ring 1, within the declared T2/T3 budgets. No contestant system is involved, and LCM-X is not. §14.2-§14.9 define each term. Each rule states its purpose; where a rule's wording and its purpose part, the purpose governs, and the reading is disclosed with the result.
+
+### 14.2 The baseline: `naive-rag-dev`
+
+- A Hermes memory-provider plug-in whose source lives in `baselines/naive-rag-hermes/`. Each version is an archive of that subtree at one commit, pinned by sha256 in a registry entry kept outside the benchmark checkout and loaded with `--entry PATH`. The entry is flagged off every roster and board, with `benchmark_operator_runs = true`.
+- Every bar run uses one frozen benchmark checkout, so one `benchmark_commit`. Versions differ only in their entry and artifact.
+- v1 implements the pinned naive-RAG control's algorithm (hashed TF-IDF, top 5) in its own code, with a search-and-delete tool so T0's forget path runs. A receipt compares v1's top-5 retrievals with `controls/naive_rag.py` on the same T1 items and discloses any divergence. The pinned control is never edited.
+- `naive-rag-dev` is the team's system for this bar only. It is never a contestant, never on a roster, and never feeds calibration, rungs, admission or any board.
+- Purpose: PREREG names naive RAG as an allowed own baseline. A separate system lets the team fix it without touching a pinned control ("an edit to any pinned artifact voids the run", PREREG §6), and it exercises the path an outside developer uses. The raw-archive marker is not used: it is a board-only control frozen per season.
+
+### 14.3 Real-stack
+
+The system runs inside the pinned Hermes harness, with its plug-in installed from its pinned artifact, on T2, whose probe answers come from the pinned live model. In T2's probe-live profile the write turns stay scripted, and the card says so. API mode does not count, and neither do T0 or T1 alone.
+
+### 14.4 The surfacing run and the selected failure
+
+- **The run:** v1 runs twice, A and A′, on the public T2 pack named by hash in the declaration, at the one benchmark commit. Both runs end COMPLETE. The pair also gives v1's q₀ and A/A′ band (§14.10), so the noise is measured before any loop claim (PREREG §6: q₀ first).
+- **Pass** means `score_milli == 1000`. An item that is INFRA, BLOCKED or not scored live in either run is out.
+- **Groups** are fixed by fields that do not depend on any result: (cell, schedule stage). The stage follows from the life's schedule (§3: "never from its result").
+- **Selection:** a group counts in a life when v1 fails at least one of its items in both A and A′. The selected group is the one that counts in the most lives; ties go to more items failed in both runs, then to the first group in the card's fixed order. It must count in at least 8 of the 10 lives; otherwise §14.7's sizing rule grows the Ring 1 run.
+- **The failure:** the group's first item, in fixed order, that failed in both runs and whose snapshot-probe bundle reproduces (§14.5). At most five items are tried, in that order, each once.
+- The attributed stage (perceived, stored, retained, retrieved, used) is printed for diagnosis only.
+- Purpose: a fix should target a systematic weakness, and the group must count in enough lives for Ring 1 to be powered.
+
+### 14.5 Reproduced
+
+`bicentennial repro <bundle>` reproduces the selected failure (the same item, failing, with the same failure class) in at least 2 of k = 3 runs from a snapshot-probe bundle. The check runs once per tried item, in one fixed batch, and is never rerun to seek a success. It is an operational check and makes no statistical claim.
+
+### 14.6 Fixed
+
+- v2 is a new pinned artifact; v1 stays pinned, and both entries and archives are published.
+- v2's change may not read template ids, item ids, seeds, packs or gold: it is a general change to how the system stores or retrieves. A fresh-context reviewer checks v2's diff for template- or item-specific logic before the Ring 1 draw, and the review is published.
+- On the selected failure, a live-class bundle (the branch replayed with v2) passes the item in 3 of 3 runs, in one batch.
+- On the public pack, the developer report of v2 against v1 is published with v1's A/A′ band, labelled "developed on this pack; confirm on Ring 1". It carries no threshold.
+- Purpose: the public pack is where the fix was developed, so its result is the local signal; Ring 1 decides.
+
+### 14.7 Confirmed on Ring 1
+
+- **Ring 1** is T2's shape on fresh seeds of the public templates, with T2's controls. Seeds are drawn with a cryptographic generator, 63-bit, disjoint from every public pack's seeds, only after every arm in the run is frozen and nominated. A draw receipt records the draw time and a sha256 commitment to the seed list, posted before the run; the seeds are disclosed with the results and never reused. Each fresh life gets PREREG-v0.5's lite audit (one, on 10% of its bundles, by a model family other than the running agent's), recorded in a receipt. The roster is every registered system with `benchmark_operator_runs = true` and no open blocker; the benchmark never runs LCM-X.
+- **The run:** the confirmation runs inside a scheduled Ring 1 run, v0.3's release run, with v1 and v2 as arms beside the reference roster. Before its draw, the team posts v2's artifact hash and a nomination: the comparison (v1 against v2), the selected group, the test and its α, and the life count.
+- **Life count:** n = max(10, ⌈8 / f⌉), where f is the share of the public pack's lives in which the selected group counted (§14.4). It is posted before the draw. The reference roster runs the first 10 of those lives.
+- **Order and identity:** the two arms run in one window, their units interleaved across the run's parallel slots, one clone per item. If the served model identity differs between the arms, the test is not computed and the run is repeated.
+- **The test:** the unit is the life, because items in one life share its store. A life's contribution is the mean, over its scored items in the selected group, of (pass under v2 − pass under v1), with both checkpoints together. The one-sided exact sign-flip test over lives (`stats/core.py`) must give p ≤ 0.025. With fewer than 6 lives whose contribution is not zero, the result is "inconclusive", since p cannot reach 0.025.
+- **No statistically detected regression:** the same test, one-sided against v2, over all other scored items, must not give p ≤ 0.05. Per-cell losses are printed with their denominators, as description only. The check cannot show that nothing regressed, and the result says so.
+- **Attempts:** at most two, each at α = 0.025, so 0.05 in total. A second attempt waits for the next scheduled Ring 1 run, may use a v3, and draws new seeds. Every attempt is published, and RESULT.md names the attempt that confirmed. After two unconfirmed attempts the bar is re-planned, never loosened.
+- Purpose: fresh seeds answer the winner's curse (PREREG §6), a nomination fixed before the draw answers selection, and the life as the unit answers the dependence between items that share a store.
+
+### 14.8 Budgets and the declaration
+
+- The budgets are PREREG §6's targets, not numbers taken from a measurement: T2 ≤ 1 h per arm for 10 lives, and 6 min per life per arm for a T2-shaped run of another size (Ring 1's), at $0; a snapshot-probe reproduction of k = 3 in ≤ 5 min; a live-class check of k = 3 within 3 × T2's per-life budget.
+- **The declaration,** posted before the first bar run: the public T2 pack's hash, this section's commit, the budgets above, and a total allowance for the whole loop, the sum of every planned run's budget (A, A′, the screening batch, the live-class check, the v2 report run and the two Ring 1 arms) and nothing more.
+- A run that misses its budget means the bar is not met. The miss is disclosed, and a budget is never re-declared. If T2's first measured arm shows the target cannot be met, the bar is re-planned before any bar run.
+
+### 14.9 What the bar publishes
+
+The declaration; v1's A and A′ cards and band; the selected group, its bundle and the repro receipts; v2's entry and archive and the post of its hash; the review of v2's diff; the nomination; the Ring 1 draw receipt, and after the run the seeds, the cards, the lite-audit receipt and the report; a results folder with RESULT.md and READING.md. Only `naive-rag-dev` and the controls run in the surfacing and fix steps; at Ring 1 the reference roster runs beside them, as at every Ring 1 run. **Claim class:** a demonstration of the developer loop on the benchmark's own baseline. It is not a board result and never certifies.
+
+### 14.10 The developer report
+
+- **Tiers:** T2 and T3 carry the full report. T2-lite keeps its flip list and q₀. T1 is deterministic, so its A/A′ is byte identity.
+- **Pairing:** the previous version is a run directory the developer supplies, checked on T2-lite's frozen comparability fields plus `pins.system_hash`. A mismatch is refused.
+- **The estimand:** the mean over lives of each life's mean paired score difference (current − previous) on its scored items, on the raw penalised scale, per cell and pooled. Items INFRA or not scored live in either run are out.
+- **The diff:** per cell and pooled, the discordant counts in each direction; the one-sided exact sign-flip p over lives; and the estimate with a life-clustered interval (the wild cluster bootstrap with t-calibration) only when at least 10 lives contribute to that cell, with the life count beside it. Otherwise it prints "too few lives for a clustered interval".
+- **The A/A′ band:** q₀ as a fraction, described as one, with a binomial interval labelled with its independence assumption; and the A − A′ estimate with its interval under the same 10-life rule.
+- **Sensitivity:** an approximate minimum detectable effect from the A/A′ pair's life-level spread, labelled approximate and floored at what the exact test can detect. It is "not estimable" with fewer than 5 discordant items in that cell, or when the pair is degenerate: A equal to A′ everywhere gives no spread, never a zero MDE.
+- **Also printed:** the operating-metric deltas from the receipts (wall time, requests and tokens by role, store growth, latency), and the failure taxonomy as a table of (cell, schedule stage, failure class) counts.
+- **Labels:** verdict-free: "a developer signal; not predictive of the full tier; confirm on Ring 1 before claiming".
+- Purpose: show the developer the noise between identical runs and the smallest change the pack can detect, so a flip list is never read as an effect.
 
 ## References
 
