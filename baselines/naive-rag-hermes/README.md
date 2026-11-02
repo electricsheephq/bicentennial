@@ -52,8 +52,13 @@ Ordinary completion and raised write errors clean up the temporary file; an
 abrupt process kill can leave an unreferenced temporary file, but cannot expose
 a partially written store. Calls within a provider instance are serialized.
 
-Two known differences from the control remain:
+Three known differences from the control remain:
 
 - v1 indexes what the scripted writes store; the control indexes every event.
 - Ties fall in memory insertion order rather than event-id order. Equivalence
   tests map insertion order to event order when comparing the same corpus.
+- The control retrieves the top five chunks for every probe prompt. v1
+  retrieves only when `naive_rag_search` is called, with the caller's query,
+  and its prefetch returns nothing. A scripted recall that searches with the
+  probe prompt matches the control; in a live run the model decides whether
+  and what to search.

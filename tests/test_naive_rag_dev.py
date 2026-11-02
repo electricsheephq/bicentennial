@@ -182,6 +182,16 @@ def test_non_string_arguments_are_refused_and_never_stored(provider, value):
     assert call(p, "search", query="alpha", whole=True) == {"results": [{"id": "m000001", "content": "alpha"}]}
 
 
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+def test_whole_must_be_a_boolean(provider, value):
+    p = provider
+    assert call(p, "add", content="alpha") == {"id": "m000001"}
+    with pytest.raises(ValueError, match="whole must be a boolean"):
+        p.handle_tool_call("naive_rag_search", {"query": "alpha", "whole": value})
+    assert call(p, "search", query="alpha", whole=False) == {"results": [
+        {"id": "m000001", "ordinal": 0, "content": "alpha"}]}
+
+
 def test_whole_search_ranks_distinct_memories_by_best_chunk(provider):
     p = provider
     texts = ["\n" + "alpha " * 230 + "\n", "alpha", "alpha beta", "alpha gamma",

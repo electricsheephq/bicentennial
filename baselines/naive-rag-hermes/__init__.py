@@ -48,9 +48,11 @@ class NaiveRagProvider(MemoryProvider):
             elif tool_name == "naive_rag_delete":
                 result = {"deleted": self.store.delete(_text(args, "memory_id"))}
             elif tool_name == "naive_rag_search":
-                results, seen = [], set()
+                results, seen, whole = [], set(), args.get("whole", False)
+                if type(whole) is not bool:  # a model may send "false" as text, which would read as true
+                    raise ValueError("whole must be a boolean")
                 for _, mid, ordinal, text in scored(self.store.memories, _text(args, "query")):
-                    if args.get("whole", False):
+                    if whole:
                         if mid in seen:
                             continue
                         seen.add(mid)
