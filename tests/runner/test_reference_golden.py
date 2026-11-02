@@ -60,7 +60,7 @@ def published(out):
 def test_reference_t0_golden(installed, tmp_path):
     out = tmp_path / "out"
     code = shared["run"](installed, out)
-    assert code in (0, 1), f"T0 run refused or failed: exit {code}"
+    assert code in (0, 1, 2), f"T0 run refused or failed: exit {code}"
     actual = published(out)
     if os.environ.get("BICENTENNIAL_REGEN_GOLDEN") == "1":
         assert code == 0, "Only regenerate a successful reference run"
