@@ -1744,8 +1744,7 @@ def stub_hosts(tmp_path, monkeypatch):
     def options(mode="none", max_length=None):
         checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode,
                               max_length=max_length)
-        return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
-                    dict(fresh_install_hash="1" * 64), host_overrides=dict(
+        return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml"), host_overrides=dict(
                     checkout=checkout, worker_argv=[sys.executable, str(WORKER)]))
 
     yield options, created, denied

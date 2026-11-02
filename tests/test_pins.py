@@ -1,7 +1,9 @@
 """Offline pin measurements use the real installer with a socket-free director."""
 
+import json
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
@@ -188,3 +190,203 @@ def test_source_in_slot_refuses_before_lease(monkeypatch, capsys):
     monkeypatch.setattr(pins, "HermesMemoryHost", lambda *a, **kw: pytest.fail("installed"))
     assert pins.run_pins(system="hermes-native", hermes=Path(fixedroot.PARENT) / "bicentennial-0") == 3
     assert capsys.readouterr().err.strip() == "sandbox_overlap"
+
+
+@pytest.mark.parametrize("kind", ["host", "cell"])
+def test_install_modes_pins_and_umask_restoration(kind, source, offline, tmp_path, monkeypatch):
+    import os
+
+    from bicentennial.harness.hermes.adapter import PinMismatch
+    from bicentennial.harness.hermes.config import layout
+    from bicentennial.systems.hermes_plugin import PluginCell
+
+    root, _ = source
+    entry = load(REGISTRY / "mem0-oss.toml")
+    entry["artifact"]["sha256"] = pins.archive_hash(root, TREES[entry["name"]])
+    entry["fresh_install_hash"] = ZERO_HASH
+    counter = 0
+
+    def install():
+        nonlocal counter
+        counter += 1
+        if kind == "host":
+            with fixedroot.lease(0, pins.PinsRefused) as sandbox:
+                return pins.measure_once(entry, sandbox, hermes=tmp_path,
+                                         plugin_source=root)["fresh_install_hash"]
+        adapter = SimpleNamespace(paths=layout(tmp_path / f"cell-{counter}", tmp_path),
+            director=SimpleNamespace(run_values={"director_port": "19000"}), _worker=None)
+        cell = PluginCell(entry, adapter)
+        cell.install(root, alias="bicentennial-main")
+        return cell.fresh_install_hash
+
+    original = os.umask(0o022)
+    try:
+        expected = install()  # zero pins remain usable for measurement, without starting workers
+        for mask in (0o022, 0o002, 0o077):
+            os.umask(mask)
+            assert install() == expected
+            assert os.umask(mask) == mask
+            entry["fresh_install_hash"] = expected
+            assert install() == expected
+            entry["fresh_install_hash"] = "f" * 64
+            with pytest.raises(PinMismatch, match=expected):
+                install()
+            assert os.umask(mask) == mask
+            entry["fresh_install_hash"] = ZERO_HASH
+        # Fail partway through installation, after creating at least one hashed entry.
+        def fail(*args):
+            raise OSError("install failed")
+
+        monkeypatch.setattr("bicentennial.systems.hermes_plugin.write_config", fail)
+        with pytest.raises(OSError, match="install failed"):
+            install()
+        assert os.umask(0o077) == 0o077
+    finally:
+        os.umask(original)
+    assert not offline.active
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o002, 0o077])
+def test_native_install_modes_and_pin(mask, offline, tmp_path):
+    import os
+
+    from bicentennial.harness.hermes.adapter import PinMismatch
+
+    entry = load(REGISTRY / "hermes-native.toml")
+    expected = pins.measure(entry, hermes=tmp_path)["fresh_install_hash"]
+    entry["fresh_install_hash"] = expected
+    original = os.umask(mask)
+    try:
+        with fixedroot.lease(0, pins.PinsRefused) as sandbox:
+            assert pins.measure_once(entry, sandbox, hermes=tmp_path)["fresh_install_hash"] == expected
+        entry["fresh_install_hash"] = "f" * 64
+        with fixedroot.lease(0, pins.PinsRefused) as sandbox, pytest.raises(PinMismatch, match=expected):
+            pins.measure_once(entry, sandbox, hermes=tmp_path)
+        assert os.umask(mask) == mask
+    finally:
+        os.umask(original)
+
+
+@pytest.fixture
+def preflight_run(monkeypatch, tmp_path):
+    from bicentennial.runner import compare, t1, t2lite
+
+    entry = load(REGISTRY / "hermes-native.toml")
+    ctx = SimpleNamespace(entry=entry, hermes=None, plugin_source=None, worker_argv=["unused"],
+        packs=[SimpleNamespace(life="synthetic", items={"B0": [], "B1": []})],
+        pins={"harness_hash": "a" * 64, "benchmark_commit": "b" * 40}, pack_hash="c" * 64)
+    monkeypatch.setattr(t1, "prepare", lambda **kw: ctx)
+    monkeypatch.setattr(t2lite, "_select", lambda *a: ([], None))
+    monkeypatch.setattr(t2lite, "_card", lambda *a, **kw: {})
+    monkeypatch.setattr(t2lite, "_references", lambda *a: ({}, {}))
+    monkeypatch.setattr(t2lite, "_secrets", lambda *a: set())
+    login = tmp_path / "login"
+    login.mkdir()
+    (login / "auth.json").write_text("{}")
+    for name in t2lite.LIVE_ENV:
+        monkeypatch.setenv(name, "test-value")
+
+    def invoke(tier, **kw):
+        kwargs = dict(system=entry["name"], packs_dir=tmp_path / "packs", pack_hash=ctx.pack_hash,
+                      out=tmp_path / "out", entry=entry, worker_argv=ctx.worker_argv, **kw)
+        return (compare.run_t1(**kwargs) if tier == "t1" else
+                t2lite.run_t2lite(**kwargs, login_home=login, max_sends=0))
+
+    return ctx, invoke
+
+
+@pytest.mark.parametrize("tier", ["t1", "t2lite"])
+def test_wrong_pin_preflight_before_arms_workers_and_cards(tier, offline, tmp_path, monkeypatch,
+                                                         capsys, preflight_run):
+    from bicentennial.runner import compare, t2lite
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("preflight allowed an arm, worker or card")
+
+    monkeypatch.setattr(compare, "_execute", forbidden)
+    monkeypatch.setattr(t2lite, "_unit", forbidden)
+    monkeypatch.setattr(t2lite, "_card", forbidden)
+    monkeypatch.setattr(t2lite, "build_live_stack", forbidden)
+    ctx, invoke = preflight_run
+    expected = pins.measure(ctx.entry, hermes=tmp_path)["fresh_install_hash"]
+    ctx.entry["fresh_install_hash"] = "f" * 64
+    assert invoke(tier) == 3
+    assert capsys.readouterr().err.strip() == (
+        "pin_mismatch fresh install differs from the pin: computed " + expected)
+    refusal = json.loads((tmp_path / "out/refusal.json").read_bytes())
+    assert refusal == {"code": "pin_mismatch", "detail": [
+        "fresh install differs from the pin: computed " + expected], **({"fields": []} if tier == "t1" else {})}
+    assert not (tmp_path / "out/card.json").exists()
+    assert not offline.active
+
+
+@pytest.mark.parametrize("tier", ["t1", "t2lite"])
+@pytest.mark.parametrize("declared", ["a" * 64, ZERO_HASH, "f" * 64])
+def test_preflight_selected_slot_lease_and_first_arm(tier, declared, preflight_run, monkeypatch, tmp_path):
+    from bicentennial.runner import compare, t2lite
+
+    class FirstArm(BaseException):
+        pass
+
+    ctx, invoke = preflight_run
+    ctx.entry["fresh_install_hash"] = declared
+    active, measured, arms = {0}, [], []  # Another run holds slot zero throughout.
+    sandbox = tmp_path / "selected-slot"
+
+    @contextmanager
+    def lease(slot, refused):
+        if slot in active:
+            raise refused("sandbox_busy")
+        assert slot == 3
+        active.add(slot)
+        try:
+            yield sandbox
+        finally:
+            active.remove(slot)
+
+    def measure(entry, root, **kw):
+        assert active == {0, 3}
+        assert root == sandbox
+        measured.append(root)
+        return {"fresh_install_hash": "a" * 64}
+
+    def arm(*a, **kw):
+        assert active == {0, 3}
+        assert measured == [sandbox]
+        if tier == "t2lite":
+            assert a[3] == "no_memory"
+        arms.append("first")
+        raise FirstArm
+
+    monkeypatch.setattr(fixedroot, "lease", lease)
+    monkeypatch.setattr(pins, "measure_once", measure)
+    monkeypatch.setattr(compare, "run_arms", arm)
+    monkeypatch.setattr(t2lite, "_unit", arm)
+    login = SimpleNamespace(drain=lambda: [])
+    stack = SimpleNamespace(inner=SimpleNamespace(login=login), close=lambda: None)
+    monkeypatch.setattr(t2lite, "build_live_stack", lambda *a, **kw: stack)
+    if declared == "f" * 64:
+        assert invoke(tier, sandbox_slot=3) == 3
+        assert arms == []
+    else:
+        with pytest.raises(FirstArm):
+            invoke(tier, sandbox_slot=3)
+        assert arms == ["first"]
+    assert measured == [sandbox]
+    assert active == {0}
+
+
+def test_preflight_checks_declared_archive_and_measures_once(source, offline, tmp_path):
+    from bicentennial.harness.hermes.adapter import PinMismatch
+
+    root, _ = source
+    entry = load(REGISTRY / "mem0-oss.toml")
+    entry["fresh_install_hash"] = ZERO_HASH
+    with fixedroot.lease(0, pins.PinsRefused) as sandbox, pytest.raises(PinMismatch, match="archive differs"):
+        pins.measure_once(entry, sandbox, hermes=tmp_path, plugin_source=root)
+    entry["artifact"]["sha256"] = pins.archive_hash(root, TREES[entry["name"]])
+    before = len(offline.ports)
+    with fixedroot.lease(0, pins.PinsRefused) as sandbox:
+        pins.measure_once(entry, sandbox, hermes=tmp_path, plugin_source=root)
+    assert len(offline.ports) == before + 1
+    assert not offline.active

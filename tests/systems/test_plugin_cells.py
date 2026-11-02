@@ -302,6 +302,7 @@ def test_install_ignores_git_location_variables(tmp_path, git_checkouts, monkeyp
         paths["root"] = root
         stub = SimpleNamespace(paths=paths, director=SimpleNamespace(run_values={"director_port": 12345}))
         e = entry("holographic")
+        e["fresh_install_hash"] = ZERO_HASH
         e["artifact"]["sha256"] = sha256(git_checkouts.archive).hexdigest()
         cell = PluginCell(e, stub)
         digest = cell.install(git_checkouts.checkout, alias="bicentennial-main")
@@ -330,6 +331,7 @@ def test_mem0_archive_repeatable(tmp_path):
 def make(scratch, label, name, digest):
     e, script = entry(name), deepcopy(SCRIPT)
     e["artifact"]["sha256"] = digest
+    e["fresh_install_hash"] = ZERO_HASH  # synthetic tree; install pin behavior has separate tests
     script["sessions"][0]["turns"][0]["user"] += " " + NONCE
     routes = {"routes": [{"system": name, "segment": "seg0", "probe_model": "probe-model",
                           "alias": "bicentennial-main", "summariser": "summary-model", "vision": None,
@@ -796,6 +798,7 @@ def test_plugin_wake_hashes_are_port_stable(tmp_path, monkeypatch, name):
         fake = SimpleNamespace(paths=paths, director=SimpleNamespace(run_values={"director_port": str(port)}))
         e = entry(name)
         e["artifact"]["sha256"] = digest
+        e["fresh_install_hash"] = ZERO_HASH
         cell = PluginCell(e, fake)
         cell.install(repo, alias="bicentennial-main")
         raw.append([h for _, h in cell.snapshots])

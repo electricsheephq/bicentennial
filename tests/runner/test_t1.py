@@ -110,6 +110,8 @@ def environment(monkeypatch):
     monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
+    # These tests exercise packs and arm policy with injected workers.
+    monkeypatch.setattr(t1.install_pins, "measure_once", lambda entry, sandbox, **kw: {"fresh_install_hash": entry["fresh_install_hash"]})
     monkeypatch.setattr(t1, "check_compile", lambda *a, **kw: {"ok": True})
 
 

@@ -150,10 +150,28 @@ def write_config(hermes_home, cfg: dict) -> Path:
             stream.write(canon(cfg) + b"\n")
             stream.flush()
             os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
         os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
     return path
+
+
+def install_directory(path):
+    """Create missing install directories with the modes produced by umask 022."""
+    path = Path(path)
+    missing = []
+    while not path.exists():
+        missing.append(path)
+        path = path.parent
+    for directory in reversed(missing):
+        directory.mkdir()
+        directory.chmod(0o755)
+
+
+def install_file(path, data):
+    path.write_bytes(data)
+    path.chmod(0o644)
 
 
 def layout(root, scratch) -> dict:
@@ -168,9 +186,9 @@ def layout(root, scratch) -> dict:
     validate_paths(paths)
     if paths["hermes_home"].exists():
         raise ValueError("hermes-home exists: every run starts from fresh directories")
-    paths["hermes_home"].mkdir(parents=True)
+    install_directory(paths["hermes_home"])
     for key in ("home", "workspace", "logs", "tmp"):
-        paths[key].mkdir(exist_ok=True)
+        install_directory(paths[key])
     return paths
 
 

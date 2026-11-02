@@ -384,24 +384,25 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
             plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv)
         ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2lite-" + uuid4().hex}))
-        selection, keep = _select(ctx, only)
-        references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
-                                           aa_of, aa_prime)
-        # A run whose --aa-of and --baseline name one directory is that run's A′, and its own outcomes are the band.
-        # Decided before any send, by file identity: a symlink or another spelling on a case-insensitive disk is the
-        # same directory, a copy at another path is not.
-        self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
-        # The benchmark commit stands for the director, reader and scorer code the floor ran.
-        key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
-                            ctx.pins["benchmark_commit"]])
-        floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
-        floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
-                              {p.life + b for p in ctx.packs for b in ("B0", "B1")})
-        cached = floor is not None
-        identity_check = None
-        floor_message = "floor: ran live"
-        needles = _secrets(home)
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
+            t1.check_install(ctx, scratch)
+            selection, keep = _select(ctx, only)
+            references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
+                                               aa_of, aa_prime)
+            # A run whose --aa-of and --baseline name one directory is that run's A′, and its own outcomes are the band.
+            # Decided before any send, by file identity: a symlink or another spelling on a case-insensitive disk is the
+            # same directory, a copy at another path is not.
+            self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
+            # The benchmark commit stands for the director, reader and scorer code the floor ran.
+            key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
+                                ctx.pins["benchmark_commit"]])
+            floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
+            floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
+                                  {p.life + b for p in ctx.packs for b in ("B0", "B1")})
+            cached = floor is not None
+            identity_check = None
+            floor_message = "floor: ran live"
+            needles = _secrets(home)
             stack = build_live_stack(out / "spend.json", login_home=home, run=ctx.run_id,
                 token_url=os.environ[LIVE_ENV[0]], client_id=os.environ[LIVE_ENV[1]],
                 base_url=os.environ[LIVE_ENV[2]],
@@ -519,11 +520,12 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     else:
                         for name, data in files.items():
                             (out / name).write_bytes(data)
-                _write(out, "refusal.json", dict(code=code))
+                _write(out, "refusal.json", dict(code=code, **(
+                    {"detail": list(error.detail)} if getattr(error, "detail", ()) else {})))
         except Exception:
             # A failure while refusing goes the tool_failure way, which removes everything written.
             return _tool_failure(out, created)
-        print(code, file=sys.stderr)
+        print(code, *(getattr(error, "detail", ()) if code == "pin_mismatch" else ()), file=sys.stderr)
         return 3
     except Exception:
         return _tool_failure(out, created)

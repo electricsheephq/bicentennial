@@ -30,12 +30,14 @@ from bicentennial.sandbox.fixedroot import remove_tree
 from bicentennial.score.bundle import make_bundle
 from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
+from bicentennial.systems import pins as install_pins
 from bicentennial.systems.hermes_plugin import (
     DEPENDENCIES,
     is_plugin,
     prepare_cache,
     resolve_worker_env,
     validate_maps,
+    verify_install_pin,
     worker_properties,
 )
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
@@ -296,6 +298,19 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         SessionGate(lock), current_lock, mint_id(canon(["t1", lock_hash(lock), system]).decode(), 0),
         2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table, model_cache, model_cache_sha256,
         properties)
+
+
+def check_install(ctx, sandbox):
+    """Refuse a wrong install pin before any arm, while holding the run's lease."""
+    try:
+        measured = install_pins.measure_once(ctx.entry, sandbox, hermes=ctx.hermes,
+            plugin_source=ctx.plugin_source,
+            worker_argv=[] if callable(ctx.worker_argv) else ctx.worker_argv)
+        verify_install_pin(ctx.entry, measured["fresh_install_hash"])
+    except install_pins.PinsRefused as error:
+        raise T1Refused(error.code, detail=error.detail) from None
+    except PinMismatch as error:
+        raise T1Refused("pin_mismatch", detail=(str(error),)) from None
 
 
 def _worker(ctx, life, branch, arm):

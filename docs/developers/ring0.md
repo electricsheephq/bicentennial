@@ -140,6 +140,8 @@ Unmeasured pins are declarations, never runnable. Admission refuses them. The pi
 
 The artifact digest is sha256 of `git archive --format=tar HEAD` from the clean pinned checkout. For plug-ins use `systems/hermes_plugin.py`'s `TREES` recipe: Holographic uses `HEAD`; Mem0 OSS adds `integrations/hermes-plugin-mem0` after `HEAD`.
 
+The non-zero fresh-install pin is compared at install, before the first worker session; T1 and T2-lite also check it in preflight before any arm starts. Install-created modes equal the umask-022 result, so the hash no longer depends on the process umask. A mismatch refuses with exit 3, `pin_mismatch`; the install exception includes the computed value. Re-measure with `bicentennial pins` as shown below.
+
 The fresh-install hash is a canonical tree listing of relative path, mode, size and content hash, excluding only declared volatile paths. E4 masks the director port in root `config.yaml` and `mem0.json` for the reported pin ([RING0 §13](../../specs/ring0/RING0.md#13-v01-errata)).
 
 ### Measure registry pins
@@ -271,7 +273,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `lock_mismatch` | Current run lock differs from expected lock. |
 | `gate_refused` | Host machine gate refused a spawn. |
-| `pin_mismatch` | Checkout does not match its pin. |
+| `pin_mismatch` | Checkout or measured fresh install does not match its pin. Install modes are independent of the umask; re-measure with `bicentennial pins`. |
 | `pins_unstable` | Two install measurements, in distinct roots on distinct director ports, differ; stderr prints both hashes. |
 | `SpendRefused` | Receipt has positive spend. |
 | `upstream_record` | Isolation audit found a forbidden upstream record or egress. |
