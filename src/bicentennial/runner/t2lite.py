@@ -395,8 +395,11 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         # same directory, a copy at another path is not.
         self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
         # The benchmark commit stands for the director, reader and scorer code the floor ran.
-        key = sha256_canon([ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
-                            ctx.pins["benchmark_commit"]])
+        key_parts = [ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
+                     ctx.pins["benchmark_commit"]]
+        if turn_wait_s != 3.0:
+            key_parts.append(f"turn_wait_s={turn_wait_s}")
+        key = sha256_canon(key_parts)
         floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
         floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
                               {p.life + b for p in ctx.packs for b in ("B0", "B1")})

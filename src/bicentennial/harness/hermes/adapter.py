@@ -46,6 +46,8 @@ _now = time.monotonic
 
 def turn_wait_seconds(value) -> float:
     """Validate the run's ordinary-turn quiet time without changing any run identity."""
+    if isinstance(value, bool):
+        raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive")
     try:
         seconds = float(value)
     except (TypeError, ValueError):

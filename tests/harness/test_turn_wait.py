@@ -1,8 +1,6 @@
 """Ordinary-turn timing and the retained shutdown settle, without listening sockets."""
 
-import ast
 import inspect
-import subprocess
 from contextlib import nullcontext
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -12,21 +10,8 @@ import pytest
 from bicentennial.canon import canon
 from bicentennial.harness.hermes import adapter
 
-BASE = "f6662e6ac4aa2813057d825e987b89f3122c59ff"
 
-
-def baseline_method(name):
-    source = subprocess.run(["git", "show", f"{BASE}:src/bicentennial/harness/hermes/adapter.py"],
-        check=True, capture_output=True, text=True).stdout
-    cls = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef) and n.name == "HermesAdapter")
-    node = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
-    namespace = dict(vars(adapter))
-    namespace["_now"] = lambda: adapter._now()
-    exec(compile(ast.Module(body=[node], type_ignores=[]), "<baseline adapter>", "exec"), namespace)
-    return namespace[name]
-
-
-def fake_session(root, wait, method=adapter.HermesAdapter.run_session, mode="boundary"):
+def fake_session(root, wait, mode="boundary"):
     root.mkdir()
     a = object.__new__(adapter.HermesAdapter)
     turns = [dict(n=n, user=str(n), assistant="done") for n in range(1, 6)]
@@ -55,7 +40,7 @@ def fake_session(root, wait, method=adapter.HermesAdapter.run_session, mode="bou
     a._spawn_open = lambda *args: ("session", history, False)
     drains = []
     a._drain = lambda *args: drains.append(args) or 0
-    result = method(a, 1, sim_t_s=0, lock_hash="a" * 64, attempt_id="attempt")
+    result = a.run_session(1, sim_t_s=0, lock_hash="a" * 64, attempt_id="attempt")
     stable = asdict(result)
     stable.pop("timings_ms")
     return drains, canon(stable)
@@ -64,10 +49,17 @@ def fake_session(root, wait, method=adapter.HermesAdapter.run_session, mode="bou
 def test_default_drain_calls_equal_baseline(tmp_path):
     default = inspect.signature(adapter.HermesAdapter).parameters["turn_wait_s"].default
     assert default == 3.0
-    current = fake_session(tmp_path / "current", default)
-    baseline = fake_session(tmp_path / "baseline", default, baseline_method("run_session"))
-    assert current == baseline
-    assert current[0] == [()] * 6
+    drains, stable = fake_session(tmp_path / "current", default)
+    # Five turns and session end all retain the no-argument call shape.
+    assert drains == [(), (), (), (), (), ()]
+    assert stable == canon(dict(session=1, kind="replay", acp_session_id="session", entrypoint="test-double",
+        turns_ok=5, finals_matched=5, restarts=[
+            dict(after_turn=2, kind="kill", mode="boundary", history_before=2, history_after=2),
+            dict(after_turn=3, kind="restart", mode="clean", history_before=3, history_after=3)],
+        compaction_expected=True, summariser_records=0,
+        surface_hash="4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        gate=[], finals=[[1, "done"], [2, "done"], [3, "done"], [4, "done"], [5, "done"]], reset=None,
+        active_memory_providers=[], end_threads=[]))
 
 
 @pytest.mark.parametrize("mode", ["boundary", "held"])
@@ -93,17 +85,18 @@ def test_drain_waits_for_continuous_quiet(monkeypatch, wait):
 
 
 def test_default_drain_loop_equals_baseline(monkeypatch):
-    def run(method):
-        clock = SimpleNamespace(now=1.0, sleeps=[])
-        def sleep(seconds):
-            clock.sleeps.append(seconds)
-            clock.now += seconds
-        monkeypatch.setattr(adapter.time, "monotonic", lambda: clock.now)
-        monkeypatch.setattr(adapter.time, "sleep", sleep)
-        monkeypatch.setattr(adapter, "_now", lambda: clock.now)
-        a = SimpleNamespace(director=SimpleNamespace(control=lambda: {"inflight": 0}))
-        return method(a), clock.sleeps
-    assert run(adapter.HermesAdapter._drain) == run(baseline_method("_drain"))
+    assert adapter.DRAIN_QUIET_S == 3.0
+    clock = SimpleNamespace(now=1.0, sleeps=[])
+    def sleep(seconds):
+        clock.sleeps.append(seconds)
+        clock.now += seconds
+    monkeypatch.setattr(adapter.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(adapter.time, "sleep", sleep)
+    monkeypatch.setattr(adapter, "_now", lambda: clock.now)
+    a = SimpleNamespace(director=SimpleNamespace(control=lambda: {"inflight": 0}))
+    assert adapter.HermesAdapter._drain(a) == 3000
+    assert clock.now == 4.0
+    assert clock.sleeps == [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 
 
 def test_turn_wait_never_exceeds_session_end(tmp_path, monkeypatch):

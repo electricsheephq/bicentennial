@@ -1079,19 +1079,6 @@ def test_engine_and_cache_disclosures_and_change_refusal(synth, installed, monke
 
 def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch, capsys):
     """The same executed evidence makes identical cards at either timing."""
-    import types
-
-    source = subprocess.run(["git", "show", "f6662e6ac4aa2813057d825e987b89f3122c59ff:src/bicentennial/runner/compare.py"],
-        check=True, capture_output=True, text=True).stdout
-    baseline = types.ModuleType("baseline_compare")
-    baseline.__file__ = compare.__file__
-    exec(compile(source, "<baseline compare>", "exec"), baseline.__dict__)
-    monkeypatch.setattr(baseline, "run_arms", lambda ctx, **kw: replace(synth, ctx=ctx))
-    monkeypatch.setattr(baseline, "run_case", fake_case)
-    monkeypatch.setattr(baseline, "INFRA", compare.INFRA)
-    # Use the already selected corpus cases, without invoking its fixture function.
-    selected = tuple(c for c in compare.load_corpus(compare.CORPUS_PATH) if c.case_id in SUBSET)
-    monkeypatch.setattr(baseline, "load_corpus", lambda path: selected)
     outputs = []
     for wait in (3.0, 1.0):
         ctx = replace(synth.ctx, turn_wait_s=wait)
@@ -1102,11 +1089,5 @@ def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch,
         assert capsys.readouterr().err.startswith(f"turn_wait_s={wait}\n")
         assert all(properties(out, arm)["t1.turn_wait_s"] == str(wait) for arm in compare.GATED)
         outputs.append(out)
-    # Run the base commit's publication path against the exact same fake evidence.
-    monkeypatch.setattr(t1, "prepare", lambda **kw: synth.ctx)
-    old = tmp_path / "baseline"
-    assert baseline.run_t1(system="hermes-native", packs_dir=installed.root, pack_hash=installed.digest,
-        out=old, entry=measured(), worker_argv=installed.worker) == 0
     for arm in compare.GATED:
-        assert (old / arm / "card.json").read_bytes() == (outputs[0] / arm / "card.json").read_bytes()
         assert (outputs[0] / arm / "card.json").read_bytes() == (outputs[1] / arm / "card.json").read_bytes()

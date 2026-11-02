@@ -42,7 +42,7 @@ def test_turn_wait_cli_default_and_range(monkeypatch, command, value):
 
 
 @pytest.mark.parametrize("command", ["t1", "t2lite"])
-@pytest.mark.parametrize("value", [0.4, 3.1, -1, "not-a-number"])
+@pytest.mark.parametrize("value", [0.4, 3.1, -1, "not-a-number", True, False])
 def test_direct_runner_wait_refusal_precedes_preparation(monkeypatch, tmp_path, capsys, command, value):
     monkeypatch.setattr(t1, "prepare", lambda **kw: pytest.fail("preparation started"))
     out = tmp_path / "out"
@@ -51,7 +51,7 @@ def test_direct_runner_wait_refusal_precedes_preparation(monkeypatch, tmp_path, 
     code = (compare.run_t1(**kw) if command == "t1" else
         t2lite.run_t2lite(**kw, login_home=tmp_path / "login", max_sends=0))
     assert code == 3 and capsys.readouterr().err == "usage\n"
-    assert not out.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("guide", ["ring0.md", "t2lite.md"])
@@ -62,3 +62,24 @@ def test_developer_guides_document_turn_wait(guide):
                      "published setting", "one-commit A/B", "your own", "kill or restart", "exit 3"):
         assert required in row
     assert ("`t1.turn_wait_s`" if guide == "ring0.md" else "`turn_wait_s`") in text
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_prepare_boolean_wait_refusal_precedes_inputs(monkeypatch, tmp_path, value):
+    monkeypatch.setattr(t1, "load", lambda *args: pytest.fail("inputs read before usage refusal"))
+    with pytest.raises(t1.T1Refused) as caught:
+        t1.prepare(system="hermes-native", packs=tmp_path / "packs", pack_hash="a" * 64, turn_wait_s=value)
+    assert caught.value.code == "usage"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_t2lite_outputs_table_documents_turn_wait():
+    text = (Path(__file__).resolve().parents[1] / "docs/developers/t2lite.md").read_text()
+    row = next(line for line in text.splitlines() if line.startswith("| `disclosures.json` |"))
+    assert "`turn_wait_s` (a decimal string, in seconds)" in row
+
+
+def test_t2lite_cache_key_documents_nondefault_turn_wait():
+    text = (Path(__file__).resolve().parents[1] / "docs/developers/t2lite.md").read_text()
+    paragraph = next(line for line in text.splitlines() if "floors are stored under a key" in line)
+    assert 'A non-default wait appends `turn_wait_s=<seconds>` to the key; at 3.0 seconds the key is unchanged.' in paragraph
