@@ -146,6 +146,6 @@ def compile_branch(db, schedule, cut, templates) -> Branch:
             entries.append(_entry(db, schedule, cut, t, i))
             key = i.probe_point, t.kind
             counts[key] = counts.get(key, 0) + 1
-            if schedule.scale.name == "t1" and counts[key] > (6 if t.kind == "qa" else 2):
-                raise ValueError("T1 probe budget exceeded")
+            if schedule.scale.name in ("t1", "t2") and counts[key] > (6 if t.kind == "qa" else 2):
+                raise ValueError("probe budget exceeded")
     return Branch(cut.life, cut.branch, seed, digest, tuple(sorted(entries, key=lambda e: e[0]["item_id"])))

@@ -347,6 +347,8 @@ These record where the v0.1 Kit's runners depart from the text above, and why. E
 
 - **E24. The v0.3/v0.4 split and T1's cut order** (§3, §6, §7). On 2026-11-02 the ROADMAP's v0.3 row was split (ERRATA-v2.2 E16): live G2 action scoring (#118) and the T0 Hermes-replay fallback (#165) move to v0.4, so §3's "for G2 from v0.3" and §7's "It ships in v0.3" now read v0.4. §6 said a T1 that misses its budget by more than 2× cuts the probe budget first, then B1's full replay. v0.2 measured T1's loop time (#383): the largest cost is the 3 s wait after every scripted turn, which should change nothing on T1's cards, though v0.2's A/B could not decide that (#383). So the order is: first the costs that should change nothing on T1's cards, starting with that wait, each checked by an A/B at one commit (#388); then the probe budget; then B1's full replay. This erratum records a roadmap change, not a runner departure. No frozen quantity changes.
 
+- **E25. The T2 shape (#391)** (§15). From the next kit, the named `t2` scale applies T1's shape rules at 10 sessions, and the compiler applies T1's probe cap to T2. §15 defines T2's composition, per-item probe isolation and provisional window, and fixes Ring 1's composition for any life count under §14.7. The controls pin moves, so packs built before this change no longer verify and are rebuilt with the kit batch (#389); no other pin moves. T0 and T1 item outcomes do not change.
+
 ## 14. The v0.3 developer loop
 
 **Status:** written for v0.3 before any run it governs. The bar's declaration (§14.8) cites the commit on `main` of this section as last amended before the declaration. PREREG-v0.5 governs every frozen quantity; this section defines terms that PREREG §6 and §8 leave open for the developer tiers and changes none of them. Developer tiers carry no decision bar: §14.1-§14.9 define one demonstration, PREREG §8's developer-product acceptance bar, and §14.10 defines the developer report.
@@ -437,6 +439,23 @@ The declaration; every run after it, with its cards; v1's A and A′ cards and b
 - **Also printed:** the operating-metric deltas from the receipts (wall time, requests and tokens by role, store growth, latency), and the failure taxonomy as a table of (cell, schedule stage, failure class) counts.
 - **Labels:** verdict-free: "a developer signal; not predictive of the full tier; confirm on Ring 1 before claiming".
 - Purpose: show the developer the noise between identical runs and the smallest change the pack can detect, so a flip list is never read as an effect.
+
+## 15. T2 composition
+
+**Lives:** 10 public base lives, 5 G1 and 5 G2, each with 10 sessions of about 5 assistant turns. Each B0 has its twin B1, replayed in full from session 1 as at T1 (§6).
+
+**The shape** is T1's rules scaled to 10 sessions, using the same preset formula:
+- **Checkpoints:** after sessions 5 and 10, halfway and at the end.
+- **The SIGKILL:** at the first turn boundary of session ⌈0.55 × 10⌉ = 6 on B0 and B1, then a cold restart.
+- **Compaction sprints:** one in sessions 2–5 and one in sessions 7–10, each at least 1.25 × W in history tokens. Compaction fires inside sessions; no separate compaction or restart fault is scheduled.
+- **One wiring-only swap:** at the start of session ⌈0.75 × 10⌉ = 8, using T1's aliases and route-switch rule (§6).
+- **Long gaps:** one over sessions 1–5 and one over sessions 6–10. Placement excludes session 1 and the fixed fault points, as it does at T1.
+
+**The probe budget** per (life, branch, checkpoint) inherits T1's cap: 6 QA and 2 action items. T2 compiles one probe session per item (`probe_mode="per_item"`), so isolation is per item: each probe runs on its own store clone. Probe answers are live. G2 action items run but are not scored live until #118.
+
+**The window:** T2 inherits T1's provisional W = 16K (§9; C-5).
+
+**Ring 1 composition:** for any life count n fixed by §14.7, n = max(10, ⌈12/f⌉), life k is G1 when k is odd and G2 when k is even, named in draw order. The first 10 lives are a reference roster of 5 G1 and 5 G2. Purpose: keep a group's share of counting lives matched to the public pack's as Ring 1 scales the life count.
 
 ## References
 
