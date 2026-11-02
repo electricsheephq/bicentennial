@@ -19,6 +19,7 @@ from bicentennial.director.upstream import login as custody
 from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
+from bicentennial.ledger import BlobStore, Guard
 from bicentennial.packs.install import verify
 from bicentennial.probe.scripted_reader import ReaderResult
 from bicentennial.report.receipt import (
@@ -39,6 +40,7 @@ from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
 from bicentennial.sandbox import fixedroot
+from bicentennial.sandbox.envserver.honeypot import hits
 from bicentennial.score.classes import outcome
 from bicentennial.systems.hermes_plugin import (
     cache_digest,
@@ -141,8 +143,12 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
         except LiveCredentialStop:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
+            # The adapter's honeypot count (harness/hermes/adapter.py), over the requests sent before the stop.
+            token, store = pack.meta["honeypot_token"], BlobStore(ledger / "blobs", Guard([]))
+            honeypot = hits(token, [store.get(r["req"]).decode() for r in rows
+                                    if r.get("type") == "request"]) if token else 0
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
-                tokens_by_role=_tokens(ledger, rows)))
+                tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot))
             raise
         runs.append(run)
         try:

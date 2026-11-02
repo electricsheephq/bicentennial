@@ -16,6 +16,7 @@ from bicentennial.contracts.run import validate
 from bicentennial.director.responder import Call, Reply
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
+from bicentennial.ledger import BlobStore, Guard
 from bicentennial.packs.install import verify as verify_pack
 from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.probe.scripted_reader import UNKNOWN, ReaderResult
@@ -299,6 +300,30 @@ def test_honeypot_invalid_outranks_stop_with_canary_first(scenario, tmp_path, mo
     assert runner._read(scenario.out, "refusal.json") == {"code": "canary" if "canary" in stop else "honeypot"}
     assert sorted(p.name for p in scenario.out.iterdir()) == ["refusal.json"]
     assert not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize("sent,mode,code", [("synthetic-honey", "credential", "honeypot"),
+    ("synthetic prompt", "credential", "credential_stop"), (None, "credential", "credential_stop"),
+    ("synthetic-honey", "canary_credential", "canary")])
+def test_credential_stop_counts_the_stopped_attempts_requests(scenario, monkeypatch, sent, mode, code):
+    # A honeypot read before a credential stop in the same attempt still voids the run, after the canary.
+    drive = runner.run_life
+    def send_then_stop(**kw):
+        if sent is not None:
+            ledger = kw["scratch"] / kw["branch"] / "run/ledger"
+            store = BlobStore(ledger / "blobs", Guard([]))
+            rows = ({"type": "session", "session": 21}, {"type": "request", "role": "probe_main", "seq": 1, "t_ms": 5,
+                "req": store.put({"messages": [{"role": "tool", "content": sent}]}),
+                "resp": store.put({"usage": {"prompt_tokens": 2, "completion_tokens": 1}})})
+            (ledger / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows))
+        scenario.mode = mode
+        return drive(**kw)
+    monkeypatch.setattr(runner, "run_life", send_then_stop)
+    assert scenario.invoke() == 3
+    assert len(scenario.seen) == 1
+    assert runner._read(scenario.out, "refusal.json") == {"code": code}
+    assert sorted(p.name for p in scenario.out.iterdir()) == (
+        ["custody.json", "receipt.json", "refusal.json"] if code == "credential_stop" else ["refusal.json"])
 
 
 def test_honeypot_in_earlier_repetition_preserves_cached_floor(scenario, tmp_path, monkeypatch):
