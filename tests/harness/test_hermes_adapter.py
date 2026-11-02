@@ -653,16 +653,20 @@ def test_drain_waits_for_its_quiet_period(tmp_path, monkeypatch, quiet, busy_pol
     from types import SimpleNamespace
 
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 3.0)
-    clock, slept, polls = [100.0], [], []
-    monkeypatch.setattr(adapter, "_now", lambda: clock[0])
-    monkeypatch.setattr(adapter.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(adapter.time, "sleep", lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
     a = make(tmp_path, "drain-quiet", faults=[])
+    clock, slept, polls = [100.0], [], []
+    # Only the adapter module's own clock is faked, after make(): the egress thread make() started keeps the real one.
+    fake = SimpleNamespace(monotonic=lambda: clock[0],
+                           sleep=lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
+    monkeypatch.setattr(adapter, "time", fake)
+    monkeypatch.setattr(adapter, "_now", fake.monotonic)
     real, a.director = a.director, SimpleNamespace(
         control=lambda: polls.append(clock[0]) or {"inflight": int(len(polls) <= busy_polls)})
     try:
         elapsed = a._drain() if quiet is None else a._drain(quiet)
         assert slept == sleeps and elapsed == int(sum(sleeps) * 1000)
     finally:
+        monkeypatch.setattr(adapter, "time", time)
+        monkeypatch.setattr(adapter, "_now", time.monotonic)
         a.director = real
         a.close()

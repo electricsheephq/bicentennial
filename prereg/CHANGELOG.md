@@ -4,7 +4,7 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 
 ## Ring 0 erratum, 2026-11-02: the wait after each turn is 1 s (#267)
 - **RING0 §13 E24:** from the next kit, the Hermes harness waits 1.0 s with nothing in flight after each turn, polled every 0.25 s, instead of 3.0 s. The wait at each session's end keeps 3.0 s. In T1's measured runs at `c9bf10b`, those waits were the largest part of T1's loop time, almost all of it with nothing in flight. No pin, card, schema or receipt field changes; the receipts' `drain` timings shrink. v0.1's frozen kit keeps 3.0 s.
-- **RING0 §6, the cut order:** v0.2 first cuts costs that change nothing T1 measures; the probe budget, then B1's full replay, are cut only if that is not enough and a measured saving justifies it. The measurement showed that one action item per checkpoint would save at most about 10% and moves packs, and that forking B1 would save almost nothing. The cut order is not a pre-registered quantity: PREREG §6 fixes only T1's ≤ 10 min engineering budget. The ROADMAP's v0.2 row says the same.
+- **RING0 §6, the cut order:** v0.2 first cuts costs that change nothing T1 measures; the probe budget, then B1's full replay, are cut only if that is not enough and a measured saving justifies it. The measurement showed that one action item per checkpoint would save at most about 10% and moves packs, and that forking B1 would save almost nothing. The cut order is not a pre-registered quantity: PREREG §6 fixes T1's contents and its ≤ 10 min, $0 engineering budget, but no order of cuts. The ROADMAP's v0.2 row says the same.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Ring 0 erratum, 2026-11-01: the carry-over diagnostic reads earlier answers by their content (#352, #355)
