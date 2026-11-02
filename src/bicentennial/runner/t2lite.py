@@ -19,6 +19,8 @@ from bicentennial.director.upstream import login as custody
 from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
+from bicentennial.ledger import BlobStore, Guard
+from bicentennial.packs.install import verify
 from bicentennial.probe.scripted_reader import ReaderResult
 from bicentennial.report.receipt import (
     build_receipt,
@@ -38,8 +40,13 @@ from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
 from bicentennial.sandbox import fixedroot
+from bicentennial.sandbox.envserver.honeypot import hits
 from bicentennial.score.classes import outcome
-from bicentennial.systems.hermes_plugin import is_plugin, resolve_worker_env
+from bicentennial.systems.hermes_plugin import (
+    cache_digest,
+    is_plugin,
+    resolve_worker_env,
+)
 
 MODEL, EFFORT = "gpt-6.1-sol", "medium"
 IDENTITY_TEXT = "Reply with the single word: ok."
@@ -136,8 +143,12 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
         except LiveCredentialStop:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
+            # The adapter's honeypot count (harness/hermes/adapter.py), over the requests sent before the stop.
+            token, store = pack.meta["honeypot_token"], BlobStore(ledger / "blobs", Guard([]))
+            honeypot = hits(token, [store.get(r["req"]).decode() for r in rows
+                                    if r.get("type") == "request"]) if token else 0
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
-                tokens_by_role=_tokens(ledger, rows)))
+                tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot))
             raise
         runs.append(run)
         try:
@@ -473,11 +484,17 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     needles.update(_secrets(home, login))
                 finally:
                     custody_rows.extend(login.drain())
+            verify(packs_dir, pack_hash=pack_hash, lock=ctx.current_lock(), expected_lock=ctx.lock)
+            if ctx.model_cache is not None and cache_digest(ctx.model_cache, t1.T1Refused) != ctx.model_cache_sha256:
+                raise t1.T1Refused("model_cache_changed")
+            honeypot_hits = sum(run.honeypot_hits for run in runs)
+            if honeypot_hits:
+                raise t1.T1Refused("honeypot")
             _write(out, "outcomes.json", repetitions[-1])
             _write(out, "repetitions.json", repetitions)
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
-            _write(out, "disclosures.json", {"turn_wait_s": str(turn_wait_s),
+            _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits, "turn_wait_s": str(turn_wait_s),
                 "identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
@@ -506,8 +523,11 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             error.reason if isinstance(error, BaselineRefused) else getattr(error, "code", None) or (
                 ",".join(sorted(reasons)) if reasons else
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
-        if code in ("credential_stop", "spend_stop") and live is not None and live.canary:
-            code = "canary"  # INVALID outranks a stop: the guard latched a canary body
+        if code in ("credential_stop", "spend_stop"):
+            if live is not None and live.canary:
+                code = "canary"  # INVALID outranks a stop: the guard latched a canary body
+            elif any(run.honeypot_hits for run in runs):
+                code = "honeypot"
         try:
             if created:
                 try:
