@@ -604,7 +604,7 @@ def test_before_shutdown_observes_final_turn_before_end(tmp_path, monkeypatch):
     # Exercise run_session's actual ordering without relying on host process permissions.
     monkeypatch.setattr(a, "_gate", lambda readings: None)
     monkeypatch.setattr(a, "_spawn_open", lambda *args: ("sid", 0, False))
-    monkeypatch.setattr(a, "_drain", lambda: order.append("drain") or 0)
+    monkeypatch.setattr(a, "_drain", lambda *_: order.append("drain") or 0)
     replies = {turn["user"]: turn["assistant"] for turn in SCRIPT["sessions"][0]["turns"]}
     a._worker = SimpleNamespace(call=lambda **kw: order.append("turn") or {
         "ok": True, "final": replies[kw["text"]], "history": 0},
@@ -619,4 +619,50 @@ def test_before_shutdown_observes_final_turn_before_end(tmp_path, monkeypatch):
         session(a, 1)
         assert "before" not in order and order[-1] == "end"
     finally:
+        a.close()
+
+
+def test_turn_drains_wait_less_than_the_session_end(tmp_path, monkeypatch):
+    """Each turn's drain waits DRAIN_TURN_QUIET_S; the session end keeps DRAIN_QUIET_S (RING0 §13 E24)."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 3.0)
+    quiets = []
+    a = make(tmp_path, "turn-drain", faults=[])
+    monkeypatch.setattr(a, "_gate", lambda readings: None)
+    monkeypatch.setattr(a, "_spawn_open", lambda *args: ("sid", 0, False))
+    monkeypatch.setattr(a, "_drain", lambda quiet=None: quiets.append(quiet) or 0)
+    replies = {turn["user"]: turn["assistant"] for turn in SCRIPT["sessions"][0]["turns"]}
+    a._worker = SimpleNamespace(call=lambda **kw: {"ok": True, "final": replies[kw["text"]], "history": 0},
+                                kill=lambda: None)
+    monkeypatch.setattr(a, "_end", lambda: ())
+    try:
+        result = session(a, 1)
+        assert adapter.DRAIN_TURN_QUIET_S == 1.0
+        assert quiets == [1.0] * result.turns_ok + [None] and result.turns_ok == 5
+    finally:
+        a.close()
+
+
+@pytest.mark.parametrize(("quiet", "busy_polls", "sleeps"), [
+    (None, 0, [0.5] * 6),           # the session end: 3.0 s quiet, polled every 0.5 s
+    (1.0, 0, [0.25] * 4),           # after a turn: 1.0 s quiet, polled every 0.25 s
+    (1.0, 2, [0.25] * 6),           # a request in flight at the first two polls restarts the quiet period
+])
+def test_drain_waits_for_its_quiet_period(tmp_path, monkeypatch, quiet, busy_polls, sleeps):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 3.0)
+    clock, slept, polls = [100.0], [], []
+    monkeypatch.setattr(adapter, "_now", lambda: clock[0])
+    monkeypatch.setattr(adapter.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(adapter.time, "sleep", lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
+    a = make(tmp_path, "drain-quiet", faults=[])
+    real, a.director = a.director, SimpleNamespace(
+        control=lambda: polls.append(clock[0]) or {"inflight": int(len(polls) <= busy_polls)})
+    try:
+        elapsed = a._drain() if quiet is None else a._drain(quiet)
+        assert slept == sleeps and elapsed == int(sum(sleeps) * 1000)
+    finally:
+        a.director = real
         a.close()

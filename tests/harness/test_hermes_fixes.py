@@ -586,7 +586,7 @@ def test_session_timing_boundaries_without_worker(tmp_path, monkeypatch, hook, r
     a._spawn_open = spawn
     a._worker = SimpleNamespace(call=lambda **kw: (advance(0.125),
         {"ok": True, "final": "a", "history": 1})[1])
-    a._drain = lambda: (advance(0.125), 125)[1]
+    a._drain = lambda *_: (advance(0.125), 125)[1]
     a._end = lambda: (advance(0.125), ())[1]
     a.records = lambda: []
     a.before_shutdown = (lambda: advance(0.125)) if hook else None
@@ -809,8 +809,8 @@ def test_session_shutdown_checks_director(tmp_path, monkeypatch, phase, stopped,
                 inject()
         return out
 
-    def drain():
-        elapsed = real_drain()
+    def drain(*args):
+        elapsed = real_drain(*args)
         drains.append(elapsed)
         if phase == "drain" and len(drains) == len(acceptance.SCRIPT["sessions"][0]["turns"]) + 1:
             inject()
