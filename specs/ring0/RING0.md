@@ -4,8 +4,8 @@
 
 **What Ring 0 is** (PREREG §6 l.383-388; DESIGN §9.1). Ring 0 is the public developer packs. Every Ring 0 result carries these labels:
 - "not predictive of the full tier; never certifies";
-- "filters: not run (v0.2)";
-- "rungs: uncalibrated (v0.2)";
+- "filters: not run";
+- "rungs: uncalibrated";
 - "voice: template".
 
 Each lever takes one uncalibrated value in v0.1. The developer tiers carry no decision bar.
@@ -31,7 +31,7 @@ The scripted reader answers T0 and T1 probes without a model. It is deterministi
 1. The reader selects the first present option with a non-empty token list.
 2. If none is present, it selects the empty-token option. If the item has no empty-token option, the reader emits UNKNOWN.
 
-The order encodes one leniency: when the gold evidence and a stale or decoy value are both present, the reader acts on gold. A lossless store that keeps the stale value beside the current one therefore loses nothing here. The **competing-token diagnostic** records it: every option with a non-empty token list that is present but not selected is listed on the item's result. The card prints the share of items with a competing option present, per system and per track. Lenient scoring under-tests supersession, and the card says so; the live tiers (T2 and up, v0.2) judge it with a model.
+The order encodes one leniency: when the gold evidence and a stale or decoy value are both present, the reader acts on gold. A lossless store that keeps the stale value beside the current one therefore loses nothing here. The **competing-token diagnostic** records it: every option with a non-empty token list that is present but not selected is listed on the item's result. The card prints the share of items with a competing option present, per system and per track. Lenient scoring under-tests supersession, and the card says so; the live tiers judge it with a model (T2-lite's probe answers from v0.2, T2 and up from v0.3).
 
 **Outputs:**
 - **A QA item** yields its typed envelope, from the selected option:
@@ -111,7 +111,7 @@ Act results at T0 and T1 carry the label **"evidence-conditioned scripted action
 - PREREG §3 takes the action class from the trace and the end state;
 - a scripted policy's trace measures whether the evidence was available, not what a model would do with it.
 
-The live tiers (v0.2) carry the Act stage proper.
+The live tiers carry the Act stage proper: for G1 from T2-lite (v0.2), and for G2 from v0.3, once its action predicates score a live action by meaning (ROADMAP, v0.3 row).
 
 ## 4. Stable and volatile result fields
 
@@ -174,7 +174,7 @@ The determinism check names the first stable field that differs.
 - **The SIGKILL:** a kill of the harness process at the first turn boundary of session ⌈0.55 × 20⌉ = 11, on B0 and B1, then a cold restart. This is the board rule (PREREG §6) scaled to 20 sessions.
 - **Compaction sprints:** at least 2 per life, one before session 11 and one after it. Each is at least 1.25 × W in history tokens, at the provisional C-5 window W (§9; K02). Compaction then fires inside sessions.
 - **One wiring-only swap:** at the start of session 15, the route table moves the harness's alias from `bicentennial-main` to `bicentennial-swap`. The scripted model serves both aliases identically, so the swap exercises the harness's model-switch path and not a model.
-- **Delivery faults** (DESIGN §6.5) are not in fault-lite, so T1 has no exactly-once invariant (v0.2).
+- **Delivery faults** (DESIGN §6.5) are not in fault-lite, so T1 has no exactly-once invariant.
 
 **Checkpoints:** after sessions 10 and 20. One is before the kill and one is after it.
 
@@ -206,7 +206,7 @@ The oracle-evidence, full-history and naive-RAG columns are cached with the pack
 **Forgetting is not exercised at T1.** The scripted model only adds (§2), so no deletion is ever requested.
 - KEEP-FORGET and KEEP-NEIGH items are reported "not exercised at T1" and sit outside the T1 gate. They are never scored as a system failure.
 - T0 exercises forgetting through the adapter contract (§7).
-- A content-blind delete for T1 waits for v0.2: it needs a declared forget plan per system and a forget target that a script can carry without a gold token.
+- A content-blind delete for T1 waits for a later release: it needs a declared forget plan per system and a forget target that a script can carry without a gold token.
 
 **The T1 gate** is PASS only when all of the following hold:
 - every S05 invariant passes:
@@ -234,7 +234,7 @@ A first run has no baseline card. If every other condition holds, it is a labell
   - **API systems** go through the adapter contract (§11), settle included.
   - **Hermes plug-in systems** go through an in-process memory host. It calls the provider's documented lifecycle hooks, in their documented order, to ingest each scripted turn. The content-blind write rule (§2) fills its write tools, and the reader's recall call uses its read tools.
   - **Hermes native memory** is driven through its documented agent tools, `memory` and `session_search`, called in process with the arguments an agent would send. The host also gives the reader the session-start memory snapshot that pinned Hermes injects into the system prompt, rendered by Hermes's own code at session open. Other harness prompt injection is not exercised, and the run discloses this in its JUnit properties (§13 E7).
-- **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed. It ships in v0.2 (§13 E5).
+- **The fallback** is Hermes replay through the T1 adapter, with a clone per probe. It does not meet the 60 s target, and the miss is disclosed. It ships in v0.3 (ROADMAP, v0.3 row; §13 E5 predates the 2026-11-01 re-plan).
 - **Forgetting:** at each forget-request event, the runner calls `forget(selector)` with the target's locked tokens as the selector.
   - Each adapter maps the call onto the system's documented deletion surface: Hermes native's `memory` `remove`, Mem0's delete after its own search, Holographic's forget or remove action (C-6).
   - A plug-in host handles each distinct written text once per call, and keeps one row for each unselected event with the same text. With a search backend it searches that text again after each pass that issued a delete, until a pass issues none. A row already decided is not decided again, so the search ends. Rows past one result page are reached only while each pass deletes a row: a page filled with kept or unowned rows ends the search. Systems that record searches see the extra ones: Holographic adds a retrieval to each row a search returns, including rows the forget keeps, and Mem0 makes an embedding request for each search.

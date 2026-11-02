@@ -330,7 +330,7 @@ The **write-turn prompt text** is open. Ring 0 runs with a scripted model and se
 **The lever-mix shape at Ring 0 v0.1:**
 - each cell varies only its primary lever (`docs/inventory/CELLS-v0.md`), at one uncalibrated value;
 - every other lever sits at its neutral value: no interference unless the cell is an interference cell, and at least one wake between the evidence and the item;
-- packs are labelled "rungs: uncalibrated (v0.2)".
+- packs are labelled "rungs: uncalibrated".
 
 **Direction labels:** each template carries one, written before any system runs. No label exceeds 40% of a track's scored items in a pack (PREREG §4, §9).
 
@@ -359,7 +359,7 @@ The **write-turn prompt text** is open. Ring 0 runs with a scripted model and se
 **How the entries bind.**
 - The T0 and T1 runners will refuse a real system on any template that has no entry here, or whose entry's hash does not match the template build (exit 3). Controls are not refused. Until those runners land, the only check is the repository test that fails when the committed file no longer matches the template build.
 - A template change that alters any recorded field is a new template version with its own entry, written before a real system runs on it.
-- T0 relation rows (the invariance and direction rows) sit at other distance and wake values as diagnostics, not rungs. Rungs come with calibration in v0.2.
+- T0 relation rows (the invariance and direction rows) sit at other distance and wake values as diagnostics, not rungs. Rungs per cell come in v0.3 (ROADMAP).
 
 **Limits stated at the freeze.**
 - The direction cap (no label above 40% of a track's scored items in a pack) is a pack-level gate over both genres. At Ring 0 v0.1 it is not met wherever one label holds more than 40% of a track. The pack build's distribution check will report it per pack; until that lands, this record is the disclosure. That holds for Wake (one template), for Tuesday and Recall (two templates with two labels, so 50% each) and for Keep at T1, which uses only `keep-incidental-v1`. The Drift share depends on which Drift templates a pack selects, and is known only once a pack is built.

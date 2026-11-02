@@ -57,8 +57,8 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 
 **E9. S6 in v0.1 runs without Learn chains.**
 - **The text:** DESIGN §6.10 and PREREG §6 give S6 the cost of the Learn chains on each life's critical path.
-- **The conflict:** Learn chains are a v0.2 deliverable (ROADMAP).
-- **In v0.1:** S6 reports their term, C_learn, as missing, with the break-even that S6b computed. The term is measured in v0.2, before any Learn chain enters a run of record.
+- **The conflict:** Learn chains are a Pilot deliverable (ROADMAP).
+- **In v0.1:** S6 reports their term, C_learn, as missing, with the break-even that S6b computed. The term is measured in the Pilot, before any Learn chain enters a run of record.
 
 ## Cases PREREG-v0.4 leaves open (provisional rules; queued for PREREG-v0.6)
 
@@ -91,7 +91,7 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 
 **E12. Act in the v0.1 Kit.**
 - **The text:** the ROADMAP's v0.1 row ships "Ring 0 developer packs for the Remember, Survive and Act stages".
-- **The clarification:** at T0 and T1, Act is the scripted reader's evidence-conditioned action, executed and scored by the real action scorer. It carries the label "evidence-conditioned scripted action; not an Act judgement" (RING0 §3), because a scripted policy measures whether the evidence was available, not what a model does with it. The live tiers (v0.2) carry the Act stage proper.
+- **The clarification:** at T0 and T1, Act is the scripted reader's evidence-conditioned action, executed and scored by the real action scorer. It carries the label "evidence-conditioned scripted action; not an Act judgement" (RING0 §3), because a scripted policy measures whether the evidence was available, not what a model does with it. The live tiers carry the Act stage proper: for G1 from T2-lite (v0.2), and for G2 from v0.3.
 - **Where it is fixed:** the ROADMAP carries a note to this effect.
 
 **E13. API-mode adapter ingest checks (Phase 1, #213; addition to DESIGN §6.9).**

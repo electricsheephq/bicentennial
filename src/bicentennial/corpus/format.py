@@ -66,7 +66,7 @@ def _leaves(value, field):
 
 def check_source(source):
     if type(source) is str and source.startswith("equal_run:"):
-        raise ValueError("equal_run needs a board roster (v0.2)")
+        raise ValueError("equal_run needs a board roster")
     admitted = tuple(f"control:{n}" for n in CONTROLS) + tuple(
         f"reference_stub:{n}" for n in REFERENCE_STUBS if n != PASS_ORACLE)
     if type(source) is not str or source not in admitted:
