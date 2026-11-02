@@ -170,6 +170,18 @@ def test_tools_and_explicit_writes_only(provider):
         p.handle_tool_call("unknown", {})
 
 
+@pytest.mark.parametrize("value", [123, None, {"text": "alpha"}, ["alpha"], True])
+def test_non_string_arguments_are_refused_and_never_stored(provider, value):
+    p = provider
+    assert call(p, "add", content="alpha") == {"id": "m000001"}
+    before = p.store.path.read_bytes()
+    for tool, key in (("add", "content"), ("search", "query"), ("delete", "memory_id")):
+        with pytest.raises(ValueError, match=f"{key} must be a string"):
+            p.handle_tool_call(f"naive_rag_{tool}", {key: value})
+    assert p.store.path.read_bytes() == before
+    assert call(p, "search", query="alpha", whole=True) == {"results": [{"id": "m000001", "content": "alpha"}]}
+
+
 def test_whole_search_ranks_distinct_memories_by_best_chunk(provider):
     p = provider
     texts = ["\n" + "alpha " * 230 + "\n", "alpha", "alpha beta", "alpha gamma",

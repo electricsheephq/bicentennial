@@ -9,6 +9,13 @@ from .store import Store
 from .tfidf import TOP_K, scored
 
 
+def _text(args, key):
+    """A string argument; anything else is refused before it can reach the store."""
+    if type(args[key]) is not str:
+        raise ValueError(f"{key} must be a string")
+    return args[key]
+
+
 class NaiveRagProvider(MemoryProvider):
     name = "naive-rag-dev"
 
@@ -37,12 +44,12 @@ class NaiveRagProvider(MemoryProvider):
     def handle_tool_call(self, tool_name, args, **kwargs):
         with self.lock:
             if tool_name == "naive_rag_add":
-                result = {"id": self.store.add(args["content"])}
+                result = {"id": self.store.add(_text(args, "content"))}
             elif tool_name == "naive_rag_delete":
-                result = {"deleted": self.store.delete(args["memory_id"])}
+                result = {"deleted": self.store.delete(_text(args, "memory_id"))}
             elif tool_name == "naive_rag_search":
                 results, seen = [], set()
-                for _, mid, ordinal, text in scored(self.store.memories, args["query"]):
+                for _, mid, ordinal, text in scored(self.store.memories, _text(args, "query")):
                     if args.get("whole", False):
                         if mid in seen:
                             continue
