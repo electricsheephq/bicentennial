@@ -35,6 +35,7 @@ from bicentennial.runner.hermes_score import MISSING, Infra, score_item
 from bicentennial.runner.life import STEP_S
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
+    LiveStop,
     ProbeLiveLeg,
     strip_contract,
 )
@@ -204,6 +205,18 @@ def test_credential_stop_and_identity(reason, login_stop):
     assert leg.identity_flags == {21}
 
 
+@pytest.mark.parametrize("state,reason", [
+    ({"stopped": True, "stop_reason": "upstream_invalid_request_4xx"}, "upstream_invalid_request_4xx"),
+    ({"stop_reason": "responder_error:x"}, "responder_error:x"),
+    ({"stopped": True}, "stopped")])
+def test_item1_session_boundary_live_stop(state, reason):
+    _, leg, live, _ = unit_leg()
+    live.values.update(state)
+    with pytest.raises(LiveStop) as error:
+        leg.check_session()
+    assert error.value.reason == reason
+
+
 def test_only_probe_main_reaches_leg():
     _, leg, live, call = unit_leg()
     scripted_calls = []
@@ -319,6 +332,35 @@ def test_credential_stops_before_next_session(lives, tmp_path, unit_sessions, mo
     with pytest.raises(LiveCredentialStop, match="upstream_401"):
         drive(lives["t1-g1", "B0"], tmp_path, live=live)
     assert indices == [1] and closed == [True]
+
+
+@pytest.mark.parametrize("last", [False, True])
+def test_items1_2_live_stop_at_next_session_boundary(lives, tmp_path, unit_sessions, monkeypatch, last):
+    case, live = lives["t1-g1", "B0"], FakeLive()
+    stop_at = case["compiled"].probes[-1 if last else 0].index
+    original, indices, closed = adapter.HermesAdapter.run_session, [], []
+    def run(self, index, **kwargs):
+        indices.append(index)
+        return original(self, index, **kwargs)
+    def respond(call):
+        if call.cursor["session"] == stop_at:
+            live.values.update(stopped=True, stop_reason="upstream_invalid_request_4xx")
+            return Reply(503, "live_stopped", "live", call.model)
+        return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
+    close = adapter.HermesAdapter.close
+    def finish(self):
+        closed.append(True)
+        return close(self)
+    live.reply = respond
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", run)
+    monkeypatch.setattr(adapter.HermesAdapter, "close", finish)
+    with pytest.raises(LiveStop, match="upstream_invalid_request_4xx"):
+        drive(case, tmp_path, live=live)
+    order = [s["index"] for s in case["compiled"].script["sessions"]]
+    expected = order[:order.index(stop_at) + 1]
+    assert indices == expected and len(indices) == len(expected) and closed == [True]
+    if not last:
+        assert len(live.calls) == 1
 
 
 def test_identity_and_spend_records(lives, tmp_path, unit_sessions):
