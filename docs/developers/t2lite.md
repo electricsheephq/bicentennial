@@ -58,7 +58,7 @@ Only `probe_main` goes live among director requests; replay, write, extraction, 
 | Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain. |
 | Credential or spend stop | No card; `refusal.json` with `credential_stop` or `spend_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. |
 | INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. Canary and honeypot outrank a stop; canary comes first. |
-| Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later preparation/reference refusals send nothing but can leave `refusal.json`. |
+| Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later refusals send nothing but can leave `refusal.json`; they come in this order: preparation (pins, packs, system); inside the sandbox lease, the slot (`sandbox_busy`) and the measured install pin (`pin_mismatch`); then the selection, baseline and reference checks. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
 A card is published only after scanning all outputs for login secrets. A refusal can therefore replace an otherwise complete run. Inspect stderr when no output directory was created.
@@ -89,7 +89,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 
 | File | Meaning |
 |---|---|
-| `refusal.json` | Stop code; spend stops retain the same file set. |
+| `refusal.json` | Stop code, with `detail` when the refusal has one (the computed fingerprint for an install `pin_mismatch`, the holder pid for `sandbox_busy`); spend stops retain the same file set. |
 | `receipt.json` | INFRA_FAILURE receipt for work actually performed. |
 | `custody.json` | Secret-free custody records explaining the stop. |
 
@@ -161,7 +161,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `operator_identity` | Operator-marked login cannot run lcm-x. |
 | `out_exists` | Output already exists, including a symlink. |
 | `output_overlap` | Output overlaps login, packs or cache. |
-| `pin_mismatch` | Checkout does not match its pin. |
+| `pin_mismatch` | Checkout or measured fresh install does not match its pin; for the install pin, stderr and `refusal.json` show the computed value. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `pins_unstable` | `bicentennial pins` only: two install measurements, in distinct roots on distinct director ports, differ. |
 | `plugin_deps_check_failed` | Worker inspection cannot start, times out, lacks marker support, or returns invalid output. |
@@ -171,7 +171,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `refused` | Install CLI or `bicentennial pins` filesystem or value error; `bicentennial pins` adds the error text. |
 | `rerun_arguments` | Incompatible references, checkpoint or repetition arguments. |
 | `route_unroutable` | Registered model route cannot be resolved. |
-| `sandbox_busy` | The selected slot is locked; exit 3. |
+| `sandbox_busy` | The selected slot is locked; `detail` names the holder pid; exit 3. |
 | `sandbox_overlap` | An input, login, reference, output or cache overlaps a destructive sandbox slot. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |

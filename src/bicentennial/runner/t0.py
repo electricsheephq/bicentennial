@@ -1035,12 +1035,16 @@ def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
                 "SpendRefused" if isinstance(error, SpendRefused) else
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch")
             fields = tuple(sorted(getattr(error, "fields", ())))
+            # A pin mismatch names what was found, as T1 and T2-lite do: the install pin's message carries the computed
+            # fingerprint, shown on stderr and in refusal.json.
+            detail = tuple(getattr(error, "detail", ())) or (
+                (str(error),) if isinstance(error, PinMismatch) and str(error) else ())
             if created:
                 refusal = dict(code=code, fields=list(fields))
-                if getattr(error, "detail", ()):
-                    refusal["detail"] = list(error.detail)
+                if detail:
+                    refusal["detail"] = list(detail)
                 (out / "refusal.json").write_bytes(canon(refusal))
-            print(code, file=sys.stderr)
+            print(code, *(detail if code == "pin_mismatch" else ()), file=sys.stderr)
             return 3
     except Exception:
         print("tool_failure", file=sys.stderr)

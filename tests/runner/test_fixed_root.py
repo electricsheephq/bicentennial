@@ -316,9 +316,11 @@ def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
                              check=True, capture_output=True).stdout
     plugin = acceptance.measured("holographic")
     plugin["artifact"]["sha256"] = acceptance.sha256(archive).hexdigest()
-    # The stand-in's own install, measured as `bicentennial pins` measures one, is its declared pin.
-    plugin["fresh_install_hash"] = install_pins.measure(plugin, hermes=hermes, plugin_source=source)[
-        "fresh_install_hash"]
+    # The stand-in's own install, measured as this run's preflight measures it, is its declared pin. The worker is
+    # injected, so no Hermes checkout pin applies (the stub checkout is not the pinned Hermes).
+    with fixedroot.lease(0, install_pins.PinsRefused) as sandbox:
+        plugin["fresh_install_hash"] = install_pins.measure_once(dict(plugin, fresh_install_hash="0" * 64), sandbox,
+            hermes=hermes, plugin_source=source, worker_argv=[])["fresh_install_hash"]
     roots, runs, current, bodies = [], [], {}, []
     real_life, real_layout, host_layout = t1.run_life, adapter.layout, plugin_host.layout
 

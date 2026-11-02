@@ -1838,6 +1838,20 @@ def test_stub_busy_after_start(installed, tmp_path, stub_hosts, monkeypatch):
     assert json.loads((out / "refusal.json").read_bytes())["code"] == "gate_refused"
 
 
+def test_stub_install_pin_mismatch_shows_computed(installed, tmp_path, stub_hosts, capsys):
+    """#259: a wrong install pin refuses before any unit, naming the computed fingerprint on stderr and in refusal.json."""
+    options, created, _ = stub_hosts
+    kwargs = options()
+    kwargs["entry"] = dict(kwargs["entry"], fresh_install_hash="f" * 64)
+    out = tmp_path / "out"
+    assert run(installed, out, **kwargs) == 3
+    message = "fresh install differs from the pin: computed " + load(REGISTRY / "hermes-native.toml")["fresh_install_hash"]
+    assert capsys.readouterr().err.splitlines()[-1] == "pin_mismatch " + message
+    assert json.loads((out / "refusal.json").read_bytes()) == {"code": "pin_mismatch", "fields": [], "detail": [message]}
+    assert not created
+    assert_no_results(out)
+
+
 def test_close_error_preserves_system_cause(installed, tmp_path):
     class Broken(ReferenceStore):
         def query(self, task, now):
