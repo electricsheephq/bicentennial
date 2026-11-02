@@ -766,7 +766,8 @@ def test_guard_delegates_stack_and_never_forwards_canary():
     stack = Stack()
     guard = runner._Guard(stack)
     assert guard.upstreams is stack.upstreams and guard.wire == stack.wire
-    assert guard.state() == {} and guard.served_identities() == stack.served_identities()
+    stack.identities = {runner.MODEL: "synthetic-identity"}
+    assert guard.state() == {} and guard.served_identities() == {runner.MODEL: "synthetic-identity"}
     call = Call("probe_main", "", "chat", {"messages": [{"content": CANARY}]}, runner.MODEL, {}, "fake")
     assert guard.respond(call).status == 503
     assert guard.respond(replace(call, body={})).status == 503
