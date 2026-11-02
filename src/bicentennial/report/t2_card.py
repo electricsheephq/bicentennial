@@ -19,8 +19,25 @@ def _identity(item):
     return item["life"], item["branch"], item["item_id"]
 
 
+def _row_counts(card):
+    items, units = card["items"], card["floor"]["units"]
+    counts = dict(units=len(units), lives=len({item["life"] for item in items}),
+                  not_scored_live=len(card["not_scored_live"]),
+                  floor_cached_units=sum(unit["cached"] for unit in units.values()),
+                  kept_copies=sum(item["repro"] is not None for item in items),
+                  # T2-lite's null-citation escape (runner/t2lite.py): an unknown answer always has a null citation.
+                  null_citation=sum(item["envelope"] is not None and item["envelope"]["type"] != "unknown"
+                                    and item["envelope"]["citation"] is None for item in items))
+    for item in items:
+        key = f"items.{item['genre']}.{item['stage']}"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def validate_t2_card(card) -> None:
     """Validate structure and the card's result-independent identity and exclusions."""
+    if type(card) is not dict:
+        raise ValueError("t2_card:object")
     if card.get("tier") != "T2":
         raise ValueError("t2_card:tier")
     if "gate_verdict" in card:
@@ -66,9 +83,8 @@ def validate_t2_card(card) -> None:
         if genres.setdefault(item["life"], item["genre"]) != item["genre"]:
             raise ValueError("t2_card:life_genre")
         excluded = _identity(item) in expected_unscored
-        failed = (type(item["score_milli"]) is int and item["score_milli"] < 1000
-                  and item["failure_class"] not in ("INFRA", "INFRA_FAILURE", "BLOCKED")
-                  and not excluded)
+        # BLOCKED and N/A rows carry a null score (contracts/bundle.py), so a number below 1000 is a failure.
+        failed = type(item["score_milli"]) is int and item["score_milli"] < 1000 and not excluded
         if item["repro"] is not None:
             if not failed:
                 raise ValueError("t2_card:repro_ineligible")
@@ -78,6 +94,11 @@ def validate_t2_card(card) -> None:
         # keep their ordinary semantics, including a crash's zero, while still excluded.
         row = {key: value for key, value in item.items() if key not in _ITEM_EXTRAS}
         _check_item(row, not_scored_live=excluded and item["failure_class"] is None)
+    # Counts the rows define must agree with them; `infra` is the runner's own count.
+    derived = _row_counts(card)
+    if any(card["counts"][key] != value for key, value in derived.items()) or any(
+            key.startswith("items.") and key not in derived and value != 0 for key, value in card["counts"].items()):
+        raise ValueError("t2_card:counts_values")
 
 
 def build_t2_card(*, system, pack_hash, seed_hash, pins, model, effort, served_identity,

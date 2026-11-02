@@ -336,3 +336,34 @@ def test_item_1_incidental_session_and_store_ids_do_not_change_card(tmp_path):
         card["items"][0][forbidden] = "a" * 64
         with pytest.raises(ValueError, match=forbidden):
             cards.validate_t2_card(card)
+
+
+@pytest.mark.parametrize("value", [[], None, "card"])
+def test_item_2_non_object_card_refused(value):
+    with pytest.raises(ValueError, match="t2_card:object"):
+        cards.validate_t2_card(value)
+
+
+@pytest.mark.parametrize("key", ["units", "lives", "not_scored_live", "floor_cached_units", "kept_copies",
+                                 "null_citation", "items.G1.remember", "items.G2.act"])
+def test_item_1_counts_the_rows_define_agree_with_them(key):
+    args = inputs()
+    args["counts"][key] += 1
+    with pytest.raises(ValueError, match="t2_card:counts_values"):
+        cards.build_t2_card(**args)
+
+
+def test_item_1_null_citation_counts_asserted_answers_without_a_citation():
+    args = inputs()
+    args["items"][1] = dict(args["items"][1], envelope=dict(args["items"][1]["envelope"], citation=None))
+    args["counts"]["null_citation"] = 1
+    assert cards.build_t2_card(**args)["counts"]["null_citation"] == 1
+
+
+def test_item_1_infra_and_absent_cells_are_not_derived_from_rows():
+    args = inputs()
+    args["counts"].update({"infra": 5, "items.G1.act": 0})
+    assert cards.build_t2_card(**args)["counts"]["infra"] == 5
+    args["counts"]["items.G1.act"] = 1
+    with pytest.raises(ValueError, match="t2_card:counts_values"):
+        cards.build_t2_card(**args)
