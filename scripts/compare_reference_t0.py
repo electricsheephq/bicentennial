@@ -6,6 +6,10 @@ import os
 import sys
 from pathlib import Path
 
+# The card_ring0 schema's values for the compared fields.
+VERDICTS = {"PASS", "CONFORMANCE_PASS", "FAIL", "INVALID", "BLOCKED"}
+STATUSES = {"COMPLETE", "INFRA_FAILURE", "BLOCKED"}
+
 
 def read_aggregates(root):
     root = Path(root)
@@ -32,14 +36,14 @@ def read_aggregates(root):
         for row in card["aggregates"]:
             stage, track, score = row["stage"], row["track"], row["score_milli"]
             if not isinstance(stage, str) or not isinstance(track, str) or (
-                    score is not None and type(score) is not int):
+                    score is not None and (type(score) is not int or not -1000 <= score <= 1000)):
                 raise ValueError(f"{path}: malformed aggregate")
             key = f"{stage}/{track}"
             if key in aggregates:
                 raise ValueError(f"{path}: duplicate aggregate {key}")
             aggregates[key] = score
         verdict, status = card["gate_verdict"], card["run_status"]
-        if not isinstance(verdict, str) or not isinstance(status, str):
+        if verdict not in VERDICTS or status not in STATUSES:
             raise ValueError(f"{path}: malformed gate verdict or run status")
         result[path.parent.relative_to(root).as_posix()] = dict(
             aggregates=aggregates, gate_verdict=verdict, run_status=status)
