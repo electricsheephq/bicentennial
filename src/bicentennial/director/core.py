@@ -77,6 +77,7 @@ class Director:
         self.pending, self.id_roles = {}, {}  # director-issued call id -> its scripted turn; -> (role, subrole)
         self.ledger = self.route = self.attempt_id = None
         self.n_ids = self.inflight = self.write_failures = self.send_errors = 0
+        self.summariser_requests = 0  # recorded compaction requests: the adapter settles a compaction turn fully
         self.role_ids = {}
         self.stopped, self._lock, self._count = False, threading.Lock(), threading.Lock()
 
@@ -156,6 +157,7 @@ class Director:
                         rec["client_disconnected"] = True
                     rec["t_ms"] = round((time.monotonic() - t0) * 1000)
                     self.ledger.append(rec)
+                    self.summariser_requests += rec["role"] == "summariser"
                 except BaseException:
                     self.stopped = True
                     raise

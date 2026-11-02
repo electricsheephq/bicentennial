@@ -41,6 +41,11 @@ def _only(value):
     return parts[0], parts[1], int(parts[2])
 
 
+def _turn_wait(value):
+    from bicentennial.harness.hermes.adapter import turn_wait_seconds
+    return turn_wait_seconds(value)
+
+
 def _sends(value):
     result = int(value)
     if result < 0:
@@ -52,7 +57,8 @@ def run_build(*, tier, out):
     try:
         from bicentennial.packs.build import build_tier
         from bicentennial.systems.registry import REGISTRY, load
-        build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
+        result = build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
+        print(f"sqlite_version {result['sqlite_version']}", file=sys.stderr)
     except FileExistsError:
         print("out_exists", file=sys.stderr)
         return 3
@@ -118,6 +124,7 @@ def main(argv=None) -> int:
     for name in ("baseline", "hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command.add_argument("--sandbox-slot", type=int, default=0)
+    command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=3.0, metavar="SECONDS")
     command = commands.add_parser("t2lite")
     for name in ("system", "pack-hash", "out", "login-home"):
         command.add_argument("--" + name, required=True)
@@ -126,6 +133,7 @@ def main(argv=None) -> int:
     for name in ("baseline", "aa-of", "aa-prime", "hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command.add_argument("--sandbox-slot", type=int, default=0)
+    command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=3.0, metavar="SECONDS")
     command.add_argument("--only", type=_only)
     command.add_argument("--repeat", type=_workers, default=1)
     command = commands.add_parser("build")

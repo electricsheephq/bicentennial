@@ -310,7 +310,7 @@ def test_t1_junit_properties_on_both_arms_and_floor(tmp_path, monkeypatch, syste
     fake_worker(tmp_path, dists=[("demo-pkg", "1.0")])
     props = prepared("t1", tmp_path, monkeypatch, system=system)
     arm = NS(outcomes={}, bundles=(), transforms=(), units=(), verdicts=())
-    run = NS(ctx=NS(entry={"name": system}, worker_properties=props), arms={a: arm for a in
+    run = NS(ctx=NS(entry={"name": system}, worker_properties=props, turn_wait_s=3.0), arms={a: arm for a in
         ("system", "wiped", "no_memory")}, not_exercised=(), singleton_lives={}, duty_items=())
     monkeypatch.setattr(compare, "_finals", lambda *a: [])
     for name in ("system", "wiped"):

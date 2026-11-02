@@ -191,8 +191,11 @@ def _token(value):
     return value
 
 
-def rerun_command(card, item):
-    """Format a publishable command; paths are always literal placeholders."""
+def rerun_command(card, item, *, turn_wait_s=3.0):
+    """Format a publishable command; paths are always literal placeholders.
+
+    A non-default turn wait is part of the command, so the rerun replays the checkpoint at the run's own wait.
+    """
     item = item if isinstance(item, ItemOutcome) else ItemOutcome.from_dict(item)
     system, life, branch = (_token(v) for v in (card["system"], item.life, item.branch))
     digest = card["pack_hash"]
@@ -201,13 +204,16 @@ def rerun_command(card, item):
         raise ValueError("invalid pack_hash")
     if type(item.probe_point) is not int or item.probe_point < 1:
         raise ValueError("invalid probe_point")
+    if type(turn_wait_s) is not float or not 0.5 <= turn_wait_s <= 3.0:
+        raise ValueError("invalid turn_wait_s")
+    wait = "" if turn_wait_s == 3.0 else f" --turn-wait {turn_wait_s}"
     plugin = " --plugin-source <plugin checkout>" if system in PLUGIN_SYSTEMS else ""
     if system in MODEL_CACHE_SYSTEMS:
         plugin += " --model-cache <model cache>"
     return (f"PYTHONHASHSEED=0 bicentennial t2lite --system {system} --packs <packs> "
             f"--pack-hash {digest} --hermes <hermes checkout>{plugin} "
             f"--login-home <login home> --max-sends <max sends> "
-            f"--only {life}:{branch}:{item.probe_point} --repeat 3 --out <new dir>")
+            f"--only {life}:{branch}:{item.probe_point} --repeat 3{wait} --out <new dir>")
 
 
 def _vouch(card, outcomes, side):
@@ -221,7 +227,7 @@ def _vouch(card, outcomes, side):
 
 
 def flip_report(current_card, baseline_card, baseline_outcomes, current_outcomes, *,
-                aa_prime=None, aa_prime_card=None):
+                aa_prime=None, aa_prime_card=None, turn_wait_s=3.0):
     """Return a fresh JSON object, ready for canon; no files are written.
 
     A′ outcomes come with their card, which records aa_prime: true and is checked
@@ -243,7 +249,7 @@ def flip_report(current_card, baseline_card, baseline_outcomes, current_outcomes
     for side, card, outcomes in runs:
         _vouch(card, _outcomes(outcomes), side)
     result = flip_list(baseline_outcomes, current_outcomes, aa_prime=aa_prime,
-                       rerun=lambda item: rerun_command(current_card, item))
+                       rerun=lambda item: rerun_command(current_card, item, turn_wait_s=turn_wait_s))
     q0 = result.pop("q0")
     q0_milli = result.pop("q0_milli")
     result["q0"] = (None if q0 is None else dict(
