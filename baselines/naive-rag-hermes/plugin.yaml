@@ -1,0 +1,5 @@
+name: naive-rag-dev
+version: 1.0.0
+description: Benchmark-owned naive-RAG developer baseline for Hermes
+author: Bicentennial benchmark
+license: Apache-2.0
