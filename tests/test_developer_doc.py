@@ -198,6 +198,7 @@ def _life_refusals():
 
 def _code_refusals():
     codes = _life_refusals()
+    codes.update(_refusal_codes(REPO / "src/bicentennial/systems/pins.py", ("PinsRefused",)))
     # The shared mapping check returns codes instead of raising a runner exception.
     mapping_tree = ast.parse((REPO / "src/bicentennial/systems/mapping.py").read_text())
     for node in ast.walk(mapping_tree):
@@ -241,6 +242,17 @@ def test_doc_codes():
     for label in schema["properties"]["labels"]["properties"].values():
         codes.update(label["enum"])
     assert not sorted(code for code in codes if code not in text)
+
+
+def test_doc_pin_measurement():
+    text = GUIDE.read_text()
+    section = text.split("### Measure registry pins\n", 1)[1].split("\nRunners require", 1)[0]
+    for name in ("hermes-native", "holographic", "mem0-oss"):
+        assert f"bicentennial pins --system {name}" in section
+    for phrase in ("distinct director ports", "pins_unstable", "sandbox_busy", "reviewed PR",
+                   "artifact.sha256 VALUE", "entry NAME", "writes no registry or source files"):
+        assert phrase in section
+    assert "no public measurement command" not in text
 
 
 def test_doc_requires_life_refusal_rows(tmp_path, monkeypatch):
