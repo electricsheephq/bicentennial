@@ -63,6 +63,9 @@ class Stack:
     def respond(self, call):
         assert not self.closed
         self.calls.append(call)
+        if self.values.get("stop_reason") or self.values.get("stopped"):
+            # Like the real responder once a stop is latched: nothing is sent and no identity is observed.
+            return Reply(503, "live_stopped", "live", call.model, upstream=({"kind": "try"},))
         response = self.responses.get(call.role, {})
         served = response.get("served", "live")
         self.values.update(response.get("state", {}))
@@ -258,6 +261,8 @@ def test_identity_check_matches_before_units(scenario, tmp_path, capsys):
 def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
     s = scenario
     assert s.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    before = entry.read_bytes()
     s.seen.clear()
     s.stack_options = {"identity": "new-identity"}
     if response != "different":
@@ -278,10 +283,18 @@ def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
     card = runner._read(tmp_path / "miss", "card.json")
     assert card["counts"]["floor_cached"] == 0
     floor = runner._read(tmp_path / "miss", "no_memory.json")
-    assert floor["served_identity"] == card["served_identity"] == canon(s.stacks[-1].served_identities()).decode()
-    entry, = (tmp_path / "cache").iterdir()
-    if response != "unidentified":
+    assert floor["served_identity"] == card["served_identity"] == (
+        "unobserved" if response == "invalid" else canon(s.stacks[-1].served_identities()).decode())
+    assert list((tmp_path / "cache").iterdir()) == [entry]
+    if response in ("unidentified", "invalid"):
+        # Neither floor is written: one measured on an unidentified model, and one whose every send met the stop
+        # the identity request latched. The old entry stays as it was.
+        assert entry.read_bytes() == before
+    else:
         assert json.loads(entry.read_bytes()) == floor
+    if response == "invalid":
+        live = runner._read(tmp_path / "miss", "disclosures.json")["live"]
+        assert live["stop_reason"] == "upstream_invalid_request_400"
     message = "differs from the cache entry" if response == "different" else "not confirmed"
     assert f"floor: ran live (served identity {message})" in capsys.readouterr().err
 
