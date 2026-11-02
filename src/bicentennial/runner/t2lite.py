@@ -14,8 +14,9 @@ from uuid import uuid4
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import Voids
-from bicentennial.director.responder import Reply
+from bicentennial.director.responder import Call, Reply
 from bicentennial.director.upstream import login as custody
+from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
 from bicentennial.probe.scripted_reader import ReaderResult
@@ -41,6 +42,7 @@ from bicentennial.score.classes import outcome
 from bicentennial.systems.hermes_plugin import is_plugin, resolve_worker_env
 
 MODEL, EFFORT = "gpt-6.1-sol", "medium"
+IDENTITY_TEXT = "Reply with the single word: ok."
 # The live lane's settings, required as in the spikes; nothing defaults to a fake address.
 LIVE_ENV = ("BICENTENNIAL_SOL_TOKEN_URL", "BICENTENNIAL_SOL_CLIENT_ID", "BICENTENNIAL_SOL_BASE_URL")
 # Never sent upstream (build_live_stack sets send_cap=False); it only bounds the zero-price reservation.
@@ -292,6 +294,8 @@ def _cached_floor(path, ids, units):
     except (OSError, ValueError):
         return None
     if (isinstance(floor, dict) and isinstance(floor.get("outcomes"), dict) and isinstance(floor.get("stops"), dict)
+            and isinstance(floor.get("served_identity"), str) and floor["served_identity"]
+            and floor["served_identity"] != "unobserved" and "unidentified" not in floor["served_identity"]
             and set(floor["outcomes"]) == ids and set(floor["stops"]) == units):
         return floor
     return None
@@ -394,7 +398,8 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
                               {p.life + b for p in ctx.packs for b in ("B0", "B1")})
         cached = floor is not None
-        floor_stops = floor["stops"] if cached else {}
+        identity_check = None
+        floor_message = "floor: ran live"
         needles = _secrets(home)
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
             stack = build_live_stack(out / "spend.json", login_home=home, run=ctx.run_id,
@@ -404,6 +409,27 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             login = stack.inner.login
             live = _Guard(stack)
             try:
+                if cached:
+                    reply = live.respond(Call(role="identity_check", subrole="", wire="chat",
+                        body={"messages": [{"role": "user", "content": IDENTITY_TEXT}]},
+                        model=MODEL, cursor=None, run_key=ctx.run_id + ":identity"))
+                    state = live.state()
+                    reason = state.get("stop_reason")
+                    if reason in CREDENTIAL_STOPS or state.get("login_stop"):
+                        raise LiveCredentialStop(reason if reason in CREDENTIAL_STOPS else state["login_stop"])
+                    if state.get("spend_stopped"):
+                        raise t1.T1Refused("spend_stop")
+                    ids = stack.served_identities()
+                    observed = canon(ids).decode() if ids else "unobserved"
+                    cached = reply.served == "live" and observed == floor["served_identity"]
+                    identity_check = dict(served=reply.served, observed=observed, matched=cached,
+                        tries=sum(d.get("kind") == "try" for d in reply.upstream),
+                        held_ms=sum(d["held_ms"] for d in reply.upstream if d.get("kind") == "hold"))
+                    floor_message = ("floor: reused from the cache (served identity matched)" if cached else
+                        "floor: ran live (served identity differs from the cache entry)"
+                        if reply.served == "live" and ids and "unidentified" not in ids.values() else
+                        "floor: ran live (served identity not confirmed)")
+                floor_stops = floor["stops"] if cached else {}
                 if not cached:
                     floor = {"outcomes": {}, "stops": floor_stops}
                     for pack in ctx.packs:
@@ -413,9 +439,13 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                             floor["outcomes"].update(scores)
                             stopped = runs[-1].stopped
                             floor_stops[pack.life + branch] = list(stopped) if stopped else None
-                    if floor_path and not any(r["failure_class"] == "BLOCKED" for r in floor["outcomes"].values()):
+                    ids = stack.served_identities()
+                    floor["served_identity"] = canon(ids).decode() if ids else "unobserved"
+                    if (floor_path and ids and "unidentified" not in ids.values()
+                            and stack.state().get("identity_drift") is None
+                            and not any(r["failure_class"] == "BLOCKED" for r in floor["outcomes"].values())):
                         pending_cache = (floor_path, floor)
-                print("floor: reused from the cache" if cached else "floor: ran live", file=sys.stderr)
+                print(floor_message, file=sys.stderr)
                 repetitions = []
                 for rep in range(repeat):
                     scores, joined = {}, {}
@@ -442,7 +472,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "repetitions.json", repetitions)
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
-            _write(out, "disclosures.json", {"live": dict(stack.state(),
+            _write(out, "disclosures.json", {"identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
                 for key, arm in (("t1.transforms", "system"), ("no_memory.transforms", "no_memory"))}})
