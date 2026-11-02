@@ -376,8 +376,9 @@ def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
         assert {r.root for r in runs if r.branch == branch} == {sandbox / "t1" / branch / "run"}
     assert len({len(str(r.root)) for r in runs}) == 1
     assert {kind for kind, _ in roots} == {"adapter", "host"}
-    assert roots and all(root.is_relative_to(sandbox / "t1") or
-                         root.is_relative_to(sandbox / "corpus") for _, root in roots)
+    # T1's install check (t1.check_install) measures one install at the lease's pins-0, before any arm.
+    assert roots and all(root.is_relative_to(sandbox / "t1") or root.is_relative_to(sandbox / "corpus")
+                         or root == sandbox / "pins-0" for _, root in roots)
     for entry in ("hermes-native", "holographic"):
         for arm in t1.UNIT_ORDER:
             for name in {r.life for r in runs}:
