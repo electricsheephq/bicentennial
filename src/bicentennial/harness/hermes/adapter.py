@@ -41,7 +41,8 @@ ENTRYPOINT = "acp_adapter.session.SessionManager in process (S6a fallback)"
 WORKER = Path(__file__).resolve().with_name("worker.py")
 DRAIN_QUIET_S, DRAIN_CAP_S, EXIT_TIMEOUT_S = 3.0, 240.0, 300
 # After each turn (RING0 §13 E24, #267). The session end keeps DRAIN_QUIET_S: it is the last settle before the worker
-# exits and its daemon threads stop. A turn's floor never exceeds the session end's.
+# exits and its daemon threads stop, and so does a turn that a kill or restart follows. A turn's floor never exceeds the
+# session end's.
 DRAIN_TURN_QUIET_S = 1.0
 STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 3600, 300
 _now = time.monotonic
@@ -278,7 +279,9 @@ class HermesAdapter:
                 self._held, t0 = (index, n) if held else None, _now()
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
-                t["drain"].append(self._drain(min(DRAIN_TURN_QUIET_S, DRAIN_QUIET_S)))
+                # A turn that a kill or restart follows keeps the full settle: the worker stops right after it.
+                stops = any(f["kind"] in ("kill", "restart") for f in faults)
+                t["drain"].append(self._drain(None if stops else min(DRAIN_TURN_QUIET_S, DRAIN_QUIET_S)))
                 c, killed, self._held = d.control(), held and out is None and (index, n) in self._fired, None
                 if c["stopped"] or c["write_failures"] > failures:
                     raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")

@@ -644,6 +644,29 @@ def test_turn_drains_wait_less_than_the_session_end(tmp_path, monkeypatch):
         a.close()
 
 
+@pytest.mark.parametrize("kind", ["kill", "restart"])
+def test_turn_before_a_kill_or_restart_keeps_the_full_drain(tmp_path, monkeypatch, kind):
+    """The worker stops right after such a turn, so its drain keeps DRAIN_QUIET_S (RING0 §13 E24)."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 3.0)
+    quiets = []
+    a = make(tmp_path, f"{kind}-drain", faults=[{"kind": kind, "session": 1, "turn": 2}])
+    monkeypatch.setattr(a, "_gate", lambda readings: None)
+    monkeypatch.setattr(a, "_spawn_open", lambda *args: ("sid", 0, False))
+    monkeypatch.setattr(a, "_drain", lambda quiet=None: quiets.append(quiet) or 0)
+    replies = {turn["user"]: turn["assistant"] for turn in SCRIPT["sessions"][0]["turns"]}
+    a._worker = SimpleNamespace(call=lambda **kw: {"ok": True, "final": replies[kw["text"]], "history": 0},
+                                kill=lambda: None)
+    monkeypatch.setattr(a, "_end", lambda: ())
+    try:
+        result = session(a, 1)
+        assert [r["kind"] for r in result.restarts] == [kind]
+        assert quiets == [1.0, None, 1.0, 1.0, 1.0, None]
+    finally:
+        a.close()
+
+
 @pytest.mark.parametrize(("quiet", "busy_polls", "sleeps"), [
     (None, 0, [0.5] * 6),           # the session end: 3.0 s quiet, polled every 0.5 s
     (1.0, 0, [0.25] * 4),           # after a turn: 1.0 s quiet, polled every 0.25 s
