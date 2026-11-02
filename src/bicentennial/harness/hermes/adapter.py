@@ -441,8 +441,8 @@ class HermesAdapter:
             # already out of inflight is visible to upgrade() below.
             idle = self.director.control()["inflight"] == 0
             if upgrade is not None and quiet < DRAIN_QUIET_S and upgrade():
-                # The current calm stretch is kept, so the 3.0 s count is the default drain's own: at 3.0 a request
-                # that starts and ends between two samples does not restart it either.
+                # The current calm stretch is kept, and 3.0 s count from its first idle sample. At 3.0 too, a
+                # request that starts and ends between two samples does not restart a stretch.
                 quiet = DRAIN_QUIET_S
             if idle:
                 calm = calm or time.monotonic()
