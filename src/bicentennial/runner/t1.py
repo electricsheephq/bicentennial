@@ -32,12 +32,15 @@ from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
 from bicentennial.systems.hermes_plugin import (
     DEPENDENCIES,
+    ENGINES,
+    PROVIDERS,
     is_plugin,
     prepare_cache,
     resolve_worker_env,
     validate_maps,
     worker_properties,
 )
+from bicentennial.systems.mapping import check_mapping, resolve_mapping
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
@@ -235,6 +238,10 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     admit_system(entry)
     if entry["harness"] != "hermes":
         raise T1Refused("harness_not_hermes")
+    engine_only = system in ENGINES and system not in PROVIDERS
+    reason = check_mapping(entry, resolve_mapping(system), require_forget=not engine_only)
+    if reason is not None:
+        raise T1Refused(reason)
     harness_pin = dict(sorted(load(REGISTRY / "hermes-native.toml")["artifact"].items()))
     if (hermes is None and worker_argv is None) or (is_plugin(system) and plugin_source is None):
         raise T1Refused("missing_input")
