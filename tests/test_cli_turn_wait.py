@@ -42,7 +42,8 @@ def test_turn_wait_cli_default_and_range(monkeypatch, command, value):
 
 
 @pytest.mark.parametrize("command", ["t1", "t2lite"])
-@pytest.mark.parametrize("value", [0.4, 3.1, -1, "not-a-number", True, False, 10**1000])
+@pytest.mark.parametrize("value", [0.4, 3.1, -1, "not-a-number", True, False,
+                                   pytest.param(10**1000, id="beyond-float")])
 def test_direct_runner_wait_refusal_precedes_preparation(monkeypatch, tmp_path, capsys, command, value):
     monkeypatch.setattr(t1, "prepare", lambda **kw: pytest.fail("preparation started"))
     out = tmp_path / "out"
