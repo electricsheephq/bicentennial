@@ -52,7 +52,8 @@ def run_build(*, tier, out):
     try:
         from bicentennial.packs.build import build_tier
         from bicentennial.systems.registry import REGISTRY, load
-        build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
+        result = build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
+        print(f"sqlite_version {result['sqlite_version']}", file=sys.stderr)
     except FileExistsError:
         print("out_exists", file=sys.stderr)
         return 3
