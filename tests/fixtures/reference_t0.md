@@ -29,4 +29,6 @@ python3 scripts/compare_reference_t0.py OLD_RUN NEW_RUN
 
 It compares each pack's aggregates, gate verdict and run status. Exit
 codes: 0 when all are equal, 1 for differences (including missing packs or
-aggregate rows), and 2 for unreadable or malformed input.
+aggregate rows), and 2 for unreadable or malformed input. Malformed means
+any value in those fields that the `card_ring0` schema does not allow; the
+script reads the allowed values from the schema.

@@ -6,9 +6,12 @@ import os
 import sys
 from pathlib import Path
 
-# The card_ring0 schema's values for the compared fields.
-VERDICTS = {"PASS", "CONFORMANCE_PASS", "FAIL", "INVALID", "BLOCKED"}
-STATUSES = {"COMPLETE", "INFRA_FAILURE", "BLOCKED"}
+# The compared fields' allowed values, read from the card_ring0 schema so they cannot drift from it.
+CARD = json.loads((Path(__file__).resolve().parents[1] / "schemas/card_ring0.schema.json").read_bytes())["properties"]
+VERDICTS, STATUSES = set(CARD["gate_verdict"]["enum"]), set(CARD["run_status"]["enum"])
+ROW = CARD["aggregates"]["items"]["properties"]
+STAGES, TRACKS = set(ROW["stage"]["enum"]), set(ROW["track"]["enum"])
+LOW, HIGH = ROW["score_milli"]["minimum"], ROW["score_milli"]["maximum"]
 
 
 def read_aggregates(root):
@@ -34,9 +37,11 @@ def read_aggregates(root):
             raise ValueError(f"{path}: malformed aggregates")
         aggregates = {}
         for row in card["aggregates"]:
+            if type(row) is not dict or row.keys() != ROW.keys():
+                raise ValueError(f"{path}: malformed aggregate")
             stage, track, score = row["stage"], row["track"], row["score_milli"]
-            if not isinstance(stage, str) or not isinstance(track, str) or (
-                    score is not None and (type(score) is not int or not -1000 <= score <= 1000)):
+            if stage not in STAGES or track not in TRACKS or (
+                    score is not None and (type(score) is not int or not LOW <= score <= HIGH)):
                 raise ValueError(f"{path}: malformed aggregate")
             key = f"{stage}/{track}"
             if key in aggregates:

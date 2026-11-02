@@ -65,7 +65,8 @@ def test_lists_every_pack_change(tmp_path):
 
 @pytest.mark.parametrize("invalid", ["absent", "empty", "missing_card", "json", "card", "system", "duplicate",
                                      "aggregates_dict", "aggregates_str", "verdict", "verdict_value", "status_value",
-                                     "score_range"])
+                                     "score_range", "stage_value", "track_value", "row_extra", "row_missing",
+                                     "row_str"])
 def test_unreadable(tmp_path, invalid):
     old, new = tmp_path / "old", tmp_path / "new"
     write_card(old, "one")
@@ -90,6 +91,14 @@ def test_unreadable(tmp_path, invalid):
         write_card(new, "one", run_status="DONE")
     elif invalid == "score_range":
         write_card(new, "one", 1001)
+    elif invalid in ("stage_value", "track_value", "row_extra", "row_missing", "row_str"):
+        row = dict(stage="typo" if invalid == "stage_value" else "remember",
+                   track="keep" if invalid == "track_value" else "Keep", score_milli=1000)
+        if invalid == "row_extra":
+            row["note"] = ""
+        elif invalid == "row_missing":
+            del row["score_milli"]
+        write_card(new, "one", aggregates=["remember/Keep" if invalid == "row_str" else row])
     result = subprocess.run([sys.executable, str(SCRIPT), str(old), str(new)],
                             capture_output=True, text=True)
     assert result.returncode == 2
