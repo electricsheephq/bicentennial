@@ -730,6 +730,13 @@ def test_projected_files_retain_content_and_stored_hash_changes(copied_pack, rel
         parent[field] = dict(value, changed=["content"])
     else:
         parent[field] = value + 1
+    if rel == "sealed/controls.json":
+        # Re-seal the file's own hashes as a consistent build would (controls/cache.py), so the edited field is
+        # the only difference left in it.
+        if fields != ("key_sha256",):
+            data["key_sha256"] = sha256_canon(data["key"])
+        if fields != ("digest",):
+            data["digest"] = sha256_canon({k: v for k, v in data.items() if k != "digest"})
     path.write_bytes(canon(data))
     # The edited file's own projection moves: a stale manifest file entry alone would also move the golden.
     assert masked_pack_files(copied_pack)[rel] != projected
