@@ -50,7 +50,7 @@ def turn_wait_seconds(value) -> float:
         raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive")
     try:
         seconds = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: an int beyond float range
         raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive") from None
     if not 0.5 <= seconds <= 3.0:
         raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive")
@@ -441,6 +441,8 @@ class HermesAdapter:
             # already out of inflight is visible to upgrade() below.
             idle = self.director.control()["inflight"] == 0
             if upgrade is not None and quiet < DRAIN_QUIET_S and upgrade():
+                # The current calm stretch is kept, so the 3.0 s count is the default drain's own: at 3.0 a request
+                # that starts and ends between two samples does not restart it either.
                 quiet = DRAIN_QUIET_S
             if idle:
                 calm = calm or time.monotonic()
