@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-02: the wait after each turn is 1 s (#267)
+- **RING0 §13 E24:** from the next kit, the Hermes harness waits 1.0 s with nothing in flight after each turn, polled every 0.25 s, instead of 3.0 s. The wait at each session's end keeps 3.0 s. In T1's measured runs at `c9bf10b`, those waits were the largest part of T1's loop time, almost all of it with nothing in flight. No pin, card, schema or receipt field changes; the receipts' `drain` timings shrink. v0.1's frozen kit keeps 3.0 s.
+- **RING0 §6, the cut order:** v0.2 first cuts costs that change nothing T1 measures; the probe budget, then B1's full replay, are cut only if that is not enough and a measured saving justifies it. The measurement showed that one action item per checkpoint would save at most about 10% and moves packs, and that forking B1 would save almost nothing. The cut order is not a pre-registered quantity: PREREG §6 fixes only T1's ≤ 10 min engineering budget. The ROADMAP's v0.2 row says the same.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-01: the carry-over diagnostic reads earlier answers by their content (#352, #355)
 - **RING0 §13 E23 (§6):** from the next kit, T1's reader bounds the earlier probe exchanges by the turn it answers, and an earlier answer counts by its value and its citation's quote, not by its envelope's field names and confidence numbers. T2-lite's shadow reads the same exchanges. `carry_over` is a reporting flag: no answer, score or class changes. T1 cards' `carry_over` and `carry_over_milli` can change, and so can T2-lite's `carry_over` on its cards, its item rows and `t2lite_probes.json`. The reader pin moves, so packs built before this change no longer verify and are rebuilt.
 No PREREG version change; PREREG-v0.5 remains frozen.
