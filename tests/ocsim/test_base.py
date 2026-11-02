@@ -274,7 +274,7 @@ def test_complete(fake):
                             "sha256": sha256((fake.root / artifact["path"]).read_bytes()).hexdigest()}
     assert provenance["pending_disclosures"] == [
         "B-4 recovered INFRA attempts: pending; sources C5a's container (B-4) and the bar-2 runner",
-        "B-9 sigma_d's scale difference from the full tier (PREREG l.548): the card",
+        "B-9 sigma_d's scale difference from the full tier (PREREG-v0.4 l.502): the card",
         "B-8 the anchor's rate: C's measured pinned-lane rate, a proxy for the swap lane, since bar 2 never runs the swap model: the card"]
     paths = {"rows": {base.ROSTER}, "required": {base.C12}, "lanes": {base.C11, base.C1, base.C2},
              "alloc_by_b": {base.DRY, base.C12}, "lives": {base.DRY},
@@ -1166,7 +1166,7 @@ def test_pilot_floor_provenance_round_trip_and_neutrality(tmp_path, monkeypatch)
     assert provenance["M"] == 2 and [r[:2] for r in provenance["pairs"]] == [["beta", "gamma"]]
     rule = base.RULES["n_lives_floor"]
     assert rule.rule == "B-9, B-26, B-27"
-    assert {base.RULING, "#245 issuecomment-6535643668", "PREREG l.574"} <= set(rule.sources)
+    assert {base.RULING, "#245 issuecomment-6535643668", "PREREG-v0.4 l.574"} <= set(rule.sources)
     monkeypatch.setattr(run, "c8_dirty", lambda root: False)
     parsed = run.parse_inputs(inputs.build(canon(fixture.controls), built, root=ROOT, resamples=3))
     assert parsed.n_lives_floor == value and parsed.planning is False

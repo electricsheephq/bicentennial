@@ -242,7 +242,7 @@ def test_mixes_exact(tmp_path):
         check_life(db, schedule, stages)
         assert {e["salience"] for e in stages["commitments"]["event"]} == {SALIENCE}
         db.close()
-    assert DECOY_RATIO_LABEL == "provisional pending PREREG-v0.5"
+    assert DECOY_RATIO_LABEL == "provisional pending PREREG-v0.6"
 
 
 def test_surfaces_and_explicit_values(tmp_path):

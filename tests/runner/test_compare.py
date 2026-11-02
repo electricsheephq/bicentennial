@@ -194,6 +194,7 @@ def test_full_run(completed, installed, cases):
             ["ring0.T1.hermes-native.no_memory"] if arm == "system" else [])
         props = properties(out, arm)
         assert props["t1.write_clipped"] == "0"
+        assert props["t1.forget_kept"] == '{"ambiguous":0,"same_text":0,"unattributed":0}'
         assert "t1.write_max_length" not in props
         assert props["t1.fields"] == canon({"actor": "not_delivered", "text": "full",
                                             "time": "session_clock"}).decode()
@@ -249,6 +250,10 @@ def test_corpus_delivery_properties_include_retries_and_clones(synth, installed,
         def __init__(self, *args, **kwargs):
             super().__init__()
             self.write_clipped, self.write_max_length = 0, 3
+            self.forget_kept = {("row", "synthetic"): "ambiguous"}
+
+        def begin_session(self, index):
+            pass
 
         def ingest(self, event):
             self.write_clipped += int(len(event["text"]) > self.write_max_length)
@@ -265,6 +270,7 @@ def test_corpus_delivery_properties_include_retries_and_clones(synth, installed,
             seen[factory.arm].append(host)
             for i, text in enumerate(("abc", "long event")):
                 host.ingest(dict(event_id=str(i), t_sim=i, kind="message", actor="fixture", text=text))
+            host.begin_session(2)
         return (CaseResult(case.case_id, "INFRA_FAILURE", "infra", None) if attempts[key] == 1 else
                 fake_case(case, factory, **kwargs))
 
@@ -277,6 +283,8 @@ def test_corpus_delivery_properties_include_retries_and_clones(synth, installed,
         props = properties(out, arm)
         assert len(seen[arm]) == 4 * len(attempts) // len(compare.GATED)
         assert props["t1.write_clipped"] == str(sum(h.write_clipped for h in seen[arm]))
+        assert props["t1.forget_kept"] == canon(dict(
+            ambiguous=len(seen[arm]), same_text=0, unattributed=0)).decode()
         assert props["t1.write_max_length"] == "3"
         assert props["t1.fields"] == canon(seen[arm][0].fields()).decode()
     floor = ET.parse(out / "system/junit.xml").getroot()[-1]

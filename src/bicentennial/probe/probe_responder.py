@@ -109,7 +109,8 @@ class ProbeResponder:
             if count != offset:
                 raise ValueError("decision exchange missing")
             view, keys = self.readers[iid]
-            prior = self.earlier(call.run_key, position[0])
+            # The current turn bounds the earlier exchanges: its own row is written only after this reply (#352).
+            prior = self.earlier(call.run_key, *position)
             earlier = context_text([_earlier_body(v) for v in prior])
             self.decisions[key] = read(view, keys, context_text(call.body), mode="hermes", earlier=earlier)
         result = self.decisions[key]
