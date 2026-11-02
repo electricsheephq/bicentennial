@@ -13,7 +13,7 @@ from bicentennial.controls.cache import ControlsTampered, code_sha256
 from bicentennial.director.compiler.check import Voids, check_compile
 from bicentennial.director.routes import RouteTable, route_table_hash
 from bicentennial.gitenv import git_env
-from bicentennial.harness.hermes.adapter import PinMismatch
+from bicentennial.harness.hermes.adapter import PinMismatch, turn_wait_seconds
 from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS, GateRefused
 from bicentennial.items import c7
 from bicentennial.items.protocol import CANARY
@@ -33,6 +33,8 @@ from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invarian
 from bicentennial.systems import pins as install_pins
 from bicentennial.systems.hermes_plugin import (
     DEPENDENCIES,
+    ENGINES,
+    PROVIDERS,
     is_plugin,
     prepare_cache,
     resolve_worker_env,
@@ -40,6 +42,7 @@ from bicentennial.systems.hermes_plugin import (
     verify_install_pin,
     worker_properties,
 )
+from bicentennial.systems.mapping import check_mapping, resolve_mapping
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
@@ -57,6 +60,13 @@ class T1Refused(RuntimeError):
         self.code, self.fields = code, tuple(sorted(fields))
         self.detail = tuple(sorted(detail))
         super().__init__(code)
+
+
+def validate_turn_wait(value):
+    try:
+        return turn_wait_seconds(value)
+    except ValueError:
+        raise T1Refused("usage") from None
 
 
 REFUSALS = (T1Refused, SystemRefused, PinnedArtifactChanged, LockMismatch,
@@ -104,6 +114,7 @@ class T1Context:
     model_cache: object = None
     model_cache_sha256: str | None = None
     worker_properties: tuple = ()
+    turn_wait_s: float = 3.0
 
 
 @dataclass(frozen=True)
@@ -224,8 +235,9 @@ def _lock(index, packs, entry, table, pack_hash):
 
 
 def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=None,
-            worker_argv=None, model_cache=None) -> T1Context:
+            worker_argv=None, model_cache=None, turn_wait_s=3.0) -> T1Context:
     """Refuse invalid inputs and pin both lives before constructing any adapter."""
+    turn_wait_s = validate_turn_wait(turn_wait_s)
     if entry is None:
         try:
             entry = load(REGISTRY / f"{system}.toml")
@@ -237,6 +249,10 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     admit_system(entry)
     if entry["harness"] != "hermes":
         raise T1Refused("harness_not_hermes")
+    engine_only = system in ENGINES and system not in PROVIDERS
+    reason = check_mapping(entry, resolve_mapping(system), require_forget=not engine_only)
+    if reason is not None:
+        raise T1Refused(reason)
     harness_pin = dict(sorted(load(REGISTRY / "hermes-native.toml")["artifact"].items()))
     if (hermes is None and worker_argv is None) or (is_plugin(system) and plugin_source is None):
         raise T1Refused("missing_input")
@@ -297,7 +313,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     return T1Context(entry, harness_pin, index, pack_hash, packed, lock, dict(sorted(pins.items())),
         SessionGate(lock), current_lock, mint_id(canon(["t1", lock_hash(lock), system]).decode(), 0),
         2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table, model_cache, model_cache_sha256,
-        properties)
+        properties, turn_wait_s)
 
 
 def check_install(ctx, sandbox):
@@ -326,7 +342,7 @@ def _unit(ctx, pack, arm, b, scratch, voids, floor):
             current_lock=ctx.current_lock, voids=voids, harness_pin=ctx.harness_pin,
             hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
             worker_argv=_worker(ctx, pack.life, b, arm), visible=pack.visible,
-            honeypot_token=pack.meta["honeypot_token"],
+            honeypot_token=pack.meta["honeypot_token"], turn_wait_s=ctx.turn_wait_s,
             extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
         runs.append(run)
         scores, labels = {}, {}

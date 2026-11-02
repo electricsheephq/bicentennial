@@ -158,7 +158,7 @@ The command constructs the T0 memory-layer host twice, in distinct roots on dist
 
 Scratch stays in an exclusively leased sandbox slot (default 0; select another with `--sandbox-slot`). A busy slot refuses with exit 3, `sandbox_busy`, before install. The command writes no registry or source files. Copy the measured pins into a reviewed PR; a pin change is still a reviewed PR.
 
-Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, `FORGET`, and plug-in `PROVIDERS`/`TREES`. Optional `ENGINES` selects the `context.engine` id. Optional `PLUGIN_DIRS` overrides the installed directory. Optional `ENABLED` lists systems whose directory goes in `plugins.enabled`. Optional `WORKER_ENV` supplies reviewed worker environment values. Its names may not shadow a variable the harness sets or start with `BICENTENNIAL_`, `HERMES_`, `PYTHON`, `LD_` or `DYLD_`. A value is either `{model_cache}`, optionally followed by `/` and one relative path of `A-Za-z0-9._-` segments, or a plain value of `A-Za-z0-9._,=+-` only, which can never name a path. A cache directory whose resolved path has any character outside `A-Za-z0-9._/-` (a separator or whitespace) refuses `model_cache_invalid`. Systems needing a staged model cache require `--model-cache DIR`; its file-tree digest is disclosed and checked again after the run. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
+Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, `FORGET`, and plug-in `PROVIDERS`/`TREES`. T0 and T1 refuse uncovered write tools before starting any adapter or worker, with exit 3 and `write_mapping_missing:<tool>` naming the first uncovered tool. A missing required forget mapping refuses `forget_mapping_missing`: T0 always requires it for systems with write tools; T1 requires it when the regression corpus hosts the system itself (all but engine-only systems). `UNSCRIPTED` in `systems/mapping.py` explicitly lists declared write tools the scripted director never calls. These checks cover systems that declare write tools. A system that declares none passes them, but a T0 host still needs its `WRITE_ARGS` and `FORGET` entries, so without them it fails at host start (`no T0 mapping`) rather than in preflight. Optional `ENGINES` selects the `context.engine` id. Optional `PLUGIN_DIRS` overrides the installed directory. Optional `ENABLED` lists systems whose directory goes in `plugins.enabled`. Optional `WORKER_ENV` supplies reviewed worker environment values. Its names may not shadow a variable the harness sets or start with `BICENTENNIAL_`, `HERMES_`, `PYTHON`, `LD_` or `DYLD_`. A value is either `{model_cache}`, optionally followed by `/` and one relative path of `A-Za-z0-9._-` segments, or a plain value of `A-Za-z0-9._,=+-` only, which can never name a path. A cache directory whose resolved path has any character outside `A-Za-z0-9._/-` (a separator or whitespace) refuses `model_cache_invalid`. Systems needing a staged model cache require `--model-cache DIR`; its file-tree digest is disclosed and checked again after the run. This is the same reviewed change for every system.
 
 `DEPENDENCIES` maps a plug-in system to an existing repository-relative POSIX path under `systems/locks/` (no `..` or backslashes); locks allow comments and continuations, require exact `name==version` pins with SHA-256 hashes and optional environment markers, and reject extras, URLs, editables, includes, duplicate normalised names with identical marker text, and empty locks.
 
@@ -210,6 +210,10 @@ bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$P
 bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH_T1" --hermes "$HOLOGRAPHIC_HERMES" --plugin-source "$PLUGIN_CHECKOUT" --baseline runs/ring0-t1-holographic-first/system/card.json --out runs/ring0-t1-holographic-next
 ```
 
+| T1 flag | Meaning |
+|---|---|
+| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 3.0; invalid values refuse with exit 3 before execution. Session end, turns followed by kill or restart, and compaction turns (a scheduled compaction, or a compaction request recorded during the turn or its quiet time) keep 3.0 s, counted from the first sample of the current stretch with nothing in flight. Outside the lock, lock hash, attempt id and card. The default is the published setting until the one-commit A/B passes; results at another value are your own. |
+
 T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
 
 The gated arms are system and wiped-store positive control. The wiped gate must FAIL: if it passes, the system card is INVALID, exit 1. Wiped `uninformative` is not a pass. The cached no-memory floor appears as `controls.no_memory_floor` and the `no_memory` JUnit suite ([RING0 §§5–6](../../specs/ring0/RING0.md#5-verified-empty-and-the-wiped-store-control)).
@@ -245,6 +249,12 @@ Exit-3 codes and causes, including registry reasons above:
 | `tier_composition` | T1 does not contain exactly G1 and G2. |
 | `schedule_mismatch` | Packed schedule differs from reconstructed schedule. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
+| `write_mapping_missing:<tool>` | First declared write tool differs from the mapped write tool, or a declared tool has no write, forget-delete or unscripted mapping. |
+| `write_mapping_unknown:<tool>` | A mapped write-side tool is absent from the declared write tools. |
+| `forget_search_undeclared:<tool>` | The forget search tool is absent from `read_tools`. |
+| `write_mapping_action:<tool>` | A fixed write or forget-delete action is absent from the tool's non-empty declared actions. |
+| `forget_mapping_missing` | A system with write tools lacks the forget mapping required by its runner. |
+| `embedding_dim_invalid` | An embeddings role requires an integer `embedding_dim` of at least 2. |
 | `missing_input` | Required Hermes, plug-in source or model cache omitted, or an unused model cache supplied. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
@@ -263,7 +273,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `baseline_missing` | T0 fault-free baseline pack/item missing. |
 | `catalogue_changed` | T0 catalogue hash changed. |
 | `visible_canary` | Canary found in agent-visible input. |
-| `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
+| `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `scratch_exists` | T1 arm scratch path already exists. |
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
 | `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
@@ -299,6 +309,8 @@ Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. C
 ## 10. Reading the outputs
 
 Ring 0 contract change, 2026-11-01: memory hosts add `t0.forget_kept` and `t1.forget_kept` to their delivery properties, as canonical JSON counts for `ambiguous`, `same_text` and `unattributed`, zeros included. Counts follow the host lifetime across reset and restore; the first reason per row id (or text hash without search) wins within a store generation, and each wipe starts a new generation because a fresh store may reuse row ids. T0 sums all invocation hosts and T1 sums corpus hosts per gated arm; a row kept by two hosts counts twice. A row with no candidate owner whose text the host deleted since its last reset counts nowhere: the system kept it. A replacement host after a crash starts without that memory, so such a row can still count as `unattributed`. Reference adapters disclose nothing. `forget_ambiguous` reads the `ambiguous` plus `same_text` count. INV-FORGET adds reason `host_kept` beside `store_hit` only when a kept text contains a searched needle; the status and the member counts stay those of the check without it. The scorer pin moves with this change, so earlier packs are rebuilt. Kept texts remain in memory and never enter outputs or checkpoints ([RING0 E22](../../specs/ring0/RING0.md#13-v01-errata)). No PREREG version change; PREREG-v0.5 remains frozen.
+
+T1 records the run setting as the `t1.turn_wait_s` JUnit property (seconds).
 
 Also inspect `t0.sandbox_slot` for registry T0 runs (reference runs disclose no slot), and `t1.sandbox_slot` for T1. The value is the selected slot, default 0; it is a run property outside the frozen disclosure tuple.
 

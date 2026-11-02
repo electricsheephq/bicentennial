@@ -957,3 +957,14 @@ def test_engine_only_life_uses_plugin_wake_and_env(lives, tmp_path, monkeypatch,
     else:
         assert not result.hooks
     result.cleanup()
+
+
+@pytest.mark.parametrize("arm", ["system", "wiped", "no_memory"])
+def test_turn_wait_reaches_life_adapter(lives, tmp_path, monkeypatch, completed_sessions, harness, arm):
+    offline_life_adapter(monkeypatch)
+    run = drive(lives["t1-g1", "B0"], tmp_path, arm=arm, turn_wait_s=1.0)
+    try:
+        assert len(harness.made) == 1 and harness.made[0].turn_wait_s == 1.0
+        assert run.sessions
+    finally:
+        run.cleanup()

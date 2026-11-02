@@ -997,7 +997,7 @@ def test_cli(monkeypatch):
     assert cli.main(args) == 2
     assert calls == [["-m", "bicentennial.cli", *args], dict(system="s", packs_dir="p",
         pack_hash="h", out="o", baseline=None, hermes=None, plugin_source=None, model_cache=None,
-        cache=None, sandbox_slot=0)]
+        cache=None, sandbox_slot=0, turn_wait_s=3.0)]
     assert cli.main(["t0", "--system", "s", "--pack", "all", "--packs", "p",
                      "--pack-hash", "h", "--out", "o"]) == 0
 
@@ -1079,3 +1079,19 @@ def test_engine_and_cache_disclosures_and_change_refusal(synth, installed, monke
                 "compression.threshold_tokens applies to the built-in compressor only")
             assert props["t1.corpus_engine"] == "corpus runs Hermes built-in memory, the system's memory layer as shipped"
             assert all(props[k] == v for k, v in compare.PLUGIN_DISCLOSURES)
+
+
+def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch, capsys):
+    """The same executed evidence makes identical cards at either timing."""
+    outputs = []
+    for wait in (3.0, 1.0):
+        ctx = replace(synth.ctx, turn_wait_s=wait)
+        monkeypatch.setattr(t1, "prepare", lambda ctx=ctx, **kw: ctx)
+        out = tmp_path / str(wait)
+        capsys.readouterr()
+        assert invoke(installed, out, turn_wait_s=wait) == 0
+        assert "turn_wait_s" not in capsys.readouterr().err
+        assert all(properties(out, arm)["t1.turn_wait_s"] == str(wait) for arm in compare.GATED)
+        outputs.append(out)
+    for arm in compare.GATED:
+        assert (outputs[0] / arm / "card.json").read_bytes() == (outputs[1] / arm / "card.json").read_bytes()
