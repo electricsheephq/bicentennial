@@ -64,6 +64,17 @@ class Stack:
         return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
 
 
+def hold_rows():
+    def held(reason, ms):
+        return dict(kind="hold", reason=reason, held_ms=ms)
+    def ledger(diagnostics):
+        return dict(role="probe_main", served_by="live", upstream=[
+            dict(role="probe_main", served_by="live", diagnostics=diagnostics)])
+    return (ledger([held("quota", 11), held("rate", 11), dict(kind="try"),
+                    held("rate", 11), dict(kind="try")]),
+            ledger([held("quota", 7), dict(kind="try")]))
+
+
 @pytest.fixture(autouse=True)
 def live_settings(monkeypatch):
     for name, value in zip(runner.LIVE_ENV, ("https://synthetic.invalid/token", "synthetic-client",
@@ -126,6 +137,8 @@ def scenario(tmp_path, monkeypatch):
             for i in kw["items"]]
         runner._write(root, "t2lite_probes.json", probes)
         rows = ({"role": "probe_main", "served_by": "live"},)
+        if state.mode == "holds" and kw["items"][0]["item_id"] == "t1-g1B0":
+            rows = (hold_rows()[0 if kw["arm"] == "no_memory" else 1],)
         if state.mode == "live_replay":
             rows = ({"role": "replay_main", "served_by": "live"},)
         if state.mode == "live_upstream":
@@ -202,6 +215,31 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert len(s.seen) == 12
     assert "floor: reused from the cache" in capsys.readouterr().err
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_holds_count_waits_on_rows(held):
+    rows = hold_rows() if held else ({}, {"upstream": [{"served_by": "live", "diagnostics": []}]})
+    assert runner._holds(rows) == (dict(waits=3, held_ms=29, reasons=["quota", "rate"]) if held
+                                   else dict(waits=0, held_ms=0, reasons=[]))
+
+
+def test_holds_count_terminal_wait_and_ignore_scripted():
+    row = hold_rows()[0]
+    row["upstream"][0]["diagnostics"] = row["upstream"][0]["diagnostics"][:2]
+    assert runner._holds([row]) == dict(waits=1, held_ms=11, reasons=["quota", "rate"])
+    row["upstream"][0]["served_by"] = "scripted"
+    assert runner._holds([row]) == dict(waits=0, held_ms=0, reasons=[])
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_run_discloses_holds_from_both_arms(scenario, held):
+    scenario.mode = "holds" if held else None
+    assert scenario.invoke() == 0
+    assert {arm for arm, _ in scenario.seen} == {"no_memory", "system"}
+    assert runner._read(scenario.out, "disclosures.json")["live"]["holds"] == (
+        dict(waits=3, held_ms=29, reasons=["quota", "rate"]) if held
+        else dict(waits=0, held_ms=0, reasons=[]))
 
 
 @pytest.fixture
@@ -428,6 +466,102 @@ def test_baseline_checked_before_build_or_send(scenario, tmp_path, field):
     assert runner._read(scenario.out, "refusal.json") == {"code": "invalid_card:baseline" if field in ("tier", "profile") else field}
 
 
+@pytest.mark.parametrize("flipped", [False, True])
+@pytest.mark.parametrize("alias", [False, True])
+def test_aa_of_own_baseline_uses_final_outcomes(scenario, tmp_path, monkeypatch, flipped, alias):
+    s = scenario
+    s.ctx.packs[1] = replace(s.ctx.packs[1], genre="G2")
+    s.ctx.packs[1].items["B0"][0]["stage"] = "act"
+    baseline = tmp_path / "baseline"
+    assert s.invoke("baseline") == 0
+    reference = tmp_path / "alias" if alias else baseline
+    if alias:
+        reference.symlink_to(baseline, target_is_directory=True)
+    score, report = runner.score_item, runner.flip_report
+    calls = []
+    def scoring(item, **kw):
+        return row(item["item_id"], 0) if flipped and item["item_id"] == "t1-g1B1" else score(item, **kw)
+    def reporting(*args, **kw):
+        calls.append((args, kw))
+        return report(*args, **kw)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(runner, "flip_report", reporting)
+    assert s.invoke(aa_of=reference, baseline=baseline) == 0
+    result = runner._read(s.out, "flips.json")
+    assert result["q0"] == dict(numerator=int(flipped), denominator=3 if flipped else 1,
+                                milli=333 if flipped else 0)
+    assert result["counts"]["aa_prime_scored"] == result["counts"]["scored"] == 3
+    assert result["counts"]["unstable"] == result["counts"]["flips"] == int(flipped)
+    assert len(result["rows"]) == int(flipped)
+    assert "no A/A′ band" not in result["labels"]
+    assert all(r["unstable"] is True for r in result["rows"])
+    args, kwargs = calls[-1]
+    assert kwargs["aa_prime"] is args[3]
+    assert kwargs["aa_prime_card"] is args[0]
+    assert kwargs["aa_prime"] == runner._read(s.out, "outcomes.json")
+    assert kwargs["aa_prime_card"] == runner._read(s.out, "card.json")
+
+
+@pytest.mark.parametrize("copied", [False, True])
+def test_aa_of_different_baseline_has_no_band(scenario, tmp_path, copied):
+    from shutil import copytree
+    s = scenario
+    assert s.invoke("baseline") == 0
+    if copied:
+        copytree(tmp_path / "baseline", tmp_path / "other")
+    else:
+        assert s.invoke("other") == 0
+    s.score = 0
+    assert s.invoke(aa_of=tmp_path / "baseline", baseline=tmp_path / "other") == 0
+    report = runner._read(s.out, "flips.json")
+    assert report["q0"] is None and "no A/A′ band" in report["labels"]
+    assert len(report["rows"]) == 4 and all(r["unstable"] is None for r in report["rows"])
+
+
+def test_aa_of_band_decided_before_any_send(scenario, tmp_path, monkeypatch):
+    from shutil import copytree
+    s = scenario
+    baseline, other, alias = tmp_path / "baseline", tmp_path / "other", tmp_path / "alias"
+    assert s.invoke("baseline") == 0
+    copytree(baseline, other)
+    alias.symlink_to(baseline, target_is_directory=True)
+    score = runner.score_item
+    def scoring(item, **kw):
+        # Once the run is sending, the alias names the copy instead; the band was already decided.
+        if alias.resolve() != other.resolve():
+            alias.unlink()
+            alias.symlink_to(other, target_is_directory=True)
+        return score(item, **kw)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    assert s.invoke(aa_of=alias, baseline=baseline) == 0
+    assert alias.resolve() == other.resolve()
+    report = runner._read(s.out, "flips.json")
+    assert report["q0"] is not None and "no A/A′ band" not in report["labels"]
+
+
+def test_aa_of_band_follows_file_identity(scenario, tmp_path):
+    s = scenario
+    assert s.invoke("baseline") == 0
+    other_spelling = tmp_path / "BASELINE"
+    if not other_spelling.exists():
+        pytest.skip("case-sensitive file system: the directory has one spelling")
+    assert s.invoke(aa_of=other_spelling, baseline=tmp_path / "baseline") == 0
+    report = runner._read(s.out, "flips.json")
+    assert report["q0"] is not None and "no A/A′ band" not in report["labels"]
+
+
+def test_aa_of_with_aa_prime_refused_before_output(scenario, tmp_path, capsys):
+    s = scenario
+    baseline = tmp_path / "baseline"
+    assert s.invoke("baseline") == 0
+    assert s.invoke("prime", aa_of=baseline) == 0
+    s.stacks.clear(), s.seen.clear()
+    capsys.readouterr()
+    assert s.invoke(aa_of=baseline, baseline=baseline, aa_prime=tmp_path / "prime") == 3
+    assert not s.out.exists() and s.stacks == [] and s.seen == []
+    assert capsys.readouterr().err.split() == ["rerun_arguments"]
+
+
 def test_flip_identities_and_prime_card(scenario, tmp_path):
     s = scenario
     assert s.invoke("baseline") == 0
@@ -442,6 +576,9 @@ def test_flip_identities_and_prime_card(scenario, tmp_path):
     assert "synthetic-identity" in report["served_identity"]["baseline"]
     assert "changed-identity" in report["served_identity"]["current"]
     assert report["q0"]["numerator"] == 0
+    assert report["counts"]["aa_prime_scored"] == 4
+    assert "no A/A′ band" not in report["labels"]
+    assert all(r["unstable"] is False for r in report["rows"])
 
 
 def test_guard_delegates_stack_and_never_forwards_canary():
@@ -752,6 +889,13 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
         assert all(target[iid]["score_milli"] is None and target[iid]["accuracy_correct"] is None
                    for iid in g2_actions)
     outcome = next(r for r in outcomes.values() if r["stage"] != "act")
+    assert runner._read(tmp_path / "full", "disclosures.json")["live"]["holds"] == {
+        "waits": 0, "held_ms": 0, "reasons": []}
+    assert runner.run_t2lite(out=tmp_path / "prime", aa_of=tmp_path / "full",
+                            baseline=tmp_path / "full", **args) == 0
+    noise = runner._read(tmp_path / "prime", "flips.json")
+    assert noise["q0"]["numerator"] == 0 and noise["counts"]["aa_prime_scored"] > 0
+    assert noise["rows"] == [] and "no A/A′ band" not in noise["labels"]
     only = outcome["life"], outcome["branch"], outcome["probe_point"]
     assert runner.run_t2lite(out=tmp_path / "rerun", only=only, repeat=3, **args) == 0
     repetitions = runner._read(tmp_path / "rerun", "repetitions.json")

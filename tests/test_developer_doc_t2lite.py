@@ -36,6 +36,10 @@ def test_doc_commands_exist(monkeypatch, capsys):
             SHARED["_flags_in_help"](cli.main, "t2lite", tokens[2:], capsys)
             assert cli.main(tokens[1:]) == 0
     assert len(calls) == 3
+    a, prime, b = calls
+    assert prime["aa_of"] == prime["baseline"] == a["out"]
+    assert b["baseline"] == a["out"] and b["aa_prime"] == prime["out"]
+    assert "A′'s flips are noise, and its q₀ is the noise rate" in text
 
 
 def _calls(tree, name):
@@ -123,7 +127,9 @@ def test_doc_outputs(scenario, monkeypatch, mode):
     scenario.mode = mode
     if mode is None:
         assert scenario.invoke("A") == 0
-        assert scenario.invoke("prime", aa_of=scenario.out.parent / "A") == 0
+        assert scenario.invoke("prime", aa_of=scenario.out.parent / "A", baseline=scenario.out.parent / "A") == 0
+        prime = t2lite._read(scenario.out.parent / "prime", "flips.json")
+        assert prime["q0"]["milli"] == 0 and "no A/A′ band" not in prime["labels"]
         assert scenario.invoke(baseline=scenario.out.parent / "A", aa_prime=scenario.out.parent / "prime") == 0
     else:
         assert scenario.invoke() == 3
@@ -133,6 +139,10 @@ def test_doc_outputs(scenario, monkeypatch, mode):
     actual = {re.sub(r"/(t1-g[12])/B[01]/", "/<life>/<branch>/", p.relative_to(scenario.out).as_posix())
               for p in scenario.out.rglob("*") if p.is_file()}
     assert actual == listed
+    if mode is None:
+        assert "`live.holds` (`waits`, `held_ms`, sorted `reasons`)" in table
+        assert t2lite._read(scenario.out, "disclosures.json")["live"]["holds"] == {
+            "waits": 0, "held_ms": 0, "reasons": []}
 
 
 def test_ci_block_matches_doc(tmp_path):

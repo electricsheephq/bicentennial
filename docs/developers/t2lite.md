@@ -21,13 +21,13 @@ Use a separate developer login home. The operator identity cannot run `lcm-x`; a
 
 ## Run it
 
-Run from the clone root. In these examples, set `PACK_HASH` to the installed T1 pack's hash, and replace the relative checkout and login directories with your own. Each output directory must be new. A is the first run; A′ repeats that same system and pins, with `--aa-of` naming A. The candidate uses A as `--baseline` and the earlier A′ as `--aa-prime`.
+Run from the clone root. In these examples, set `PACK_HASH` to the installed T1 pack's hash, and replace the relative checkout and login directories with your own. Each output directory must be new. Run A first, then repeat the same system and pins as A′ with `--aa-of A --baseline A`. A′'s flips are noise, and its q₀ is the noise rate. Both references must name the same directory, which is checked before the first send: a symlink to A, or another spelling of A on a case-insensitive disk, counts; a copy at another path does not supply this band. Then run a change B with `--baseline A --aa-prime A′` to compare it with A using that measured noise.
 
 ```sh
 export PYTHONHASHSEED=0
 bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --out runs/A
-bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --aa-of runs/A --out runs/A-prime
-bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --baseline runs/A --aa-prime runs/A-prime --out runs/candidate
+bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --aa-of runs/A --baseline runs/A --out runs/A-prime
+bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --baseline runs/A --aa-prime runs/A-prime --out runs/B
 ```
 
 The send limit is an example, not a promised budget. Earlier cards must match system, pack, seed, model, effort, answer contract, profile and all code/harness pins. A candidate can change its implementation while keeping those comparability fields fixed. Checkpoint reruns use `--only LIFE:B0:CHECKPOINT` (or B1) and optionally `--repeat N`, a positive integer. They replay the whole branch and keep all items at that checkpoint. Repeats above one require a checkpoint; checkpoint runs cannot take references. `--aa-prime` requires `--baseline`; `--aa-of` cannot accompany `--aa-prime`. `--sandbox-slot` chooses an available slot from 0 through 9.
@@ -76,7 +76,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 | `repetitions.json` | Joined outcomes for every repetition. |
 | `no_memory.json` | Floor outcomes and per-unit stops, possibly reused. |
 | `custody.json` | Drained login custody events, without login secrets. |
-| `disclosures.json` | Live stack state and transforms disclosed per arm. |
+| `disclosures.json` | Live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
 | `spend.json` | Locked reservation and settlement accounting. |
 | `receipt.json` | COMPLETE status, actual work, tokens, latency and runtime. |
 | `flips.json` | Comparison against the baseline, if supplied. |
