@@ -160,6 +160,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `output_overlap` | Output overlaps login, packs or cache. |
 | `pin_mismatch` | Checkout does not match its pin. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
+| `pins_unstable` | `bicentennial pins` only: two install measurements on distinct director ports differ. |
 | `plugin_deps_check_failed` | Worker inspection cannot start, times out, lacks marker support, or returns invalid output. |
 | `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
 | `plugin_deps_missing:<dist>` | Worker lacks a locked dependency. |
