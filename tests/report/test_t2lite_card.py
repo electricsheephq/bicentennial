@@ -3,6 +3,7 @@
 import copy
 import json
 import runpy
+import shutil
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
@@ -11,8 +12,9 @@ import pytest
 
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.run import NAMES, SCHEMAS, validate
+from bicentennial.controls import cache
 from bicentennial.director.compiler.answer_contract import CONTRACT_SHA256
-from bicentennial.packs import build, manifest
+from bicentennial.packs import build, manifest, scoring
 from bicentennial.report import t2lite_card as cards
 from bicentennial.report.card import assemble, finalize
 from bicentennial.report.t1_gate import check_baseline
@@ -394,106 +396,172 @@ def test_citation_parity_with_qa(quote, evidence, expected):
         assert citation_match(citation, evidence) == _cited(citation, evidence)
 
 
-# Host-free tree digests (host_free_tree_sha256 below) of a T0 build on main. A change that
-# moves packs on purpose updates them and records the move in prereg/CHANGELOG.md.
+# Content digests of T0 packs, excluding code pins and SQLite writer-version bytes.
+# Intentional content changes update these from the assertion's failure message.
 LEGACY_PACK_HASHES = {
-    "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/1": "433c3d9ff273050ace9c620a0fd39205938c8fe548467b32bcce1823f799535e",
-    "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/2": "3b15d65d4bec9543d11eac648c8dcd0b3d505f9110dd2430cdcd0fa51d0bb952",
-    "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/3": "a91963b46c9ed6e69347840a290cbca41324b15ff26e70ca8c7f541c94448690",
-    "pack/G1/Drift/drift-chain@1/s2-d0-none/1": "7b879713c0d3ac42096758f0915c28152a82953c425e33bc03adf2bc0139e370",
-    "pack/G1/Drift/drift-chain@1/s3-d0-none/1": "c6c5b0859648b70e74e71143ec3974d8b6ff52dac471655cf8947f49448734a4",
-    "pack/G1/Drift/drift-chain@1/s3-d1-compaction/1": "49d73a00b7db4e65e970bbcbdd2b129fedcbd43bbb6f3515734226b2f7d6fa22",
-    "pack/G1/Drift/drift-chain@1/s3-d1-gap/1": "a6c5f86f5c479074eb11721cb1bf20964b989925dd09b8e8339b19334cc24d17",
-    "pack/G1/Drift/drift-chain@1/s3-d1-none/1": "080de790097225ce97b940b016f1710bd35d57149decec746f29852b732da4e7",
-    "pack/G1/Drift/drift-chain@1/s3-d1-none/2": "4153db0d66cb04c0237c5f05370bc026683360301701d262e07e7a59dabf1402",
-    "pack/G1/Drift/drift-chain@1/s3-d1-none/3": "c136158f301e0ff79b43ac897b7445a1d845a626934a081f06d13c6058e15181",
-    "pack/G1/Drift/drift-config@1/s2-d0-none/1": "d7f46b118af5e47af7a500d2735c48ad3efcdc5fc070a2bbecdd1bc82d297cea",
-    "pack/G1/Drift/drift-config@1/s3-d0-none/1": "12cdcfd3cfd68c82ea77563b107eb52c58123509bc319b7659bf61235cd7da5c",
-    "pack/G1/Drift/drift-config@1/s3-d1-gap/1": "188f494edaacad7d15e2d8f2bde5ee33fe92a24a4f75f0605686fa2d95c2da2f",
-    "pack/G1/Drift/drift-config@1/s3-d1-kill/1": "d06774b2f5d635fd58552505d25c239a71afcdccdc55e934fa6df00ae9ccbfa4",
-    "pack/G1/Drift/drift-config@1/s3-d1-none/1": "743f91803b7ef492a89961782fad26d6157179a136fef51f8b2982caf0f96d51",
-    "pack/G1/Drift/drift-config@1/s3-d1-none/2": "ebb28c0fc16216f4eac5c56216b912602498f1af4abda86854b67f0adc8cd009",
-    "pack/G1/Drift/drift-config@1/s3-d1-none/3": "062fc119db398bfcd0421b5ae2dab4ac4517ee8ed7ce3b5ea83edc105db5c4d1",
-    "pack/G1/Drift/drift-quote@1/s2-d0-none/1": "3ea7e20655937e4b5ef9b6edb9ae27205be8194b569c0cc7679a14190c14c9fd",
-    "pack/G1/Drift/drift-quote@1/s3-d0-none/1": "c3e4c23a5953dc884ccce26c191a13e40bb3df69b300c16575529515bf8a3df0",
-    "pack/G1/Drift/drift-quote@1/s3-d0-none/2": "936c611fcef197e7cf5fb7349c0718f60cda47612952449852cb18c5c9bce303",
-    "pack/G1/Drift/drift-quote@1/s3-d0-none/3": "3ddab9549a900ca47669c59ef1c17566fb22afa8cce9de4c1bf27c33f091478b",
-    "pack/G1/Drift/drift-quote@1/s3-d1-gap/1": "6ffe095a735720df3a588a3b23065b41484504ccff691b421a9c5ad0ca09ef53",
-    "pack/G1/Drift/drift-quote@1/s3-d1-kill/1": "fdda16df0f76162b130aa687c9a53ec845019e29441d37130e5350fe5822db70",
-    "pack/G1/Drift/drift-quote@1/s3-d1-none/1": "50635a3cdec0b73eb337d5b48567d466a3b21ed11e3ff523242c748c4f14c2e1",
-    "pack/G1/Drift/drift-quote@1/s3-d1-none/2": "34484f14edce2ae4b52b9cc584a01875f4cee9f64827b847ab436acadea0d622",
-    "pack/G1/Drift/drift-quote@1/s3-d1-none/3": "c58b2936149b07369e18f0474c262a6787fed89559a0958650577a0d39a8693a",
-    "pack/G1/Recall/recall-value@1/s2-d1-none/1": "98a04425bf66573731976ad727613fcb7733a862e59e1143c47ec3878208308c",
-    "pack/G1/Recall/recall-value@1/s3-d0-none/1": "91b383956d0db373233523e33e934689ee9804be8fbe14b5dacd226bb3c38236",
-    "pack/G1/Recall/recall-value@1/s3-d1-kill/1": "fd2952193cabcb8387c71ee8e1d34a94a63cdda86730571bb7774df81bf18e83",
-    "pack/G1/Recall/recall-value@1/s3-d1-none/1": "00ba27910bdbc3af3f0d79dbae0f3c2f15865ab33a438239d6552694e60c88d3",
-    "pack/G1/Recall/recall-value@1/s3-d1-none/2": "63f991500dbf4fa86b79c9fced13e561eccbaec0be8bbd4d6f254519d5899ecc",
-    "pack/G1/Recall/recall-value@1/s3-d1-none/3": "b9593dcb5a8f814aa0523588cd3e970894338de64099056deefbab8ca7372d93",
-    "pack/G1/Recall/recall-value@1/s3-d2-none/1": "f72c3ed158ef9cdea59553129808b1e9702a8371ea685b5daa347bee73f6174d",
-    "pack/G1/Wake/wake-loop@1/s2-d1-none/1": "3d195980a929fa15254eb1561eb8f7c5f994c1d7f86e8d1d3f76d666d35ebf4b",
-    "pack/G1/Wake/wake-loop@1/s3-d1-kill/1": "600bbdc6e1b1126e49c6f8a56f7b3d13714c8467fee4afc7cf336caa684923a2",
-    "pack/G1/Wake/wake-loop@1/s3-d1-none/1": "c3f99ab1f137f4b46f1d78382af7ee10662f6f93488e3076290cec30676a2f47",
-    "pack/G1/Wake/wake-loop@1/s3-d1-none/2": "c68b6215464beaac8522231819bd3bb5f7b51178778815d58177b6382ec81b6c",
-    "pack/G1/Wake/wake-loop@1/s3-d1-none/3": "98fd3a1fdbc4650a3653d6ca62b598920fc9e5cc1768985a6789cccca0afc1cc",
-    "pack/G1/Wake/wake-loop@1/s3-d2-none/1": "7f052f66574ea929f592ca1ed0eea10c26014d0a7513c5498b02937ed6588bba",
-    "pack/G2/Drift/drift-asof@1/s2-d0-none/1": "a5233cf86b35b02aea8851933510c2e79cfa67720885cd4af20e8ea4bb68564d",
-    "pack/G2/Drift/drift-asof@1/s3-d0-none/1": "e42bf731031046a9652990af2a66f7da96c54129a6994357d8ff34ce4c2e5de4",
-    "pack/G2/Drift/drift-asof@1/s3-d1-gap/1": "f1f27048f4e99c4834f792074a624c36fa701ea33c15b1352ce131203694b009",
-    "pack/G2/Drift/drift-asof@1/s3-d1-kill/1": "92706f74c810af02c13be02b0930f99f6e4fff8d641bc644bcc6fded3e4a188f",
-    "pack/G2/Drift/drift-asof@1/s3-d1-none/1": "10a9ac34d069c30d1e2bb2251772cd1f91ccc5021611d419b209bbbcdca105f5",
-    "pack/G2/Drift/drift-asof@1/s3-d1-none/2": "cdf8ddb57ccc2c81761123a888437a265f7ec01e69eb8effbab3cd2751bf765a",
-    "pack/G2/Drift/drift-asof@1/s3-d1-none/3": "61986eabe4de50e86038b2c6b99b736c7b274e71702a0193655ee7a0358d2454",
-    "pack/G2/Drift/drift-booking@1/s2-d0-none/1": "ff849ab411b39b62e4ef9fb4f74bd890ce6515b362f53abd422a9acbb8d35fb4",
-    "pack/G2/Drift/drift-booking@1/s3-d0-none/1": "df136f76ba1354746dbdecc4cb6f38819f53c22aae868310ea2427ac605e79ff",
-    "pack/G2/Drift/drift-booking@1/s3-d1-gap/1": "621cb3c8a4725467c1482e311b24d153b87dfbfe2804d3aa8a0a02bf9f5b5a5f",
-    "pack/G2/Drift/drift-booking@1/s3-d1-kill/1": "5ebe26e6a896655a92a84ae6943bbd4fc29741f9f0a145d35d7165bd10643c5f",
-    "pack/G2/Drift/drift-booking@1/s3-d1-none/1": "7bac00ebc6b7c334722bc1b26383ced3dc321f22ccbc44afe4effdb53bf4d868",
-    "pack/G2/Drift/drift-booking@1/s3-d1-none/2": "97a836c19c3089f4c03c793159dbb9bbf297a1181345552ab9cb14528bf22f5e",
-    "pack/G2/Drift/drift-booking@1/s3-d1-none/3": "54dd5a698fa469b98865fa91dc00a2dbddeb5f8c35f47f6a03cd6a8ea0d12c19",
-    "pack/G2/Drift/drift-no-update@1/s2-d0-none/1": "760eb5096c0878bd8f83165b6cc81f4810febe5646f2a3c2f8c04e49ea07c951",
-    "pack/G2/Drift/drift-no-update@1/s3-d0-none/1": "ab95edac9252eb5318245b9c108f1b5a145580cc747c0b647a8e46e916214fd0",
-    "pack/G2/Drift/drift-no-update@1/s3-d0-none/2": "8f5c8384e2c92fc7f377de8c406e03cfa0fa6a5541fde479ac9871b5a83b54e5",
-    "pack/G2/Drift/drift-no-update@1/s3-d0-none/3": "075cc6705dd37ebed70a67360bfbcbbb474ac1da7846e9ca7d90b9089df2d3ce",
-    "pack/G2/Drift/drift-no-update@1/s3-d1-gap/1": "bac0ef3bd2a4aee6d64b7bdeb2ee10cffdcd3ff32f103240ee7bce4d794a717d",
-    "pack/G2/Drift/drift-no-update@1/s3-d1-kill/1": "f18be86998e2e36bc6afa07ff71d3dd3e0ee0bfa90fd2f9f82e9da05c00d9eea",
-    "pack/G2/Drift/drift-no-update@1/s3-d1-none/1": "60131541656e2c74b1e294862b1059a23c9cb238e9bc942561da2f8acc2f39a8",
-    "pack/G2/Drift/drift-no-update@1/s3-d1-none/2": "65f19f5ba178180906b0ea28ed21b9ea5ec784d9f93cf3aaae429787785e5168",
-    "pack/G2/Drift/drift-no-update@1/s3-d1-none/3": "3af78515d1060ff9a8130e753f59038234e302ef34e43f7f4798c06b2cebebf1",
-    "pack/G2/Keep/keep-forget@1/s3-d1-gap/1": "8416d2d902175288080bea7186ee51c79ef039c8247a64bc0534e6f9f7680b1c",
-    "pack/G2/Keep/keep-forget@1/s3-d1-kill/1": "46d258cadf199ee19544e8ee49256524c1dc47dbfa7b7db1481f9d8274113aa7",
-    "pack/G2/Keep/keep-forget@1/s3-d1-none/1": "908724fff217cc7db65792346d98c7fdd03ad7a500a2dee3b8e5b32a47609230",
-    "pack/G2/Keep/keep-forget@1/s3-d1-none/2": "decdca4b9fad68dc5289e25366e1c5b1979f0ff487e2d7f7374f633250c78b0a",
-    "pack/G2/Keep/keep-forget@1/s3-d1-none/3": "eaf5221e81e0d37912da1b351d3285b064ad574adff02b854a8a6aef03fdbf8f",
-    "pack/G2/Keep/keep-incidental@1/s2-d1-none/1": "8207404f031db13fd76c4d7bf17c0e327f77fe6cc1763faa48ef57c4e3533790",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-kill/1": "6dfc6f8ea60d9cbc3cbc76f0e440ea123226e012dbf96c60345278db28ec7099",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-none/1": "9dfcc2ca86c5cc7ca3480dca0eab4f1880a58d859898b28e53ac9fbdc87c9bf8",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-none/2": "8c3a8a9148b8fcd1b26ac1ad4a0e301c4df31a197dbd069072f0643cd1786458",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-none/3": "087f4292f955e685c3e19d3cfdb29cddea12ad4e6209fe1eda838563e2e3e4ed",
-    "pack/G2/Keep/keep-incidental@1/s3-d2-none/1": "d036ce80aa5a58eb0396ce36f9557a2f3de55a82308d93c80d38701e8e46914e",
-    "pack/G2/Keep/keep-neighbour@1/s2-d1-none/1": "ae97f3ef06f22c3b04c7d66eb2282c859276bfda452b10fb062d27f8d51a86f6",
-    "pack/G2/Keep/keep-neighbour@1/s3-d1-kill/1": "6da36a79817eddf309e2bd9f0a0aced4972fd1bf48e5819c6a81dee488302dfb",
-    "pack/G2/Keep/keep-neighbour@1/s3-d1-none/1": "84c3f72cc66ce2b9ab5846069bf0fd8b7f4f75a9d3cee4c57e2c9fb4b594457d",
-    "pack/G2/Keep/keep-neighbour@1/s3-d1-none/2": "7f654e575a0bede86473f8a75920c5e187bacef24ff150a400ff66204c8b3d3b",
-    "pack/G2/Keep/keep-neighbour@1/s3-d1-none/3": "70285e39d48b1041811f80deeab99a46673aeabab6de996d5c1b0ba9a0c6396c",
-    "pack/G2/Keep/keep-neighbour@1/s3-d2-none/1": "29f4bb50bbb54a28b3855818ba8ece9a427bf8790ac647d0ab2f71eb5dd4c2f2",
-    "pack/G2/Recall/recall-count@1/s2-d0-none/1": "5f3a7a73e795c281440a31cea685f01899c34ee7578a2f33ccc9ac5df06f3346",
-    "pack/G2/Recall/recall-count@1/s3-d0-none/1": "71529969bbb9e0b881cc3a716f9d2d2573921896b07cf39a623da29a9ad64de2",
-    "pack/G2/Recall/recall-count@1/s3-d1-gap/1": "6b55ebc889fe3a53a74ad714bf7e745269840e2dfbb07185915bb31ed6639acc",
-    "pack/G2/Recall/recall-count@1/s3-d1-kill/1": "fd5db13895b77ccfba2622a298f90b0527d11a277f6004b3354fe0caed7d4eaf",
-    "pack/G2/Recall/recall-count@1/s3-d1-none/1": "5bb58b67ff3106e6a7306734970bdf38a7c8b049a4d69841c977fbf29f8c3865",
-    "pack/G2/Recall/recall-count@1/s3-d1-none/2": "894e3de6b16791085812441e5ecedc5a8c5d224c131085352dcf6b30463e32e9",
-    "pack/G2/Recall/recall-count@1/s3-d1-none/3": "aeacc2bd4359c3c496147b9515e529cbc371528e97fca09709a9fd654dbdf46b",
+    "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/1": "db43934ebb8904bc50e954865016f5245a7abcb80be7a6da1f85810313015741",
+    "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/2": "961da62a4254649212f16a19a56f2c00ad8a25dde352eed15d1c4da06e635edc",
+    "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/3": "323d5e6f9522511b920f8f55bc8e7621600d12fb767a75a987c4b208a37e46ab",
+    "pack/G1/Drift/drift-chain@1/s2-d0-none/1": "821661ba9665a406323d0671e518f3ad4a376f812647c0f3429f5e860f832a69",
+    "pack/G1/Drift/drift-chain@1/s3-d0-none/1": "058497e20a3ef0b8010902f5ceda1bcefe726de822eda3a20de13f669b3a26ce",
+    "pack/G1/Drift/drift-chain@1/s3-d1-compaction/1": "56c0b6122cb3da59f9c7c6f130c9b38654f7eb3485c6aeeb0956dbae5a194418",
+    "pack/G1/Drift/drift-chain@1/s3-d1-gap/1": "ac9c4074bb938676629009d9fdac37673fe02dc0248d38e599f28f0853b1b08d",
+    "pack/G1/Drift/drift-chain@1/s3-d1-none/1": "fc65537b6e751aeb66e6cc377fbaf913932a60c8008086932cc28b9bda216e19",
+    "pack/G1/Drift/drift-chain@1/s3-d1-none/2": "bc1b19d48344e20bcaee9044cf84b82e5c1f45d9d151dd33ead05b53872dbd1f",
+    "pack/G1/Drift/drift-chain@1/s3-d1-none/3": "63e569dd740295045958bcfbb75c568b8c333bb10e13b8ba33a119a1ed506122",
+    "pack/G1/Drift/drift-config@1/s2-d0-none/1": "46b1936ca033fb99e83fae33b0905c94c17d54cba430728672597c58b50134d4",
+    "pack/G1/Drift/drift-config@1/s3-d0-none/1": "2bded4101269f24c0ccc4daa133a3d68449b1748327c6eb1a051724b76e479b9",
+    "pack/G1/Drift/drift-config@1/s3-d1-gap/1": "ee273805b0960a84f930e54296310cd8516c72bf0ef685305bc785b220e8b046",
+    "pack/G1/Drift/drift-config@1/s3-d1-kill/1": "2f6e211bae8ee5132ad70b7bb68027bcf94cda92007dfcd9837c7d2b6fb2e15f",
+    "pack/G1/Drift/drift-config@1/s3-d1-none/1": "067016cd4eff067d99cf71246da93bf488ad5570af090b86e44b014f11be0124",
+    "pack/G1/Drift/drift-config@1/s3-d1-none/2": "5ac2fb18ea2013eda47c3ee8475a77576fc2c693cdb490eb4ac82128252e66fa",
+    "pack/G1/Drift/drift-config@1/s3-d1-none/3": "85a8ca71c9b007e8d65c7dd09fbbf6046def5cffe6c6c48c9a0c7def0b9ddf5d",
+    "pack/G1/Drift/drift-quote@1/s2-d0-none/1": "7c06f79c85e90ca5516e3cf393d181d3170cc963da5fb845759a9952d76d6650",
+    "pack/G1/Drift/drift-quote@1/s3-d0-none/1": "bd1bac14798ade260a8e8181850a40c7ba54cfb2a6c66b34c466c393de71aba4",
+    "pack/G1/Drift/drift-quote@1/s3-d0-none/2": "6ec5ce488d3fb109d6ac26dc70aa63addb50d0fea431eb83af91dfa0ead83512",
+    "pack/G1/Drift/drift-quote@1/s3-d0-none/3": "1470f187605b51e952cbde270f6935f3cd86c09e2fcc87c652996f7b5781bd7d",
+    "pack/G1/Drift/drift-quote@1/s3-d1-gap/1": "1a36d4da2bb2a4005d6905c52865d6f1ed9baa737ae126eb1b9fb655930e77b7",
+    "pack/G1/Drift/drift-quote@1/s3-d1-kill/1": "51ba105a81ff3355f250f835ee50b9a14f173c68cc967084a97804d3833b7acf",
+    "pack/G1/Drift/drift-quote@1/s3-d1-none/1": "0b5032fb0d2f0f17b1b27b449215828a99a4e881893dc6fd787009c6f83f313e",
+    "pack/G1/Drift/drift-quote@1/s3-d1-none/2": "ade3c57b78a9e16929af925937f6d4fb040aec19e630ef9bd5300c46a8ca7988",
+    "pack/G1/Drift/drift-quote@1/s3-d1-none/3": "ff4dbfc270b5da98cb11477927c503b9a71d3cfee1129e593eba07fb72b6210d",
+    "pack/G1/Recall/recall-value@1/s2-d1-none/1": "731f3a099e02fefd96a1b01b978cfe001695d3961e8721389b2850eae7197b64",
+    "pack/G1/Recall/recall-value@1/s3-d0-none/1": "00056ab1c8ca54fc34cecd8a3997c6351170f804e792c6944e312547470613e0",
+    "pack/G1/Recall/recall-value@1/s3-d1-kill/1": "112c3749807567dfd94d820fb1d2ba75f5b8d6cba36fb074da649689617c27dd",
+    "pack/G1/Recall/recall-value@1/s3-d1-none/1": "461cdecafbe82320798b5318741cf553c57ccf7b81ca979450da6fc22b9212ad",
+    "pack/G1/Recall/recall-value@1/s3-d1-none/2": "d44edcc54ad12fabf9a3ff660e62cc3a990eff839a9aa08973a5e8f66bde8dec",
+    "pack/G1/Recall/recall-value@1/s3-d1-none/3": "e4549541117cd7e3b12e1d89f770d3b22fc99d972eb85dd0f6ac0a2d0a339b8b",
+    "pack/G1/Recall/recall-value@1/s3-d2-none/1": "8f7f74c2e28ed26958e678e42f311c8a9bca1726fc1c8a2dd7f5b121fe65d373",
+    "pack/G1/Wake/wake-loop@1/s2-d1-none/1": "66f784cf28267b06a796a7acd98c7573d019b7222151ef527a7a9e3edb569b76",
+    "pack/G1/Wake/wake-loop@1/s3-d1-kill/1": "83ee99103ed953e30d7d74d04be5774564c9a2a937e0ce522757ebb9c227ffc5",
+    "pack/G1/Wake/wake-loop@1/s3-d1-none/1": "b6bd9456c2ddee43a2833cec1e7c3b6fee771a2a851843b398d984145736148c",
+    "pack/G1/Wake/wake-loop@1/s3-d1-none/2": "6aeacd197c7ee32e61c0b1b8685bf017ff9fa99f8511baa949368e038e6f630f",
+    "pack/G1/Wake/wake-loop@1/s3-d1-none/3": "e34e3f25660d78eec0a32c903d028fd4831edce038f691c5be1835f460cc2097",
+    "pack/G1/Wake/wake-loop@1/s3-d2-none/1": "4682dd244dcbcd492f9e90927c0c66967934392e31ebadc29b19d75ad25b1646",
+    "pack/G2/Drift/drift-asof@1/s2-d0-none/1": "85ce57b62dddd4bb13bcc871415fb7dae48ee37967cca289a1f94c0634ad2efc",
+    "pack/G2/Drift/drift-asof@1/s3-d0-none/1": "d9e8fc1c42705b098278cb13c6db74b09685f923a43630ad7b9271ab963eb644",
+    "pack/G2/Drift/drift-asof@1/s3-d1-gap/1": "20d858cc111c8581b734cec41381d1d790e69fa75282460a6afb90efd561f4a8",
+    "pack/G2/Drift/drift-asof@1/s3-d1-kill/1": "125cbeee5982438c9bca01fa24728dcb57cf150d578851063e17f6731b7c675f",
+    "pack/G2/Drift/drift-asof@1/s3-d1-none/1": "85a4d9e165c36af4212bafb3ac7730c5366e7f981d99be38792a6b930518442d",
+    "pack/G2/Drift/drift-asof@1/s3-d1-none/2": "4373a991c74177979e87797a8906e1dbfd1bc91c9fd5f47d0eef7ad60547710a",
+    "pack/G2/Drift/drift-asof@1/s3-d1-none/3": "4e0d98cf59363e559a09de89e8a5abdc0bfcd8d0aa10b73a5bb4fb01b779f181",
+    "pack/G2/Drift/drift-booking@1/s2-d0-none/1": "211a224d6712618831c91daf8e00ceab8f93ce725c8df281318277b191ee8631",
+    "pack/G2/Drift/drift-booking@1/s3-d0-none/1": "f170c66d38a73298d2fbe99384e25550f3762a8bea2239f64e4eb080baa38789",
+    "pack/G2/Drift/drift-booking@1/s3-d1-gap/1": "f77821f63d9e0c9a0ef0b12ca1d4cecc7ea47cf922ce2bac55d9e04262187e1f",
+    "pack/G2/Drift/drift-booking@1/s3-d1-kill/1": "0779d12d58eb3148afec93b39f0dc93557c6e3ecf0597527593f7a19849a5e9b",
+    "pack/G2/Drift/drift-booking@1/s3-d1-none/1": "87596e400638d5ddce829c9527a149cadfd66aeb01cfbb238b0847e776ca6424",
+    "pack/G2/Drift/drift-booking@1/s3-d1-none/2": "b2b090bc9f4a803361f8bfb4568480f61cb92a55b1f4ce42a8a837fa217e8373",
+    "pack/G2/Drift/drift-booking@1/s3-d1-none/3": "57f0027381414d365c18122c398f0b18473ed93010bb965d112bc5f8bdb09c7b",
+    "pack/G2/Drift/drift-no-update@1/s2-d0-none/1": "933d0720aa66597ecfa396efbe47784af0951e9e9ce87ac3a40de43efbe9c255",
+    "pack/G2/Drift/drift-no-update@1/s3-d0-none/1": "bc29690469dc9042feffdf401c1f90e412403dd350967ed44b75432337ac4655",
+    "pack/G2/Drift/drift-no-update@1/s3-d0-none/2": "e93996f493e7d73fd92b0d441368a384bcea295596833f7be6a3b95215edbe0c",
+    "pack/G2/Drift/drift-no-update@1/s3-d0-none/3": "56e8ed8e29b2a6be387204e528dc080a7120f1aa97700eafaf9eb0e4b47a18db",
+    "pack/G2/Drift/drift-no-update@1/s3-d1-gap/1": "43c74b0849927ee9035bf8eb6dbbc789bb94dd95e0f3fb4f1dae57b5f6973ff3",
+    "pack/G2/Drift/drift-no-update@1/s3-d1-kill/1": "f41d07eee7a48ff93b6f538c8ca8427420b381de76e0a9125e8bd547fbd0faaf",
+    "pack/G2/Drift/drift-no-update@1/s3-d1-none/1": "ca76dac7c78e4a1827cd60e12f4c4201137055a6d7ee4b9f6105635da53e5f53",
+    "pack/G2/Drift/drift-no-update@1/s3-d1-none/2": "25972ffbd1941b16bba08de68a6d4496b1579fad105651770bc86ba600f21adb",
+    "pack/G2/Drift/drift-no-update@1/s3-d1-none/3": "8dfb164c1c6b8854b4aa0179d8a1b9ebca227368f32c720d66ac18e459d09557",
+    "pack/G2/Keep/keep-forget@1/s3-d1-gap/1": "497cd20bcd9c6e557ab586c2ca0bdf28b581395c0c300f801de54e847809bdb8",
+    "pack/G2/Keep/keep-forget@1/s3-d1-kill/1": "119a49b4fa314e794f3a37f8f0116507762b08d89410f8384babc816f44b229b",
+    "pack/G2/Keep/keep-forget@1/s3-d1-none/1": "0ef6a344b14b07751aa1a72ff72e68361fb291a0ec5200ef601c4ad77c4a017d",
+    "pack/G2/Keep/keep-forget@1/s3-d1-none/2": "df15b98d6bd468d26df6983fcc623513770cb6550af9dc944fe82d28e7723953",
+    "pack/G2/Keep/keep-forget@1/s3-d1-none/3": "e3e7bd7b04f8eff8143acbefa65bca9c8757616aaa7659147cd8f04ac2a566fa",
+    "pack/G2/Keep/keep-incidental@1/s2-d1-none/1": "cdf45d9e865a77ef95f6109a31a7f6c1ddb1385503b0b2d343bc42306c940d19",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-kill/1": "d2fa1f31c73b5d68ed0df23956d2cfb2979070cd15c1ce927e7c927841e9776b",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-none/1": "1d83bf1acb844e1fc93d20c7cb708ef6487a026524795513c689afc78dc6fcd7",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-none/2": "00a3340f12aff738fa7d897648ef540d5422d45c98f91259b97727a651d0fcb8",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-none/3": "aca21275092a775937da85d18cc90e8e27fd597af6752ca12f42d79f47301dbc",
+    "pack/G2/Keep/keep-incidental@1/s3-d2-none/1": "4773e8fdbeffbdb7a26c5d1aa69826162aab4f0f4a61e013e92b8549ec9296e3",
+    "pack/G2/Keep/keep-neighbour@1/s2-d1-none/1": "ec5d7d3cdbbcea26daedbf44100b53d3b1a628ad4782298f050afdbc03259a5d",
+    "pack/G2/Keep/keep-neighbour@1/s3-d1-kill/1": "085ebdfdd00b1a9cf3e929158879937e81fd284c27d3f0771698ce671c88d2d1",
+    "pack/G2/Keep/keep-neighbour@1/s3-d1-none/1": "74d98c7f5b106b83a64d5ec5a7b4a24cb42f1b2f20461908a369405e04bead8e",
+    "pack/G2/Keep/keep-neighbour@1/s3-d1-none/2": "93e50be256cdf65c94a1bdea3f3368872758d127661d1c2ea4d2d511663686c7",
+    "pack/G2/Keep/keep-neighbour@1/s3-d1-none/3": "6a17e00df184bd11ce512c99e9774ae53c4c0f8db6bda745594848a9a1cc6a63",
+    "pack/G2/Keep/keep-neighbour@1/s3-d2-none/1": "eac2964d5cc33ec8b90466d1c1e19e436622b5ad1c1f7a914537b94932a8722a",
+    "pack/G2/Recall/recall-count@1/s2-d0-none/1": "835958615e69da7c2d34bde9ceeb6082c05f42bc30d2768b06b839b41235b67d",
+    "pack/G2/Recall/recall-count@1/s3-d0-none/1": "fa88ced2b898ecccd8bf6f03254a3ff73a19e3ed3f89c0966193070b8d791d65",
+    "pack/G2/Recall/recall-count@1/s3-d1-gap/1": "671ed0e67db006a5a298f9471e9c54ce9cb4e51e6f86522918d95dc8dd4ad6a6",
+    "pack/G2/Recall/recall-count@1/s3-d1-kill/1": "bb6a832fc68c022738a7664911b1a14d43b5e378f886919ccb052b58ad452f88",
+    "pack/G2/Recall/recall-count@1/s3-d1-none/1": "ac1b8b7f86af6420dfed7f9be8b991464cbb9a23a12a7360193673e4c53119ee",
+    "pack/G2/Recall/recall-count@1/s3-d1-none/2": "6f1deecfb9e2018191c8d7ee9df9f1a226d7693a71b00c4811210208a5bfbb93",
+    "pack/G2/Recall/recall-count@1/s3-d1-none/3": "8d85f6a1cf88b6ef2270ebc17e915a5e56aced7d3408599e74b64f3301cd4ca4",
 }
 
 
+CODE_PIN_FIELDS = ("scorer_sha256", "controls_sha256", "reader_sha256")
+
+
+def rehash_projected(stored, original, projected):
+    """Rehash a dependency while retaining any inconsistent stored content hash."""
+    expected = sha256_canon(original)
+    replacement = sha256_canon(projected)
+    return replacement if stored == expected else dict(stored=stored, projected=replacement)
+
+
+def masked_pack_files(root):
+    """Remove direct code pins and rehash their content-bearing dependencies."""
+    def load(rel):
+        raw = (root / rel).read_bytes()
+        data = json.loads(raw)
+        assert canon(data) == raw
+        return data
+
+    original_score = load("sealed/scoring.json")
+    score = copy.deepcopy(original_score)
+    del score["code_sha256"]
+    original_pack = load("sealed/pack.json")
+    pack = copy.deepcopy(original_pack)
+    pack["hashes"]["scoring"] = rehash_projected(
+        pack["hashes"]["scoring"], original_score, score)
+
+    original_controls = load("sealed/controls.json")
+    controls = copy.deepcopy(original_controls)
+    for name in CODE_PIN_FIELDS:
+        del controls["key"][name]
+    # This key hashes the scoring object both directly and through the pack.
+    inp = scoring.control_input(root)
+    original_lives = dict(pack=inp.pack, reader_keys=sorted(inp.keys, key=lambda k: k["item_id"]),
+                          events=inp.events, now=inp.now, scoring_sha256=inp.scoring_sha256)
+    del original_lives["pack"]["controls"]
+    lives = copy.deepcopy(original_lives)
+    lives["pack"]["hashes"]["scoring"] = pack["hashes"]["scoring"]
+    lives["scoring_sha256"] = sha256_canon(score)
+    controls["key"]["lives_sha256"] = rehash_projected(
+        controls["key"]["lives_sha256"], original_lives, lives)
+    controls["key_sha256"] = rehash_projected(
+        controls["key_sha256"], original_controls["key"], controls["key"])
+    controls["digest"] = rehash_projected(
+        controls["digest"], {k: v for k, v in original_controls.items() if k != "digest"},
+        {k: v for k, v in controls.items() if k != "digest"})
+    pack["hashes"]["controls"] = rehash_projected(
+        pack["hashes"]["controls"], original_controls, controls)
+    data = load("manifest.json")
+    for name in (*CODE_PIN_FIELDS, "controls_key_sha256"):
+        del data["pins"][name]
+    data["pins"]["scoring_sha256"] = rehash_projected(
+        data["pins"]["scoring_sha256"], original_score, score)
+    masked = {"sealed/scoring.json": canon(score), "sealed/controls.json": canon(controls),
+              "sealed/pack.json": canon(pack)}
+    for rel, raw in masked.items():
+        original = (root / rel).read_bytes()
+        entry = data["files"][rel]
+        replacement = dict(size=len(raw), sha256=sha256(raw).hexdigest())
+        if entry != dict(size=len(original), sha256=sha256(original).hexdigest()):
+            replacement = dict(stored=entry, projected=replacement)
+        data["files"][rel] = replacement
+    masked["manifest.json"] = canon(data)
+    return masked
+
+
 def host_free_tree_sha256(root):
-    """tree_sha256, with each world DB named by its schema and logical export instead of its bytes.
+    """Hash pack content with code pins projected out and logical world DB hashes.
 
     A DB header records the writing SQLite library's version, so raw pack hashes differ
     between hosts (#327). The stored DDL text and the export do not, and the manifests carry
     only those DB hashes.
     """
     files = manifest.file_manifest(root)
+    masked = masked_pack_files(root)
     worlds = {}
     for rel in files:
         if rel.endswith(".db"):
@@ -505,30 +573,159 @@ def host_free_tree_sha256(root):
         if rel in worlds:
             rows.append([rel, "world", worlds[rel]])
         elif rel == "manifest.json":
-            raw = (root / rel).read_bytes()
+            raw = masked[rel]
             data = json.loads(raw)
             assert canon(data) == raw  # so hashing the parsed manifest hides no serialization change
             data["files"].update({name: dict(world=digest) for name, digest in worlds.items()})
             rows.append([rel, "manifest", sha256_canon(data)])
+        elif rel in masked:
+            raw = masked[rel]
+            rows.append([rel, len(raw), sha256(raw).hexdigest()])
         else:
             rows.append([rel, files[rel]["size"], files[rel]["sha256"]])
     return sha256_canon(rows)
 
 
-def test_existing_pack_trees_are_unchanged(tmp_path):
-    result = build.build_tier("T0", tmp_path, harness_artifacts=[
+@pytest.fixture(scope="module")
+def t0_pack_build(tmp_path_factory):
+    root = tmp_path_factory.mktemp("pack-goldens")
+    result = build.build_tier("T0", root, harness_artifacts=[
         dict(name="hermes", version="test", sha256="a" * 64)])
+    return root / "T0", result
+
+
+def test_existing_pack_trees_are_unchanged(t0_pack_build, tmp_path):
+    root, result = t0_pack_build
     packs = result["index"]["packs"]
-    digests = {rel: host_free_tree_sha256(tmp_path / "T0" / rel) for rel in packs}
-    # A change that moves packs on purpose updates the table from this message.
+    digests = {rel: host_free_tree_sha256(root / rel) for rel in packs}
+    # An intentional pack content change updates the table from this message.
     assert digests == LEGACY_PACK_HASHES, canon(digests).decode()
     for rel, identity in packs.items():
-        assert manifest.tree_sha256(tmp_path / "T0" / rel) == identity["tree_sha256"]
+        assert manifest.tree_sha256(root / rel) == identity["tree_sha256"]
     # Another host's SQLite writes its own version number into each DB header.
     rel = sorted(packs)[0]
-    for db_path in sorted((tmp_path / "T0" / rel).rglob("*.db")):
+    copied = tmp_path / "pack"
+    shutil.copytree(root / rel, copied)
+    for db_path in sorted(copied.rglob("*.db")):
         data = bytearray(db_path.read_bytes())
         data[96:100] = (int.from_bytes(data[96:100], "big") ^ 1).to_bytes(4, "big")
         db_path.write_bytes(bytes(data))
-    assert manifest.tree_sha256(tmp_path / "T0" / rel) != packs[rel]["tree_sha256"]
-    assert host_free_tree_sha256(tmp_path / "T0" / rel) == LEGACY_PACK_HASHES[rel]
+    assert manifest.tree_sha256(copied) != packs[rel]["tree_sha256"]
+    assert host_free_tree_sha256(copied) == LEGACY_PACK_HASHES[rel]
+
+
+def changed_fields(before, after, prefix=""):
+    """List every changed JSON leaf using paths relative to the file."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        assert before.keys() == after.keys()
+        return [path for key in sorted(before)
+                for path in changed_fields(before[key], after[key], f"{prefix}/{key}")]
+    if isinstance(before, list) and isinstance(after, list):
+        assert len(before) == len(after)
+        return [path for i, (a, b) in enumerate(zip(before, after, strict=True))
+                for path in changed_fields(a, b, f"{prefix}/{i}")]
+    return [prefix] if before != after else []
+
+
+def test_code_pin_changes_leave_masked_pack_goldens_unchanged(t0_pack_build, tmp_path, monkeypatch):
+    artifacts = [dict(name="hermes", version="test", sha256="a" * 64)]
+    left, result = t0_pack_build
+    after = tmp_path / "after"
+    original = cache.code_sha256
+
+    def changed_code_hash(paths, **kwargs):
+        return sha256_canon(["changed code pin", original(paths, **kwargs)])
+
+    for module in (cache, scoring, build):
+        monkeypatch.setattr(module, "code_sha256", changed_code_hash)
+    build.build_tier("T0", after, harness_artifacts=artifacts)
+    right = after / "T0"
+    files = manifest.file_manifest(left)
+    assert files.keys() == manifest.file_manifest(right).keys()
+    differences = {}
+    for rel in sorted(files):
+        a, b = (left / rel).read_bytes(), (right / rel).read_bytes()
+        if a != b:
+            differences[rel] = changed_fields(json.loads(a), json.loads(b))
+    expected = {"index.json": sorted([
+        *(f"/pins/{name}" for name in (*CODE_PIN_FIELDS, "scoring_code_sha256")),
+        *(f"/packs/{rel}/tree_sha256" for rel in result["index"]["packs"])])}
+    for rel in result["index"]["packs"]:
+        expected[rel + "/manifest.json"] = sorted([
+            *(f"/pins/{name}" for name in (*CODE_PIN_FIELDS, "controls_key_sha256", "scoring_sha256")),
+            *(f"/files/sealed/{name}.json/sha256" for name in ("controls", "pack", "scoring"))])
+        expected[rel + "/sealed/controls.json"] = sorted([
+            *(f"/key/{name}" for name in (*CODE_PIN_FIELDS, "lives_sha256")), "/key_sha256", "/digest"])
+        expected[rel + "/sealed/pack.json"] = ["/hashes/controls", "/hashes/scoring"]
+        expected[rel + "/sealed/scoring.json"] = ["/code_sha256"]
+    assert differences == expected, canon(differences).decode()
+    before_hashes = {rel: host_free_tree_sha256(left / rel) for rel in result["index"]["packs"]}
+    after_hashes = {rel: host_free_tree_sha256(right / rel) for rel in result["index"]["packs"]}
+    assert before_hashes == after_hashes
+
+
+@pytest.fixture
+def copied_pack(t0_pack_build, tmp_path):
+    root, result = t0_pack_build
+    rel = sorted(result["index"]["packs"])[0]
+    path = tmp_path / "pack"
+    shutil.copytree(root / rel, path)
+    return path
+
+
+def test_item_content_change_changes_masked_pack_golden(copied_pack):
+    before = host_free_tree_sha256(copied_pack)
+    path = copied_pack / "sealed/life/items.B0.json"
+    raw = path.read_bytes()
+    # A single whitespace byte still changes the committed byte-level content golden.
+    assert raw.endswith(b"\n")
+    path.write_bytes(raw[:-1] + b" ")
+    assert host_free_tree_sha256(copied_pack) != before
+
+
+@pytest.mark.parametrize("field", [
+    "history_set_hash", "world_hash_b0", "world_hash_b1", "seed_hash", "c7_sha256",
+    "c7_entries", "scoring_sha256",
+])
+def test_manifest_content_pins_change_masked_pack_golden(copied_pack, field):
+    before = host_free_tree_sha256(copied_pack)
+    path = copied_pack / "manifest.json"
+    data = json.loads(path.read_bytes())
+    value = data["pins"][field]
+    if isinstance(value, dict):
+        key = sorted(value)[0]
+        value[key] = "0" * 64 if value[key] != "0" * 64 else "1" * 64
+    else:
+        data["pins"][field] = "0" * 64 if value != "0" * 64 else "1" * 64
+    path.write_bytes(canon(data))
+    assert host_free_tree_sha256(copied_pack) != before
+
+
+@pytest.mark.parametrize("rel,fields", [
+    ("sealed/scoring.json", ("cases", 0, "item", "prompt")),
+    ("sealed/scoring.json", ("evidence",)),
+    ("sealed/controls.json", ("arms", "no_memory", "items", 0, "score_milli")),
+    ("sealed/controls.json", ("key", "lives_sha256")),
+    ("sealed/controls.json", ("key_sha256",)),
+    ("sealed/controls.json", ("digest",)),
+    ("sealed/pack.json", ("hashes", "scoring")),
+    ("sealed/pack.json", ("hashes", "controls")),
+    ("manifest.json", ("files", "sealed/controls.json", "sha256")),
+])
+def test_projected_files_retain_content_and_stored_hash_changes(copied_pack, rel, fields):
+    before = host_free_tree_sha256(copied_pack)
+    path = copied_pack / rel
+    data = json.loads(path.read_bytes())
+    parent = data
+    for field in fields[:-1]:
+        parent = parent[field]
+    field = fields[-1]
+    value = parent[field]
+    if isinstance(value, str):
+        parent[field] = value + "changed"
+    elif isinstance(value, dict):
+        parent[field] = dict(value, changed=["content"])
+    else:
+        parent[field] = value + 1
+    path.write_bytes(canon(data))
+    assert host_free_tree_sha256(copied_pack) != before
