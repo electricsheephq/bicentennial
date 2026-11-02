@@ -571,7 +571,7 @@ def test_session_timing_boundaries_without_worker(tmp_path, monkeypatch, hook, r
     a.egress = SimpleNamespace(forking=Forking())
     a.director = SimpleNamespace(route={"alias": "main"},
         start_session=lambda *args: advance(0.5),
-        control=lambda: {"write_failures": 0, "stopped": False, "inflight": 0})
+        control=lambda: {"write_failures": 0, "stopped": False, "inflight": 0}, summariser_requests=0)
     a._gate = lambda readings: (advance(0.125), readings.append({"exit": 0, "state": "idle"}))
 
     def spawn(reason, sid, timings):

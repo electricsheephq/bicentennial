@@ -286,14 +286,17 @@ class HermesAdapter:
             for turn in session["turns"]:
                 n, faults = turn["n"], self.schedule.at(index, turn["n"])
                 held = self.kill_mode == "held" and any(f["kind"] == "kill" for f in faults)
-                self._held, t0 = (index, n) if held else None, _now()
+                self._held, t0, summarised = (index, n) if held else None, _now(), d.summariser_requests
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
                 # A kill or restart stops the worker next, and a compaction turn's stored state matters most,
-                # so these turns keep the full settle.
-                full = any(f["kind"] in ("kill", "restart", "compaction") for f in faults)
+                # so these turns keep the full settle. T1 and T2-lite compact under sprint pressure, not on a
+                # schedule, so a compaction request recorded during the turn or its quiet time counts too.
+                compacted = lambda s=summarised: d.summariser_requests > s  # noqa: E731
+                full = any(f["kind"] in ("kill", "restart", "compaction") for f in faults) or compacted()
                 quiet = min(self.turn_wait_s, DRAIN_QUIET_S)
-                t["drain"].append(self._drain() if full or quiet == DRAIN_QUIET_S else self._drain(quiet))
+                t["drain"].append(self._drain() if full or quiet == DRAIN_QUIET_S
+                                  else self._drain(quiet, upgrade=compacted))
                 c, killed, self._held = d.control(), held and out is None and (index, n) in self._fired, None
                 if c["stopped"] or c["write_failures"] > failures:
                     raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")
@@ -428,12 +431,14 @@ class HermesAdapter:
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
 
-    def _drain(self, quiet=None) -> int:
+    def _drain(self, quiet=None, upgrade=None) -> int:
         """Wait for `quiet` s (default DRAIN_QUIET_S) with nothing in flight (background titles and reviews), as
-        replay.py 169-180."""
+        replay.py 169-180. Once upgrade() is true, the wait becomes DRAIN_QUIET_S."""
         quiet = DRAIN_QUIET_S if quiet is None else quiet
         t0, m0, calm = time.monotonic(), _now(), None
         while time.monotonic() - t0 < DRAIN_CAP_S:
+            if upgrade is not None and quiet < DRAIN_QUIET_S and upgrade():
+                quiet = DRAIN_QUIET_S
             if self.director.control()["inflight"] == 0:
                 calm = calm or time.monotonic()
                 if time.monotonic() - calm >= quiet:
