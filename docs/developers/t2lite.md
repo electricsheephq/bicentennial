@@ -57,11 +57,13 @@ Only `probe_main` goes live among director requests; replay, write, extraction, 
 |---|---|
 | Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain. |
 | Credential or spend stop | No card; `refusal.json` with `credential_stop` or `spend_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. |
-| INVALID | Isolation breach, canary in a live body or credential scan: only `refusal.json`. Canary outranks a stop. |
+| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. Canary and honeypot outrank a stop; canary comes first. |
 | Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later preparation/reference refusals send nothing but can leave `refusal.json`. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
 A card is published only after scanning all outputs for login secrets. A refusal can therefore replace an otherwise complete run. Inspect stderr when no output directory was created.
+
+After the last unit and live stack shutdown, the pins, pack and model cache are re-verified before any completed-run file is written.
 
 ## The outputs
 
@@ -76,7 +78,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 | `repetitions.json` | Joined outcomes for every repetition. |
 | `no_memory.json` | Floor outcomes, per-unit stops and `served_identity`, possibly reused. |
 | `custody.json` | Drained login custody events, without login secrets. |
-| `disclosures.json` | Top-level `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
+| `disclosures.json` | Top-level `honeypot_hits` (0 on every published run), `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
 | `spend.json` | Locked reservation and settlement accounting. |
 | `receipt.json` | COMPLETE status, actual work, tokens, latency and runtime. |
 | `flips.json` | Comparison against the baseline, if supplied. |
@@ -139,6 +141,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `harness_extra_missing:mcp` | Pinned Hermes environment cannot import mcp. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
 | `hashseed` | Seed is not 0. |
+| `honeypot` | Planted gold file reached a model request in any live arm or attempt: INVALID. |
 | `invalid_card:<side>` | Compared card fails T2-lite validation. |
 | `invalid_card:aa_of` | A-of card fails validation. |
 | `invalid_card:aa_prime` | A′ card fails validation. |

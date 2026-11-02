@@ -52,7 +52,13 @@ def test_commit_ignores_git_location_variables(git_checkouts, monkeypatch):
 
 
 @pytest.fixture(scope="module")
-def installed(tmp_path_factory):
+def extra_rows():
+    """Allow consumers of the installed fixture to add catalogue rows."""
+    return []
+
+
+@pytest.fixture(scope="module")
+def installed(tmp_path_factory, extra_rows):
     root = tmp_path_factory.mktemp("t0-installed")
     catalogue = load_catalogue(ROOT / "packs/catalogue-v0.toml",
         c7_path=ROOT / "specs/ring0/c7-partial.json", tier_path=ROOT / "tiers/life_specs/t0.toml")
@@ -60,6 +66,7 @@ def installed(tmp_path_factory):
     names = ["g2-keep-incidental-mft-1", "g2-drift-booking-mft-1", "g2-keep-forget-mft-1",
              "g2-recall-count-mft-1", "g2-drift-asof-dir-2", "g1-recall-value-mft-1"]
     names.append(rows["g2-drift-asof-dir-2"].baseline)
+    names.extend(extra_rows)
     start = time.monotonic_ns()
     try:
         with pytest.MonkeyPatch.context() as patch:
