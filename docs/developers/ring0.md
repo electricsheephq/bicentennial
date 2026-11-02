@@ -30,7 +30,7 @@ Every card carries these labels verbatim from `card_ring0`:
 
 Nothing in a developer ring certifies ([PREREG §6](../../prereg/PREREG-v0.4.md#6-tiers-rings-subsets-and-branches)). The reader measures evidence availability at probe time, not a model's judgement. It selects among options whose locked tokens are present, preferring gold when competing evidence is also present. Act at T0/T1 is evidence-conditioned scripted action ([RING0 §§1–3](../../specs/ring0/RING0.md#1-the-scripted-reader)).
 
-Forgetting is exercised at T0 only. KEEP-FORGET and KEEP-NEIGH read "not exercised at T1" and sit outside its gate. The ≤ 60 s per pack T0 target and ≤ 10 min T1 target are engineering targets, not bars. v0.1's first two official runs measured both and list their target misses ([the first](../../results/v0.1-kit/2026-10-30/READING.md), [the second](../../results/v0.1-kit/2026-11-01-run2/READING.md)). Disclose target misses ([RING0 §6](../../specs/ring0/RING0.md#6-t1-composition-and-the-probe-budget), [PREREG §8 bar 5](../../prereg/PREREG-v0.4.md#8-pilot-acceptance-bars-all-required)). Determinism is claimed only per machine and pin set ([RING0 §4](../../specs/ring0/RING0.md#4-stable-and-volatile-result-fields)).
+Forgetting is exercised at T0 only. KEEP-FORGET and KEEP-NEIGH read "not exercised at T1" and sit outside its gate. The ≤ 60 s per pack T0 target and ≤ 10 min T1 target are engineering targets, not bars. v0.1's three official runs measured both and list their target misses ([the first](../../results/v0.1-kit/2026-10-30/READING.md), [the second](../../results/v0.1-kit/2026-11-01-run2/READING.md), [the third, accepted](../../results/v0.1-kit/2026-11-01-run3/READING.md)). Disclose target misses ([RING0 §6](../../specs/ring0/RING0.md#6-t1-composition-and-the-probe-budget), [PREREG §8 bar 5](../../prereg/PREREG-v0.4.md#8-pilot-acceptance-bars-all-required)). Determinism is claimed only per machine and pin set ([RING0 §4](../../specs/ring0/RING0.md#4-stable-and-volatile-result-fields)).
 
 LCM-X's developers use this public kit on equal terms. The benchmark never runs LCM-X: the runners refuse it under the benchmark operator's identity ([RING0 §12](../../specs/ring0/RING0.md#12-lcm-x)).
 
@@ -235,6 +235,8 @@ Exit-3 codes and causes, including registry reasons above:
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `settle_unmapped` | Hook settle has no `SETTLE_THREADS` mapping. |
 | `surface_not_empty` | A sandbox-home memory surface already holds files before install. |
+| `visible_pack_overlaps_surface` | The agent-visible pack directory overlaps the workspace or a memory surface. |
+| `visible_path_escape` | An agent-visible file would be written outside the pack directory. |
 | `harness_extra_missing:mcp` | The pinned Hermes checkout's `.venv` cannot import `mcp`, or the 60 s import check could not start or timed out; install the extra, or rerun on a less loaded machine. |
 | `plugin_deps_lock_invalid` | Dependency map or lock is invalid (including a marker the worker's `packaging` cannot parse or evaluate), or applicable pins conflict. |
 | `plugin_deps_missing:<dist>` | Worker lacks an applicable locked version; stderr lists every mismatch. |
@@ -278,6 +280,8 @@ Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. C
 `stage_attribution`, the reader's `failing_stage`, is stored, retained, retrieved, used or unknown. The reader uses whatever is present, so "used" never fails at Ring 0 ([RING0 §1](../../specs/ring0/RING0.md#1-the-scripted-reader)). Remember, Survive and Act are reported separately; never sum them.
 
 ## 10. Reading the outputs
+
+Ring 0 contract change, 2026-11-01: memory hosts add `t0.forget_kept` and `t1.forget_kept` to their delivery properties, as canonical JSON counts for `ambiguous`, `same_text` and `unattributed`, zeros included. Counts follow the host lifetime across reset and restore; the first reason per row id (or text hash without search) wins within a store generation, and each wipe starts a new generation because a fresh store may reuse row ids. T0 sums all invocation hosts and T1 sums corpus hosts per gated arm; a row kept by two hosts counts twice. A row with no candidate owner whose text the host deleted since its last reset counts nowhere: the system kept it. A replacement host after a crash starts without that memory, so such a row can still count as `unattributed`. Reference adapters disclose nothing. `forget_ambiguous` reads the `ambiguous` plus `same_text` count. INV-FORGET adds reason `host_kept` beside `store_hit` only when a kept text contains a searched needle; the status and the member counts stay those of the check without it. The scorer pin moves with this change, so earlier packs are rebuilt. Kept texts remain in memory and never enter outputs or checkpoints ([RING0 E22](../../specs/ring0/RING0.md#13-v01-errata)). No PREREG version change; PREREG-v0.5 remains frozen.
 
 Also inspect `t0.sandbox_slot` for registry T0 runs (reference runs disclose no slot), and `t1.sandbox_slot` for T1. The value is the selected slot, default 0; it is a run property outside the frozen disclosure tuple.
 

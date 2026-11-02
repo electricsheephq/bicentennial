@@ -27,6 +27,7 @@ from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.reader_keys import life_keys
 from bicentennial.items.templates import g1, g2
 from bicentennial.ledger import BlobStore, Guard, apply_masks
+from bicentennial.probe.probe_responder import _earlier_body
 from bicentennial.probe.scripted_reader import failing_stage
 from bicentennial.runner import life as runner
 from bicentennial.runner.life import CAUSES, STEP_S, LifeRun, PluginWake, run_life
@@ -34,6 +35,7 @@ from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock
 from bicentennial.sandbox.envserver.state import trace
 from bicentennial.sandbox.envserver.tools_g2 import ACTION_TOOLS
 from bicentennial.sandbox.surfaces import surface_hash
+from bicentennial.score.exposure import context_text
 from bicentennial.score.invariants import run_invariants
 from bicentennial.systems.hermes_plugin import MARKER, PluginCell
 from bicentennial.systems.registry import REGISTRY, SystemRefused, load
@@ -735,6 +737,50 @@ def test_earlier_and_pair_inputs_ignore_torn_tail(tmp_path):
     (tmp_path / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows) + b'{"torn":')
     assert runner._earlier(tmp_path, 21) == tuple(store.get(r[k]) for r in rows[:2] for k in ("req", "resp"))
     assert runner._pair_inputs(tmp_path, rows, None, "G1") == ((), ())
+
+
+def write_ledger(root, turns):
+    store = BlobStore(root / "blobs", Guard([]))
+    rows = [dict(seq=n, role="probe_main", cursor=dict(session=21, turn=turn), req=store.put(req), resp=store.put(resp))
+            for n, (turn, req, resp) in enumerate(turns, 1)]
+    (root / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows))
+    return store, rows
+
+
+def test_earlier_named_turn_keeps_the_previous_turn(tmp_path):
+    # At turn 2's first request the ledger ends at turn 1: the inferred bound drops it, the named turn keeps it (#352).
+    store, rows = write_ledger(tmp_path, [(1, dict(messages=[dict(role="user", content="turn 1")]), dict(choices=[]))])
+    assert runner._earlier(tmp_path, 21) == ()
+    assert runner._earlier(tmp_path, 21, 2) == tuple(store.get(rows[0][k]) for k in ("req", "resp"))
+
+
+def envelope(kind, value, quote=None, confidence=500):
+    citation = None if quote is None else dict(quote=quote, context_offset=7401)
+    return canon(dict(type=kind, value=value, confidence_milli=confidence, citation=citation)).decode()
+
+
+def test_probe_earlier_reads_answers_by_their_content(tmp_path):
+    # An earlier answer counts by its value and its citation's quote, never by its envelope's field names or numbers
+    # (#355): in a reply, plain or streamed, and in a later request's history.
+    first = envelope("entity", "EARLIER-VALUE", "an earlier quote")
+    answers = (envelope("number", 42), envelope("set", ["SET-A", "SET-B"]), envelope("unknown", None, confidence=0),
+               "```json\n" + envelope("span", "FENCED-VALUE") + "\n```")
+    turns = [(1, dict(messages=[dict(role="user", content="q1")]),
+              dict(choices=[dict(message=dict(role="assistant", content=first))])),
+             (2, dict(messages=[dict(role="user", content="q1"), dict(role="assistant", content=first),
+                                dict(role="user", content="q2")]),
+              dict(sse=[dict(choices=[dict(delta=dict(role="assistant", content=answers[0]))])])),
+             *((3, dict(input=[dict(type="message", role="assistant",
+                                    content=[dict(type="output_text", text=answer)])]), dict(text="plain earlier text"))
+               for answer in answers[1:])]
+    write_ledger(tmp_path, turns)
+    text = context_text([_earlier_body(v) for v in runner._probe_earlier(tmp_path)("run", 21, 4)])
+    for content in ("EARLIER-VALUE", "an earlier quote", "42", "SET-A", "SET-B", "FENCED-VALUE", "plain earlier text"):
+        assert content in text
+    for form in ("confidence_milli", "context_offset", "citation", "entity", "unknown", "500", "7401", "```"):
+        assert form not in text
+    raw = context_text([_earlier_body(v) for v in runner._earlier(tmp_path, 21, 4)])
+    assert all(form in raw for form in ("confidence_milli", "7401", "500"))
 
 
 @pytest.mark.parametrize("stream", [False, True])

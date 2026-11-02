@@ -19,7 +19,7 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
-from bicentennial.canon import sha256_canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_listing
 from bicentennial.director.compiler import answer_contract
@@ -189,15 +189,44 @@ def _tokens(root, rows):
     return tokens
 
 
+def _answer_content(value):
+    """Reduce every earlier answer envelope to its value and its citation's quote (#355).
+
+    Its field names and numbers are the answer format, not earlier content. NUL joins the two, as context_text joins
+    values. The reader cannot parse envelopes itself: the probe package imports no scoring code."""
+    if isinstance(value, bytes):
+        value = json.loads(value)
+    if isinstance(value, str):
+        envelope = parse_envelope(value)
+        if envelope is None:
+            return value
+        answer = envelope["value"]
+        texts = [] if answer is None else [answer if isinstance(answer, str) else canon(answer).decode()]
+        if envelope["citation"] is not None:
+            texts.append(envelope["citation"]["quote"])
+        return "\x00".join(texts)
+    if isinstance(value, dict):
+        return {key: _answer_content(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_answer_content(item) for item in value]
+    return value
+
+
 def _earlier(root, session, before=None):
     rows = [r for r in _rows(root) if r.get("role") == "probe_main"
             and (r.get("cursor") or {}).get("session") == session]
-    # The live leg names its turn: a turn's row is written only after its reply, so the ledger's highest turn can
-    # be the previous one. T1's reader keeps the inferred bound.
+    # T1's reader and the live leg name their turn: a turn's row is written only after its reply, so the ledger's
+    # highest turn can be the previous one (#352). Without a turn, the bound is inferred.
     highest = before if before is not None else max((r["cursor"]["turn"] for r in rows), default=0)
     store = BlobStore(root / "blobs", Guard([]))
     return tuple(store.get(r[key]) for r in sorted(rows, key=lambda r: r["seq"])
                  if r["cursor"]["turn"] < highest for key in ("req", "resp") if r.get(key))
+
+
+def _probe_earlier(ledger):
+    """The reader's earlier exchanges, which T2-lite's shadow reads too: answers count by their content only."""
+    return lambda run_key, session, before=None: tuple(
+        _answer_content(blob) for blob in _earlier(ledger, session, before))
 
 
 def _probe_code(rows, attempt_id, *, probe_live=False):
@@ -301,7 +330,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         responder = ProbeResponder(ScriptedResponder(entry_r), reader,
             {iid: (p.index, n) for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)},
             {iid: (reader_view(by_id[iid]), keys[iid]) for iid in sorted(by_id)},
-            earlier=lambda run_key, session, before=None: _earlier(root / "run" / "ledger", session, before),
+            earlier=_probe_earlier(root / "run" / "ledger"),
             step_call=step_call)
         leg = ProbeLiveLeg(live, live_model, responder, answer_contract) if live is not None else None
         results = leg if leg is not None else responder
