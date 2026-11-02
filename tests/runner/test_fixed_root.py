@@ -21,6 +21,7 @@ from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.ledger import BlobStore, Guard, apply_masks
 from bicentennial.runner import compare, life, t0, t1
 from bicentennial.sandbox import fixedroot
+from bicentennial.systems import pins as install_pins
 
 installed = acceptance.installed
 cases = acceptance.cases
@@ -315,6 +316,9 @@ def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
                              check=True, capture_output=True).stdout
     plugin = acceptance.measured("holographic")
     plugin["artifact"]["sha256"] = acceptance.sha256(archive).hexdigest()
+    # The stand-in's own install, measured as `bicentennial pins` measures one, is its declared pin.
+    plugin["fresh_install_hash"] = install_pins.measure(plugin, hermes=hermes, plugin_source=source)[
+        "fresh_install_hash"]
     roots, runs, current, bodies = [], [], {}, []
     real_life, real_layout, host_layout = t1.run_life, adapter.layout, plugin_host.layout
 

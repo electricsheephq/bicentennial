@@ -60,7 +60,9 @@ def measured(name="hermes-native"):
     for field in ("sha256",):
         if entry["artifact"][field] == "0" * 64:
             entry["artifact"][field] = "1" * 64
-    entry["fresh_install_hash"] = "1" * 64
+    # A measured registry pin stays, so preflight compares the real install; a placeholder becomes non-zero.
+    if entry["fresh_install_hash"] == "0" * 64:
+        entry["fresh_install_hash"] = "1" * 64
     return entry
 
 
