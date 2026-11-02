@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-01: the carry-over diagnostic reads earlier answers by their content (#352, #355)
+- **RING0 §13 E23 (§6):** from the next kit, T1's reader bounds the earlier probe exchanges by the turn it answers, and an earlier answer counts by its value and its citation's quote, not by its envelope's field names and confidence numbers. T2-lite's shadow reads the same exchanges. `carry_over` is a reporting flag: no answer, score or class changes. T1 cards' `carry_over` and `carry_over_milli` can change, and so can T2-lite's `carry_over` on its cards, its item rows and `t2lite_probes.json`. The reader pin moves, so packs built before this change no longer verify and are rebuilt.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Labels, 2026-11-01: the two provisional generator values name PREREG-v0.6 (#318)
 - **`world/scale.py`:** from the next kit, the labels of the span and the decoy ratio read "provisional pending PREREG-v0.6", the version `docs/ERRATA-v2.2.md` E5 queues both values for. No output carries these two labels, but the file is in the controls pin's closure, so the controls pin moves with this change and earlier packs are rebuilt.
 - **Kept:** the v1 G1 templates' lever-mix label, "provisional pending PREREG-v0.5", is a recorded field of their C-7 entries (`specs/ring0/c7-partial.json`). Changing it would make new template versions (`prereg/PREREG-v0-completion.md`, How the entries bind), so it keeps its wording until a G1 template's next version. Read it as "provisional, not pre-registered".
