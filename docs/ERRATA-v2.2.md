@@ -101,6 +101,12 @@ Those three stand as written there. `specs/ring0/RING0.md` uses the entries belo
 - The controls' expected results are fixed in their tests. In particular, naive RAG fails exactly `supersession_current` and `text_full_length`; its actor storage passes.
 - This adds the Phase 1 API-mode rule without changing PREREG-v0.4 or any frozen quantity. Ring 0's checks and host delivery disclosures are specified in RING0 §13 E12.
 
+**E16. The 2026-11-02 release split (v0.3 and v0.4).**
+- **The text:** E12 says the live tiers carry the Act stage proper "for G2 from v0.3". RING0 §3 says the same, and RING0 §7 says the T0 Hermes-replay fallback ships in v0.3.
+- **The change:** on 2026-11-02 the ROADMAP's v0.3 row was split in two. v0.3 closes the developer loop; live G2 action scoring (#118) and the Hermes-replay fallback (#165) move to v0.4. E12's "for G2 from v0.3" reads "for G2 from v0.4", and so do those RING0 mentions.
+- **Where it is fixed:** the ROADMAP rows, which are authoritative, and the developer guide, now. RING0.md's lines change in v0.3's first RING0 erratum, because code reads RING0.md.
+- No frozen quantity changes.
+
 ## Certification
 
 **E14. Certification's size holds under the t calibration (#240).**
