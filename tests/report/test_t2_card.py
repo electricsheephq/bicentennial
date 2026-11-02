@@ -360,6 +360,12 @@ def test_item_1_null_citation_counts_asserted_answers_without_a_citation():
     args["items"][1] = dict(args["items"][1], envelope=dict(args["items"][1]["envelope"], citation=None))
     args["counts"]["null_citation"] = 1
     assert cards.build_t2_card(**args)["counts"]["null_citation"] == 1
+    # An unknown answer always has a null citation (runner/t2lite.py), so it is not counted.
+    args["items"][1] = dict(args["items"][1], base_verdict="OMISSION", score_milli=0, worst_case_milli=0,
+                            accuracy_correct=None, envelope=dict(type="unknown", value=None, confidence_milli=0,
+                                                                 citation=None))
+    args["counts"]["null_citation"] = 0
+    assert cards.build_t2_card(**args)["counts"]["null_citation"] == 0
 
 
 def test_item_1_infra_and_absent_cells_are_not_derived_from_rows():
