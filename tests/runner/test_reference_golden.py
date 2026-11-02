@@ -1,9 +1,10 @@
 """Pin published reference T0 outcomes on the whole-run fixture plus an unequal twin.
 
 Regenerate with:
-    BICENTENNIAL_REGEN_GOLDEN=1 PYTHONPATH=src pytest -q \
+    PYTHONHASHSEED=0 BICENTENNIAL_REGEN_GOLDEN=1 PYTHONPATH=src pytest -q \
         tests/runner/test_reference_golden.py::test_reference_t0_golden
 
+A regeneration run rewrites the file and skips, so it never reports a pass; review the diff.
 A PR changing the golden file must explain why in its body.
 """
 
@@ -63,6 +64,7 @@ def test_reference_t0_golden(installed, tmp_path):
     if os.environ.get("BICENTENNIAL_REGEN_GOLDEN") == "1":
         assert code == 0, "Only regenerate a successful reference run"
         GOLDEN.write_bytes(canon(actual))
+        pytest.skip("golden regenerated; review the diff")
     golden = json.loads(GOLDEN.read_bytes())
     changes = list(compare["differences"](golden, actual))
     if changes:

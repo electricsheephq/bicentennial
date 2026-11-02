@@ -11,11 +11,12 @@ integer milli-points; no outcome is re-scored by the golden test.
 Regenerate from the repository root:
 
 ```sh
-BICENTENNIAL_REGEN_GOLDEN=1 PYTHONPATH=src pytest -q tests/runner/test_reference_golden.py::test_reference_t0_golden
+PYTHONHASHSEED=0 BICENTENNIAL_REGEN_GOLDEN=1 PYTHONPATH=src pytest -q tests/runner/test_reference_golden.py::test_reference_t0_golden
 ```
 
-Use the required test-slot wrapper where applicable. Review every changed
-item and aggregate. A PR changing the golden JSON must explain why in its body.
+The runner refuses without `PYTHONHASHSEED=0`. A regeneration run rewrites
+the file and skips instead of passing. Review every changed item and
+aggregate. A PR changing the golden JSON must explain why in its body.
 
 For release comparison over every pack in two full T0 output directories:
 
