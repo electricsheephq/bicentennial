@@ -5,6 +5,7 @@ import json
 import runpy
 import socket
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,12 +16,15 @@ from bicentennial.contracts.run import validate
 from bicentennial.director.responder import Call, Reply
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
+from bicentennial.packs.install import verify as verify_pack
+from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.probe.scripted_reader import UNKNOWN, ReaderResult
 from bicentennial.report.t2lite_card import validate_t2lite_card
 from bicentennial.runner import t2lite as runner
 from bicentennial.runner.hermes_score import Infra
 from bicentennial.runner.life import LifeRun
 from bicentennial.runner.probe_live import LiveCredentialStop
+from bicentennial.systems.hermes_plugin import cache_digest
 
 ANSWER = dict(type="entity", value="synthetic", confidence_milli=900, citation=None)
 SHADOW_ANSWER = dict(type="entity", value="shadow-only", confidence_milli=800, citation=None)
@@ -115,7 +119,7 @@ def scenario(tmp_path, monkeypatch):
         pins={k: "b" * (64 if k in ("harness_hash", "seed_hash") else 40)
               for k in (*runner.PIN_FIELDS, "seed_hash")}, packs=packs, run_id="synthetic",
         harness_pin={}, hermes=None, plugin_source=None, worker_argv=None, model_cache=None,
-        gate=None, current_lock=None)
+        gate=None, current_lock=lambda: {"current": "synthetic"}, lock={"expected": "synthetic"})
     # scores and matches plant one item's score or probe match flags over the defaults.
     state = SimpleNamespace(ctx=ctx, stacks=[], seen=[], mode=None, score=1000, home=home, scores={}, matches={},
         stack_options={})
@@ -199,6 +203,7 @@ def scenario(tmp_path, monkeypatch):
                 competing_present=list(kw["result"].competing_present)))
         return scored
     monkeypatch.setattr(runner.t1, "prepare", lambda **kw: ctx)
+    monkeypatch.setattr(runner, "verify", lambda *args, **kw: None, raising=False)
     monkeypatch.setattr(runner.t1, "_crosses", lambda *args: False)
     monkeypatch.setattr(runner, "build_live_stack", build)
     monkeypatch.setattr(runner, "run_life", life)
@@ -208,6 +213,148 @@ def scenario(tmp_path, monkeypatch):
         pack_hash=ctx.pack_hash, out=tmp_path / name, login_home=home, max_sends=20) | kw)
     state.out = tmp_path / "out"
     return state
+
+
+def test_clean_guard_disclosure_preserves_card_bytes(scenario):
+    assert scenario.invoke() == 0
+    # Canonical card bytes captured from the unguarded runner with this same scenario.
+    assert sha256((scenario.out / "card.json").read_bytes()).hexdigest() == (
+        "0c79ef8c58f62d13b8d02adfd2e747a24fa9f665643783aaa40cc97972f3adfa")
+    assert runner._read(scenario.out, "disclosures.json")["honeypot_hits"] == 0
+
+
+@pytest.mark.parametrize("arm", ["system", "no_memory"])
+@pytest.mark.parametrize("retry", [False, True])
+def test_honeypot_refuses_every_live_attempt(scenario, tmp_path, monkeypatch, arm, retry):
+    drive, attempts = runner.run_life, []
+    def hit(**kw):
+        run = drive(**kw)
+        if kw["arm"] == arm and not attempts:
+            attempts.append(run)
+            return replace(run, honeypot_hits=2, classes={i["item_id"]: ("INFRA_FAILURE", "synthetic")
+                for i in kw["items"]} if retry else run.classes)
+        return run
+    monkeypatch.setattr(runner, "run_life", hit)
+    assert scenario.invoke(cache=tmp_path / "cache") == 3
+    assert runner._read(scenario.out, "refusal.json") == {"code": "honeypot"}
+    assert sorted(p.name for p in scenario.out.iterdir()) == ["refusal.json"]
+    assert not (tmp_path / "cache").exists()
+    assert len(scenario.seen) == (9 if retry else 8)
+    assert scenario.stacks[-1].closed and scenario.stacks[-1].drained
+
+
+@pytest.mark.parametrize("failure", [None, "pin_mismatch", "pinned_artifact_changed", "model_cache_changed"])
+def test_publication_checks_after_close_before_any_completed_file(scenario, tmp_path, monkeypatch, failure):
+    s, checked, writes = scenario, [], []
+    s.ctx.model_cache = tmp_path / "model-cache"
+    s.ctx.model_cache.mkdir()
+    artifact = s.ctx.model_cache / "artifact"
+    artifact.write_bytes(b"original")
+    s.ctx.model_cache_sha256 = cache_digest(s.ctx.model_cache, runner.t1.T1Refused)
+    drive, write = runner.run_life, runner._write
+    def changed(**kw):
+        run = drive(**kw)
+        if len(s.seen) == 8:
+            artifact.write_bytes(b"changed" if failure == "model_cache_changed" else b"original")
+        return replace(run, honeypot_hits=1) if failure else run
+    def record(out, name, value):
+        if name != "t2lite_probes.json":
+            writes.append(name)
+        return write(out, name, value)
+    def verify(*args, **kw):
+        assert len(s.seen) == 8 and s.stacks[-1].closed and s.stacks[-1].drained
+        assert writes == []
+        checked.append((args, kw))
+        if failure == "pin_mismatch":
+            from bicentennial.harness.hermes.adapter import PinMismatch
+            raise PinMismatch("synthetic")
+        if failure == "pinned_artifact_changed":
+            raise PinnedArtifactChanged(("scorer_sha256",))
+    monkeypatch.setattr(runner, "run_life", changed)
+    monkeypatch.setattr(runner, "_write", record)
+    monkeypatch.setattr(runner, "verify", verify)
+    assert s.invoke(cache=tmp_path / "cache") == (3 if failure else 0)
+    assert checked == [((tmp_path / "packs",), dict(pack_hash=s.ctx.pack_hash,
+        lock=s.ctx.current_lock(), expected_lock=s.ctx.lock))]
+    if failure:
+        assert runner._read(s.out, "refusal.json") == {"code": failure}
+        assert sorted(p.name for p in s.out.iterdir()) == ["refusal.json"]
+        assert writes == ["refusal.json"]
+        assert not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize("stop", ["credential", "spend", "canary_credential", "canary_spend"])
+def test_honeypot_invalid_outranks_stop_with_canary_first(scenario, tmp_path, monkeypatch, stop):
+    drive = runner.run_life
+    def stop_after_hit(**kw):
+        if len(scenario.seen) == 1:
+            scenario.mode = "canary" if stop == "canary_spend" else stop
+            if stop == "canary_spend":
+                kw["live"].stack.values["spend_stopped"] = True
+        run = drive(**kw)
+        return replace(run, honeypot_hits=1 if len(scenario.seen) == 1 else 0)
+    monkeypatch.setattr(runner, "run_life", stop_after_hit)
+    assert scenario.invoke(cache=tmp_path / "cache") == 3
+    assert len(scenario.seen) == 2
+    assert runner._read(scenario.out, "refusal.json") == {"code": "canary" if "canary" in stop else "honeypot"}
+    assert sorted(p.name for p in scenario.out.iterdir()) == ["refusal.json"]
+    assert not (tmp_path / "cache").exists()
+
+
+def test_honeypot_in_earlier_repetition_preserves_cached_floor(scenario, tmp_path, monkeypatch):
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    before = entry.read_bytes()
+    s.seen.clear()
+    drive = runner.run_life
+    def hit(**kw):
+        run = drive(**kw)
+        return replace(run, honeypot_hits=int(len(s.seen) == 1))
+    monkeypatch.setattr(runner, "run_life", hit)
+    assert s.invoke("repeated", cache=tmp_path / "cache", only=("t1-g1", "B0", 2), repeat=2) == 3
+    assert s.seen == [("system", 0)] * 2
+    assert runner._read(tmp_path / "repeated", "refusal.json") == {"code": "honeypot"}
+    assert [p.name for p in (tmp_path / "repeated").iterdir()] == ["refusal.json"]
+    assert list((tmp_path / "cache").iterdir()) == [entry] and entry.read_bytes() == before
+
+
+def test_real_pack_edit_after_last_unit_refused(scenario, installed, tmp_path, monkeypatch):
+    s = scenario
+    s.ctx.current_lock, s.ctx.lock = lambda: None, None
+    monkeypatch.setattr(runner, "verify", verify_pack)
+    verify_pack(installed.root, pack_hash=installed.digest)
+    artifact = installed.root / "index.json"
+    before = artifact.read_bytes()
+    drive = runner.run_life
+    def changed(**kw):
+        run = drive(**kw)
+        if len(s.seen) == 8:
+            artifact.chmod(0o644)
+            artifact.write_bytes(before + b"\n")
+            artifact.chmod(0o444)
+        return run
+    monkeypatch.setattr(runner, "run_life", changed)
+    try:
+        assert s.invoke(packs_dir=installed.root, pack_hash=installed.digest, cache=tmp_path / "cache") == 3
+        assert len(s.seen) == 8 and s.stacks[-1].closed
+        assert runner._read(s.out, "refusal.json") == {"code": "pinned_artifact_changed"}
+        assert [p.name for p in s.out.iterdir()] == ["refusal.json"]
+        assert not (tmp_path / "cache").exists()
+    finally:
+        artifact.chmod(0o644)
+        artifact.write_bytes(before)
+        artifact.chmod(0o444)
+
+
+def test_guide_documents_publication_guards():
+    text = (Path(__file__).resolve().parents[2] / "docs/developers/t2lite.md").read_text()
+    assert "honeypot" in next(line for line in text.splitlines() if line.startswith("| INVALID |"))
+    assert "| `honeypot` |" in text
+    assert "`honeypot_hits` (0" in next(line for line in text.splitlines()
+        if line.startswith("| `disclosures.json` |"))
+    assert "After the last unit and live stack shutdown" in text
+    assert "pins, pack and model cache are re-verified before any completed-run file is written" in text
 
 
 def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
@@ -1051,6 +1198,15 @@ def loopback_allowed():
 
 def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tmp_path, monkeypatch):
     """Real preparation, L2 director, shadow, scorer, receipt, cards and checkpoint replay."""
+    _full_fake_worker(installed, tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize("arm", ["system", "no_memory"])
+def test_full_fake_worker_honeypot_refuses(loopback_allowed, installed, tmp_path, monkeypatch, arm):
+    _full_fake_worker(installed, tmp_path, monkeypatch, honeypot_arm=arm)
+
+
+def _full_fake_worker(installed, tmp_path, monkeypatch, honeypot_arm=None):
     import sys
     from contextlib import closing
 
@@ -1128,6 +1284,8 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
                 assert stores == expected
                 baseline.cleanup()
                 snapshots[key] = stores
+        if kw["arm"] == honeypot_arm:
+            result = replace(result, honeypot_hits=1)
         observations.append(result)
         return result
     monkeypatch.setattr(runner, "build_live_stack", build)
@@ -1135,7 +1293,14 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     args = dict(system="hermes-native", packs_dir=installed.root, pack_hash=installed.digest,
         login_home=home, max_sends=10000, entry=SHARED["measured"](), worker_argv=installed.worker,
         cache=tmp_path / "cache")
-    assert runner.run_t2lite(out=tmp_path / "full", **args) == 0
+    status = runner.run_t2lite(out=tmp_path / "full", **args)
+    if honeypot_arm:
+        assert status == 3 and all(s.closed and s.drained for s in stacks)
+        assert runner._read(tmp_path / "full", "refusal.json") == {"code": "honeypot"}
+        assert [p.name for p in (tmp_path / "full").iterdir()] == ["refusal.json"]
+        assert not (tmp_path / "cache").exists()
+        return
+    assert status == 0
     card = runner._read(tmp_path / "full", "card.json")
     validate_t2lite_card(card)
     assert all(i["failure_class"] != "BLOCKED" for i in card["items"])

@@ -19,6 +19,7 @@ from bicentennial.director.upstream import login as custody
 from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
+from bicentennial.packs.install import verify
 from bicentennial.probe.scripted_reader import ReaderResult
 from bicentennial.report.receipt import (
     build_receipt,
@@ -39,7 +40,11 @@ from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
 from bicentennial.sandbox import fixedroot
 from bicentennial.score.classes import outcome
-from bicentennial.systems.hermes_plugin import is_plugin, resolve_worker_env
+from bicentennial.systems.hermes_plugin import (
+    cache_digest,
+    is_plugin,
+    resolve_worker_env,
+)
 
 MODEL, EFFORT = "gpt-6.1-sol", "medium"
 IDENTITY_TEXT = "Reply with the single word: ok."
@@ -468,11 +473,18 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     needles.update(_secrets(home, login))
                 finally:
                     custody_rows.extend(login.drain())
+            verify(packs_dir, pack_hash=pack_hash, lock=ctx.current_lock(), expected_lock=ctx.lock)
+            if ctx.model_cache is not None and cache_digest(ctx.model_cache, t1.T1Refused) != ctx.model_cache_sha256:
+                raise t1.T1Refused("model_cache_changed")
+            honeypot_hits = sum(run.honeypot_hits for run in runs)
+            if honeypot_hits:
+                raise t1.T1Refused("honeypot")
             _write(out, "outcomes.json", repetitions[-1])
             _write(out, "repetitions.json", repetitions)
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
-            _write(out, "disclosures.json", {"identity_check": identity_check, "live": dict(stack.state(),
+            _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits,
+                "identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
                 for key, arm in (("t1.transforms", "system"), ("no_memory.transforms", "no_memory"))}})
@@ -500,8 +512,11 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             error.reason if isinstance(error, BaselineRefused) else getattr(error, "code", None) or (
                 ",".join(sorted(reasons)) if reasons else
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
-        if code in ("credential_stop", "spend_stop") and live is not None and live.canary:
-            code = "canary"  # INVALID outranks a stop: the guard latched a canary body
+        if code in ("credential_stop", "spend_stop"):
+            if live is not None and live.canary:
+                code = "canary"  # INVALID outranks a stop: the guard latched a canary body
+            elif any(run.honeypot_hits for run in runs):
+                code = "honeypot"
         try:
             if created:
                 try:
