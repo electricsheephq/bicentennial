@@ -131,6 +131,11 @@ def main(argv=None) -> int:
     command = commands.add_parser("build")
     command.add_argument("--tier", choices=("T0", "T1"), required=True)
     command.add_argument("--out", required=True)
+    command = commands.add_parser("pins")
+    command.add_argument("--system", required=True)
+    command.add_argument("--hermes")
+    command.add_argument("--plugin-source")
+    command.add_argument("--sandbox-slot", type=int, default=0)
     args = vars(parser.parse_args(argv))
     selected = args.pop("command")
     if os.environ.get("PYTHONHASHSEED") != "0":
@@ -143,6 +148,9 @@ def main(argv=None) -> int:
         return run_t1(**args)
     if selected == "t2lite":
         return run_t2lite(**args)
+    if selected == "pins":
+        from bicentennial.systems.pins import run_pins
+        return run_pins(**args)
     return run_build(**args)
 
 

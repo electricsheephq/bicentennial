@@ -134,13 +134,27 @@ Admission reasons are:
 | `schema_invalid` | Schema validation fails without a more specific policy reason. |
 | `benchmark_operator_forbidden` | Benchmark operator requests an entry forbidding its runs. |
 | `unmeasured:artifact.sha256` | Artifact hash is the all-zero placeholder. |
-| `unmeasured:fresh_install_hash` | Fresh-install hash is the all-zero placeholder. |
+| `unmeasured:fresh_install_hash` | Fresh-install hash is the all-zero placeholder; measure it with `bicentennial pins` below. |
 
 Unmeasured pins are declarations, never runnable. Admission refuses them. The pinned-artifact check compares the installed artifact with `artifact.sha256`; verified empty compares each surface with the unmasked tree hash taken earlier in the same run, never with a registry value ([RING0 §5 and E4](../../specs/ring0/RING0.md#5-verified-empty-and-the-wiped-store-control)).
 
 The artifact digest is sha256 of `git archive --format=tar HEAD` from the clean pinned checkout. For plug-ins use `systems/hermes_plugin.py`'s `TREES` recipe: Holographic uses `HEAD`; Mem0 OSS adds `integrations/hermes-plugin-mem0` after `HEAD`.
 
-The fresh-install hash is a canonical tree listing of relative path, mode, size and content hash, excluding only declared volatile paths. E1 places the v0.1 snapshot before configuration for native memory and after install-time files for plug-ins. E4 masks the director port in root `config.yaml` and `mem0.json` for the reported pin. v0.1 has no public measurement command; measure and review the pin in the registry change ([RING0 §13](../../specs/ring0/RING0.md#13-v01-errata)).
+The fresh-install hash is a canonical tree listing of relative path, mode, size and content hash, excluding only declared volatile paths. E4 masks the director port in root `config.yaml` and `mem0.json` for the reported pin ([RING0 §13](../../specs/ring0/RING0.md#13-v01-errata)).
+
+### Measure registry pins
+
+Use a clean pinned Hermes checkout and, for a plug-in, a clean source checkout at the commit named in its registry comment:
+
+```sh
+bicentennial pins --system hermes-native --hermes "$HERMES_CHECKOUT"
+bicentennial pins --system holographic --hermes "$HERMES_CHECKOUT" --plugin-source "$PLUGIN_CHECKOUT"
+bicentennial pins --system mem0-oss --hermes "$HERMES_CHECKOUT" --plugin-source "$MEM0_CHECKOUT"
+```
+
+The command constructs the T0 memory-layer host twice, in distinct roots on distinct director ports, using its install-time hash and surface combination without starting a worker. Different hashes refuse with exit 3, `pins_unstable`, and both values on stderr: something in the install depends on its port or its root. Any other filesystem or value error refuses with exit 3 and `refused` followed by the error text, for example `refused no T0 mapping` for a system without the reviewed mapping described below. Successful stdout contains `fresh_install_hash VALUE`, `artifact.sha256 VALUE`, then `entry NAME`. Native's `artifact.sha256` is the registry's Hermes pin, which the checkout must match, so it is checked rather than measured; a Hermes bump (a checkout at a new commit) refuses `pin_mismatch` and is outside this command. Plug-in archives use the commit and subdirectory in the registry comment and are verified again by the installer.
+
+Scratch stays in an exclusively leased sandbox slot (default 0; select another with `--sandbox-slot`). A busy slot refuses with exit 3, `sandbox_busy`, before install. The command writes no registry or source files. Copy the measured pins into a reviewed PR; a pin change is still a reviewed PR.
 
 Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, `FORGET`, and plug-in `PROVIDERS`/`TREES`. Optional `ENGINES` selects the `context.engine` id. Optional `PLUGIN_DIRS` overrides the installed directory. Optional `ENABLED` lists systems whose directory goes in `plugins.enabled`. Optional `WORKER_ENV` supplies reviewed worker environment values. Its names may not shadow a variable the harness sets or start with `BICENTENNIAL_`, `HERMES_`, `PYTHON`, `LD_` or `DYLD_`. A value is either `{model_cache}`, optionally followed by `/` and one relative path of `A-Za-z0-9._-` segments, or a plain value of `A-Za-z0-9._,=+-` only, which can never name a path. A cache directory whose resolved path has any character outside `A-Za-z0-9._/-` (a separator or whitespace) refuses `model_cache_invalid`. Systems needing a staged model cache require `--model-cache DIR`; its file-tree digest is disclosed and checked again after the run. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
 
@@ -258,6 +272,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `lock_mismatch` | Current run lock differs from expected lock. |
 | `gate_refused` | Host machine gate refused a spawn. |
 | `pin_mismatch` | Checkout does not match its pin. |
+| `pins_unstable` | Two install measurements, in distinct roots on distinct director ports, differ; stderr prints both hashes. |
 | `SpendRefused` | Receipt has positive spend. |
 | `upstream_record` | Isolation audit found a forbidden upstream record or egress. |
 | `egress_unobserved` | The egress sampler stopped early, or every sample of a registered worker failed before the worker was reaped. A worker that exits before its registration sample is still sampled (unreaped, with no sockets), so a start-up crash stays an infrastructure failure. |
@@ -265,7 +280,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `baseline_unreadable` | T1 baseline cannot be read. |
 | `baseline_invalid` | T1 baseline is malformed or noncanonical. |
 | `baseline_mismatch` | T1 baseline identity, acceptance or bundle set differs. |
-| `refused` | Install CLI filesystem or value error. |
+| `refused` | Install CLI or `bicentennial pins` filesystem or value error; `bicentennial pins` adds the error text. |
 
 Busy-marker messages are `machine guard refused: marker exit N` for a refusing/unreadable marker and `machine busy: heavy work refused` for heavy work at exit 10. The code is on stderr. If this invocation created `--out` before refusal, `refusal.json` holds `{code, fields}`; for `upstream_record`, a non-empty `detail` list names each non-loopback endpoint, with the pid and command that showed it and its sample count, and each record that broke isolation; for `egress_unobserved`, `detail` lists whether the sampler was alive at `stop()`, failed-sample counts by exception type name, and each registered pid with no completed sample as `egress unsampled pid=<pid> log=<stderr log file name>` (empty when unnamed); `upstream_record` wins across all available hosts and runs; it is not a result. An already-existing output path is refused without overwriting it. An unexpected exception inside a runner exits 70, prints `tool_failure` first on stderr, and leaves no result file: results are staged and moved into place only when every file is written ([RING0 §8, E6](../../specs/ring0/RING0.md#8-exit-codes)). Any other code also means the tool failed and no result exists. Before a runner starts, for example when the CLI's niceness re-exec finds no `nice` or `taskpolicy`, Python can still exit 1 on an uncaught exception with no result; confirm result files exist before reading exit 1 as a gate.
 
