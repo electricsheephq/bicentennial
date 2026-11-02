@@ -310,6 +310,14 @@ def test_item_1_broken_control_rows_recorded_without_refusal():
         cards.build_t2_card(**dict(inputs(), controls_broken=[dict(stage="act")]))
 
 
+def test_item_1_broken_control_rows_hold_one_order():
+    ordered = [dict(stage="act", track="Tuesday"), dict(stage="remember", track="Wake")]
+    assert cards.build_t2_card(**dict(inputs(), controls_broken=ordered))["controls_broken"] == ordered
+    for rows in (ordered[::-1], [ordered[0], ordered[0]]):
+        with pytest.raises(ValueError, match="t2_card:controls_broken"):
+            cards.build_t2_card(**dict(inputs(), controls_broken=rows))
+
+
 def test_item_1_incidental_session_and_store_ids_do_not_change_card(tmp_path):
     args = inputs()
     kept = tmp_path / args["items"][0]["repro"]

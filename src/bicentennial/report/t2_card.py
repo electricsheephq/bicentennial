@@ -51,6 +51,10 @@ def validate_t2_card(card) -> None:
     groups = sorted({(i["cell_id"], i["stage"]) for i in card["items"]})
     if card["groups"] != [list(group) for group in groups]:
         raise ValueError("t2_card:groups")
+    # One order for the same rows: controls/cache.py's broken_rows sorts by (stage, track).
+    broken = [(row["stage"], row["track"]) for row in card["controls_broken"]]
+    if broken != sorted(set(broken)):
+        raise ValueError("t2_card:controls_broken")
     genre_stages = {f"items.{i['genre']}.{i['stage']}" for i in card["items"]}
     if not genre_stages <= card["counts"].keys():
         raise ValueError("t2_card:counts_items")
