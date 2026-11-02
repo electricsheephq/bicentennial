@@ -4,7 +4,7 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 
 ## Ring 0, 2026-11-0X: the v0.3 developer loop's terms (§14) and the v0.3/v0.4 split (§13 E24)
 - **RING0 §14:** defines the terms of PREREG §8's developer-product acceptance bar for v0.3 (the baseline `naive-rag-dev`, real-stack, the surfacing run and the selected failure, reproduced, fixed, confirmed on Ring 1, the budgets and the declaration, what the bar publishes) and the developer report's statistics, before any run they govern. Developer tiers still carry no decision bar.
-- **RING0 §13 E24 (§3, §6, §7):** live G2 action scoring and the T0 Hermes-replay fallback move to v0.4 (ERRATA-v2.2 E16), and T1's cut order starts with the costs that change nothing on its cards, such as the wait after each turn, each checked by an A/B at one commit.
+- **RING0 §13 E24 (§3, §6, §7):** live G2 action scoring and the T0 Hermes-replay fallback move to v0.4 (ERRATA-v2.2 E16), and T1's cut order starts with the costs that should change nothing on its cards, such as the wait after each turn (v0.2's A/B could not decide that, #383), each checked by an A/B at one commit.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Labels, 2026-11-02: deferred-work labels name no release (#340)
