@@ -158,7 +158,7 @@ The command constructs the T0 memory-layer host twice, in distinct roots on dist
 
 Scratch stays in an exclusively leased sandbox slot (default 0; select another with `--sandbox-slot`). A busy slot refuses with exit 3, `sandbox_busy`, before install. The command writes no registry or source files. Copy the measured pins into a reviewed PR; a pin change is still a reviewed PR.
 
-Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, `FORGET`, and plug-in `PROVIDERS`/`TREES`. Optional `ENGINES` selects the `context.engine` id. Optional `PLUGIN_DIRS` overrides the installed directory. Optional `ENABLED` lists systems whose directory goes in `plugins.enabled`. Optional `WORKER_ENV` supplies reviewed worker environment values. Its names may not shadow a variable the harness sets or start with `BICENTENNIAL_`, `HERMES_`, `PYTHON`, `LD_` or `DYLD_`. A value is either `{model_cache}`, optionally followed by `/` and one relative path of `A-Za-z0-9._-` segments, or a plain value of `A-Za-z0-9._,=+-` only, which can never name a path. A cache directory whose resolved path has any character outside `A-Za-z0-9._/-` (a separator or whitespace) refuses `model_cache_invalid`. Systems needing a staged model cache require `--model-cache DIR`; its file-tree digest is disclosed and checked again after the run. This is the same reviewed change for every system. Missing mappings can become infrastructure failures rather than clean refusals; do not assume an exit code.
+Runners require `harness = "hermes"` (`harness_not_hermes`). A new system needs a reviewed benchmark mapping before it runs: `WRITE_ARGS`, `FORGET`, and plug-in `PROVIDERS`/`TREES`. T0 and T1 refuse uncovered write tools before starting any adapter or worker, with exit 3 and `write_mapping_missing:<tool>` naming the first uncovered tool. A missing required forget mapping refuses `forget_mapping_missing`: T0 always requires it for systems with write tools; T1 requires it when the regression corpus hosts the system itself (all but engine-only systems). `UNSCRIPTED` in `systems/mapping.py` explicitly lists declared write tools the scripted director never calls. These checks cover systems that declare write tools. A system that declares none passes them, but a T0 host still needs its `WRITE_ARGS` and `FORGET` entries, so without them it fails at host start (`no T0 mapping`) rather than in preflight. Optional `ENGINES` selects the `context.engine` id. Optional `PLUGIN_DIRS` overrides the installed directory. Optional `ENABLED` lists systems whose directory goes in `plugins.enabled`. Optional `WORKER_ENV` supplies reviewed worker environment values. Its names may not shadow a variable the harness sets or start with `BICENTENNIAL_`, `HERMES_`, `PYTHON`, `LD_` or `DYLD_`. A value is either `{model_cache}`, optionally followed by `/` and one relative path of `A-Za-z0-9._-` segments, or a plain value of `A-Za-z0-9._,=+-` only, which can never name a path. A cache directory whose resolved path has any character outside `A-Za-z0-9._/-` (a separator or whitespace) refuses `model_cache_invalid`. Systems needing a staged model cache require `--model-cache DIR`; its file-tree digest is disclosed and checked again after the run. This is the same reviewed change for every system.
 
 `DEPENDENCIES` maps a plug-in system to an existing repository-relative POSIX path under `systems/locks/` (no `..` or backslashes); locks allow comments and continuations, require exact `name==version` pins with SHA-256 hashes and optional environment markers, and reject extras, URLs, editables, includes, duplicate normalised names with identical marker text, and empty locks.
 
@@ -245,6 +245,12 @@ Exit-3 codes and causes, including registry reasons above:
 | `tier_composition` | T1 does not contain exactly G1 and G2. |
 | `schedule_mismatch` | Packed schedule differs from reconstructed schedule. |
 | `harness_not_hermes` | Registry harness is not Hermes. |
+| `write_mapping_missing:<tool>` | First declared write tool differs from the mapped write tool, or a declared tool has no write, forget-delete or unscripted mapping. |
+| `write_mapping_unknown:<tool>` | A mapped write-side tool is absent from the declared write tools. |
+| `forget_search_undeclared:<tool>` | The forget search tool is absent from `read_tools`. |
+| `write_mapping_action:<tool>` | A fixed write or forget-delete action is absent from the tool's non-empty declared actions. |
+| `forget_mapping_missing` | A system with write tools lacks the forget mapping required by its runner. |
+| `embedding_dim_invalid` | An embeddings role requires an integer `embedding_dim` of at least 2. |
 | `missing_input` | Required Hermes, plug-in source or model cache omitted, or an unused model cache supplied. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
@@ -263,7 +269,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `baseline_missing` | T0 fault-free baseline pack/item missing. |
 | `catalogue_changed` | T0 catalogue hash changed. |
 | `visible_canary` | Canary found in agent-visible input. |
-| `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
+| `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `scratch_exists` | T1 arm scratch path already exists. |
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
 | `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
