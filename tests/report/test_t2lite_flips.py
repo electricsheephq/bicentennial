@@ -131,7 +131,7 @@ def item(item_id="item-0", **changes):
         item_id=item_id, score_milli=1000, failure_class=None, base_verdict="PASS",
         life="life-1", branch="B0", probe_point=10, probe_session=12,
         cell_id="FAULT-CRASH", track="Faults", stage="survive", genre="G1",
-        template_ref="synthetic-template-v1", twin_bundle="bundle-1", twin_flip=False,
+        template_ref="synthetic-template-v1", twin_bundle=None,
         in_context=True, stage_attribution="used", envelope="parsed",
         value_match=True, citation_match=True, crosses_cold_restart=True,
         swap_position="before")
@@ -157,7 +157,7 @@ def test_frozen_record_projects_plain_dict_and_envelope_state():
 def test_planted_flip_keeps_both_records_and_every_diagnostic():
     baseline = item()
     current = item(score_milli=-1000, failure_class="FAIL_TASK", base_verdict="FAIL_MEMORY",
-                   probe_session=13, twin_flip=True, in_context=False,
+                   probe_session=13, in_context=False,
                    stage_attribution="retrieved", envelope="missing", value_match=False,
                    citation_match=False, crosses_cold_restart=False, swap_position="after")
     callback_items = []
@@ -168,7 +168,7 @@ def test_planted_flip_keeps_both_records_and_every_diagnostic():
 
     result = flips.flip_list({"item-0": baseline}, {"item-0": current}, rerun=rerun)
     assert result["rows"] == [dict(item_id="item-0", baseline=baseline, current=current,
-                                   unstable=None, rerun="synthetic rerun")]
+                                   unstable=None, twin_flip=None, rerun="synthetic rerun")]
     assert callback_items == [flips.ItemOutcome.from_dict(baseline)]
     assert result["excluded"] == []
     assert result["counts"] == dict(items=1, flips=1, excluded=0, scored=1,
@@ -178,7 +178,7 @@ def test_planted_flip_keeps_both_records_and_every_diagnostic():
 def test_unchanged_and_metadata_only_changes_are_not_flips():
     baseline = {"item-0": item()}
     assert flips.flip_list(baseline, baseline)["rows"] == []
-    current = {"item-0": item(base_verdict="FAIL_MEMORY", in_context=False, twin_flip=True)}
+    current = {"item-0": item(base_verdict="FAIL_MEMORY", in_context=False)}
     assert flips.flip_list(baseline, current)["rows"] == []
 
 
@@ -196,7 +196,7 @@ def test_infra_or_blocked_on_either_side_is_excluded(side, field, reason):
     runs[side]["item-0"][field] = reason
     result = flips.flip_list(runs["baseline"], runs["current"])
     assert result["rows"] == []
-    assert result["excluded"] == [dict(item_id="item-0", reason=reason,
+    assert result["excluded"] == [dict(item_id="item-0", reason=reason, twin_flip=None,
                                        baseline=runs["baseline"]["item-0"],
                                        current=runs["current"]["item-0"])]
     assert result["counts"]["scored"] == 0
@@ -241,6 +241,100 @@ def valid_band_runs():
     baseline, current, prime = band_runs()
     prime["i-1"]["score_milli"] = 0
     return baseline, current, prime
+
+
+def pair_of(iid):
+    """i-0 and i-1 share a bundle, then i-2 and i-3, and so on."""
+    return f"bundle-{int(iid.split('-')[1]) // 2}"
+
+
+def bundled(*ids, bundle="bundle-1", **changes):
+    return {iid: item(iid, twin_bundle=bundle, **changes) for iid in ids}
+
+
+def twin_flips(result):
+    return ({r["item_id"]: r["twin_flip"] for r in result["rows"]},
+            {e["item_id"]: (e["reason"], e["twin_flip"]) for e in result["excluded"]})
+
+
+def test_twin_flip_is_true_on_both_rows_when_both_flip():
+    result = flips.flip_list(bundled("a", "b"), bundled("a", "b", score_milli=-1000))
+    assert twin_flips(result) == ({"a": True, "b": True}, {})
+    assert all("twin_flip" in r and "twin_flip" not in r["baseline"] and "twin_flip" not in r["current"]
+               for r in result["rows"])
+
+
+def test_twin_flip_is_false_when_the_twin_is_steady():
+    baseline = bundled("a", "b")
+    current = dict(baseline, **bundled("a", score_milli=-1000))
+    assert twin_flips(flips.flip_list(baseline, current)) == ({"a": False}, {})
+
+
+def test_twin_flip_follows_a_failure_class_change_alone():
+    baseline = bundled("a", "b")
+    current = dict(bundled("a", score_milli=-1000), **bundled("b", failure_class="FAIL_TASK"))
+    assert twin_flips(flips.flip_list(baseline, current)) == ({"a": True, "b": True}, {})
+
+
+@pytest.mark.parametrize("side", ["baseline", "current"])
+@pytest.mark.parametrize("reason", ["INFRA", "INFRA_FAILURE", "BLOCKED"])
+def test_twin_flip_is_null_when_the_twin_is_excluded(side, reason):
+    runs = dict(baseline=bundled("a", "b"), current=bundled("a", "b", score_milli=-1000))
+    runs[side]["b"]["failure_class"] = reason
+    # The excluded twin's own entry still reports its scored, flipped partner.
+    assert twin_flips(flips.flip_list(runs["baseline"], runs["current"])) == (
+        {"a": None}, {"b": (reason, True)})
+
+
+def test_g2_act_bundle_is_excluded_with_null_twin_flip():
+    baseline = bundled("a", "b", stage="act", genre="G2")
+    current = bundled("a", "b", stage="act", genre="G2", score_milli=-1000)
+    assert twin_flips(flips.flip_list(baseline, current)) == (
+        {}, {"a": ("not_scored_live", None), "b": ("not_scored_live", None)})
+
+
+@pytest.mark.parametrize("bundles", [
+    dict(a=None, b=None), dict(a="bundle-1", b="bundle-2"),
+    dict(a="bundle-1", b="bundle-1", c="bundle-1"), dict(a=["bundle-1"], b=["bundle-1"])])
+def test_twin_flip_is_null_without_exactly_a_pair(bundles):
+    baseline = {iid: item(iid, twin_bundle=bundle) for iid, bundle in bundles.items()}
+    current = {iid: dict(r, score_milli=-1000) for iid, r in baseline.items()}
+    assert twin_flips(flips.flip_list(baseline, current)) == (dict.fromkeys(bundles), {})
+
+
+def test_each_row_follows_its_own_bundle_in_one_cell():
+    baseline = dict(bundled("a", "b"), **bundled("c", "d", bundle="bundle-2"))
+    current = copy.deepcopy(baseline)
+    for iid in ("a", "b", "c"):
+        current[iid]["score_milli"] = -1000
+    assert {r["cell_id"] for r in baseline.values()} == {"FAULT-CRASH"}
+    assert twin_flips(flips.flip_list(baseline, current)) == ({"a": True, "b": True, "c": False}, {})
+
+
+def test_twin_flip_decides_nothing_and_ignores_a_stale_input_value():
+    baseline, current, prime = band_runs()
+    current["i-9"]["failure_class"] = "BLOCKED"
+    for run in (baseline, current, prime):
+        for record in run.values():
+            record["twin_flip"] = True  # a record written before the field moved to the row
+    plain = flips.flip_list(baseline, current, aa_prime=prime)
+    for run in (baseline, current, prime):
+        for iid, record in run.items():
+            record["twin_bundle"] = pair_of(iid)
+    paired = flips.flip_list(baseline, current, aa_prime=prime)
+
+    def decisions(result):
+        return (result["q0"], result["q0_milli"], result["labels"], result["counts"],
+                [(r["item_id"], r["unstable"]) for r in result["rows"]],
+                [(e["item_id"], e["reason"]) for e in result["excluded"]])
+
+    assert decisions(paired) == decisions(plain)
+    assert twin_flips(plain) == (dict.fromkeys(f"i-{i}" for i in range(9)), {"i-9": ("BLOCKED", None)})
+    # i-8's twin is the excluded i-9; i-9's own entry reports i-8's flip.
+    assert twin_flips(paired) == ({**{f"i-{i}": True for i in range(8)}, "i-8": None},
+                                  {"i-9": ("BLOCKED", True)})
+    assert all("twin_flip" not in entry[side] for result in (plain, paired)
+               for entry in result["rows"] + result["excluded"] for side in ("baseline", "current"))
 
 
 def test_aa_prime_two_of_ten_exact_fraction_milli_and_row_flags():
@@ -337,9 +431,10 @@ def test_rerun_refuses_path_or_shell_tokens_in_identifiers(field, value):
 def test_report_canonical_bytes_labels_counts_and_no_fixture_paths():
     baseline, current, prime = valid_band_runs()
     for run in (baseline, current, prime):
-        for record in run.values():
+        for iid, record in run.items():
             record["hermes"] = "/synthetic/local/hermes"
             record["plugin_source"] = "/synthetic/local/plugin"
+            record["twin_bundle"] = pair_of(iid)
     baseline_card, current_card = card("omega", run=baseline), card("omega", run=current)
     prime_card = card("omega", run=prime, aa_prime=True)
     original = copy.deepcopy((baseline_card, current_card, prime_card, baseline, current, prime))
@@ -350,6 +445,7 @@ def test_report_canonical_bytes_labels_counts_and_no_fixture_paths():
     assert result["counts"] == dict(items=10, flips=10, excluded=0, scored=10,
                                     aa_prime_scored=10, unstable=2)
     assert result["labels"] == [current_card["labels"][k] for k in sorted(current_card["labels"])]
+    assert [r["twin_flip"] for r in result["rows"]] == [True] * 10
     encoded = canon(result)
     assert json.loads(encoded) == result
     reordered = [dict(reversed(list(run.items()))) for run in (baseline, current, prime)]
