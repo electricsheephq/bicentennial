@@ -44,6 +44,19 @@ STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 360
 _now = time.monotonic
 
 
+def turn_wait_seconds(value) -> float:
+    """Validate the run's ordinary-turn quiet time without changing any run identity."""
+    if isinstance(value, bool):
+        raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive")
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):  # OverflowError: an int beyond float range
+        raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive") from None
+    if not 0.5 <= seconds <= 3.0:
+        raise ValueError("turn-wait must be seconds from 0.5 to 3.0 inclusive")
+    return seconds
+
+
 class PinMismatch(RuntimeError):
     """The checkout is not the pinned artifact (RING0 §8: exit code 3)."""
 
@@ -200,7 +213,8 @@ class HermesAdapter:
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
                  memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
                  context_engine=None, plugins_enabled=(), extra_env=None, scripted: bool = True,
-                 admission_deadline: float | None = None):
+                 admission_deadline: float | None = None, turn_wait_s=3.0):
+        self.turn_wait_s = turn_wait_seconds(turn_wait_s)
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)
         if entry.get("benchmark_operator_runs") is False and os.environ.get("BICENTENNIAL_OPERATOR") == "benchmark":
@@ -272,10 +286,17 @@ class HermesAdapter:
             for turn in session["turns"]:
                 n, faults = turn["n"], self.schedule.at(index, turn["n"])
                 held = self.kill_mode == "held" and any(f["kind"] == "kill" for f in faults)
-                self._held, t0 = (index, n) if held else None, _now()
+                self._held, t0, summarised = (index, n) if held else None, _now(), d.summariser_requests
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
-                t["drain"].append(self._drain())
+                # A kill or restart stops the worker next, and a compaction turn's stored state matters most,
+                # so these turns keep the full settle. T1 and T2-lite compact under sprint pressure, not on a
+                # schedule, so a compaction request recorded during the turn or its quiet time counts too.
+                compacted = lambda s=summarised: d.summariser_requests > s  # noqa: E731
+                full = any(f["kind"] in ("kill", "restart", "compaction") for f in faults) or compacted()
+                quiet = min(self.turn_wait_s, DRAIN_QUIET_S)
+                t["drain"].append(self._drain() if full or quiet == DRAIN_QUIET_S
+                                  else self._drain(quiet, upgrade=compacted))
                 c, killed, self._held = d.control(), held and out is None and (index, n) in self._fired, None
                 if c["stopped"] or c["write_failures"] > failures:
                     raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")
@@ -410,17 +431,26 @@ class HermesAdapter:
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
 
-    def _drain(self) -> int:
-        """Wait for DRAIN_QUIET_S with nothing in flight (background titles and reviews), as replay.py 169-180."""
+    def _drain(self, quiet=None, upgrade=None) -> int:
+        """Wait for `quiet` s (default DRAIN_QUIET_S) with nothing in flight (background titles and reviews), as
+        replay.py 169-180. Once upgrade() is true, the wait becomes DRAIN_QUIET_S."""
+        quiet = DRAIN_QUIET_S if quiet is None else quiet
         t0, m0, calm = time.monotonic(), _now(), None
         while time.monotonic() - t0 < DRAIN_CAP_S:
-            if self.director.control()["inflight"] == 0:
+            # inflight first: the director counts a compaction before the request leaves inflight, so a request
+            # already out of inflight is visible to upgrade() below.
+            idle = self.director.control()["inflight"] == 0
+            if upgrade is not None and quiet < DRAIN_QUIET_S and upgrade():
+                # The current calm stretch is kept, and 3.0 s count from its first idle sample. At 3.0 too, a
+                # request that starts and ends between two samples does not restart a stretch.
+                quiet = DRAIN_QUIET_S
+            if idle:
                 calm = calm or time.monotonic()
-                if time.monotonic() - calm >= DRAIN_QUIET_S:
+                if time.monotonic() - calm >= quiet:
                     return _ms(m0)
             else:
                 calm = None
-            time.sleep(min(0.5, DRAIN_QUIET_S / 4))
+            time.sleep(min(0.5, quiet / 4))
         raise HarnessFailed("drain_timeout")
 
     def _on_hold(self, cursor) -> None:
