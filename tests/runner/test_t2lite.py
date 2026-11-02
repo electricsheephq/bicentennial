@@ -41,6 +41,8 @@ class Stack:
     def __init__(self):
         self.closed, self.drained, self.calls, self.values = False, False, [], {}
         self.identity = "synthetic-identity"
+        self.identities, self.responses = {}, {}
+        self.observe = True
         self.inner = SimpleNamespace(login=SimpleNamespace(needles=lambda: {}, drain=self.drain))
 
     def drain(self):
@@ -56,12 +58,21 @@ class Stack:
         return self.values.copy()
 
     def served_identities(self):
-        return {runner.MODEL: self.identity}
+        return self.identities.copy()
 
     def respond(self, call):
         assert not self.closed
         self.calls.append(call)
-        return Reply(200, "live", "live", call.model, text=canon(UNKNOWN).decode())
+        if self.values.get("stop_reason") or self.values.get("stopped"):
+            # Like the real responder once a stop is latched: nothing is sent and no identity is observed.
+            return Reply(503, "live_stopped", "live", call.model, upstream=({"kind": "try"},))
+        response = self.responses.get(call.role, {})
+        served = response.get("served", "live")
+        self.values.update(response.get("state", {}))
+        if served == "live" and response.get("observe", self.observe):
+            self.identities.setdefault(call.model, self.identity)
+        return Reply(200, served, "live", call.model, text=canon(UNKNOWN).decode(),
+            upstream=response.get("upstream", ({"kind": "try"},)))
 
 
 def hold_rows():
@@ -106,12 +117,15 @@ def scenario(tmp_path, monkeypatch):
         harness_pin={}, hermes=None, plugin_source=None, worker_argv=None, model_cache=None,
         gate=None, current_lock=None)
     # scores and matches plant one item's score or probe match flags over the defaults.
-    state = SimpleNamespace(ctx=ctx, stacks=[], seen=[], mode=None, score=1000, home=home, scores={}, matches={})
+    state = SimpleNamespace(ctx=ctx, stacks=[], seen=[], mode=None, score=1000, home=home, scores={}, matches={},
+        stack_options={})
     def build(*args, **kw):
         stack = Stack()
         if state.mode == "identity":
             stack.identity = "changed-identity"
             stack.values["identity_drift"] = {"served": stack.identity}
+        for name, value in state.stack_options.items():
+            setattr(stack, name, value)
         state.stacks.append(stack)
         return stack
     def life(**kw):
@@ -215,8 +229,131 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert {t["arm"] for t in cached_receipt["timings"]} == {"system"}
     assert cached_receipt["tokens"] == {"input": 8, "output": 4}
     assert len(s.seen) == 12
-    assert "floor: reused from the cache" in capsys.readouterr().err
+    assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
+
+
+def test_identity_check_matches_before_units(scenario, tmp_path, capsys):
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    s.seen.clear()
+    diagnostics = ({"kind": "hold", "held_ms": 12}, {"kind": "try"},
+                   {"kind": "hold", "held_ms": 7}, {"kind": "try"})
+    s.stack_options = {"responses": {"identity_check": {"upstream": diagnostics}}}
+    assert s.invoke("hit", cache=tmp_path / "cache") == 0
+    calls = s.stacks[-1].calls
+    assert calls[0] == Call("identity_check", "", "chat",
+        {"messages": [{"role": "user", "content": "Reply with the single word: ok."}]},
+        runner.MODEL, None, calls[0].run_key)
+    assert calls[0].run_key.startswith("t2lite-") and calls[0].run_key.endswith(":identity")
+    assert [c.role for c in calls] == ["identity_check"] + ["probe_main"] * 4
+    assert s.seen == [("system", 0)] * 4
+    identity = canon({runner.MODEL: "synthetic-identity"}).decode()
+    disclosure = runner._read(tmp_path / "hit", "disclosures.json")
+    assert disclosure["identity_check"] == dict(served="live", observed=identity, matched=True, tries=2, held_ms=19)
+    assert disclosure["live"]["holds"] == dict(waits=0, held_ms=0, reasons=[])
+    card = runner._read(tmp_path / "hit", "card.json")
+    assert card["served_identity"] == identity and card["counts"]["floor_cached"] == 1
+    assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("response", ["different", "not_forwarded", "unobserved", "unidentified", "invalid"])
+def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    before = entry.read_bytes()
+    s.seen.clear()
+    s.stack_options = {"identity": "new-identity"}
+    if response != "different":
+        reply = ({"served": "live_unavailable"} if response == "not_forwarded" else
+                 {"observe": False} if response == "unobserved" else
+                 {"served": "live_stopped", "state": {"stop_reason": "upstream_invalid_request_400"}})
+        s.stack_options["responses"] = {"identity_check": reply}
+        if response == "unidentified":
+            s.stack_options = {"identity": "unidentified"}
+    assert s.invoke("miss", cache=tmp_path / "cache") == 0
+    assert s.seen == [("no_memory", 0)] * 4 + [("system", 0)] * 4
+    assert [c.role for c in s.stacks[-1].calls] == ["identity_check"] + ["probe_main"] * 8
+    disclosure = runner._read(tmp_path / "miss", "disclosures.json")["identity_check"]
+    observed = ("unobserved" if response in ("not_forwarded", "unobserved", "invalid") else
+                canon({runner.MODEL: "unidentified" if response == "unidentified" else "new-identity"}).decode())
+    assert disclosure == dict(served=s.stacks[-1].responses.get("identity_check", {}).get("served", "live"),
+        observed=observed, matched=False, tries=1, held_ms=0)
+    card = runner._read(tmp_path / "miss", "card.json")
+    assert card["counts"]["floor_cached"] == 0
+    floor = runner._read(tmp_path / "miss", "no_memory.json")
+    assert floor["served_identity"] == card["served_identity"] == (
+        "unobserved" if response == "invalid" else canon(s.stacks[-1].served_identities()).decode())
+    assert list((tmp_path / "cache").iterdir()) == [entry]
+    if response in ("unidentified", "invalid"):
+        # Neither floor is written: one measured on an unidentified model, and one whose every send met the stop
+        # the identity request latched. The old entry stays as it was.
+        assert entry.read_bytes() == before
+    else:
+        assert json.loads(entry.read_bytes()) == floor
+    if response == "invalid":
+        live = runner._read(tmp_path / "miss", "disclosures.json")["live"]
+        assert live["stop_reason"] == "upstream_invalid_request_400"
+    message = "differs from the cache entry" if response == "different" else "not confirmed"
+    assert f"floor: ran live (served identity {message})" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("identity", [None, 0, "", "unobserved", '{"model":"unidentified"}', "missing"])
+def test_cached_floor_requires_usable_identity(scenario, tmp_path, identity):
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    floor = json.loads(entry.read_bytes())
+    floor.pop("served_identity")
+    if identity != "missing":
+        floor["served_identity"] = identity
+    entry.write_bytes(canon(floor))
+    s.seen.clear()
+    assert s.invoke("miss", cache=tmp_path / "cache") == 0
+    assert len(s.seen) == 8 and all(c.role == "probe_main" for c in s.stacks[-1].calls)
+    assert runner._read(tmp_path / "miss", "disclosures.json")["identity_check"] is None
+    assert runner._read(tmp_path / "miss", "card.json")["counts"]["floor_cached"] == 0
+    assert json.loads(entry.read_bytes())["served_identity"] == canon(s.stacks[-1].served_identities()).decode()
+
+
+@pytest.mark.parametrize("mode", ["drift", "unobserved", "unidentified"])
+def test_floor_cache_requires_known_stable_identity(scenario, tmp_path, mode):
+    s = scenario
+    if mode == "drift":
+        s.mode = "identity"
+    else:
+        s.stack_options = {"observe": False} if mode == "unobserved" else {"identity": "unidentified"}
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    assert not (tmp_path / "cache").exists()
+    floor = runner._read(s.out, "no_memory.json")
+    ids = s.stacks[-1].served_identities()
+    assert floor["served_identity"] == (canon(ids).decode() if ids else "unobserved")
+
+
+@pytest.mark.parametrize("state,code", [({"stop_reason": "upstream_401"}, "credential_stop"),
+    ({"login_stop": "login_error"}, "credential_stop"), ({"spend_stopped": True}, "spend_stop"),
+    ({"stop_reason": "upstream_401", "spend_stopped": True}, "credential_stop")])
+def test_identity_check_latched_stop_precedes_units(scenario, tmp_path, state, code):
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    s.seen.clear()
+    s.stack_options = {"responses": {"identity_check": {"served": "live_stopped", "state": state}}}
+    assert s.invoke("stopped", cache=tmp_path / "cache") == 3
+    assert s.seen == [] and [c.role for c in s.stacks[-1].calls] == ["identity_check"]
+    assert s.stacks[-1].closed and s.stacks[-1].drained
+    assert runner._read(tmp_path / "stopped", "refusal.json") == {"code": code}
+    assert sorted(p.name for p in (tmp_path / "stopped").iterdir()) == ["custody.json", "receipt.json", "refusal.json"]
+    receipt = runner._read(tmp_path / "stopped", "receipt.json")
+    assert receipt["run_status"] == "INFRA_FAILURE" and receipt["tokens"] == {"input": 0, "output": 0}
+    assert runner._read(tmp_path / "stopped", "custody.json") == [{"type": "holder"}]
+
+
+def test_identity_check_absent_without_cache_entry(scenario, tmp_path):
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    assert [c.role for c in scenario.stacks[-1].calls] == ["probe_main"] * 8
+    assert runner._read(scenario.out, "disclosures.json")["identity_check"] is None
+    assert runner._read(scenario.out, "card.json")["counts"]["floor_cached"] == 0
 
 
 @pytest.mark.parametrize("held", [False, True])
@@ -452,6 +589,61 @@ def test_real_stack_max_sends_exhaustion(scenario, monkeypatch):
     assert stacks[0].closed and stacks[0].inner.login.drain() == []
 
 
+@pytest.mark.parametrize("max_sends", [0, 1, 2, 6])
+def test_real_stack_identity_check_tries_use_max_sends(scenario, tmp_path, monkeypatch, max_sends):
+    from bicentennial.director.upstream import forward
+    from bicentennial.runner.live import build_live_stack
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    s.seen.clear()
+    helpers = runpy.run_path(str(Path(__file__).with_name("test_live_stack.py")))
+    helpers["home"].__wrapped__(s.home)
+    stacks, sent, replies = [], [], []
+    def build(*args, **kwargs):
+        stack = build_live_stack(*args, **(kwargs | {"rate": 0}))
+        stack.inner.inner.sleep = lambda seconds: None
+        respond = stack.respond
+        def record(call):
+            reply = respond(call)
+            replies.append((call, reply))
+            return reply
+        stack.respond = record
+        stacks.append(stack)
+        return stack
+    def send(up, data, headers):
+        sent.append(json.loads(data))
+        retry = len(sent) == 1
+        return dict(status=503 if retry else 200, category="server" if retry else None,
+            retry_after_s=None, body_shape=None, body_read_error=None, n_unparsed=0, n_dropped_items=0,
+            served_model=None if retry else "synthetic-identity", usage={"input_tokens": 2, "output_tokens": 1},
+            text="ok", tool_calls=(), forward=not retry, stop_reason=None)
+    monkeypatch.setattr(runner, "build_live_stack", build)
+    monkeypatch.setattr(forward, "send", send)
+    assert s.invoke("limited", cache=tmp_path / "cache", max_sends=max_sends) == (0 if max_sends == 6 else 3)
+    stack = stacks[0]
+    assert stack.closed and stack.inner.login.drain() == []
+    assert stack.state()["sends"] == len(sent) == max_sends
+    assert replies[0][0].role == "identity_check"
+    assert sum(d["kind"] == "try" for d in replies[0][1].upstream) == (1 if max_sends == 0 else 2)
+    for body in sent[:2]:
+        assert body == dict(model=runner.MODEL, stream=True, store=False, instructions="",
+            input=[dict(type="message", role="user", content=[dict(type="input_text", text=runner.IDENTITY_TEXT)])],
+            reasoning={"effort": runner.EFFORT})
+    if max_sends < 6:
+        assert runner._read(tmp_path / "limited", "refusal.json") == {"code": "spend_stop"}
+        assert s.seen == ([] if max_sends < 2 else [("system", 0)])
+    else:
+        assert s.seen == [("system", 0)] * 4
+        disclosures = runner._read(tmp_path / "limited", "disclosures.json")
+        assert disclosures["live"]["sends"] == 6
+        assert disclosures["identity_check"] == dict(served="live", matched=True, tries=2, held_ms=0,
+            observed=canon({runner.MODEL: "synthetic-identity"}).decode())
+        assert runner._read(tmp_path / "limited", "spend.json")["settled_calls"] == 6
+        receipt = runner._read(tmp_path / "limited", "receipt.json")
+        assert receipt["tokens"] == {"input": 8, "output": 4}
+        assert runner._read(tmp_path / "limited", "card.json")["counts"]["floor_cached"] == 1
+
+
 @pytest.mark.parametrize("field", ["tier", "system", "model", "effort", "pack_hash", "seed_hash", "profile",
     "answer_contract_sha256", *["pins." + k for k in runner.PIN_FIELDS]])
 def test_baseline_checked_before_build_or_send(scenario, tmp_path, field):
@@ -587,7 +779,8 @@ def test_guard_delegates_stack_and_never_forwards_canary():
     stack = Stack()
     guard = runner._Guard(stack)
     assert guard.upstreams is stack.upstreams and guard.wire == stack.wire
-    assert guard.state() == {} and guard.served_identities() == stack.served_identities()
+    stack.identities = {runner.MODEL: "synthetic-identity"}
+    assert guard.state() == {} and guard.served_identities() == {runner.MODEL: "synthetic-identity"}
     call = Call("probe_main", "", "chat", {"messages": [{"content": CANARY}]}, runner.MODEL, {}, "fake")
     assert guard.respond(call).status == 503
     assert guard.respond(replace(call, body={})).status == 503
@@ -880,7 +1073,9 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
         stack = Stack()
         stack.oracle = None
         def respond(call):
-            Stack.respond(stack, call)
+            reply = Stack.respond(stack, call)
+            if call.role == "identity_check":
+                return reply
             return stack.oracle.respond(call)
         stack.respond = respond
         stacks.append(stack)
@@ -957,6 +1152,8 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
         "waits": 0, "held_ms": 0, "reasons": []}
     assert runner.run_t2lite(out=tmp_path / "prime", aa_of=tmp_path / "full",
                             baseline=tmp_path / "full", **args) == 0
+    assert sum(c.role == "identity_check" for c in stacks[-1].calls) == 1
+    assert runner._read(tmp_path / "prime", "card.json")["counts"]["floor_cached"] == 1
     noise = runner._read(tmp_path / "prime", "flips.json")
     assert noise["q0"]["numerator"] == 0 and noise["counts"]["aa_prime_scored"] > 0
     assert noise["rows"] == [] and "no A/A′ band" not in noise["labels"]
@@ -964,6 +1161,8 @@ def test_full_fake_worker_and_rerun_store_hashes(loopback_allowed, installed, tm
     assert all(e["twin_flip"] is None for e in noise["excluded"] if e["item_id"] in g2_actions)
     only = outcome["life"], outcome["branch"], outcome["probe_point"]
     assert runner.run_t2lite(out=tmp_path / "rerun", only=only, repeat=3, **args) == 0
+    assert sum(c.role == "identity_check" for c in stacks[-1].calls) == 1
+    assert runner._read(tmp_path / "rerun", "card.json")["counts"]["floor_cached"] == 1
     repetitions = runner._read(tmp_path / "rerun", "repetitions.json")
     assert len(repetitions) == 3 and all(outcome["item_id"] in rep for rep in repetitions)
     assert all(s.closed and s.drained for s in stacks)

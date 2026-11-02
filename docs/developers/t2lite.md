@@ -47,9 +47,9 @@ python -c 'import xml.etree.ElementTree as E; root = E.parse("build/t2lite-offli
 
 ## What a run costs
 
-Only `probe_main` goes live; replay, write, extraction, compaction and every other role stay scripted as at T1. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, the floor runs once per cache key: pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. A missing, damaged or incomplete entry runs the floor again; without a cache it always runs. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
+Only `probe_main` goes live among director requests; replay, write, extraction, compaction and every other role stay scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, floors are stored under a key made of pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. An entry is reused only when its recorded served identity matches the identity request’s observed served model. When the identity request gets a forwarded reply, it is the run's first observed send, so the card's `served_identity` and the drift flags on later probes are measured against its served model. A missing, damaged, incomplete or unverified entry runs the floor again; without a cache it always runs. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. The identity request is never in the receipt or scored. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
 
-`--max-sends` is a required nonnegative limit on upstream sends, including retries and the uncached floor; zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED.
+`--max-sends` is a required nonnegative limit on upstream sends, including retries, the uncached floor and the identity request’s tries (up to four per hold cycle, more under rate holds); zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED.
 
 ## How a run ends
 
@@ -74,9 +74,9 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 | `card.json` | Verdict-free T2-lite card: pins, labels, item rows, counters, and `not_scored_live`, the ids of G2 action rows that carry no score. |
 | `outcomes.json` | Joined per-item outcomes from the last repetition. |
 | `repetitions.json` | Joined outcomes for every repetition. |
-| `no_memory.json` | Floor outcomes and per-unit stops, possibly reused. |
+| `no_memory.json` | Floor outcomes, per-unit stops and `served_identity`, possibly reused. |
 | `custody.json` | Drained login custody events, without login secrets. |
-| `disclosures.json` | Live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
+| `disclosures.json` | Top-level `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
 | `spend.json` | Locked reservation and settlement accounting. |
 | `receipt.json` | COMPLETE status, actual work, tokens, latency and runtime. |
 | `flips.json` | Comparison against the baseline, if supplied. |
@@ -199,6 +199,6 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 
 ## Limits
 
-T2-lite is not predictive of the full tier. Only `probe_main` is live; everything else is scripted as at T1. Entity matching is strict, not semantic. G2 actions are not scored live ([#358](https://github.com/electricsheephq/bicentennial/issues/358)): their card and outcome rows carry no score, and the card lists their ids in `not_scored_live`. A G2 action that fails for a system or infrastructure reason keeps that failure class instead. The card's `act` label reads "Act: G1 actions are the live model's, scored by T1's action predicates".
+T2-lite is not predictive of the full tier. Only `probe_main` is live among director requests; everything else is scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. Entity matching is strict, not semantic. G2 actions are not scored live ([#358](https://github.com/electricsheephq/bicentennial/issues/358)): their card and outcome rows carry no score, and the card lists their ids in `not_scored_live`. A G2 action that fails for a system or infrastructure reason keeps that failure class instead. The card's `act` label reads "Act: G1 actions are the live model's, scored by T1's action predicates".
 
 Probes can write memory; isolation is per checkpoint, not per question. The window W = 16K is provisional. Results never feed boards, gates, admission, rungs or the public regression corpus. The flip list is the developer's own regression set, never public-corpus stock ([erratum](../ERRATA-v2.2.md#design-text-where-prereg-governs)). This offline acceptance proves the guide matches the code; it proves no live run.
