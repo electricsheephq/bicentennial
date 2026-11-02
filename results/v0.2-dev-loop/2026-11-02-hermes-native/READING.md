@@ -14,7 +14,7 @@ At each probe the agent answers from what its memory put in front of it. A no-me
 
 - **System:** Hermes native, the built-in memory of the pinned Hermes harness (hermes-agent v0.22.2: the `memory` tool with `MEMORY.md`, plus `session_search`).
 - **Kit:** benchmark commit `c9bf10b7f56b`, with T1 packs built and installed on the run's machine (pack hash in `RESULT.md`). Pack hashes depend on the build host's SQLite version ([#327](https://github.com/electricsheephq/bicentennial/issues/327)), so the same commit built on another machine can give another hash, and these cards are references only for packs with this hash.
-- **Items:** 17 per run, from both lives' probes. Six are G2 actions, which T2-lite does not score live yet ([#358](https://github.com/electricsheephq/bicentennial/issues/358); live G2 action scoring is v0.3, [#118](https://github.com/electricsheephq/bicentennial/issues/118)). That leaves 11 scored items per run.
+- **Items:** 17 per run, from both lives' probes. Six are G2 actions, which T2-lite does not score live yet ([#358](https://github.com/electricsheephq/bicentennial/issues/358); live G2 action scoring is v0.4, [#118](https://github.com/electricsheephq/bicentennial/issues/118)). That leaves 11 scored items per run.
 - **Runs:** A, then A′ with `--aa-of A --baseline A`. A′ reuses A's no-memory floor from the cache, so it sends only the system's probes.
 - **Machine:** a 14-core macOS machine that also runs other work. "Loop time" below says what else ran during each run.
 
