@@ -289,10 +289,11 @@ class HermesAdapter:
                 self._held, t0 = (index, n) if held else None, _now()
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
-                # A kill or restart stops the worker next, so its turn keeps the full settle.
-                stops = any(f["kind"] in ("kill", "restart") for f in faults)
+                # A kill or restart stops the worker next, and a compaction turn's stored state matters most,
+                # so these turns keep the full settle.
+                full = any(f["kind"] in ("kill", "restart", "compaction") for f in faults)
                 quiet = min(self.turn_wait_s, DRAIN_QUIET_S)
-                t["drain"].append(self._drain() if stops or quiet == DRAIN_QUIET_S else self._drain(quiet))
+                t["drain"].append(self._drain() if full or quiet == DRAIN_QUIET_S else self._drain(quiet))
                 c, killed, self._held = d.control(), held and out is None and (index, n) in self._fired, None
                 if c["stopped"] or c["write_failures"] > failures:
                     raise HarnessFailed("director_stopped" if c["stopped"] else "write_failure")

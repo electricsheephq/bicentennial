@@ -229,7 +229,7 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert {t["arm"] for t in cached_receipt["timings"]} == {"system"}
     assert cached_receipt["tokens"] == {"input": 8, "output": 4}
     assert len(s.seen) == 12
-    assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
 
 
@@ -254,7 +254,7 @@ def test_identity_check_matches_before_units(scenario, tmp_path, capsys):
     assert disclosure["live"]["holds"] == dict(waits=0, held_ms=0, reasons=[])
     card = runner._read(tmp_path / "hit", "card.json")
     assert card["served_identity"] == identity and card["counts"]["floor_cached"] == 1
-    assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("response", ["different", "not_forwarded", "unobserved", "unidentified", "invalid"])
@@ -296,7 +296,7 @@ def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
         live = runner._read(tmp_path / "miss", "disclosures.json")["live"]
         assert live["stop_reason"] == "upstream_invalid_request_400"
     message = "differs from the cache entry" if response == "different" else "not confirmed"
-    assert f"floor: ran live (served identity {message})" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert f"floor: ran live (served identity {message})" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("identity", [None, 0, "", "unobserved", '{"model":"unidentified"}', "missing"])
@@ -753,7 +753,7 @@ def test_aa_of_with_aa_prime_refused_before_output(scenario, tmp_path, capsys):
     capsys.readouterr()
     assert s.invoke(aa_of=baseline, baseline=baseline, aa_prime=tmp_path / "prime") == 3
     assert not s.out.exists() and s.stacks == [] and s.seen == []
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").split() == ["rerun_arguments"]
+    assert capsys.readouterr().err.split() == ["rerun_arguments"]
 
 
 def test_flip_identities_and_prime_card(scenario, tmp_path):
@@ -834,17 +834,17 @@ def test_planted_flip_rerun_command_repeats_checkpoint(scenario, tmp_path, monke
 def test_argument_refusals_create_nothing(scenario, tmp_path, capsys, kw):
     kw = {k: tmp_path / v if isinstance(v, str) else v for k, v in kw.items()}
     assert scenario.invoke(**kw) == 3 and not scenario.out.exists()
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").split() == ["rerun_arguments"] and scenario.stacks == []
+    assert capsys.readouterr().err.split() == ["rerun_arguments"] and scenario.stacks == []
 
 
 def test_live_settings_and_login_home_refuse_first(scenario, monkeypatch, capsys):
     monkeypatch.delenv(runner.LIVE_ENV[1])
     assert scenario.invoke() == 3 and not scenario.out.exists()
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").split() == [runner.LIVE_ENV[1], "live_config"]
+    assert capsys.readouterr().err.split() == [runner.LIVE_ENV[1], "live_config"]
     monkeypatch.setenv(runner.LIVE_ENV[1], "synthetic-client")
     (scenario.home / "auth.json").unlink()
     assert scenario.invoke() == 3 and not scenario.out.exists()
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").split() == ["login_home"] and scenario.stacks == []
+    assert capsys.readouterr().err.split() == ["login_home"] and scenario.stacks == []
 
 
 @pytest.mark.parametrize("damage", ["items", "outcome", "place", "place_life", "place_branch", "prime_flag",
@@ -1177,7 +1177,7 @@ def test_turn_wait_disclosure_and_every_arm(scenario, monkeypatch, capsys, wait)
     monkeypatch.setattr(runner, "run_life", drive)
     capsys.readouterr()
     assert scenario.invoke(turn_wait_s=wait) == 0
-    assert capsys.readouterr().err.startswith(f"turn_wait_s={wait}\n")
+    assert "turn_wait_s" not in capsys.readouterr().err
     assert runner._read(scenario.out, "disclosures.json")["turn_wait_s"] == str(wait)
     assert len(seen) == 8 and {arm for arm, _ in seen} == {"no_memory", "system"}
     assert all(value == wait for _, value in seen)
@@ -1206,3 +1206,12 @@ def test_floor_cache_separates_turn_waits(scenario, tmp_path, waits):
                               ctx.pins["harness_hash"], ctx.pins["benchmark_commit"], "turn_wait_s=0.5"])
     assert (tmp_path / "cache" / (short_key + ".t2lite-floor.json")).is_file()
     assert len(list((tmp_path / "cache").iterdir())) == 2
+
+
+def test_flip_rerun_command_keeps_the_runs_turn_wait(scenario, tmp_path):
+    s = scenario
+    assert s.invoke("baseline", cache=tmp_path / "cache") == 0
+    s.score = 0
+    assert s.invoke(baseline=tmp_path / "baseline", cache=tmp_path / "cache", turn_wait_s=0.5) == 0
+    command = runner._read(s.out, "flips.json")["rows"][0]["rerun"]
+    assert " --repeat 3 --turn-wait 0.5 --out <new dir>" in command

@@ -196,7 +196,7 @@ bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$P
 
 | T1 flag | Meaning |
 |---|---|
-| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 3.0; invalid values refuse with exit 3 before execution. Session end and turns followed by kill or restart keep 3.0 s. Outside the lock, lock hash, attempt id and card. The default is the published setting until the one-commit A/B passes; results at another value are your own. |
+| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 3.0; invalid values refuse with exit 3 before execution. Session end, compaction turns and turns followed by kill or restart keep 3.0 s. Outside the lock, lock hash, attempt id and card. The default is the published setting until the one-commit A/B passes; results at another value are your own. |
 
 T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
 
@@ -287,7 +287,7 @@ Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. C
 
 Ring 0 contract change, 2026-11-01: memory hosts add `t0.forget_kept` and `t1.forget_kept` to their delivery properties, as canonical JSON counts for `ambiguous`, `same_text` and `unattributed`, zeros included. Counts follow the host lifetime across reset and restore; the first reason per row id (or text hash without search) wins within a store generation, and each wipe starts a new generation because a fresh store may reuse row ids. T0 sums all invocation hosts and T1 sums corpus hosts per gated arm; a row kept by two hosts counts twice. A row with no candidate owner whose text the host deleted since its last reset counts nowhere: the system kept it. A replacement host after a crash starts without that memory, so such a row can still count as `unattributed`. Reference adapters disclose nothing. `forget_ambiguous` reads the `ambiguous` plus `same_text` count. INV-FORGET adds reason `host_kept` beside `store_hit` only when a kept text contains a searched needle; the status and the member counts stay those of the check without it. The scorer pin moves with this change, so earlier packs are rebuilt. Kept texts remain in memory and never enter outputs or checkpoints ([RING0 E22](../../specs/ring0/RING0.md#13-v01-errata)). No PREREG version change; PREREG-v0.5 remains frozen.
 
-T1 records the run setting as the `t1.turn_wait_s` JUnit property (seconds), and prints `turn_wait_s` on stderr at start.
+T1 records the run setting as the `t1.turn_wait_s` JUnit property (seconds).
 
 Also inspect `t0.sandbox_slot` for registry T0 runs (reference runs disclose no slot), and `t1.sandbox_slot` for T1. The value is the selected slot, default 0; it is a run property outside the frozen disclosure tuple.
 

@@ -306,7 +306,7 @@ def test_write_failure_cleans_results(synth, installed, tmp_path, monkeypatch, c
     monkeypatch.setattr(compare, "write_run", write)
     if error is OSError:
         assert invoke(installed, out) == 70
-        stderr = capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+        stderr = capsys.readouterr().err
         assert stderr.splitlines()[0] == "tool_failure"
         assert "Traceback (most recent call last):" in stderr and "OSError: second arm" in stderr
     else:
@@ -330,7 +330,7 @@ def test_cache_at_staging_survives_failure(synth, installed, tmp_path, monkeypat
     monkeypatch.setattr(compare, "_controls", controls)
     # The cache occupies the staging path, so staging cannot start; the cache must survive.
     assert invoke(installed, out, cache=cache) == 70
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").splitlines()[0] == "tool_failure"
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
     no_results(out)
     assert (cache / "keep").read_bytes() == b"cache"
 
@@ -375,7 +375,7 @@ def test_system_move_failure_rolls_back(synth, installed, tmp_path, monkeypatch,
     monkeypatch.setattr(compare.os, "replace", move)
     if error is OSError:
         assert invoke(installed, out) == 70
-        assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").splitlines()[0] == "tool_failure"
+        assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
     else:
         with pytest.raises(error, match="system move"):
             invoke(installed, out)
@@ -391,7 +391,7 @@ def test_preflight_tool_failure(installed, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(t1, "prepare", broken)
     out = tmp_path / "out"
     assert invoke(installed, out) == 70
-    stderr = capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    stderr = capsys.readouterr().err
     assert stderr.splitlines()[0] == "tool_failure"
     assert "RuntimeError: preflight failed" in stderr
     assert not out.exists()
@@ -413,7 +413,7 @@ def test_refusal_write_failure_cleans_results(synth, installed, tmp_path, monkey
     monkeypatch.setattr(compare, "_execute", refused)
     monkeypatch.setattr(Path, "write_bytes", write)
     assert invoke(installed, out) == 70
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n").splitlines()[0] == "tool_failure"
+    assert capsys.readouterr().err.splitlines()[0] == "tool_failure"
     assert not any(out.iterdir())
 
 
@@ -452,7 +452,7 @@ def test_baseline_order_and_refusals(synth, installed, monkeypatch, tmp_path, ca
         order.clear()
         assert invoke(installed, out, baseline=path) == 3
         assert order == ["baseline"] and not out.exists()
-        assert code in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+        assert code in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("persistent", [False, True])
@@ -563,7 +563,7 @@ def test_spend_preflight(synth, installed, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(compare, "build_receipt", receipt)
     out = tmp_path / "out"
     assert invoke(installed, out) == 3
-    assert "SpendRefused" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert "SpendRefused" in capsys.readouterr().err
     no_results(out)
 
 
@@ -590,7 +590,7 @@ def test_isolation_refusal(synth, installed, monkeypatch, tmp_path, where, capsy
     assert invoke(installed, out) == (0 if where == "scripted" else 3)
     if where != "scripted":
         no_results(out)
-        assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n") == "upstream_record\n"
+        assert capsys.readouterr().err == "upstream_record\n"
         detail = ("record id=request-7 served_by=scripted diagnostics" if where == "diagnostics" else
                   f"record id={'request-7' if where == 'forwarded' else 0} served_by=live")
         detail = endpoint if where == "egress" else detail
@@ -649,7 +649,7 @@ def test_corpus_egress_refusal_detail(synth, installed, monkeypatch, tmp_path, c
     assert (t0.run_t0(system="reference_store", packs=[], packs_dir=tmp_path, pack_hash="a" * 64, out=out)
             if site == "t0" else invoke(installed, out)) == 3
     no_results(out)
-    assert capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n") == code + "\n"
+    assert capsys.readouterr().err == code + "\n"
     assert json.loads((out / "refusal.json").read_bytes()) == dict(
         code=code, fields=[], detail=expected)
 
@@ -679,17 +679,17 @@ def test_refusal_mapping(synth, installed, monkeypatch, tmp_path, capsys, error,
     monkeypatch.setattr(compare, "run_arms", refused)
     out = tmp_path / "out"
     assert invoke(installed, out) == 3
-    assert code in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert code in capsys.readouterr().err
     no_results(out)
 
 
 def test_preconditions(installed, tmp_path, capsys):
     out = tmp_path / "out"
     assert invoke(installed, out, system="nomemory", entry=None) == 3
-    assert not out.exists() and "unknown_system" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert not out.exists() and "unknown_system" in capsys.readouterr().err
     out.mkdir()
     assert invoke(installed, out) == 3
-    assert "out_exists" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert "out_exists" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("fault,status,reason,attempts", [
@@ -940,7 +940,7 @@ def test_corpus_held_refusal(synth, installed, monkeypatch, tmp_path, capsys):
     out = tmp_path / "out"
     assert invoke(installed, out) == 3
     assert calls == ["refused", "returned"]
-    assert "gate_refused" in capsys.readouterr().err.removeprefix("turn_wait_s=3.0\n")
+    assert "gate_refused" in capsys.readouterr().err
     no_results(out)
 
 
@@ -1086,7 +1086,7 @@ def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch,
         out = tmp_path / str(wait)
         capsys.readouterr()
         assert invoke(installed, out, turn_wait_s=wait) == 0
-        assert capsys.readouterr().err.startswith(f"turn_wait_s={wait}\n")
+        assert "turn_wait_s" not in capsys.readouterr().err
         assert all(properties(out, arm)["t1.turn_wait_s"] == str(wait) for arm in compare.GATED)
         outputs.append(out)
     for arm in compare.GATED:

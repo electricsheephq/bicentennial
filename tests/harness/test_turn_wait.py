@@ -65,7 +65,7 @@ def test_default_drain_calls_equal_baseline(tmp_path):
 @pytest.mark.parametrize("mode", ["boundary", "held"])
 def test_fault_turns_and_session_end_keep_full_wait(tmp_path, mode):
     drains, _ = fake_session(tmp_path / mode, 1.0, mode=mode)
-    assert drains == [(1.0,), (), (), (1.0,), (1.0,), ()]
+    assert drains == [(1.0,), (), (), (), (1.0,), ()]
 
 
 @pytest.mark.parametrize("wait", [0.5, 1.0, 3.0])

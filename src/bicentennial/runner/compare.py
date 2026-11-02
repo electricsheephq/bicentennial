@@ -457,7 +457,6 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
         out = Path(out)
         try:
             turn_wait_s = t1.validate_turn_wait(turn_wait_s)
-            print(f"turn_wait_s={turn_wait_s}", file=t0.sys.stderr)
             if os.environ.get("PYTHONHASHSEED") != "0":
                 raise T1Refused("hashseed")
             if out.exists() or out.is_symlink():

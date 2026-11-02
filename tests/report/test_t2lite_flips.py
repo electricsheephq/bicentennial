@@ -571,3 +571,14 @@ def test_plugin_lists_equal_the_registry():
     assert flips.MODEL_CACHE_SYSTEMS == {
         name for name, env in hermes_plugin.WORKER_ENV.items()
         if any("{model_cache}" in value for value in env.values())}
+
+
+def test_rerun_command_keeps_a_non_default_turn_wait():
+    source_card, record = card("hermes-native"), item()
+    default = flips.rerun_command(source_card, record)
+    assert flips.rerun_command(source_card, record, turn_wait_s=3.0) == default
+    short = flips.rerun_command(source_card, record, turn_wait_s=0.5)
+    assert short == default.replace(" --repeat 3 --out", " --repeat 3 --turn-wait 0.5 --out")
+    for bad in (True, "0.5", 0.4, 3.5, 1):
+        with pytest.raises(ValueError, match="invalid turn_wait_s"):
+            flips.rerun_command(source_card, record, turn_wait_s=bad)

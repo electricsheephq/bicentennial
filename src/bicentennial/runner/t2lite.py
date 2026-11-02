@@ -354,7 +354,6 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
     needles, pending_cache, live, custody_rows = set(), None, None, []
     try:
         turn_wait_s = t1.validate_turn_wait(turn_wait_s)
-        print(f"turn_wait_s={turn_wait_s}", file=sys.stderr)
         # Arguments and settings first: these refusals create no output, so the same command can run again.
         if (repeat < 1 or max_sends < 0 or repeat != 1 and only is None
                 or only is not None and (baseline or aa_of or aa_prime)
@@ -486,7 +485,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             if baseline:
                 report = flip_report(card, references["baseline"], outcomes["baseline"], repetitions[-1],
                     aa_prime=repetitions[-1] if self_band else outcomes.get("prime"),
-                    aa_prime_card=card if self_band else references.get("prime"))
+                    aa_prime_card=card if self_band else references.get("prime"), turn_wait_s=turn_wait_s)
                 report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
                     current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
                 _write(out, "flips.json", report)
