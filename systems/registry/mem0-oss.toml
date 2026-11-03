@@ -37,5 +37,5 @@ type = "array"
 [structured_formats.extraction.schema.oneOf.properties.memory.items]
 type = "object"
 additionalProperties = false
-required = ["event", "id", "text"]
+required = ["text"]
 properties = {event = {enum = ["ADD"]}, id = {type = "string"}, text = {type = "string"}}

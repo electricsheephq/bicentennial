@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0, 2026-11-03: Mem0's scripted additive extraction reply (#208)
+- **RING0 §2 and §13 E28:** from this kit, the stub answers mem0ai 2.2.1's additive extraction call with the `memory` list it reads: one text-only entry per new user message, cut at 240 characters and bounded by the reply budget. Automatic extraction is exercised, and `<tier>.extraction` discloses the scripted extractive reply; E28 supersedes E11.
+- **Pins and results:** no code pin moves. Mem0's T0 and T1 results can change, because T0's memory-layer host makes the same extraction call on every ingest; both are measured by the owner with runs before and after. Explicit `mem0_add` writes and other systems' replies are unchanged.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-03: Keep incidental decoys are declared competing values (#293)
 - **RING0 §13 E27 (§1):** from the next kit, visible decoy option tokens of `keep-incidental-v1` are `planted` competing values, excluding required and forbidden tokens. First-match scoring stays unchanged: T0 and T1 item outcomes, scores and selected options do not change. Per-kind competing counters in item reports accompanying cards with these items now count decoys in context; cards' existing `competing_milli` share already uses `competing_present` and stays unchanged.
 - **Pins and packs:** the controls pin moves through the compiler's option-role helper; reader, scoring and scorer pins stay unchanged. Every T0 and T1 pack's controls cache and manifest move with the controls pin, and packs containing these items also change reader keys and their dependent hashes and build diagnostics. Rebuild earlier packs. The frozen template source, world content and `world_hash` stay unchanged; no schema changes.
