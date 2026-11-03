@@ -34,12 +34,13 @@ from bicentennial.runner.hermes_score import identity0 as identity0
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
 from bicentennial.runner.units import (
-    UnitRefusal,
+    Arm,
+    Unit,
     _check_stop,
     _read,
     _write,
-    reduce_refusals,
     refusal_code,
+    schedule,
 )
 from bicentennial.runner.units import _Guard as _Guard
 from bicentennial.runner.units import _unit as _unit
@@ -243,16 +244,14 @@ def _references(prospective, selection, baseline, aa_of, aa_prime):
 
 
 def _collect_unit(runs, units, *args, **kwargs):
-    """Merge one unit's attempts in serial order, including a refusing attempt."""
-    try:
-        result = _unit(*args, **kwargs)
-    except UnitRefusal as failure:
-        runs.extend(failure.runs)
-        units.append(failure.timing)
-        raise reduce_refusals([failure.error]) from None
-    runs.extend(result.runs)
-    units.append(result.timing)
-    return result
+    """Use the scheduler at one slot while preserving the serial publication boundaries."""
+    ctx, pack, branch, arm, scratch, live, out, *rest = args
+    floor_stops = rest[0] if rest else kwargs.get("floor_stops")
+    config = Arm.from_context(ctx, arm)
+    unit = Unit(config, pack, branch, scratch, out)
+    collected = schedule(ctx, [unit], live, roots=1, floor_stops=floor_stops, execute=_unit)
+    results = collected.merge(runs, units)
+    return results[unit.identity]
 
 
 def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,

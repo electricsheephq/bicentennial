@@ -40,12 +40,18 @@ class LiveStop(LiveCredentialStop):
     """A non-credential stop, propagated through the life runner's stop cleanup."""
 
 
+class LatchStop(LiveStop):
+    """A secondary session-boundary stop caused only by another unit."""
+
+
 def check_live_stop(state):
     reason = state.get("stop_reason")
     if reason in CREDENTIAL_STOPS or state.get("login_stop"):
         raise LiveCredentialStop(reason if reason in CREDENTIAL_STOPS else state["login_stop"])
     # Spend retains its own refusal in the tier runner.
     if not state.get("spend_stopped") and (state.get("stopped") or reason):
+        if state.get("latch_stopped") and not reason:
+            raise LatchStop("stopped")
         raise LiveStop(reason or "stopped")
 
 
