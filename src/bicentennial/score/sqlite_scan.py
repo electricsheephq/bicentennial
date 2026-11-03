@@ -1,7 +1,6 @@
 """Private-copy SQLite evidence for forgetting checks."""
 
 import bz2
-import gzip
 import io
 import lzma
 import shutil
@@ -19,6 +18,8 @@ SQLITE_VERSION = sqlite3.sqlite_version
 SIDECARS = ("-wal", "-shm", "-journal")
 # Larger than a realistic memory record; bounded reads also contain expansion bombs.
 DECOMPRESS_CAP = 64 * 1024 * 1024
+GZIP_MAGIC = b"\x1f\x8b"
+GZIP_WBITS = 16 + zlib.MAX_WBITS
 
 
 def _zlib_header(value):
@@ -26,43 +27,49 @@ def _zlib_header(value):
             and int.from_bytes(value[:2], "big") % 31 == 0)
 
 
+def _streams(value, header, wbits):
+    """Decode consecutive complete zlib streams or gzip members; bytes after the last complete one are ordinary."""
+    output = b""
+    while header(value):
+        decoder = zlib.decompressobj(wbits)
+        try:
+            chunk = decoder.decompress(value, DECOMPRESS_CAP - len(output))
+        except zlib.error:
+            # As with zlib.decompress, a complete preceding stream survives trailing junk.
+            return output, False
+        if len(output) + len(chunk) >= DECOMPRESS_CAP:
+            return output + chunk, True
+        if not decoder.eof:
+            return output, False
+        output += chunk
+        # gzip readers skip zero padding between members.
+        value = decoder.unused_data.lstrip(b"\0") if wbits == GZIP_WBITS else decoder.unused_data
+    return output, False
+
+
 def _decompressed(value):
     """One level only. Return searchable output and whether any content is opaque.
 
-    Invalid streams are ordinary bytes. File decoders retain their standard-library
-    handling of concatenated members and padding. Consecutive complete zlib streams
-    are searched too; trailing non-stream bytes retain zlib's ordinary-byte behavior.
+    Invalid streams are ordinary bytes. Consecutive complete zlib streams and gzip members are searched up to the
+    first bytes that do not continue them; bz2 and xz readers keep their standard-library handling of
+    concatenated streams and padding.
     """
     if value.startswith((b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")):
         return b"", True
-    zlib_header = _zlib_header(value)
-    opener = next((opener for header, opener in ((b"\x1f\x8b", gzip.open), (b"BZh", bz2.BZ2File),
-                                                (b"\xfd7zXZ\0", lzma.LZMAFile))
+    if _zlib_header(value):
+        return _streams(value, _zlib_header, zlib.MAX_WBITS)
+    if value.startswith(GZIP_MAGIC):
+        return _streams(value, lambda rest: rest.startswith(GZIP_MAGIC), GZIP_WBITS)
+    opener = next((opener for header, opener in ((b"BZh", bz2.BZ2File), (b"\xfd7zXZ\0", lzma.LZMAFile))
                    if value.startswith(header)), None)
-    if not zlib_header and opener is None:
+    if opener is None:
         return b"", False
     try:
-        if zlib_header:
-            output = b""
-            while _zlib_header(value):
-                decoder = zlib.decompressobj()
-                try:
-                    chunk = decoder.decompress(value, DECOMPRESS_CAP - len(output))
-                except zlib.error:
-                    # As with zlib.decompress, a complete preceding stream survives trailing junk.
-                    return output, False
-                if len(output) + len(chunk) >= DECOMPRESS_CAP:
-                    return output + chunk, True
-                if not decoder.eof:
-                    return output, False
-                output += chunk
-                value = decoder.unused_data
-        else:
-            with opener(io.BytesIO(value), mode="rb") as stream:
-                output = stream.read(DECOMPRESS_CAP)
-        return output, len(output) >= DECOMPRESS_CAP
-    except (OSError, EOFError, zlib.error, lzma.LZMAError):
+        with opener(io.BytesIO(value), mode="rb") as stream:
+            output = stream.read(DECOMPRESS_CAP)
+    except (OSError, EOFError, lzma.LZMAError):
         return b"", False
+    return output, len(output) >= DECOMPRESS_CAP
 
 
 def _quoted(name):

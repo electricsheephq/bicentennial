@@ -195,6 +195,29 @@ def test_concatenated_compressed_members_are_searched(tmp_path, codec):
     assert_status(tmp_path, "FAIL", "store_hit")
 
 
+@pytest.mark.parametrize("tail", [b"trailing junk", b"\0" * 8 + b"junk", gzip.compress(b"x" * 64)[:-8]],
+                         ids=["junk", "padding-then-junk", "truncated-member"])
+def test_gzip_member_before_invalid_bytes_is_searched(tmp_path, tail):
+    blob_store(tmp_path, gzip.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 1024) + tail)
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+def test_gzip_member_after_zero_padding_is_searched(tmp_path):
+    second = gzip.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 1024)
+    blob_store(tmp_path, gzip.compress(b"first member") + b"\0" * 16 + second)
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+def test_gzip_bad_checksum_keeps_earlier_members(tmp_path):
+    later = bytearray(gzip.compress(b"later member"))
+    later[-8] ^= 0xFF
+    blob_store(tmp_path, gzip.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 1024) + bytes(later))
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
 @pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
 def test_truncated_compression_keeps_ordinary_bytes(tmp_path, codec):
     blob_store(tmp_path, codec.compress(b"unrelated memory" * 128)[:-8])
