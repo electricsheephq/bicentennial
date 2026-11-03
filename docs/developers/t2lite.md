@@ -86,7 +86,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 | `custody.json` | Drained login custody events, without login secrets. |
 | `disclosures.json` | Top-level `honeypot_hits` (0 on every published run), `turn_wait_s` (a decimal string, in seconds), `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
 | `spend.json` | Locked reservation and settlement accounting. |
-| `receipt.json` | COMPLETE status, actual work, tokens, latency and runtime. |
+| `receipt.json` | COMPLETE status, actual work, tokens, latency, runtime, per-arm `background` disclosures, decimal-string `turn_wait_s`, and `units` with life, branch, arm, slot, start/end ms and attempts (including retries and executed floor units). |
 | `flips.json` | Comparison against the baseline, if supplied. |
 | `no_memory/<life>/<branch>/t2lite_probes.json` | Uncached floor probe, envelope and shadow diagnostics. |
 | `repetitions/0/<life>/<branch>/t2lite_probes.json` | System probe diagnostics for repetition 0 (and similarly each later number). |

@@ -9,13 +9,15 @@ import signal
 import subprocess
 import sys
 import time
-from copy import deepcopy
+from collections import Counter
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
 
 from bicentennial.director.core import Director
+from bicentennial.director.roles import MAIN_ROLES
 from bicentennial.director.serve import serve, shutdown
 from bicentennial.gitenv import git_env
 from bicentennial.harness.egress import Egress
@@ -253,6 +255,8 @@ class HermesAdapter:
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
         self.end_threads = None
+        self._receipt_sessions = {}
+        self.background_threads = []
         self.director = Director(script, route_table, entry["name"], life, branch, run,
                                  tuple(t["tool"] for t in entry["write_tools"]), responder, clock, Guard([]),
                                  {"sandbox_root": str(self.paths["root"]), "director_port": "0"}, write_prompt,
@@ -280,6 +284,7 @@ class HermesAdapter:
             with self.egress.forking:  # no sampler fork may hold the ledger's flock while it is reopened
                 t["egress_wait"].append(_ms(m))
                 d.start_session(index, sim_t_s, lock_hash, attempt_id, self.paths["root"] / "ledger")
+                self._receipt_sessions[attempt_id] = (index, sim_t_s, self.clock.step_s, d.ctx.cursor)
             self._alias = d.route["alias"]  # a swap reaches Hermes's config at session start (RING0 §6)
             sid, history, _ = self._spawn_open("session_start", resume_session_id, t)
             failures, turns_ok, matched = d.control()["write_failures"], 0, 0
@@ -289,6 +294,11 @@ class HermesAdapter:
                 self._held, t0, summarised = (index, n) if held else None, _now(), d.summariser_requests
                 out = self._worker.call(op="turn", text=turn["user"])
                 t["turn"].append(_ms(t0))
+                names = out.get("alive_threads") if out else None
+                count = (sum((Counter(names) - self._baseline_threads).values())
+                         if names is not None and self._baseline_threads is not None else None)
+                self.background_threads.append(count)
+                t.setdefault("background_threads", []).append(count)
                 # A kill or restart stops the worker next, and a compaction turn's stored state matters most,
                 # so these turns keep the full settle. T1 and T2-lite compact under sprint pressure, not on a
                 # schedule, so a compaction request recorded during the turn or its quiet time counts too.
@@ -412,6 +422,7 @@ class HermesAdapter:
         if out is None or not out.get("ok") or (sid is not None and out.get("session_id") != sid):
             raise HarnessFailed("open_failed" if sid is None else "resume_failed")
         self.active_memory_providers = list(out.get("active_memory_providers") or [])
+        self._baseline_threads = Counter(out["alive_threads"]) if "alive_threads" in out else None
         if self.plugin is not None and self.plugin not in self.active_memory_providers:
             raise HarnessFailed("plugin_inactive")
         self.active_context_engine = out.get("active_context_engine")
@@ -467,6 +478,40 @@ class HermesAdapter:
 
     def stable_digest(self) -> str:
         return stable_digest(self.records(), self.director.run_values)
+
+    def background_records(self) -> list[dict]:
+        """Derive quote attribution without changing a ledger byte or the live director.
+
+        Reconstruct the matcher view in append order, which is dispatch order under
+        the director lock. Arrival comparisons use t, independently of that order.
+        sim_now alone cannot distinguish a quote from the clock fallback.
+        """
+        view = copy(self.director)
+        view.ctx = copy(self.director.ctx)
+        store = BlobStore(self.paths["root"] / "ledger" / "blobs", Guard([]))
+        rows = self.records()
+        cursors = {sid: values[3] for sid, values in self._receipt_sessions.items()}
+        positions = {(t["session"], t["turn"]): n for n, t in enumerate(view.turns)}
+        derived = []
+        for row in rows:
+            sid, c = row.get("attempt_id"), row.get("cursor")
+            state = self._receipt_sessions.get(sid)
+            if state is None or row.get("type") != "request":
+                derived.append(row)
+                continue
+            index, instant, step, _ = state
+            if (c and row.get("subrole") == "cursor" and row.get("role") in MAIN_ROLES
+                    and row.get("served") != "refused_float"):
+                cursors[sid] = max(cursors[sid], positions[c["session"], c["turn"]] + 1)
+            if row.get("role") not in MAIN_ROLES:
+                view.session_index, view.ctx.cursor = index, cursors[sid]
+                body = json.loads(store.get(row["req"]))
+                quoted = view._request_turn(body) if isinstance(body, dict) else None
+                # Early refusals never ran quote attribution. Confirm the recorded scheduled time.
+                n = quoted["turn"] if quoted and row.get("sim_now") == instant + step * quoted["turn"] else None
+                row = dict(row, quoted_turn=n)
+            derived.append(row)
+        return derived
 
     def honeypot_hits(self, token: str) -> int:
         store = BlobStore(self.paths["root"] / "ledger" / "blobs", Guard([]))

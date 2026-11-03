@@ -190,3 +190,23 @@ with no repeated key; the validator rejects any other order.
 | `receipt.latency_summary.p90` | volatile | RING0 §4 |
 | `receipt.latency_summary.p95` | volatile | RING0 §4 |
 | `receipt.latency_summary.max` | volatile | RING0 §4 |
+| `receipt.background` | volatile | RING0 §13 E30 |
+| `receipt.background[].arm` | volatile | RING0 §13 E30 |
+| `receipt.background[].late` | volatile | RING0 §13 E30 |
+| `receipt.background[].late.count` | volatile | RING0 §13 E30 |
+| `receipt.background[].late.max_delay_ms` | volatile | RING0 §13 E30 |
+| `receipt.background[].threads_at_turn_start` | volatile | RING0 §13 E30 |
+| `receipt.background[].threads_at_turn_start.count` | volatile | RING0 §13 E30 |
+| `receipt.background[].threads_at_turn_start.max_alive` | volatile | RING0 §13 E30 |
+| `receipt.background[].unattributed` | volatile | RING0 §13 E30 |
+| `receipt.background[].unattributed.count` | volatile | RING0 §13 E30 |
+| `receipt.timings[].sessions[].background_threads` | volatile | RING0 §13 E30 |
+| `receipt.turn_wait_s` | volatile | RING0 §13 E30 |
+| `receipt.units` | volatile | RING0 §13 E30 |
+| `receipt.units[].arm` | volatile | RING0 §13 E30 |
+| `receipt.units[].attempts` | volatile | RING0 §13 E30 |
+| `receipt.units[].branch` | volatile | RING0 §13 E30 |
+| `receipt.units[].end_ms` | volatile | RING0 §13 E30 |
+| `receipt.units[].life` | volatile | RING0 §13 E30 |
+| `receipt.units[].slot` | volatile | RING0 §13 E30 |
+| `receipt.units[].start_ms` | volatile | RING0 §13 E30 |

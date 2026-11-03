@@ -112,7 +112,7 @@ def main():
                         tools[:] = [n for n in tools if not n.startswith(f"mcp__{name}__")] + [
                             f"mcp__{name}__{t['name']}" for t in rpc(proc, "tools/list", {})["tools"]]
                 emit(dict(ok=op["session_id"] is None or path.exists(), session_id=sid,
-                          history=len(history), active_memory_providers=[provider] if provider else []))
+                          alive_threads=["MainThread"], history=len(history), active_memory_providers=[provider] if provider else []))
                 if op["session_id"] and args.embeddings_after_restart:
                     request(cfg, [], [], embeddings=True)
             elif op["op"] == "turn":
@@ -143,7 +143,7 @@ def main():
                     continue
                 history = messages[1:] + [msg]
                 path.write_text(json.dumps(history))
-                emit(dict(ok=True, final=msg.get("content") or "", history=len(history)))
+                emit(dict(ok=True, final=msg.get("content") or "", history=len(history), alive_threads=["MainThread"]))
             elif op["op"] == "end":
                 emit(dict(ok=True, alive_threads=[]))
                 for proc in servers.values():
