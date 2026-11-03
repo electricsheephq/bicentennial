@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from bicentennial.sandbox.spansearch import span_search
+from bicentennial.score.sqlite_pages import linked_hits
 
 SQLITE_HEADER = b"SQLite format 3\0"
 SIDECARS = ("-wal", "-shm", "-journal")
@@ -80,6 +81,10 @@ def scan_sqlite(source, relative, needles):
             # encoding, so the raw search uses every encoding SQLite stores text in.
             raw = span_search(root, sorted(blobs))
             hits.update(relative + p[len(source.name):] for group in raw.values() for p in group)
+            try:
+                hits.update(relative + p[len(source.name):] for p in linked_hits(copy, blobs))
+            except (OSError, ValueError):
+                reason = "sqlite_unreadable"
             if reason:
                 return tuple(sorted(hits)), reason
             connection = sqlite3.connect(copy)

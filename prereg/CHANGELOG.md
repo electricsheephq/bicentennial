@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-03: INV-FORGET finds linked split SQLite tokens (#417)
+- **RING0 §13 E32 (§7, E26):** before recovery, private-copy scanning follows SQLite page-number links across every stored main-file, WAL and rollback-journal page version, including superseded, stale and uncommitted frames and persisted journals. It checks local and overflow junctions in UTF-8 and both UTF-16 encodings, following chains until the whole needle ends. A coincidental join from unrelated reuse of the linked page counts as a hit. Only absent to FAIL `store_hit` can change, for stores holding a linked split token; other verdicts, text, opaque and checkpoint rules stay unchanged. The scorer pin (`scorer_sha256`, over `score/*.py`) moves, so earlier packs are rebuilt. The other three code pins stay unchanged. v0.1's frozen kit keeps its rule.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-11-03: INV-FORGET reads SQLite contents (#276)
 - **RING0 §13 E26 (§7):** from the next kit, INV-FORGET searches private SQLite copies and their sidecars before recovery, in UTF-8 and both UTF-16 encodings, reads all SQL values, and requires integrity and zero-filled free pages to certify absence. Raw hits remain `store_hit`; binary formats other than SQLite remain `opaque_store`. The new doubt reasons are `sqlite_unreadable` and `sqlite_freelist`, ordered after `opaque_store`. Canonical host checkpoints are scanned by their carried files. T0 adds canonical JUnit property `invariants.forget_scan` with run-wide method/result counts and hit locations; verdict objects and T1 outputs are unchanged. A token split across pages in superseded copies (main-file pages that newer WAL frames replace, old WAL frames, a persisted journal) is a known gap, tracked in #417. The scorer pin (`scorer_sha256`, over `score/*.py`) moves, so packs built before this change no longer verify and are rebuilt. v0.1's frozen kit keeps its rule.
 No PREREG version change; PREREG-v0.5 remains frozen.
