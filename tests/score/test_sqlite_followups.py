@@ -255,10 +255,13 @@ def test_bad_checksum_at_cap_keeps_capped_output(tmp_path, monkeypatch, codec, c
                                               ("FAIL", "store_hit")),
                                              (b"unrelated memory", ("INCONCLUSIVE", "sqlite_unreadable"))],
                          ids=["value-hit", "no-hit"])
-def test_sql_values_are_read_when_page_images_cannot_be_collected(tmp_path, value, expected):
+def test_sql_values_are_read_when_page_images_cannot_be_collected(tmp_path, monkeypatch, value, expected):
     blob_store(tmp_path, value)
-    with (tmp_path / "store.db").open("ab") as stream:
-        stream.write(b"junk")
+
+    def uncollectable(*args):  # torn trailing bytes no longer make the images uncollectable (E32)
+        raise ValueError("no SQLite page images")
+
+    monkeypatch.setattr(sqlite_scan, "linked_hits", uncollectable)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["store.db"]
     assert_no_encoded_token(tmp_path)
     assert_status(tmp_path, *expected)
