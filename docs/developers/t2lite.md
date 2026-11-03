@@ -55,15 +55,15 @@ python -c 'import xml.etree.ElementTree as E; root = E.parse("build/t2lite-offli
 
 Only `probe_main` goes live among director requests; replay, write, extraction, compaction and every other role stay scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, floors are stored under a key made of pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. A non-default wait appends `turn_wait_s=<seconds>` to the key; at 3.0 seconds the key is unchanged. An entry is reused only when its recorded served identity matches the identity request’s observed served model. When the identity request gets a forwarded reply, it is the run's first observed send, so the card's `served_identity` and the drift flags on later probes are measured against its served model. A missing, damaged, incomplete or unverified entry runs the floor again; without a cache it always runs. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. The identity request is never in the receipt or scored. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
 
-`--max-sends` is a required nonnegative limit on upstream sends, including retries, the uncached floor and the identity request’s tries (up to four per hold cycle, more under rate holds); zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED.
+`--max-sends` is a required nonnegative limit on upstream sends, including retries, the uncached floor and the identity request’s tries (up to four per hold cycle, more under rate holds); zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED while the live stack remains active; a latched stop ends the run without retrying the unit.
 
 ## How a run ends
 
 | End | What remains |
 |---|---|
-| Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain. |
-| Credential or spend stop | No card; `refusal.json` with `credential_stop` or `spend_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. |
-| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. Canary and honeypot outrank a stop; canary comes first. |
+| Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain from infrastructure failures that did not latch a live stack stop. |
+| Credential, spend or live stop | Exit 3; no card or new floor cache entry; `refusal.json` with `credential_stop`, `spend_stop` or `live_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. For `live_stop`, the stop reason is in `refusal.json` `detail` and on stderr as `live_stop <reason>`; a reason containing login material gives `credential_scan` instead. |
+| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. When a stop ends the run, a canary, a honeypot hit and an isolation breach seen before the stop outrank it, in that order; egress the stopped attempt could not sample does not. A unit that completes with a breach refuses `isolation` at once, ahead of a canary, a honeypot hit or a stop. |
 | Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later refusals send nothing but can leave `refusal.json`; they come in this order: the login's operator marker and account lock (`operator_identity`, `account_busy`); preparation (pins, packs, system); inside the sandbox lease, the slot (`sandbox_busy`) and the measured install pin (`pin_mismatch`); then the selection, baseline and reference checks. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
@@ -95,7 +95,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 
 | File | Meaning |
 |---|---|
-| `refusal.json` | Stop code, with `detail` when the refusal has one (the computed fingerprint for an install `pin_mismatch`, the holder pid for `sandbox_busy`); spend stops retain the same file set. |
+| `refusal.json` | Stop code, with `detail` when the refusal has one: the stop reason for `live_stop`, the computed fingerprint for an install `pin_mismatch`, the holder pid for `sandbox_busy`; spend stops retain the same file set. |
 | `receipt.json` | INFRA_FAILURE receipt for work actually performed. |
 | `custody.json` | Secret-free custody records explaining the stop. |
 
@@ -158,6 +158,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `items:<side>` | Card does not vouch for its outcomes. |
 | `licence_not_osi` | Registration lacks an accepted licence. |
 | `live_config` | A required live setting is missing. |
+| `live_stop` | A non-credential, non-spend live stack stop ended the run; `detail` and stderr give the reason, including `responder_error:*`. |
 | `lock_mismatch` | Current run lock differs from expected lock. |
 | `login_home` | No auth.json in the supplied login home. |
 | `missing_input` | Required checkout/cache missing, or unused model cache supplied. |
@@ -211,7 +212,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 
 ## Exit codes
 
-0 means complete, including cards with BLOCKED rows. 3 means refusal or stop; malformed CLI usage also exits 3. 70 means unexpected tool failure, normally with a traceback and refusal. A cleanup double fault can escape as exit 1 with partial files and no card. Pre-output refusals leave no refusal file.
+0 means complete, including cards with BLOCKED rows from failures that did not latch a live stack stop. 3 means refusal or stop; malformed CLI usage also exits 3. 70 means unexpected tool failure, normally with a traceback and refusal. A cleanup double fault can escape as exit 1 with partial files and no card. Pre-output refusals leave no refusal file.
 
 ## Limits
 

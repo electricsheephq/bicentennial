@@ -16,7 +16,6 @@ from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.responder import Call, Reply
 from bicentennial.director.upstream import login as custody
-from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
 from bicentennial.ledger import BlobStore, Guard
@@ -38,7 +37,7 @@ from bicentennial.runner import t0, t1
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
 from bicentennial.runner.live import build_live_stack
-from bicentennial.runner.probe_live import LiveCredentialStop
+from bicentennial.runner.probe_live import LiveCredentialStop, LiveStop, check_live_stop
 from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.envserver.honeypot import hits
 from bicentennial.score.classes import outcome
@@ -88,11 +87,23 @@ def _isolation(run):
         t0._check_egress([([], run.egress)], t1.T1Refused)
     except t1.T1Refused:
         raise t1.T1Refused("isolation") from None
-    for r in run.records:
+    if _live_breach(run.records):
+        raise t1.T1Refused("isolation")
+
+
+def _live_breach(records):
+    for r in records:
         live = [u for u in r.get("upstream", ()) if u.get("served_by") == "live"]
         if (r.get("served_by") == "live" or live) and not (
                 r.get("role") == "probe_main" and all(u.get("role") == "probe_main" for u in live)):
-            raise t1.T1Refused("isolation")
+            return True
+    return False
+
+
+def _breached(run):
+    # What outranks a stop: worker egress or a non-probe live role, seen before it. Unobserved egress does not,
+    # since a stopped attempt can end before a worker is sampled.
+    return bool(run.egress.get("non_loopback")) or _live_breach(run.records)
 
 
 def _secrets(home, login=None):
@@ -129,6 +140,13 @@ def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):
         answer_contract_sha256=answer_contract.contract_hash())
 
 
+def _check_stop(live):
+    state = live.state()
+    check_live_stop(state)
+    if state.get("spend_stopped"):
+        raise t1.T1Refused("spend_stop")
+
+
 def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
     for attempt in range(3):
         try:
@@ -140,7 +158,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 worker_argv=t1._worker(ctx, pack.life, branch, arm), visible=pack.visible,
                 honeypot_token=pack.meta["honeypot_token"], live=live, turn_wait_s=ctx.turn_wait_s,
                 extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
-        except LiveCredentialStop:
+        except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
             # The adapter's honeypot count (harness/hermes/adapter.py), over the requests sent before the stop.
@@ -148,15 +166,15 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
             honeypot = hits(token, [store.get(r["req"]).decode() for r in rows
                                     if r.get("type") == "request"]) if token else 0
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
-                tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot))
+                tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot,
+                egress=getattr(error, "egress", None) or {}))
             raise
         runs.append(run)
         try:
             _isolation(run)
             if live.canary:
                 raise t1.T1Refused("canary")
-            if live.state().get("spend_stopped"):
-                raise t1.T1Refused("spend_stop")
+            _check_stop(live)
             scores = {}
             probes = _read(run._root, "t2lite_probes.json")
             # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
@@ -430,12 +448,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     reply = live.respond(Call(role="identity_check", subrole="", wire="chat",
                         body={"messages": [{"role": "user", "content": IDENTITY_TEXT}]},
                         model=MODEL, cursor=None, run_key=ctx.run_id + ":identity"))
-                    state = live.state()
-                    reason = state.get("stop_reason")
-                    if reason in CREDENTIAL_STOPS or state.get("login_stop"):
-                        raise LiveCredentialStop(reason if reason in CREDENTIAL_STOPS else state["login_stop"])
-                    if state.get("spend_stopped"):
-                        raise t1.T1Refused("spend_stop")
+                    _check_stop(live)
                     ids = stack.served_identities()
                     observed = canon(ids).decode() if ids else "unobserved"
                     cached = reply.served == "live" and observed == floor["served_identity"]
@@ -451,6 +464,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     floor = {"outcomes": {}, "stops": floor_stops}
                     for pack in ctx.packs:
                         for branch in ("B0", "B1"):
+                            _check_stop(live)
                             scores, _ = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
                                 live, runs, out / "no_memory" / pack.life / branch)
                             floor["outcomes"].update(scores)
@@ -467,6 +481,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 for rep in range(repeat):
                     scores, joined = {}, {}
                     for pack, branch in selection:
+                        _check_stop(live)
                         values, probes = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
                             live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops)
                         rows = _joined(pack, branch, values, probes)
@@ -520,15 +535,20 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         return 0
     except (LiveCredentialStop, custody.Stop, BaselineRefused, *t1.REFUSALS) as error:
         reasons = getattr(error, "reasons", ())
-        code = ("credential_stop" if isinstance(error, (LiveCredentialStop, custody.Stop)) else
+        code = ("live_stop" if isinstance(error, LiveStop) else
+            "credential_stop" if isinstance(error, (LiveCredentialStop, custody.Stop)) else
             error.reason if isinstance(error, BaselineRefused) else getattr(error, "code", None) or (
                 ",".join(sorted(reasons)) if reasons else
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch"))
-        if code in ("credential_stop", "spend_stop"):
+        if code in ("credential_stop", "spend_stop", "live_stop"):
             if live is not None and live.canary:
                 code = "canary"  # INVALID outranks a stop: the guard latched a canary body
             elif any(run.honeypot_hits for run in runs):
                 code = "honeypot"
+            elif any(_breached(run) for run in runs):
+                code = "isolation"
+        if code == "live_stop" and any(n in error.reason.encode() or n in canon([error.reason]) for n in needles):
+            code = "credential_scan"  # the reason is written and printed whole, so it is scanned first
         try:
             if created:
                 try:
@@ -537,7 +557,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     code = "credential_scan"
                 fixedroot.remove_tree(out)
                 out.mkdir()
-                if code in ("credential_stop", "spend_stop"):
+                if code in ("credential_stop", "spend_stop", "live_stop"):
                     # L1's custody rows say why: the drained log, and a Stop's own records.
                     files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE")),
                              "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
@@ -546,12 +566,15 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     else:
                         for name, data in files.items():
                             (out / name).write_bytes(data)
-                _write(out, "refusal.json", dict(code=code, **(
-                    {"detail": list(error.detail)} if getattr(error, "detail", ()) else {})))
+                detail = [error.reason] if code == "live_stop" else list(getattr(error, "detail", ()))
+                _write(out, "refusal.json", dict(code=code, **({"detail": detail} if detail else {})))
         except Exception:
             # A failure while refusing goes the tool_failure way, which removes everything written.
             return _tool_failure(out, created)
-        print(code, *(getattr(error, "detail", ()) if code == "pin_mismatch" else ()), file=sys.stderr)
+        if code == "live_stop":
+            print(code + " " + error.reason, file=sys.stderr)
+        else:
+            print(code, *(getattr(error, "detail", ()) if code == "pin_mismatch" else ()), file=sys.stderr)
         return 3
     except Exception:
         return _tool_failure(out, created)
