@@ -30,6 +30,7 @@ from bicentennial.controls.cache import (
     ensure,
     read_entry,
 )
+from bicentennial.director.roles import MAIN_ROLES
 from bicentennial.director.routes import RouteTable, route_table_hash
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.gitenv import git_env
@@ -59,6 +60,7 @@ from bicentennial.report.junit import (
 )
 from bicentennial.report.receipt import (
     SpendRefused,
+    background_summary,
     build_receipt,
     busy,
     ledger_latencies,
@@ -824,6 +826,7 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         runtime_by_role=audit["runtime"], spend_micro_usd=0, store_growth_bytes=audit["growth"],
         process_ids=audit["pids"], ports=audit["ports"], temporary_paths=audit["paths"],
         egress_failed_samples=audit["failed_samples"],
+        background=[background_summary("system", [receipt_records], main_roles=MAIN_ROLES)], turn_wait_s="3.0", units=[],
         raw_body_digest=raw_body_digest(receipt_records))
     return dict(card=card, receipt=receipt, junit=junit, suites=suites, invariants=canon(verdicts),
                 controls=canon(controls), code=1 if gate in ("INVALID", "FAIL") else

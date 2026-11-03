@@ -13,11 +13,14 @@ from bicentennial.harness.hermes import adapter
 FAULTS = {n: [dict(kind=k)] for k, n in (("kill", 2), ("restart", 3), ("compaction", 4))}
 
 
-def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), compact_drains=(), upgrades=None):
+def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), compact_drains=(), upgrades=None,
+                 baseline=None, thread_names=None, observed=None):
     """compact_turns: turns that record a compaction request; compact_drains: short drains (by drain call number)
     during which one is recorded. upgrades collects each short drain's upgrade() answer."""
     root.mkdir()
     a = object.__new__(adapter.HermesAdapter)
+    a._receipt_sessions, a.background_threads, a._baseline_threads = {}, [], baseline
+    a.clock = SimpleNamespace(step_s=60)
     turns = [dict(n=n, user=str(n), assistant="done") for n in range(1, 6)]
     a.script = {"sessions": [dict(index=1, kind="replay", turns=turns)]}
     a.schedule = SimpleNamespace(at=lambda index, n: faults.get(n, []))
@@ -25,7 +28,7 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
     a.paths = dict(root=root, hermes_home=root, home=root)
     a.entry, a.volatile, a.active_memory_providers = {"surfaces": []}, [], []
     a.entrypoint, a.before_shutdown, a._fired = "test-double", None, set()
-    a.director = SimpleNamespace(route={"alias": "scripted"}, start_session=lambda *args: None,
+    a.director = SimpleNamespace(ctx=SimpleNamespace(cursor=0), route={"alias": "scripted"}, start_session=lambda *args: None,
         control=lambda: dict(stopped=False, write_failures=0, inflight=0), summariser_requests=0)
     a.egress = SimpleNamespace(forking=nullcontext())
     a._gate, a._end, a.records = lambda readings: None, lambda: (), lambda: []
@@ -38,7 +41,10 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
             return None
         history += 1
         a.director.summariser_requests += history in compact_turns
-        return dict(ok=True, final="done", history=history)
+        result = dict(ok=True, final="done", history=history)
+        if thread_names is not None:
+            result["alive_threads"] = thread_names[history - 1]
+        return result
 
     a._worker = SimpleNamespace(call=call, kill=lambda: None)
     a._spawn_open = lambda *args: ("session", history, False)
@@ -54,6 +60,8 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
 
     a._drain = drain
     result = a.run_session(1, sim_t_s=0, lock_hash="a" * 64, attempt_id="attempt")
+    if observed is not None:
+        observed.extend(result.timings_ms["background_threads"])
     stable = asdict(result)
     stable.pop("timings_ms")
     return drains, canon(stable)
