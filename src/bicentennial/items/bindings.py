@@ -5,7 +5,7 @@ from hashlib import sha256
 
 from bicentennial.world import world_hash
 
-from .compile import Branch, _entry
+from .compile import Branch, _entry, probe_cap
 
 BINDING_FIELDS = {
     "bicentennial.items.templates.g1.drift_chain.DriftChain": ("chain_id", "depth"),
@@ -73,7 +73,8 @@ def compile_bound(db, schedule, cut, templates, bindings) -> Branch:
         entries.append(_entry(db, schedule, cut, bound, i))
         key = i.probe_point, t.kind
         counts[key] = counts.get(key, 0) + 1
-        if schedule.scale.name == "t1" and counts[key] > (6 if t.kind == "qa" else 2):
-            raise ValueError("T1 probe budget exceeded")
+        cap = probe_cap(schedule.scale, t.kind)
+        if cap is not None and counts[key] > cap:
+            raise ValueError("probe budget exceeded")
     return Branch(cut.life, cut.branch, seed, digest,
                   tuple(sorted(entries, key=lambda e: e[0]["item_id"])))

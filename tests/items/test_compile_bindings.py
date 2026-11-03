@@ -27,25 +27,31 @@ def binding(key="deadline-0", checkpoint=3, **fields):
     return Binding(TEMPLATE.template_id, tuple(dict(chain_id=key, depth=1, **fields).items()), checkpoint)
 
 
-@pytest.fixture
-def world(tmp_path):
+def make_world(tmp_path, subjects=("alpha", "beta"), scale_name=None):
     s = build_schedule("1", "bindings", named("t0-micro", sessions=3))
-    s = replace(s, scale=replace(s.scale, checkpoints=(2, 3)), sessions=tuple(
+    scale = replace(s.scale, checkpoints=(2, 3), **({"name": scale_name} if scale_name else {}))
+    s = replace(s, scale=scale, sessions=tuple(
         replace(p, probe_point=True) if p.index == 2 else p for p in s.sessions))
     db = create_world(tmp_path / "base.db", world_meta("1", 3))
     write_sessions(db, s)
-    for name, kind in (("principal", "person"), ("alpha", "milestone"), ("beta", "milestone")):
+    for name, kind in (("principal", "person"), *((n, "milestone") for n in subjects)):
         insert_entity(db, id=name, kind=kind, canonical_name=name, aliases_json=[],
                       created_t=s.sessions[0].t_start, retired_t=None)
     write_corrections(db, s, [Chain(id=f"deadline-{j}", subject=name, key="deadline",
-        stem="DUE", depth=1, at=((1, j + 1), (2, j + 1)))
-        for j, name in enumerate(("alpha", "beta"))], principal="principal")
+        stem="DUE", depth=1, at=((1, j % 5 + 1), (2, j % 5 + 1)))
+        for j, name in enumerate(subjects)], principal="principal")
     write_filler(db, s, principal="principal")
     db.commit()
     def state(db):
         return {p.index: dict(repo_tree_hash="a" * 64, env_state_hash="b" * 64)
                 for p in s.sessions}
     pre = cut(db, s, branch="B0", principal_id="principal", expected_state=state(db))
+    return db, s, pre, state
+
+
+@pytest.fixture
+def world(tmp_path):
+    db, s, pre, state = make_world(tmp_path)
     yield db, s, pre, state
     db.close()
 
@@ -68,6 +74,23 @@ def test_two_fixtures_ids_and_plan(world, tmp_path):
         assert len(twin.compiled.items) == 4
     finally:
         twin.b1.close()
+
+
+@pytest.mark.parametrize("scale_name,capped", [("t1", True), ("t2", True), (None, False)])
+def test_probe_budget(tmp_path, scale_name, capped):
+    # The bound path keeps T1's and T2's cap, as compile_branch does (RING0 §6, §15): drift-chain is an action
+    # template, so 2 per probe point.
+    db, s, pre, _ = make_world(tmp_path, ("alpha", "beta", "gamma"), scale_name)
+    try:
+        bindings = [binding(f"deadline-{j}") for j in range(3)]
+        assert len(compile_bound(db, s, pre, TEMPLATES, bindings[:2]).entries) == 2
+        if capped:
+            with pytest.raises(ValueError, match="^probe budget exceeded$"):
+                compile_bound(db, s, pre, TEMPLATES, bindings)
+        else:
+            assert len(compile_bound(db, s, pre, TEMPLATES, bindings).entries) == 3
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize("checkpoints", [(3, 3), (2, 3)])
