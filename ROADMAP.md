@@ -39,6 +39,17 @@ Older documents say "v0.2" or "v0.3" for work that is now split across v0.2, v0.
   - results come in seasonal cycles, with separate open-source and commercial rankings.
 
   Bicentennial follows AML's conventions where they help entrants: a versioned evaluation contract, and a non-scored smoke run before any full run.
+- **[DolphinBench](https://dolphinbench.ai/), built by Mem0, is a shipped benchmark that, like Bicentennial, scores what an agent does with its tools, not what it can recite.** As of 2026-11-03 it has 3 simulated users with about 500,000 tokens of user messages each and 600 public tool-using tests, measured on 13 setups of memory system × model × harness, with cost and latency. Before the tests, each setup's agent processes the dated history in order, with its normal memory-writing behaviour.
+  - **Where it is ahead today:** a public launch with a measured model × harness × memory grid; history processed live by each setup's agent; dollar and latency figures; histories dated across several years. Bicentennial's live scoring of personal-assistant (G2) actions, its dollar figures and a second harness are not shipped yet.
+  - **What both check:** that a test needs its history. DolphinBench runs each test twice with the history (both must pass) and twice without it (both must fail). Bicentennial's design filters each bundle that counts toward the headline before any agent runs it (DESIGN §5.2: literal copy, blind pass, oracle failure, shortcut pass); the pilot ships these filters for Ring 0. A fixed 20% sample, never in the headline, skips the blind-pass and shortcut filters (§5.3).
+  - **Where the designs differ:**
+    - the unit of replication: Bicentennial generates many lives and computes its statistics clustered by life; DolphinBench has 3 users;
+    - held-out data: Bicentennial seals its full-tier lives and keys and carries a canary string; every DolphinBench test is public, with its checks;
+    - extra actions: Bicentennial scores a confident false memory or a harmful extra action at −1; DolphinBench ignores a call that no check names;
+    - screening: Bicentennial's blind filter panel excludes the pinned agent's family; DolphinBench screened its tests with a model that is also the agent in ranked setups, so its item pool was selected on that model's behaviour;
+    - time: Bicentennial simulates the clock through each life; DolphinBench's dates are text on the messages;
+    - span: Bicentennial's full-tier lives cover weeks of simulated time (3-26 weeks, provisional until the next PREREG version; ERRATA E5), so it makes no claim about gaps of years.
+  - Like DolphinBench, Bicentennial is built beside a system it tests, LCM-X. The firewall rules are in the README.
 - **The claim Bicentennial has to earn with results:** memory inside a real agent harness across a life, judged on actions, covering governance, with a fast diagnostic loop. To that end it:
   - runs the whole system inside a real agent harness, across a life;
   - injects compactions, crashes and swaps;

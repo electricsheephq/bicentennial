@@ -137,7 +137,7 @@ def main(argv=None) -> int:
     command.add_argument("--only", type=_only)
     command.add_argument("--repeat", type=_workers, default=1)
     command = commands.add_parser("build")
-    command.add_argument("--tier", choices=("T0", "T1"), required=True)
+    command.add_argument("--tier", choices=("T0", "T1", "T2"), required=True)
     command.add_argument("--out", required=True)
     command = commands.add_parser("pins")
     command.add_argument("--system", required=True)
