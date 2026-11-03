@@ -218,6 +218,52 @@ def test_gzip_bad_checksum_keeps_earlier_members(tmp_path):
     assert_status(tmp_path, "FAIL", "store_hit")
 
 
+def gzip_with_flags(data, flags, extra=b""):
+    member = bytearray(gzip.compress(data))
+    member[3] |= flags
+    return bytes(member[:10]) + extra + bytes(member[10:])
+
+
+@pytest.mark.parametrize("flags, extra", [(0x02, b"\x34\x12"), (0x20, b"")], ids=["wrong-header-crc", "reserved-flag"])
+def test_gzip_header_fields_python_accepts_are_read(tmp_path, flags, extra):
+    blob_store(tmp_path, gzip_with_flags(b"x" * 1024 + TOKEN.encode() + b"y" * 1024, flags, extra))
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+@pytest.mark.parametrize("codec", [zlib, gzip, lzma], ids=["zlib", "gzip", "xz"])
+def test_truncated_stream_prefix_is_searched(tmp_path, codec):
+    blob_store(tmp_path, codec.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 65536)[:-24])
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+@pytest.mark.parametrize("codec, checksum", [(zlib, slice(-4, None)), (gzip, slice(-8, -4))], ids=["zlib", "gzip"])
+@pytest.mark.parametrize("data, expected", [(b"x" * 1024, ("INCONCLUSIVE", "opaque_store")),
+                                            ((b"x" * 500 + TOKEN.encode()).ljust(1024, b"y"), ("FAIL", "store_hit"))],
+                         ids=["token-free", "token"])
+def test_bad_checksum_at_cap_keeps_capped_output(tmp_path, monkeypatch, codec, checksum, data, expected):
+    monkeypatch.setattr(sqlite_scan, "DECOMPRESS_CAP", 1024, raising=False)
+    value = bytearray(codec.compress(data))
+    value[checksum] = bytes(b ^ 0xFF for b in value[checksum])
+    blob_store(tmp_path, bytes(value))
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, *expected)
+
+
+@pytest.mark.parametrize("value, expected", [(zlib.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 1024),
+                                              ("FAIL", "store_hit")),
+                                             (b"unrelated memory", ("INCONCLUSIVE", "sqlite_unreadable"))],
+                         ids=["value-hit", "no-hit"])
+def test_sql_values_are_read_when_page_images_cannot_be_collected(tmp_path, value, expected):
+    blob_store(tmp_path, value)
+    with (tmp_path / "store.db").open("ab") as stream:
+        stream.write(b"junk")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["store.db"]
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, *expected)
+
+
 @pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
 def test_truncated_compression_keeps_ordinary_bytes(tmp_path, codec):
     blob_store(tmp_path, codec.compress(b"unrelated memory" * 128)[:-8])
