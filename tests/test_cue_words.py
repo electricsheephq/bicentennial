@@ -98,6 +98,25 @@ def test_unsupported_action_prompt(tmp_path, prompt):
         cue_words.template_requests(tmp_path)
 
 
+
+@pytest.mark.parametrize("call,match", [
+    ('Instance(**common)', "keyword arguments only"),
+    ('Instance("key", prompt="Use it.", decision_table_ref="table")', "keyword arguments only"),
+    ('replace(base, prompt="Use the usual setting.")', "replace"),
+    ('replace(base, decision_table_ref="table")', "replace"),
+    ('dataclasses.replace(base, **fields)', "replace"),
+])
+def test_unsupported_instance_call(tmp_path, call, match):
+    # An action request the walker cannot read must fail, never vanish from the check.
+    (tmp_path / "sample.py").write_text(f"{call}\n")
+    with pytest.raises(ValueError, match=match):
+        cue_words.template_requests(tmp_path)
+
+
+def test_text_replace_is_not_a_prompt(tmp_path):
+    template(tmp_path, 'f"Record the {p.replace(\'_\', \' \')} in {path}."')
+    assert len(cue_words.template_requests(tmp_path)) == 1
+
 def fake_pack(tmp_path, *, cue=True):
     root = tmp_path / "pack"
     life = root / "sealed" / "life"
@@ -162,14 +181,21 @@ def test_cli_pack_hit(tmp_path):
     assert snapshot(root) == before
 
 
-@pytest.mark.parametrize("case", ["flag", "missing", "empty", "syntax", "expression", "json"])
+@pytest.mark.parametrize("case", ["flag", "missing", "templates-missing", "empty", "no-items", "syntax",
+                                  "expression", "json"])
 def test_cli_usage_error(tmp_path, case):
     if case == "flag":
         args = ["--unknown"]
     elif case == "missing":
         args = [tmp_path / "missing"]
+    elif case == "templates-missing":
+        args = ["--templates", tmp_path / "missing"]
     elif case == "empty":
         args = ["--templates", tmp_path]
+    elif case == "no-items":
+        (tmp_path / "sealed" / "life").mkdir(parents=True)
+        (tmp_path / "sealed" / "life" / "manifest.json").write_text("{}")
+        args = [tmp_path]
     elif case == "syntax":
         (tmp_path / "sample.py").write_text("Instance(")
         args = ["--templates", tmp_path]

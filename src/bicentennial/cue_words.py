@@ -35,8 +35,9 @@ class Hit:
 def template_requests(root=TEMPLATES):
     """Read every module recursively, checking each action Instance's literal text.
 
-    Each formatted field is a gap, including fields with a literal expression.
-    Unsupported action prompt expressions fail rather than silently losing coverage.
+    Each formatted field is a gap, including fields with a literal expression. Unsupported action
+    prompt expressions, Instance calls with positional or ** arguments, and a prompt or decision
+    table set through replace() fail rather than silently losing coverage.
     """
     root = Path(root)
     if not root.is_dir():
@@ -52,8 +53,13 @@ def template_requests(root=TEMPLATES):
         for call in calls:
             name = (call.func.id if isinstance(call.func, ast.Name) else
                     call.func.attr if isinstance(call.func, ast.Attribute) else None)
+            if name == "replace" and any(keyword.arg in (None, "prompt", "decision_table_ref")
+                                         for keyword in call.keywords):
+                raise ValueError(f"{path}:{call.lineno}: a prompt set through replace() cannot be checked")
             if name != "Instance":
                 continue
+            if call.args or any(keyword.arg is None for keyword in call.keywords):
+                raise ValueError(f"{path}:{call.lineno}: expected an Instance call with keyword arguments only")
             keywords = {keyword.arg: keyword.value for keyword in call.keywords}
             if "decision_table_ref" not in keywords:
                 continue
