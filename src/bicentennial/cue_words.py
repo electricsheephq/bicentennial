@@ -16,8 +16,8 @@ CUE_PHRASES = (
 _PATTERNS = tuple((phrase, re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split()))
                                      + r"\b", re.IGNORECASE)) for phrase in CUE_PHRASES)
 TEMPLATES = Path(__file__).resolve().parent / "items" / "templates"
-# The walker finds these calls by name, so any other use of either name could hide a request.
-_GUARDED = ("Instance", "replace")
+# The walker finds these calls by name, so any other use of one of these names could hide a request.
+_GUARDED = ("Instance", "replace", "__replace__")
 
 
 @dataclass(frozen=True)
@@ -38,9 +38,11 @@ def template_requests(root=TEMPLATES):
     """Read every module recursively, checking each action Instance's literal text.
 
     Each formatted field is a gap, including fields with a literal expression. Unsupported action
-    prompt expressions, Instance calls with positional or ** arguments, Instance or replace named
-    other than to call it or in an annotation (a renamed import, an assignment, an argument), and a
-    prompt or decision table set through replace() fail rather than silently losing coverage.
+    prompt expressions, Instance calls with positional or ** arguments, Instance, replace or
+    __replace__ named other than to call it or in an annotation (a renamed import, an assignment, an
+    argument), and a prompt or decision table set through replace() or __replace__() fail rather than
+    silently losing coverage. A name reached dynamically, such as through getattr, is beyond a source
+    walk; pack mode reads the prompts as built.
     """
     root = Path(root)
     if not root.is_dir():
@@ -66,8 +68,8 @@ def template_requests(root=TEMPLATES):
         for call in calls:
             name = (call.func.id if isinstance(call.func, ast.Name) else
                     call.func.attr if isinstance(call.func, ast.Attribute) else None)
-            if name == "replace" and any(keyword.arg in (None, "prompt", "decision_table_ref")
-                                         for keyword in call.keywords):
+            if name in ("replace", "__replace__") and any(keyword.arg in (None, "prompt", "decision_table_ref")
+                                                          for keyword in call.keywords):
                 raise ValueError(f"{path}:{call.lineno}: a prompt set through replace() cannot be checked")
             if name != "Instance":
                 continue

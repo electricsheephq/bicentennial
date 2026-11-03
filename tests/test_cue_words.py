@@ -114,6 +114,8 @@ def test_unsupported_action_prompt(tmp_path, prompt):
     ('r = dataclasses.replace\nr(base, prompt="Use the usual setting.")', "other than to call it"),
     ('r = copy.replace', "other than to call it"),
     ('apply(replace)', "other than to call it"),
+    ('variant = base.__replace__(prompt="Use the usual setting.")', "replace"),
+    ('evolve = base.__replace__', "other than to call it"),
 ])
 def test_unsupported_instance_call(tmp_path, call, match):
     # An action request the walker cannot read must fail, never vanish from the check.
@@ -142,7 +144,8 @@ def test_replace_calls_that_set_no_request(tmp_path):
     (tmp_path / "sample.py").write_text(
         "from dataclasses import replace\n"
         "variant = replace(base, target=\"t\")\n"
-        "label = name.replace(\"_\", \" \").replace(\"-\", \" \")\n")
+        "label = name.replace(\"_\", \" \").replace(\"-\", \" \")\n"
+        "other = base.__replace__(target=\"t\")\n")
     assert cue_words.template_requests(tmp_path) == ()
 
 
