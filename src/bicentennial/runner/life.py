@@ -41,7 +41,11 @@ from bicentennial.harness.hermes.adapter import (
     PinMismatch,
     _now,
 )
-from bicentennial.harness.hermes.config import HERMES_TOOLSETS
+from bicentennial.harness.hermes.config import (
+    HERMES_TOOLSETS,
+    install_directory,
+    install_file,
+)
 from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
@@ -349,6 +353,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             root=root / "run", scratch=scratch, life=life["life"], branch=branch, run=run,
             checkout=hermes, harness_pin=harness_pin, worker_argv=worker_argv,
             toolsets=HERMES_TOOLSETS, env_server=wiring, turn_wait_s=turn_wait_s)
+        halted = None
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
                 plugin=PROVIDERS.get(entry["name"]), context_engine=ENGINES.get(entry["name"]),
@@ -372,9 +377,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         and any(p.name != MARKER for p in directory.iterdir())):
                     raise SystemRefused(["surface_not_empty"])
             for _, directory in surfaces:
-                directory.mkdir(parents=True, exist_ok=True)
+                install_directory(directory)
                 if not (directory / MARKER).exists():
-                    (directory / MARKER).write_bytes(b"")
+                    install_file(directory / MARKER, b"")
             cell = PluginCell(entry, adapter) if plugin else None
             if cell is not None:
                 installed = cell.install(plugin_source, alias=table.resolve(entry["name"],
@@ -522,7 +527,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     break
             if leg is not None:
                 leg.check_session(previous_session)
-        except (SystemRefused, PinMismatch, LockMismatch, GateRefused, LiveCredentialStop):
+        except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+            raise
+        except LiveCredentialStop as stop:
+            halted = stop
             raise
         except Exception as error:
             cause = _cause(error)
@@ -531,6 +539,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         finally:
             if adapter is not None:
                 egress = adapter.close()
+                if halted is not None:
+                    # A breach seen before the stop still outranks it (runner/t2lite.py), so the egress goes with it.
+                    halted.egress = egress
         if adapter is None:
             if leg is not None:
                 leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, schedule, records)

@@ -553,19 +553,22 @@ def test_pair_refusals(tmp_path, case):
     db1.close()
 
 
-def test_t1_probe_budget(tmp_path):
-    db, s = world(tmp_path / "world.db", scale=named("t1"))
+@pytest.mark.parametrize("scale_name", ["t1", "t2"])
+def test_item_3_probe_budget(tmp_path, scale_name):
+    db, s = world(tmp_path / "world.db", scale=named(scale_name))
+    checkpoint = s.scale.checkpoints[0]
     assertion(db, s, "detail", "WINDOW-7401", (1, 2))
-    # Do not materialize the T1 sprint history for this function-level composition test.
+    # Avoid sprint history for this function-level composition test.
     _, micro_s = world(tmp_path / "micro.db")
     micro_db, _ = world(tmp_path / "cut-source.db")
     assertion(micro_db, micro_s, "detail", "WINDOW-7401", (1, 2))
     c = make_cut(micro_db, micro_s)
     rows = tuple(r | {"session_id": s.sessions[0].session_id} for r in c.rows if r["event_id"] == "event-detail")
-    c = replace(c, rows=rows, sessions=({"index": 10, "expected_state": STATE[1]},),
+    c = replace(c, rows=rows, sessions=({"index": checkpoint, "expected_state": STATE[1]},),
                 world_hash=world_hash(db), schedule_sha256=sha256(s.to_json()).hexdigest())
-    ts = template([qa_instance(key=f"qa-{n}", probe_point=10) for n in range(7)])
-    with pytest.raises(ValueError, match="budget"):
+    ts = template([qa_instance(key=f"qa-{n}", probe_point=checkpoint) for n in range(7)])
+    assert len(compile_branch(db, s, c, [replace(ts, rows=ts.rows[:6])]).entries) == 6
+    with pytest.raises(ValueError, match="probe budget exceeded"):
         compile_branch(db, s, c, [ts])
     micro_db.close()
     db.close()

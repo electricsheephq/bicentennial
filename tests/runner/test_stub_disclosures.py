@@ -12,8 +12,8 @@ from bicentennial.systems.registry import REGISTRY, load
 shared = runpy.run_path(str(Path(__file__).resolve().parents[1] / "systems/test_plugin_deps.py"))
 EMBEDDINGS = ("Hashed-vector stub (RING0 E10): cosine reported as (1 + c)/2 over D-1 hashed token "
               "coordinates; similarity order preserved; hybrid weights and absolute thresholds not validated.")
-EXTRACTION = ("Automatic extraction not exercised (RING0 E11, #208): the stub's reply format is not the "
-              "one the pinned release reads; results cover explicit-write storage and recall.")
+EXTRACTION = ("Automatic extraction exercised with the scripted extractive reply (RING0 E28): one memory per "
+              "new user message, cut to 240 characters and the reply budget; extraction quality is not measured.")
 
 
 def prepared(tier, root, monkeypatch, system):

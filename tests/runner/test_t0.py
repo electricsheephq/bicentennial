@@ -738,12 +738,12 @@ def test_pack_invariant_scan_reruns(installed, tmp_path, monkeypatch, always):
     original = invariants.search_store
     scans = []
 
-    def search(root, needles):
+    def search(root, needles, collector=None):
         if "main" in Path(root).parts:
             scans.append(root)
             if always or len(scans) == 1:
                 raise OSError("store scan failed")
-        return original(root, needles)
+        return original(root, needles, collector)
 
     monkeypatch.setattr(invariants, "search_store", search)
     out = tmp_path / "out"
@@ -1751,8 +1751,7 @@ def stub_hosts(tmp_path, monkeypatch):
     def options(mode="none", max_length=None):
         checkout = write_tree(tmp_path / ("stub-" + mode), log=tmp_path / (mode + "-calls.jsonl"), mode=mode,
                               max_length=max_length)
-        return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml") |
-                    dict(fresh_install_hash="1" * 64), host_overrides=dict(
+        return dict(system="hermes-native", entry=load(REGISTRY / "hermes-native.toml"), host_overrides=dict(
                     checkout=checkout, worker_argv=[sys.executable, str(WORKER)]))
 
     yield options, created, denied
@@ -1839,6 +1838,20 @@ def test_stub_busy_after_start(installed, tmp_path, stub_hosts, monkeypatch):
     assert json.loads((out / "refusal.json").read_bytes())["code"] == "gate_refused"
 
 
+def test_stub_install_pin_mismatch_shows_computed(installed, tmp_path, stub_hosts, capsys):
+    """#259: a wrong install pin refuses before any unit, naming the computed fingerprint on stderr and in refusal.json."""
+    options, created, _ = stub_hosts
+    kwargs = options()
+    kwargs["entry"] = dict(kwargs["entry"], fresh_install_hash="f" * 64)
+    out = tmp_path / "out"
+    assert run(installed, out, **kwargs) == 3
+    message = "fresh install differs from the pin: computed " + load(REGISTRY / "hermes-native.toml")["fresh_install_hash"]
+    assert capsys.readouterr().err.splitlines()[-1] == "pin_mismatch " + message
+    assert json.loads((out / "refusal.json").read_bytes()) == {"code": "pin_mismatch", "fields": [], "detail": [message]}
+    assert not created
+    assert_no_results(out)
+
+
 def test_close_error_preserves_system_cause(installed, tmp_path):
     class Broken(ReferenceStore):
         def query(self, task, now):
@@ -1900,3 +1913,47 @@ def test_model_cache_end_digest_and_property(installed, tmp_path, monkeypatch, c
         assert code in (0, 1, 2)
         xml = next(out.rglob("junit.xml")).read_text()
         assert 'name="t0.model_cache" value="sha256:' + digest + '"' in xml
+
+
+
+def test_forget_scan_property_counts_all_adapter_and_pack_scans(installed, tmp_path, monkeypatch):
+    import sqlite3
+
+    from bicentennial.score.invariants import ForgetScan
+
+    collector = ForgetScan()
+    monkeypatch.setattr(t0, "ForgetScan", lambda: collector)
+    original = t0.run_invariants
+    expected = 0
+
+    def evaluate(evidence, **kwargs):
+        nonlocal expected
+        for e in evidence:
+            if not e.keys["forbidden"] or not e.roots:
+                continue
+            for root in e.roots:
+                expected += 1
+                with sqlite3.connect(root / "store.db") as db:
+                    db.execute("PRAGMA encoding='UTF-16le'")
+                    db.execute("CREATE TABLE memory(value)")
+                    db.execute("INSERT INTO memory VALUES (?)", (e.keys["forbidden"][0],))
+                (root / "binary").write_bytes(b"\0\xff")
+        return original(evidence, **kwargs)
+
+    monkeypatch.setattr(t0, "run_invariants", evaluate)
+    selected = [p for p in packs(installed) if p.meta["row"]["id"] in
+                ("g2-keep-forget-mft-1", "g2-keep-incidental-mft-1")]
+    out = tmp_path / "scan-report"
+    assert run(installed, out, packs=[p.rel for p in selected]) == 1
+    assert expected > 0
+    counts = collector.to_obj()["counts"]
+    assert counts == dict(raw=dict(absent=expected + 1, found=0, inconclusive=0),
+                          sqlite=dict(absent=0, found=expected, inconclusive=0),
+                          opaque=dict(absent=0, found=0, inconclusive=expected))
+    # The database is UTF-16LE, so the live value is both a raw hit and a value hit.
+    assert collector.to_obj()["hits"] == ["store.db", "store.db#memory.value"]
+    for pack in selected:
+        xml = ET.parse(out / pack.rel / "junit.xml").getroot()
+        props = xml.findall(".//property[@name='invariants.forget_scan']")
+        assert len(props) == 1
+        assert props[0].attrib["value"].encode() == canon(collector.to_obj())
