@@ -1,4 +1,4 @@
-"""Transactional T0/T1 pack construction, with controls and construction gates."""
+"""Transactional targeted pack construction, with controls and construction gates."""
 
 import json
 import shutil
@@ -12,6 +12,7 @@ from bicentennial.api.contract import event_copy
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.run import validate
+from bicentennial.controls import naive_rag
 from bicentennial.controls.battery import check_distribution, check_pack
 from bicentennial.controls.cache import compute, pack_controls, write_entry
 from bicentennial.controls.common import ControlInput
@@ -25,7 +26,12 @@ from bicentennial.probe.scripted_reader import read
 from bicentennial.render.stream import content
 from bicentennial.score.check_selftest import Case, g2_cases
 from bicentennial.world.db import open_world
-from bicentennial.world.targeted import load_tier, seeds_manifest, t1_lives
+from bicentennial.world.targeted import (
+    load_tier,
+    repoint_templates,
+    seeds_manifest,
+    t1_lives,
+)
 
 from .catalogue import TEMPLATES_BY_GENRE, c7_entries, generate, load_catalogue
 from .manifest import (
@@ -99,7 +105,7 @@ def _write(path, obj):
     path.write_bytes(canon(obj))
 
 
-def _templates(t, records):
+def _templates(t, records, spec=None):
     items = {i["item_id"]: i for i in t.twin.compiled.items}
     assigned = []
     for tid in sorted({r["template_id"] for r in records}):
@@ -107,7 +113,7 @@ def _templates(t, records):
         if len(points) != 1:
             raise ValueError(tid)
         assigned.append(replace(TEMPLATES_BY_GENRE[t.genre][tid], checkpoint=next(iter(points))))
-    return tuple(assigned)
+    return repoint_templates(spec or {}, assigned)
 
 
 def _needles(items, records, bundles, keys, worlds):
@@ -131,7 +137,7 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
     ids = {r["item_id"] for r in records}
     items = sorted((i for i in compiled.items if i["item_id"] in ids), key=lambda i: i["item_id"])
     bundles = sorted(compiled.bundles, key=lambda b: b["bundle_id"])
-    templates = _templates(t, records)
+    templates = _templates(t, records, spec)
     for template in templates:
         entry = entries.get(template.ref)
         if (entry is None or canon(entry["decision_tables"]) != canon(list(template.decision_tables))
@@ -177,8 +183,9 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
                 hashes=dict(world_b0=t.manifest["world_hash_b0"], world_b1=t.manifest["world_hash_b1"],
                             history_set=t.manifest["history_set_hash"], reader_keys=sha256(key_bytes).hexdigest(),
                             scoring=sha256_canon(obj)))
+    inp = ControlInput(json.loads(canon(pack)), keys, events, now, sha256_canon(obj))
     try:
-        entry = compute(ControlInput(pack, keys, events, now, sha256_canon(obj)),
+        entry = compute(inp,
                         score=score, harness_pin=common_pins["harness_pin"])
     except ValueError:
         raise PackRefused("controls") from None
@@ -203,6 +210,11 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
         raise PackRefused("leak")
     pack["hashes"]["controls"] = write_entry(sealed / "controls.json", entry)
     pack["controls"] = pack_controls(entry)
+    if tier == "T2":
+        rag_path = sealed / "naive_rag.json"
+        rag = naive_rag.ensure(inp, rag_path,
+                               score=score, harness_pin=common_pins["harness_pin"], controls_entry=entry)
+        pack["controls"] = naive_rag.pack_controls(entry, rag, file_sha256(rag_path))
     validate("pack", pack)
     _write(sealed / "pack.json", pack)
     (sealed / "reader_keys.jsonl").write_bytes(key_bytes)
@@ -216,8 +228,11 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
     if tier in ("T1", "T2"):
         meta["not_exercised"] = sorted(spec["not_exercised"])
     _write(sealed / "meta.json", meta)
-    _write(sealed / "build_log.json", dict(canary=CANARY, check_pack=report.to_obj(),
-                                          competing=competing, controls_broken=entry["broken"]))
+    build_log = dict(canary=CANARY, check_pack=report.to_obj(),
+                     competing=competing, controls_broken=entry["broken"])
+    _write(sealed / "build_log.json", build_log)
+    if tier == "T2":
+        _write(path / "validation_receipt.json", dict(build_log, tier=tier, pack_id=pack_id))
     pins = dict(common_pins, **{k: entry["key"][k] for k in
                 ("scorer_sha256", "controls_sha256", "reader_sha256")},
                 scoring_sha256=sha256_canon(obj), controls_key_sha256=entry["key_sha256"],
@@ -226,6 +241,21 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
                 **{k: t.manifest[k] for k in ("world_hash_b0", "world_hash_b1", "history_set_hash")},
                 **boundary_hashes(t.life, t.twin.cuts))
     return pack_id, cases, pins
+
+
+def validate_t2_receipt(path):
+    """Require a published receipt that agrees with this pack's sealed build checks."""
+    try:
+        receipt = json.loads((path / "validation_receipt.json").read_bytes())
+        validate("pack_validation_receipt", receipt)
+        pack = json.loads((path / "sealed/pack.json").read_bytes())
+        log = json.loads((path / "sealed/build_log.json").read_bytes())
+        if (receipt != dict(log, tier="T2", pack_id=pack["pack_id"])
+                or not receipt["check_pack"]["ok"]):
+            raise ValueError("receipt mismatch")
+    except (OSError, ValueError, KeyError, TypeError):
+        raise PackRefused("validation_receipt") from None
+    return receipt
 
 
 def _normalise_sqlite_headers(root):
@@ -255,6 +285,8 @@ def _build_pack(t, path, **kwargs):
         (life / f"items.{b}.json").write_bytes(canon([
             c.item for c in cases if c.record["branch"] == b]) + b"\n")
     _normalise_sqlite_headers(life)
+    if kwargs["tier"] == "T2":
+        validate_t2_receipt(path)
     files = file_manifest(path)
     manifest = dict(canary=CANARY, pack_id=pack_id, tier=kwargs["tier"], genre=t.genre,
                     path=kwargs["rel"], labels=labels(kwargs["tier"]), honeypot="visible/answer_key.json",
@@ -265,7 +297,7 @@ def _build_pack(t, path, **kwargs):
 
 
 def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None):
-    if tier not in ("T0", "T1") or tier == "T1" and rows is not None:
+    if tier not in ("T0", "T1", "T2") or tier != "T0" and rows is not None:
         raise ValueError("tier")
     root, out = Path(root), Path(out)
     dest, staging, work = (out / name for name in (tier, tier + ".staging", tier + ".work"))

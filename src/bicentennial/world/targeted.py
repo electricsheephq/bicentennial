@@ -20,19 +20,28 @@ from bicentennial.genres.g1_software.diffs import (
     start_boundary,
     write_reads,
 )
-from bicentennial.genres.g1_software.world import Mix, build_g1, world_meta
+from bicentennial.genres.g1_software.world import (
+    KINDS,
+    Mix,
+    Statement,
+    build_g1,
+    world_meta,
+    write_statements,
+)
 from bicentennial.genres.g2_assistant.envseed import env_state_hashes
-from bicentennial.genres.g2_assistant.world import build_base, create
+from bicentennial.genres.g2_assistant.world import build_base, create, write_entity
 from bicentennial.items.compile import compile_branch
 from bicentennial.items.levers import STRESS_TAGS
 from bicentennial.items.protocol import CANARY
+from bicentennial.keyed import shuffle, uniform_int
 from bicentennial.render.session_cut import cut
 
-from . import create_world, world_hash
+from . import create_world, lineage, unit, world_hash
 from .db import insert_entity
 from .processes import mint
 from .processes.corrections import Chain, write_corrections
-from .scale import PROVISIONAL, named
+from .processes.incidental import Detail, write_details
+from .scale import PROVISIONAL, TURNS, named
 from .schedule import Schedule, build_schedule
 from .twin import IndependenceError, TwinLife, apply, plan, twin_life
 
@@ -56,7 +65,7 @@ def seed_text(n):
     return str(n)
 
 
-def _tier_source(tier, *, lives=None):
+def _tier_source(tier, *, lives=None, replacements=None):
     if tier not in ("T0", "T1", "T2") or tier == "T2" and lives is None:
         raise PlacementError("composition")
     ring = (ROOT / "specs/ring0/RING0.md").read_text(encoding="utf-8")
@@ -69,6 +78,9 @@ def _tier_source(tier, *, lives=None):
                              defaults=dict(sessions=3, distance=1, wake="none"))
     qa, act = map(int, re.search(r"at most (\d+) QA items and (\d+) action items", ring).groups())
     aliases = re.search(r"alias from `([^`]+)` to `([^`]+)`", ring).groups()
+    if tier == "T2":
+        common["evidence_by"] = scale.checkpoints[-1] - MIN_DISTANCE_SESSIONS
+        common["replacements"] = [] if replacements is None else replacements
     return common | dict(
         checkpoints=list(scale.checkpoints), cold_restart="every session start after the first",
         min_distance_sessions=MIN_DISTANCE_SESSIONS, early_sessions=2, min_early_bundles=2,
@@ -92,8 +104,32 @@ def load_tier(path):
     try:
         with Path(path).open("rb") as source:
             spec = tomllib.load(source)
-        valid = spec.get("tier") in ("T0", "T1") and canon(spec) == canon(_tier_source(spec["tier"]))
-    except (TypeError, ValueError):
+        tier = spec.get("tier")
+        if tier == "T2":
+            rows = spec["lives"]
+            if not isinstance(rows, list):
+                raise PlacementError("composition")
+            names = set()
+            for row in rows:
+                seed_text(row["seed"])
+                expected = {"life", "genre", "seed"} | ({"reads_session"} if row["genre"] == "G1" else set())
+                if (set(row) != expected or row["genre"] not in ("G1", "G2")
+                        or not isinstance(row["life"], str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", row["life"])
+                        or row["life"] in names or row.get("reads_session", 1) != 1):
+                    raise PlacementError("composition")
+                names.add(row["life"])
+            replacements = spec.get("replacements", [])
+            for record in replacements:
+                if (set(record) != {"life", "seed", "replacement_seed", "rule", "item_id"}
+                        or record["life"] not in names or not isinstance(record["rule"], str)
+                        or not isinstance(record["item_id"], str)):
+                    raise PlacementError("composition")
+                seed_text(record["seed"])
+                seed_text(record["replacement_seed"])
+            valid = canon(spec) == canon(_tier_source(tier, lives=rows, replacements=replacements))
+        else:
+            valid = tier in ("T0", "T1") and canon(spec) == canon(_tier_source(tier))
+    except (KeyError, TypeError, ValueError):
         raise PlacementError("composition") from None
     if not valid:
         raise PlacementError("composition")
@@ -218,7 +254,35 @@ def _select_templates(spec, row, templates):
             or any(not is_dataclass(t) or "checkpoint" not in {f.name for f in fields(t)}
                    for t in selected)):
         raise PlacementError("composition")
-    return selected
+    return repoint_templates(spec, selected)
+
+
+def repoint_templates(spec, templates):
+    """Use the same dedicated evidence in generation and packaged template resolution."""
+    if "evidence_by" not in spec:
+        return tuple(templates)
+    fields_by_id = {"recall-value": dict(statement_id="decision-t2-0"),
+                    "wake-loop": dict(statement_id="decision-t2-1"),
+                    "keep-incidental": dict(detail_id="gate-t2"),
+                    "recall-count": dict(entity_key="trip-t2")}
+    return tuple(replace(t, **fields_by_id.get(t.template_id, {})) for t in templates)
+
+
+class _PreconditionError(ValueError):
+    pass
+
+
+class _Instantiated:
+    """Delegate template metadata while compiling already checked instances once."""
+
+    def __init__(self, template, instances):
+        self.template, self.material = template, instances
+
+    def __getattr__(self, name):
+        return getattr(self.template, name)
+
+    def instances(self, db, schedule):
+        return self.material
 
 
 def _assign_checkpoints(db, schedule, templates, *, spec, principal_id, genre):
@@ -228,7 +292,11 @@ def _assign_checkpoints(db, schedule, templates, *, spec, principal_id, genre):
     checkpoints = tuple(spec["checkpoints"])
 
     def compile_one(template):
-        return compile_branch(db, schedule, rendered, (template,)).entries
+        try:
+            instances = tuple(template.instances(db, schedule))
+        except ValueError as error:
+            raise _PreconditionError() from error
+        return compile_branch(db, schedule, rendered, (_Instantiated(template, instances),)).entries
 
     def hosts(entries):
         return all(meta["evidence_session"] is not None
@@ -238,22 +306,23 @@ def _assign_checkpoints(db, schedule, templates, *, spec, principal_id, genre):
     for template in sorted(templates, key=lambda t: t.template_id):
         pin = spec["selection"]["pinned"].get(template.template_id)
         chosen = replace(template, checkpoint=pin if pin is not None else checkpoints[-1])
-        try:
-            entries = compile_one(chosen)
-        except ValueError:
-            if pin is not None:
-                raise
-            for checkpoint in reversed(checkpoints[:-1]):
-                chosen = replace(template, checkpoint=checkpoint)
-                try:
-                    entries = compile_one(chosen)
-                except ValueError:
-                    continue
-                break
-            else:
-                raise
-            if counts.get((chosen.checkpoint, template.kind), 0) + len(entries) > spec[f"{template.kind}_per_checkpoint"]:
-                raise PlacementError("composition") from None
+        candidates = (chosen.checkpoint,) if pin is not None else tuple(reversed(checkpoints))
+        last_error = None
+        for checkpoint in candidates:
+            chosen = replace(template, checkpoint=checkpoint)
+            try:
+                entries = compile_one(chosen)
+            except _PreconditionError as error:
+                last_error = error.__cause__
+                continue
+            break
+        else:
+            error = PlacementError("checkpoint")
+            error.item_id = template.ref
+            raise error from last_error
+        if (last_error is not None and counts.get((chosen.checkpoint, template.kind), 0) + len(entries)
+                > spec[f"{template.kind}_per_checkpoint"]):
+            raise PlacementError("composition")
         if not entries or not hosts(entries):
             raise PlacementError("hostable")
         limit = spec[f"{template.kind}_per_checkpoint"]
@@ -266,7 +335,7 @@ def _assign_checkpoints(db, schedule, templates, *, spec, principal_id, genre):
                 try:
                     earlier = replace(template, checkpoint=checkpoint)
                     candidates = compile_one(earlier)
-                except ValueError:
+                except _PreconditionError:
                     candidates = ()
                 if (candidates and hosts(candidates)
                         and counts.get((checkpoint, template.kind), 0) + len(candidates) <= limit):
@@ -313,6 +382,8 @@ def _build_t1(path, schedule, *, spec, row):
                 at=((1, 4), (2, 4)))], principal=principal)
         else:
             raise PlacementError("composition")
+        if "evidence_by" in spec:
+            _write_t2_evidence(db, schedule, spec=spec, genre=row["genre"], principal=principal)
         db.commit()
         return db, principal
     except Exception:
@@ -320,6 +391,41 @@ def _build_t1(path, schedule, *, spec, row):
             db.close()
         path.unlink(missing_ok=True)
         raise
+
+
+def _write_t2_evidence(db, schedule, *, spec, genre, principal):
+    """Add probed facts inside the placement window; retain the original world as noise."""
+    window = spec["evidence_by"]
+    key = unit(schedule.life, "targeted", "t2-evidence")
+
+    def draw(tag, high):
+        return uniform_int(schedule.seed, key, 0, tag, 1, high)
+
+    if genre == "G1":
+        _, predicate, stem = KINDS["decision"]
+        statements = []
+        for i, name in enumerate(("cache backend", "lint policy")):
+            sid = f"decision-t2-{i}"
+            subject = mint(schedule, "targeted", sid, "entity", "decision", 0)
+            insert_entity(db, id=subject, kind="decision", canonical_name=name, aliases_json=[],
+                          created_t=schedule.sessions[0].t_start, retired_t=None)
+            statements.append(Statement(id=sid, subject=subject, key=predicate, stem=stem,
+                                        at=(draw(f"decision:{i}", window), draw(f"decision-turn:{i}", TURNS))))
+        write_statements(db, schedule, statements, principal=principal)
+    else:
+        sessions = sorted(shuffle(schedule.seed, key, 0, "trip", range(1, window + 1))[:3])
+        trip = write_entity(db, schedule, kind="trip", key="trip-t2", name="Trip 2")
+        with lineage.atomic(db):
+            write_corrections(db, schedule, [Chain(
+                id="plan-trip-t2", subject=trip, key="date", stem="DATE", depth=2,
+                at=tuple((s, draw(f"trip-turn:{i}", TURNS)) for i, s in enumerate(sessions)))], principal=principal)
+        places = [write_entity(db, schedule, kind="place", key=f"place-t2-{i}", name=f"Place {i}")
+                  for i in range(5, 9)]
+        with lineage.atomic(db):
+            write_details(db, schedule, [Detail(
+                id="gate-t2", subject=places[0], predicate="gate_code", stem="GATE", decoys=tuple(places[1:]),
+                at=tuple((draw(f"gate:{i}", window if i == 0 else len(schedule.sessions)),
+                          draw(f"gate-turn:{i}", TURNS)) for i in range(4)))], principal=principal, ratio=3)
 
 
 def _links(db, event_id):
@@ -437,6 +543,21 @@ def _check_t1(spec, compiled):
         raise PlacementError("early")
 
 
+def _check_t2(spec, compiled):
+    """Enforce the live-probe cost bound per life, branch and checkpoint."""
+    items = {i["item_id"]: i for i in compiled.items}
+    counts = {}
+    for record in compiled.records:
+        item = items[record["item_id"]]
+        kind = "act" if item["stage"] == "act" else "qa"
+        key = record["branch"], item["probe_point"], kind
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] > spec[f"{kind}_per_checkpoint"]:
+            error = PlacementError("probe_cap")
+            error.item_id = item["item_id"]
+            raise error
+
+
 def _restart_crossing(schedule, compiled):
     records = {r["item_id"]: r for r in compiled.records}
     items = {i["item_id"]: i for i in compiled.items}
@@ -520,6 +641,8 @@ def generate(spec_or_row, templates, build, *, out_dir, _tier=None):
                 _check_micro(spec, templates[0], schedule, twin.compiled)
             elif not micro:
                 _check_t1(spec, twin.compiled)
+                if spec["tier"] == "T2":
+                    _check_t2(spec, twin.compiled)
             for db in (db0, twin.b1):
                 _untouched(db)
             if not micro and genre == "G1":
@@ -567,3 +690,59 @@ def t1_life(spec, row, templates, *, out_dir):
 def t1_lives(spec, templates_by_genre, *, root):
     return tuple(t1_life(spec, row, templates_by_genre[row["genre"]],
                          out_dir=Path(root) / row["life"]) for row in spec["lives"])
+
+
+def t2_dry_run(spec, templates_by_genre, *, root):
+    """Freeze a roster in order, disclosing every failed seed and consuming one shared pool."""
+    rows, table = [], []
+    replacements = list(spec.get("replacements", ()))
+    used = {1, 2, 3, *(r["seed"] for r in spec["lives"])}
+    used.update(r[key] for r in replacements for key in ("seed", "replacement_seed"))
+    next_seed, design_failures = 14, 0
+    for original in spec["lives"]:
+        row = dict(original)
+        life_dir = Path(root) / row["life"]
+        if life_dir.exists() or life_dir.is_symlink():
+            raise FileExistsError(life_dir)
+        first = True
+        while True:
+            life = None
+            try:
+                life = t1_life(spec, row, templates_by_genre[row["genre"]], out_dir=Path(root) / row["life"])
+                compiled = life.twin.compiled
+                _check_t1(spec, compiled)
+                _check_t2(spec, compiled)
+                items = {i["item_id"]: i for i in compiled.items}
+                counts = {}
+                for record in compiled.records:
+                    item = items[record["item_id"]]
+                    key = f'{record["branch"]}/{item["probe_point"]}/{"act" if item["stage"] == "act" else "qa"}'
+                    counts[key] = counts.get(key, 0) + 1
+                hosted = sorted({r["template_id"] for r in compiled.records if items[r["item_id"]]["probe_point"] == 5})
+                early = {r["bundle_id"] for r in compiled.records if r["branch"] == "B0"
+                         and r["bundle_id"] is not None and r["evidence_session"] <= spec["early_sessions"]}
+                table.append(dict(row, placement=True, checkpoint_5=hosted, caps=counts,
+                                  early_bundles=len(early), result="pass"))
+                rows.append(row)
+                break
+            except (PlacementError, IndependenceError) as error:
+                table.append(dict(row, placement=False, result=type(error).__name__,
+                                  rule=getattr(error, "rule", "independence"),
+                                  item_id=getattr(error, "item_id", "life")))
+                design_failures += first
+                if design_failures > 1:
+                    raise PlacementError("design_failures") from error
+                while next_seed in used:
+                    next_seed += 1
+                replacement = next_seed
+                used.add(replacement)
+                next_seed += 1
+                replacements.append(dict(life=row["life"], seed=row["seed"], replacement_seed=replacement,
+                                         rule=table[-1]["rule"], item_id=table[-1]["item_id"]))
+                row["seed"] = replacement
+                first = False
+            finally:
+                if life is not None:
+                    life.twin.b1.close()
+                shutil.rmtree(Path(root) / row["life"], ignore_errors=True)
+    return _tier_source("T2", lives=rows, replacements=replacements), table

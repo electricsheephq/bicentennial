@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "T2 published pack validation receipt",
+  "type": "object",
+  "required": [
+    "canary",
+    "tier",
+    "pack_id",
+    "check_pack",
+    "competing",
+    "controls_broken"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "canary": {
+      "type": "string",
+      "enum": [
+        "c168e5f8-3948-4553-8554-7aa162054723"
+      ]
+    },
+    "tier": {
+      "enum": [
+        "T2"
+      ]
+    },
+    "pack_id": {
+      "type": "string"
+    },
+    "check_pack": {
+      "type": "object",
+      "required": [
+        "policies",
+        "heuristics",
+        "bundle_check",
+        "shares",
+        "unmet",
+        "failures",
+        "ok"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "policies": {
+          "type": "object"
+        },
+        "heuristics": {
+          "type": "object"
+        },
+        "bundle_check": {
+          "type": "object"
+        },
+        "shares": {
+          "type": "object"
+        },
+        "unmet": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        }
+      }
+    },
+    "competing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "kind",
+          "selected_option",
+          "score_milli"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "selected_option": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score_milli": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "controls_broken": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "track"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "type": "string"
+          },
+          "track": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

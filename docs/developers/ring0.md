@@ -2,6 +2,8 @@
 
 For the v0.2 probe-live developer loop, see [T2-lite](t2lite.md).
 
+T2 public packs can be built offline with `bicentennial build --tier T2 --out build/ring0`. Each pack includes the naive-RAG control and a published `validation_receipt.json` beside its manifest; the receipt records construction checks, competing contexts and broken controls. The T2 live runner is a later slice.
+
 ## 1. What the v0.1 kit is
 
 The kit ships T0 probe packs and T1 CI smoke only. T0 runs micro-lives through the memory-layer adapter; T1 drives two public lives through the harness with a scripted model, regression corpus and controls. See [RING0 §§6–7](../../specs/ring0/RING0.md#6-t1-composition-and-the-probe-budget).
