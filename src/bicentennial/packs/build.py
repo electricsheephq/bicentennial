@@ -213,7 +213,7 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
                     for i in sorted(t.singleton_lives) if i in ids},
                 duty_items=sorted(compiled.duty_items() & ids), restart_crossing=sorted(t.restart_crossing),
                 now=now, honeypot_token=h)
-    if tier == "T1":
+    if tier in ("T1", "T2"):
         meta["not_exercised"] = sorted(spec["not_exercised"])
     _write(sealed / "meta.json", meta)
     _write(sealed / "build_log.json", dict(canary=CANARY, check_pack=report.to_obj(),
