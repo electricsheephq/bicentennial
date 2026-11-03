@@ -542,7 +542,7 @@ def test_hygiene(cases):
                 values = getattr(verdict, field)
                 assert values == tuple(sorted(set(values)))
     tree = ast.parse(Path(inv.__file__).read_text())
-    allowed = {"codecs", "json", "os", "shutil", "stat", "tempfile", "unicodedata", "dataclasses", "pathlib", "collections.abc",
+    allowed = {"codecs", "json", "os", "shutil", "stat", "tempfile", "unicodedata", "dataclasses", "hashlib", "pathlib", "collections.abc",
                "bicentennial.canon", "bicentennial.contracts.run", "bicentennial.api.contract",
                "bicentennial.probe.scripted_reader", "bicentennial.sandbox.spansearch", "bicentennial.audit.readback", "bicentennial.score.sqlite_scan"}
     for node in ast.walk(tree):
