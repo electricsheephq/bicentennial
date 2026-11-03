@@ -44,7 +44,9 @@ The optional `BICENTENNIAL_BUSY_CMD` shell command returns a JSON object with op
 
 ## 4. Build and install a pack
 
-The build command below pins the registered Hermes-native artifact, so these packs can also serve registry systems. The output is a parent directory, which may already exist; the tier directory and its `.staging` and `.work` siblings must not exist, or the command exits 3 with `out_exists`. Success is silent; unexpected build failures exit 70 with `tool_failure` first on stderr (section 8).
+The build command below pins the registered Hermes-native artifact, so these packs can also serve registry systems. The output is a parent directory, which may already exist; the tier directory and its `.staging` and `.work` siblings must not exist, or the command exits 3 with `out_exists`. Success prints `sqlite_version VERSION` on stderr; unexpected build failures exit 70 with `tool_failure` first on stderr (section 8).
+
+From the next kit, the builder zeroes SQLite header offsets 92–99 on sealed copies before hashing, so writer version metadata no longer makes pack hashes depend on the build host's SQLite (#327). Generator output, logical world content and `world_hash` stay unchanged. The version disclosure stays outside the tier directory and its hash. Future SQLite page-layout changes are not covered by this normalization.
 
 ```sh
 bicentennial build --tier T0 --out build/ring0
