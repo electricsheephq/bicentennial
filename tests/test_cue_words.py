@@ -98,7 +98,6 @@ def test_unsupported_action_prompt(tmp_path, prompt):
         cue_words.template_requests(tmp_path)
 
 
-
 @pytest.mark.parametrize("call,match", [
     ('Instance(**common)', "keyword arguments only"),
     ('Instance("key", prompt="Use it.", decision_table_ref="table")', "keyword arguments only"),
@@ -116,6 +115,7 @@ def test_unsupported_instance_call(tmp_path, call, match):
 def test_text_replace_is_not_a_prompt(tmp_path):
     template(tmp_path, 'f"Record the {p.replace(\'_\', \' \')} in {path}."')
     assert len(cue_words.template_requests(tmp_path)) == 1
+
 
 def fake_pack(tmp_path, *, cue=True):
     root = tmp_path / "pack"
