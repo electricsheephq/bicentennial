@@ -16,7 +16,13 @@ from bicentennial.harness.hermes.plugin_host import HermesMemoryHost
 from bicentennial.runtime.clock import SimClock
 from bicentennial.sandbox import fixedroot
 from bicentennial.systems.hermes_plugin import TREES, is_plugin
-from bicentennial.systems.registry import REGISTRY, SystemRefused, check, load
+from bicentennial.systems.registry import (
+    REGISTRY,
+    ZERO_HASH,
+    SystemRefused,
+    check,
+    load,
+)
 
 
 class PinsRefused(ValueError):
@@ -37,20 +43,40 @@ def archive_hash(source, recipe):
     return digest.hexdigest()
 
 
-def measure(entry, *, hermes=None, plugin_source=None, recipe=None, sandbox_slot=0):
-    """Accept an entry mapping; return pins without modifying that declaration."""
+def _validate(entry, hermes, plugin_source, worker_argv):
     reasons = check(entry)
     if reasons:
         raise SystemRefused(reasons)
     if entry["harness"] != "hermes":
         raise PinsRefused("harness_not_hermes")
     plugin = is_plugin(entry["name"])
-    if hermes is None or plugin != (plugin_source is not None):
+    if (hermes is None and worker_argv is None) or plugin != (plugin_source is not None):
         raise PinsRefused("missing_input")
     if any(fixedroot.overlaps(path) for path in (hermes, plugin_source) if path is not None):
         raise PinsRefused("sandbox_overlap")
+
+
+def measure(entry, *, hermes=None, plugin_source=None, recipe=None, sandbox_slot=0):
+    """Measure two samples under a private lease, ignoring the old declaration."""
+    _validate(entry, hermes, plugin_source, None)
+    with fixedroot.lease(sandbox_slot, PinsRefused) as sandbox:
+        return _measure(entry, sandbox, hermes=hermes, plugin_source=plugin_source, recipe=recipe)
+
+
+def measure_once(entry, sandbox, *, hermes=None, plugin_source=None, worker_argv=None):
+    """Measure one install in the caller's leased sandbox, preserving its declarations."""
+    _validate(entry, hermes, plugin_source, worker_argv)
+    return _measure(entry, sandbox, hermes=hermes, plugin_source=plugin_source,
+                    samples=1, verify_declared=True, worker_argv=worker_argv)
+
+
+def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
+             samples=2, verify_declared=False, worker_argv=None):
+    plugin = is_plugin(entry["name"])
     measured = deepcopy(entry)
-    with fixedroot.lease(sandbox_slot, PinsRefused) as sandbox, ExitStack() as cleanup:
+    if not verify_declared:
+        measured["fresh_install_hash"] = ZERO_HASH
+    with ExitStack() as cleanup:
         # The existing installer uses tempfile for its archive. Keep that scratch in the lease too.
         temporary = sandbox / "tmp"
         temporary.mkdir()
@@ -61,25 +87,26 @@ def measure(entry, *, hermes=None, plugin_source=None, recipe=None, sandbox_slot
             recipe = tuple(recipe or TREES[entry["name"]])
             if recipe[1:] != TREES[entry["name"]][1:]:
                 raise PinsRefused("pin_mismatch")
-            measured["artifact"]["sha256"] = archive_hash(plugin_source, recipe)
+            if not verify_declared:
+                measured["artifact"]["sha256"] = archive_hash(plugin_source, recipe)
         routes = RouteTable.load({"routes": [dict(system=entry["name"], segment="seg0",
             probe_model="probe-model", alias="bicentennial-main", summariser="summary-model",
             vision=None, served_by="scripted")]})
         hosts = []
-        for index in range(2):
+        for index in range(samples):
             root = sandbox / f"pins-{index}"
             root.mkdir()
             host = HermesMemoryHost(measured, route_table=routes, responder=ScriptedResponder(measured),
                 clock=SimClock(root / "clock.json", 0, 60), root=root, scratch=sandbox,
                 life="pins", branch="B0", run="pins", lock_hash="0" * 64, sim_epoch_s=0,
                 checkout=hermes, harness_pin=load(REGISTRY / "hermes-native.toml")["artifact"],
-                plugin_source=plugin_source)
+                plugin_source=plugin_source, worker_argv=worker_argv)
             cleanup.callback(host.close)
             # Both servers remain bound until both measurements finish: port 0 cannot be reused.
             hosts.append(host)
-        first, second = (host.fresh_install_hash for host in hosts)
-        if first != second:
-            raise PinsRefused("pins_unstable", detail=(first, second))
+        first = hosts[0].fresh_install_hash
+        if any(host.fresh_install_hash != first for host in hosts[1:]):
+            raise PinsRefused("pins_unstable", detail=tuple(host.fresh_install_hash for host in hosts))
         return {"fresh_install_hash": first, "artifact.sha256": measured["artifact"]["sha256"]}
 
 

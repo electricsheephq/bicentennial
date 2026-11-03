@@ -30,6 +30,8 @@ from bicentennial.harness.egress import Egress
 from bicentennial.harness.hermes.adapter import HarnessFailed, _Worker, verify_pin
 from bicentennial.harness.hermes.config import (
     hermes_config,
+    install_directory,
+    install_file,
     layout,
     validate_paths,
     worker_env,
@@ -55,6 +57,7 @@ from bicentennial.systems.hermes_plugin import (
     PROVIDERS,
     PluginCell,
     plugin_dir,
+    verify_install_pin,
 )
 from bicentennial.systems.registry import SystemRefused, check
 from bicentennial.systems.settle import settle
@@ -164,8 +167,8 @@ class HermesMemoryHost(Adapter):
                 directory = (base / surface["relative"]).resolve()
                 if not directory.is_relative_to(base.resolve()):
                     raise ValueError("surface escapes its root")
-                directory.mkdir(parents=True, exist_ok=True)
-                (directory / MARKER).touch(exist_ok=True)
+                install_directory(directory)
+                install_file(directory / MARKER, b"")
                 fresh = self.paths["root"] / "t0-fresh" / str(i)
                 fresh.parent.mkdir(exist_ok=True)
                 clone_tree(directory, fresh)
@@ -175,6 +178,7 @@ class HermesMemoryHost(Adapter):
                 hashes.append({"relative": surface["relative"], "root": surface["root"],
                                "tree_hash": install_hash(directory, surface["volatile_paths"], self.server.port)})
             self.fresh_install_hash = hashes[0]["tree_hash"] if len(hashes) == 1 else sha256(canon(hashes)).hexdigest()
+            verify_install_pin(entry, self.fresh_install_hash)
             self.egress = Egress()
             self.egress.start()
         except BaseException:
