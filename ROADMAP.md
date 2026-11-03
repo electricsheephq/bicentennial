@@ -39,6 +39,16 @@ Older documents say "v0.2" or "v0.3" for work that is now split across v0.2, v0.
   - results come in seasonal cycles, with separate open-source and commercial rankings.
 
   Bicentennial follows AML's conventions where they help entrants: a versioned evaluation contract, and a non-scored smoke run before any full run.
+- **[DolphinBench](https://dolphinbench.ai/), built by Mem0, is the closest shipped rival.** Like Bicentennial, it scores what an agent does with its tools, not what it can recite. It has 3 simulated users with about 500,000 tokens of history each and 600 public tool-using tests, measured on 13 setups of memory system × model × harness, with cost and latency. Before the tests, each setup's agent processes the dated history in order, with its normal memory-writing behaviour.
+  - **Where it is ahead today:** a public launch with a measured model × harness × memory grid; history processed live by each setup's agent; dollar and latency figures; histories dated across several years. Bicentennial's live action scoring, dollar figures and second harness are not shipped yet.
+  - **Where the designs differ:**
+    - the unit of replication: Bicentennial generates many lives and computes its statistics clustered by life; DolphinBench has 3 users;
+    - held-out data: Bicentennial seals its full-tier lives and keys and carries a canary string; every DolphinBench test is public, with its checks;
+    - extra actions: Bicentennial scores a confident false memory or a harmful extra action at −1; DolphinBench ignores a call that no check names;
+    - screening: Bicentennial's blind filter panel excludes the pinned agent's family; DolphinBench screened its tests with a model that is also the agent in ranked setups;
+    - time: Bicentennial simulates the clock through each life; DolphinBench's dates are text on the messages;
+    - span: Bicentennial's full-tier lives cover 3-26 simulated weeks, so it makes no claim about gaps of years.
+  - Like DolphinBench, Bicentennial is built beside a system it tests, LCM-X. The firewall rules are in the README.
 - **The claim Bicentennial has to earn with results:** memory inside a real agent harness across a life, judged on actions, covering governance, with a fast diagnostic loop. To that end it:
   - runs the whole system inside a real agent harness, across a life;
   - injects compactions, crashes and swaps;
