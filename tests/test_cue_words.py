@@ -104,12 +104,27 @@ def test_unsupported_action_prompt(tmp_path, prompt):
     ('replace(base, prompt="Use the usual setting.")', "replace"),
     ('replace(base, decision_table_ref="table")', "replace"),
     ('dataclasses.replace(base, **fields)', "replace"),
+    ('from bicentennial.items.protocol import Instance as Act\n'
+     'Act(prompt="Book the usual dinner.", decision_table_ref="table")', "other than to call it"),
+    ('Act = Instance', "other than to call it"),
+    ('Act = protocol.Instance', "other than to call it"),
+    ('make(Instance)', "other than to call it"),
 ])
 def test_unsupported_instance_call(tmp_path, call, match):
     # An action request the walker cannot read must fail, never vanish from the check.
     (tmp_path / "sample.py").write_text(f"{call}\n")
     with pytest.raises(ValueError, match=match):
         cue_words.template_requests(tmp_path)
+
+
+def test_instance_in_annotations(tmp_path):
+    # Naming Instance in a type annotation builds nothing, so it is allowed.
+    (tmp_path / "sample.py").write_text(
+        "def instances(world: Instance, *rest: Instance) -> tuple[Instance, ...]:\n"
+        "    made: Instance = Instance(prompt=\"Use the usual setting.\", decision_table_ref=\"table\")\n"
+        "    return (made,)\n")
+    hits = cue_words.check_requests(cue_words.template_requests(tmp_path))
+    assert {hit.phrase for hit in hits} == {"usual", "the usual"}
 
 
 def test_text_replace_is_not_a_prompt(tmp_path):

@@ -36,8 +36,9 @@ def template_requests(root=TEMPLATES):
     """Read every module recursively, checking each action Instance's literal text.
 
     Each formatted field is a gap, including fields with a literal expression. Unsupported action
-    prompt expressions, Instance calls with positional or ** arguments, and a prompt or decision
-    table set through replace() fail rather than silently losing coverage.
+    prompt expressions, Instance calls with positional or ** arguments, Instance named other than to
+    call it or in an annotation (a renamed import, an assignment, an argument), and a prompt or
+    decision table set through replace() fail rather than silently losing coverage.
     """
     root = Path(root)
     if not root.is_dir():
@@ -50,6 +51,15 @@ def template_requests(root=TEMPLATES):
         tree = ast.parse(path.read_bytes(), filename=str(path))
         calls = sorted((node for node in ast.walk(tree) if isinstance(node, ast.Call)),
                        key=lambda node: (node.lineno, node.col_offset))
+        allowed = {id(call.func) for call in calls} | _annotation_nodes(tree)
+        for node in ast.walk(tree):
+            renamed = isinstance(node, ast.ImportFrom) and any(
+                alias.name == "Instance" and alias.asname not in (None, "Instance") for alias in node.names)
+            named = ((isinstance(node, ast.Name) and node.id == "Instance")
+                     or (isinstance(node, ast.Attribute) and node.attr == "Instance"))
+            if renamed or (named and id(node) not in allowed):
+                raise ValueError(f"{path}:{node.lineno}: Instance is named other than to call it, "
+                                 "so a request built through that name cannot be checked")
         for call in calls:
             name = (call.func.id if isinstance(call.func, ast.Name) else
                     call.func.attr if isinstance(call.func, ast.Attribute) else None)
@@ -72,6 +82,21 @@ def template_requests(root=TEMPLATES):
                 raise ValueError(f"{path}:{call.lineno}: expected a constant or f-string prompt")
             requests.append(Request(path, f"{path.stem}:{call.lineno}:{call.col_offset}", parts))
     return tuple(requests)
+
+
+def _annotation_nodes(tree):
+    """The ids of every node inside a type annotation, where naming Instance builds nothing."""
+    roots = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            arguments = node.args
+            roots.append(node.returns)
+            roots.extend(arg.annotation for arg in (*arguments.posonlyargs, *arguments.args,
+                                                    *arguments.kwonlyargs, arguments.vararg,
+                                                    arguments.kwarg) if arg is not None)
+        elif isinstance(node, ast.AnnAssign):
+            roots.append(node.annotation)
+    return {id(inner) for root in roots if root is not None for inner in ast.walk(root)}
 
 
 def pack_requests(root):
