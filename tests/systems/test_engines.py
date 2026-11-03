@@ -156,7 +156,7 @@ def test_install_slots(tmp_path, monkeypatch, mapped, archive, provider, directo
     mapped["artifact"]["sha256"] = archive[1]
     a = make(tmp_path, mapped)
     try:
-        hp.PluginCell(mapped, a).install(archive[0], alias="main")
+        hp.PluginCell(mapped | {"fresh_install_hash": "0" * 64}, a).install(archive[0], alias="main")
         cfg = json.loads((a.paths["hermes_home"] / "config.yaml").read_bytes())
         assert (a.paths["hermes_home"] / "plugins" / directory / "__init__.py").exists()
         assert cfg["memory"]["provider"] == (provider or "") and cfg["context"]["engine"] == ENGINE
@@ -272,7 +272,7 @@ def test_live_fixture_engine(tmp_path, monkeypatch, mapped, archive):
     mapped["artifact"]["sha256"] = archive[1]
     a = make(tmp_path, mapped, checkout=given, context_engine=ENGINE)
     try:
-        hp.PluginCell(mapped, a).install(archive[0], alias="bicentennial-main")
+        hp.PluginCell(mapped | {"fresh_install_hash": "0" * 64}, a).install(archive[0], alias="bicentennial-main")
         result = a.run_session(1, sim_t_s=1_600_000_000, lock_hash="ab" * 32, attempt_id="fixture")
         assert result.turns_ok == 1 and a.active_context_engine == ENGINE
         store = BlobStore(a.paths["root"] / "ledger/blobs", Guard([]))
@@ -313,6 +313,7 @@ def test_t0_both_slots_installs_without_engine_and_passes_env(tmp_path, monkeypa
     entry = load(REGISTRY / "hermes-native.toml")
     name = entry["name"]
     entry["artifact"]["sha256"] = archive[1]
+    entry["fresh_install_hash"] = "0" * 64  # synthetic install, outside runner admission
     monkeypatch.setitem(hp.PROVIDERS, name, "fixture-provider")
     monkeypatch.setitem(hp.ENGINES, name, ENGINE)
     monkeypatch.setitem(hp.TREES, name, ("HEAD",))

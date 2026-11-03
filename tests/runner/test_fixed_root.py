@@ -21,6 +21,7 @@ from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.ledger import BlobStore, Guard, apply_masks
 from bicentennial.runner import compare, life, t0, t1
 from bicentennial.sandbox import fixedroot
+from bicentennial.systems import pins as install_pins
 
 installed = acceptance.installed
 cases = acceptance.cases
@@ -315,6 +316,11 @@ def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
                              check=True, capture_output=True).stdout
     plugin = acceptance.measured("holographic")
     plugin["artifact"]["sha256"] = acceptance.sha256(archive).hexdigest()
+    # The stand-in's own install, measured as this run's preflight measures it, is its declared pin. The worker is
+    # injected, so no Hermes checkout pin applies (the stub checkout is not the pinned Hermes).
+    with fixedroot.lease(0, install_pins.PinsRefused) as sandbox:
+        plugin["fresh_install_hash"] = install_pins.measure_once(dict(plugin, fresh_install_hash="0" * 64), sandbox,
+            hermes=hermes, plugin_source=source, worker_argv=[])["fresh_install_hash"]
     roots, runs, current, bodies = [], [], {}, []
     real_life, real_layout, host_layout = t1.run_life, adapter.layout, plugin_host.layout
 
@@ -370,8 +376,9 @@ def test_fake_worker_roots(installed, cases, tmp_path, monkeypatch):
         assert {r.root for r in runs if r.branch == branch} == {sandbox / "t1" / branch / "run"}
     assert len({len(str(r.root)) for r in runs}) == 1
     assert {kind for kind, _ in roots} == {"adapter", "host"}
-    assert roots and all(root.is_relative_to(sandbox / "t1") or
-                         root.is_relative_to(sandbox / "corpus") for _, root in roots)
+    # T1's install check (t1.check_install) measures one install at the lease's pins-0, before any arm.
+    assert roots and all(root.is_relative_to(sandbox / "t1") or root.is_relative_to(sandbox / "corpus")
+                         or root == sandbox / "pins-0" for _, root in roots)
     for entry in ("hermes-native", "holographic"):
         for arm in t1.UNIT_ORDER:
             for name in {r.life for r in runs}:
