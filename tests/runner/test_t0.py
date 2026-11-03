@@ -21,6 +21,7 @@ import pytest
 from bicentennial.api.adapters.reference_store import ReferenceStore
 from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
+from bicentennial.contracts.surfaces import tree_listing
 from bicentennial.harness import egress
 from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.harness.hermes.plugin_host import GateRefused
@@ -425,8 +426,7 @@ def fake_hosts(installed, tmp_path, monkeypatch, request):
             self.store.mkdir()
             if getattr(request, "param", None) == "binary":
                 (self.store / "dictionary.gz").write_bytes(gzip.compress(b"installed dictionary", mtime=0))
-            self.fresh = options["root"] / "fresh"
-            shutil.copytree(self.store, self.fresh)
+            self.installed = {row["path"]: row for row in tree_listing(self.store, [])}
             self.closed = 0
             self.log = []
             self.records, self.egress = list, SimpleNamespace(summary=dict)
@@ -436,8 +436,8 @@ def fake_hosts(installed, tmp_path, monkeypatch, request):
             (self.store / "events.json").write_bytes(self.checkpoint())
             return [(self.store, [])]
 
-        def fresh_roots(self):
-            return (self.fresh,)
+        def fresh_listings(self):
+            return (self.installed,)
 
         def close(self):
             self.closed += 1
@@ -1982,25 +1982,27 @@ def test_installed_binary_both_t0_paths(fake_hosts, installed, tmp_path):
     results, outcomes, roots, made, texts = t0._branches(installed[1], factory.pack, factory.entry,
         installed[2], True, tmp_path / "branches", 1, bound_s=5, host_options={})
     try:
-        pairs = {root: fresh for f in made for root, fresh in f.fresh_roots.items()}
+        pairs = {root: listing for f in made for root, listing in f.fresh_listings.items()}
         for branch_roots in roots.values():
             for root in branch_roots:
-                assert (root / "dictionary.gz").read_bytes() == (pairs[root] / "dictionary.gz").read_bytes()
-                assert not (pairs[root] / "events.json").exists()
+                digest = sha256((root / "dictionary.gz").read_bytes()).hexdigest()
+                assert pairs[root]["dictionary.gz"]["sha256"] == digest
+                assert "events.json" not in pairs[root]
         def verdict(**kw):
             values = t0._pack_invariants(factory.pack, results, outcomes, roots, {}, adapter, kept_texts=texts, **kw)
             return next(v for v in values if v["invariant"] == "INV-FORGET")
-        assert verdict(fresh_roots=pairs)["status"] == "PASS"
+        assert verdict(fresh_listings=pairs)["status"] == "PASS"
         assert verdict()["reasons"] == ["opaque_store"]
     finally:
         t0._remove_units(made)
 
 
-@pytest.mark.parametrize("with_fresh", [True, False])
-def test_shipped_gzip_full_t0_stub_stack(installed, tmp_path, stub_hosts, git_checkouts, monkeypatch, with_fresh):
+@pytest.mark.parametrize("reference", ["listing", "none", "tampered"])
+def test_shipped_gzip_full_t0_stub_stack(installed, tmp_path, stub_hosts, git_checkouts, monkeypatch, reference):
     # Use a locally constructed plug-in source, never repository history.
     source = git_checkouts.checkout
-    (source / "dictionary.gz").write_bytes(gzip.compress(b"installed words", mtime=0))
+    shipped = gzip.compress(b"installed words", mtime=0)
+    (source / "dictionary.gz").write_bytes(shipped)
     for args in (["add", "dictionary.gz"], ["commit", "-qm", "synthetic dictionary"]):
         subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True)
     archive = subprocess.run(["git", "-C", str(source), "archive", "--format=tar", "HEAD"],
@@ -2020,27 +2022,37 @@ def test_shipped_gzip_full_t0_stub_stack(installed, tmp_path, stub_hosts, git_ch
         entry["fresh_install_hash"] = measurement().fresh_install_hash
     finally:
         measurement.close()
-    if not with_fresh:
-        original = t0._Factory.snapshot
-        def snapshot(factory, adapter):
-            roots = original(factory, adapter)
-            factory.fresh_roots.clear()
-            return roots
-        monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
+    original, tampered = t0._Factory.snapshot, []
+    def snapshot(factory, adapter):
+        if reference == "tampered":
+            # The system changes its shipped file and rewrites the on-disk fresh copy to match.
+            for i, (surface, _) in enumerate(adapter.surfaces()):
+                copy = adapter.paths["root"] / "t0-fresh" / str(i)
+                for path in sorted(Path(surface).rglob("dictionary.gz")):
+                    data = path.read_bytes()
+                    for target in (path, copy / path.relative_to(surface)):
+                        target.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+                    tampered.append(path)
+        roots = original(factory, adapter)
+        if reference == "none":
+            factory.fresh_listings.clear()
+        return roots
+    monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
     out = tmp_path / "binary-run"
     code = run(installed, out, packs=[pack.rel], **kwargs)
     if denied:
         raise denied[0]
     assert code in (0, 1)
+    assert bool(tampered) == (reference == "tampered")
     for path in (out / "adapter_invariants.json", out / pack.rel / "invariants.json"):
         forget = next(v for v in json.loads(path.read_bytes()) if v["invariant"] == "INV-FORGET")
-        assert forget["status"] == ("PASS" if with_fresh else "INCONCLUSIVE")
-        assert forget["reasons"] == ([] if with_fresh else ["opaque_store"])
+        assert forget["status"] == ("PASS" if reference == "listing" else "INCONCLUSIVE")
+        assert forget["reasons"] == ([] if reference == "listing" else ["opaque_store"])
     assert created
     for host in created:
-        for (_surface, _), fresh in zip(host.surfaces(), host.fresh_roots(), strict=True):
-            # Hosts may be cleaned up by the runner; the mapping is still the original install-time one.
-            assert fresh.parent.name == "t0-fresh"
+        # Listings stay those recorded at install, whatever is written later.
+        assert [row["sha256"] for listing in host.fresh_listings() for path, row in listing.items()
+                if path.endswith("dictionary.gz")] == [sha256(shipped).hexdigest()]
 
 
 @pytest.mark.parametrize("fake_hosts", ["binary"], indirect=True)
@@ -2054,7 +2066,7 @@ def test_installed_binary_full_t0_fake_run(fake_hosts, installed, tmp_path, monk
         original = t0._Factory.snapshot
         def snapshot(factory, adapter):
             roots = original(factory, adapter)
-            factory.fresh_roots.clear()
+            factory.fresh_listings.clear()
             return roots
         monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
     out = tmp_path / "fake-binary-run"
@@ -2071,14 +2083,14 @@ def test_installed_binary_full_t0_fake_run(fake_hosts, installed, tmp_path, monk
 def test_snapshot_pairs_multiple_surfaces(fake_hosts, tmp_path):
     factory, _ = fake_hosts
     host = factory()
-    other, other_fresh = tmp_path / "other", tmp_path / "other-fresh"
+    other = tmp_path / "other"
     other.mkdir()
     (other / "binary").write_bytes(b"\0second surface")
-    shutil.copytree(other, other_fresh)
+    other_listing = {row["path"]: row for row in tree_listing(other, [])}
     original = host.surfaces
     host.host.surfaces = lambda: [*original(), (other, [])]
-    host.host.fresh_roots = lambda: (host.host.fresh, other_fresh)
+    host.host.fresh_listings = lambda: (host.host.installed, other_listing)
     roots = factory.snapshot(host)
-    assert factory.fresh_roots[roots[0]] == host.host.fresh
-    assert factory.fresh_roots[roots[1]] == other_fresh
-    assert (roots[1] / "binary").read_bytes() == (other_fresh / "binary").read_bytes()
+    assert factory.fresh_listings[roots[0]] is host.host.installed
+    assert factory.fresh_listings[roots[1]] is other_listing
+    assert sha256((roots[1] / "binary").read_bytes()).hexdigest() == other_listing["binary"]["sha256"]

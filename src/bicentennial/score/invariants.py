@@ -7,6 +7,7 @@ import shutil
 import stat
 import unicodedata
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -144,28 +145,28 @@ def _combined(scans):
                        hits, opaque, reasons)
 
 
-def _unchanged(root, fresh, relative):
-    """Compare installed bytes only through real directories and regular files."""
-    paths = []
-    for base in (root, Path(fresh)):
-        path = base
+def _unchanged(root, listing, relative):
+    """Whether a regular file under real directories has the size and SHA-256 its install listing recorded.
+
+    The host keeps that listing in memory from before any session, so nothing a system writes can change it.
+    """
+    row = listing.get(relative)
+    if row is None or row.get("kind") != "file":
+        return False
+    path = root
+    for part in Path(relative).parts[:-1]:
+        path /= part
         if not stat.S_ISDIR(path.lstat().st_mode):
             return False
-        for part in Path(relative).parts[:-1]:
-            path /= part
-            if not stat.S_ISDIR(path.lstat().st_mode):
-                return False
-        path /= Path(relative).name
-        if not stat.S_ISREG(path.lstat().st_mode):
-            return False
-        paths.append(path)
-    with paths[0].open("rb") as current, paths[1].open("rb") as installed:
-        while True:
-            chunk = current.read(1024 * 1024)
-            if chunk != installed.read(1024 * 1024):
-                return False
-            if not chunk:
-                return True
+    path /= Path(relative).name
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size != row["size"]:
+        return False
+    digest = sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == row["sha256"]
 
 
 def search_store(root, needles, collector=None, *, fresh=None) -> StoreSearch:
@@ -456,7 +457,7 @@ def _api_script(factory, invariant, bound, snapshot, collector=None, *, fresh=No
 
 
 def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None, collector=None, fresh=None) -> Verdict:
-    """Run one invariant; fresh optionally maps snapshot roots to install-time copies."""
+    """Run one API-mode invariant against an adapter factory; fresh maps a snapshot root to its install listing."""
     ids, reason = {
         "INV-VERB": (("verb-1", "verb-2", "verb-3"), "absent_after_fault"),
         "INV-NEW": (("new-a", "new-b"), "not_newest"),
@@ -497,7 +498,7 @@ class ItemEvidence:
     baseline_in_context: bool | None = None
     roots: tuple | None = None
     kept_texts: tuple[str, ...] = ()
-    fresh_roots: tuple | None = None
+    fresh_listings: tuple | None = None
 
 
 def run_invariants(evidence, *, tier, requests=None, expected_call_ids=(), collector=None) -> dict[str, Verdict]:
@@ -540,8 +541,8 @@ def run_invariants(evidence, *, tier, requests=None, expected_call_ids=(), colle
                 status, reason = "INCONCLUSIVE", "no_snapshot"
             else:
                 try:
-                    fresh_roots = e.fresh_roots if e.fresh_roots is not None else (None,) * len(e.roots)
-                    for root, fresh in zip(e.roots, fresh_roots, strict=True):
+                    listings = e.fresh_listings if e.fresh_listings is not None else (None,) * len(e.roots)
+                    for root, fresh in zip(e.roots, listings, strict=True):
                         needles = needles_for(e.keys["forbidden"])
                         options = dict(fresh=fresh) if fresh is not None else {}
                         scan = (search_store(root, needles, **options) if collector is None else

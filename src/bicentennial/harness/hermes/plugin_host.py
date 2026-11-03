@@ -506,9 +506,9 @@ class HermesMemoryHost(Adapter):
     def surfaces(self):
         return [(d, list(v)) for d, v in self._surfaces]
 
-    def fresh_roots(self):
-        """Install-time copies in surfaces() order, never refreshed by a session."""
-        return tuple(directory for directory, _, _ in self._fresh)
+    def fresh_listings(self):
+        """Install-time listings (path -> kind, mode, size, sha256) in surfaces() order, kept in memory."""
+        return tuple(listing for _, _, listing in self._fresh)
 
     def records(self):
         path = self.paths["root"] / "ledger/ledger.jsonl"
