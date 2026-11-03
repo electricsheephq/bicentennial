@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 erratum, 2026-11-03: the T2 shape (#391, §13 E25, §15)
-- **RING0 §13 E25, §15:** adds the named `t2` preset, T1's shape rules at 10 sessions, and extends T1's 6 QA / 2 action probe cap to T2. §15 records per-item probe isolation, the inherited provisional W = 16K window, G2 action scoring deferred until #118, and Ring 1's alternating G1/G2 composition for any life count. Only the controls pin moves; pack trees and hashes change and packs are rebuilt once with the kit batch (#389). T0 and T1 item outcomes do not change.
+- **RING0 §13 E25, §15:** adds the named `t2` preset, T1's shape rules at 10 sessions, and extends T1's 6 QA / 2 action probe cap to T2, on both compile paths (with and without fixture bindings). §15 records per-item probe isolation, the inherited provisional W = 16K window, G2 action scoring deferred until #118, and Ring 1's alternating G1/G2 composition for any life count. Only the controls pin moves; pack trees and hashes change and packs are rebuilt once with the kit batch (#389). T0 and T1 item outcomes do not change.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Kit, 2026-11-03: pack hashes no longer depend on the build host's SQLite (#327)

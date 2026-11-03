@@ -128,6 +128,12 @@ def _entry(db, schedule, cut, t, i):
     return item, meta
 
 
+def probe_cap(scale, kind):
+    """Items of one kind per (probe point, kind) at T1 and T2 (RING0 §6, §15); None means no cap. Both compile
+    paths call this, so a scale cannot be capped on one path and not the other."""
+    return (6 if kind == "qa" else 2) if scale.name in ("t1", "t2") else None
+
+
 def compile_branch(db, schedule, cut, templates) -> Branch:
     digest = sha256(schedule.to_json()).hexdigest()
     seed = db.execute("SELECT seed FROM meta").fetchone()[0]
@@ -146,6 +152,7 @@ def compile_branch(db, schedule, cut, templates) -> Branch:
             entries.append(_entry(db, schedule, cut, t, i))
             key = i.probe_point, t.kind
             counts[key] = counts.get(key, 0) + 1
-            if schedule.scale.name in ("t1", "t2") and counts[key] > (6 if t.kind == "qa" else 2):
+            cap = probe_cap(schedule.scale, t.kind)
+            if cap is not None and counts[key] > cap:
                 raise ValueError("probe budget exceeded")
     return Branch(cut.life, cut.branch, seed, digest, tuple(sorted(entries, key=lambda e: e[0]["item_id"])))

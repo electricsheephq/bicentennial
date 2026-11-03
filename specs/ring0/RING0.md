@@ -451,11 +451,11 @@ The declaration; every run after it, with its cards; v1's A and A′ cards and b
 - **One wiring-only swap:** at the start of session ⌈0.75 × 10⌉ = 8, using T1's aliases and route-switch rule (§6).
 - **Long gaps:** one over sessions 1–5 and one over sessions 6–10. Placement excludes session 1 and the fixed fault points, as it does at T1.
 
-**The probe budget** per (life, branch, checkpoint) inherits T1's cap: 6 QA and 2 action items. T2 compiles one probe session per item (`probe_mode="per_item"`), so isolation is per item: each probe runs on its own store clone. Probe answers are live. G2 action items run but are not scored live until #118.
+**The probe budget** per (life, branch, checkpoint) inherits T1's cap: 6 QA and 2 action items. T2 compiles one probe session per item (`probe_mode="per_item"`), so isolation is per item: each probe runs on its own store clone. At T2 the cap is therefore a cost budget, not an isolation rule (per_item probes need no cap for isolation, §6): it bounds the number of live probes, for PREREG-v0.5 §6's T2 budget of at most 1 h per arm. Both compile paths, with and without fixture bindings, apply it. Probe answers are live. G2 action items run but are not scored live until #118.
 
 **The window:** T2 inherits T1's provisional W = 16K (§9; C-5).
 
-**Ring 1 composition:** for any life count n fixed by §14.7, n = max(10, ⌈12/f⌉), life k is G1 when k is odd and G2 when k is even, named in draw order. The first 10 lives are a reference roster of 5 G1 and 5 G2. Purpose: keep a group's share of counting lives matched to the public pack's as Ring 1 scales the life count.
+**Ring 1 composition:** for any life count n fixed by §14.7, n = max(10, ⌈12/f⌉), life k is G1 when k is odd and G2 when k is even, named in draw order. The first 10 lives are a reference roster of 5 G1 and 5 G2. Purpose: keep each group's share of counting lives within one life of the public pack's even split as Ring 1 scales the life count (an odd n gives G1 one extra life).
 
 ## References
 
