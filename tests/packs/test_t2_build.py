@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bicentennial import cli
+from bicentennial import cli, cue_words
 from bicentennial.canon import canon
 from bicentennial.items.compile import compile_branch
 from bicentennial.packs import build
@@ -49,6 +49,14 @@ def built_t2(tmp_path_factory):
         second = build_pair(out / "second", mp)
     assert packaged_templates == compiled_templates
     return out, first, second
+
+
+def test_t2_action_requests_carry_no_cue(built_t2):
+    # Template mode reads generated world values as gaps; the built prompts carry them.
+    out, first, _ = built_t2
+    requests = [r for rel in first["index"]["packs"] for r in cue_words.pack_requests(out / "first/T2" / rel)]
+    assert requests
+    assert not cue_words.check_requests(requests)
 
 
 def test_t2_deterministic_controls_receipt(built_t2):
