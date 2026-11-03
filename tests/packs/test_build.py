@@ -611,11 +611,11 @@ def test_t2_labels():
     assert mf.labels("T0") == {k: v["enum"][0] for k, v in ring.items() if k != "scripted_model"}
 
 
-@pytest.mark.parametrize("genre,seed", [("G1", 4), ("G2", 17)])
+@pytest.mark.parametrize("genre,seed", [("G1", 4), ("G2", 9)])
 def test_t2_life_pack_schema(tmp_path, genre, seed):
     from bicentennial.world.targeted import _tier_source, t1_life
 
-    row = dict(life="t2-g1-1" if genre == "G1" else "t2-g2-test", genre=genre, seed=seed)
+    row = dict(life="t2-g1-1" if genre == "G1" else "t2-g2-1", genre=genre, seed=seed)
     if genre == "G1":
         row["reads_session"] = 1
     spec = _tier_source("T2", lives=[row])
@@ -640,7 +640,7 @@ def test_t2_life_pack_schema(tmp_path, genre, seed):
         life.twin.b1.close()
 
 
-def test_t2_build_path_stays_closed(tmp_path):
-    with pytest.raises(ValueError, match="tier"):
-        build.build_tier("T2", tmp_path, harness_artifacts=A)
-    assert list(tmp_path.iterdir()) == []
+def test_t2_build_path(tmp_path, monkeypatch):
+    from .test_t2_build import build_pair
+
+    build_pair(tmp_path, monkeypatch)
