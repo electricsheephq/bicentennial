@@ -46,7 +46,7 @@ def _zlib_streams(value):
 
 
 def _read_prefix(stream):
-    """Everything a file decoder yields before it stops, read in steps so a later error loses nothing earlier."""
+    """What a file decoder returns before it stops, read in steps so an error keeps what earlier steps returned."""
     parts, size = [], 0
     try:
         while size < DECOMPRESS_CAP:
@@ -61,10 +61,12 @@ def _read_prefix(stream):
 
 
 def _decompressed(value):
-    """One level only. Return what decoding yields before it stops, and whether any content is opaque.
+    """One level only. Return the output decoding gives before it stops, and whether any content is opaque.
 
-    Output read before invalid bytes, a truncation or a bad checksum is searched; a header that yields nothing is
-    ordinary bytes. gzip, bz2 and xz readers follow their own concatenated members and padding.
+    Output returned before trailing bytes, a truncation or a zlib or gzip checksum error is searched; a decoding call
+    that raises loses its own output (a bz2 or xz bad check, invalid bytes inside a stream). A header that yields
+    nothing is ordinary bytes. The readers follow concatenated gzip members with zero padding and concatenated bz2 and
+    xz streams, but not xz stream padding.
     """
     if value.startswith((b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")):
         return b"", True
