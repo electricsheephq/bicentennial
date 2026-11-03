@@ -561,6 +561,8 @@ def test_plugin_disclosures(synth, installed, monkeypatch, tmp_path):
     ctx = replace(synth.ctx, entry=measured("holographic"), plugin_source=tmp_path / "plugin")
     run = replace(synth, ctx=ctx)
     monkeypatch.setattr(t1, "prepare", lambda **kw: ctx)
+    # This replayed run names a plug-in source with no archive; install pins are covered in tests/test_pins.py.
+    monkeypatch.setattr(t1, "check_install", lambda ctx, sandbox: None)
     set_run(monkeypatch, run)
     out = tmp_path / "out"
     assert invoke(installed, out, system="holographic", entry=ctx.entry, plugin_source=ctx.plugin_source) == 0
@@ -1072,6 +1074,8 @@ def test_engine_and_cache_disclosures_and_change_refusal(synth, installed, monke
     ctx = replace(synth.ctx, model_cache=cache, model_cache_sha256=digest)
     run = replace(synth, ctx=ctx)
     monkeypatch.setattr(t1, "prepare", lambda **kw: ctx)
+    # This replayed engine has no install inputs to measure; install pins are covered in tests/test_pins.py.
+    monkeypatch.setattr(t1, "check_install", lambda ctx, sandbox: None)
     set_run(monkeypatch, run)
     if changed:
         real = compare.corpus

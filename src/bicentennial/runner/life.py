@@ -41,7 +41,11 @@ from bicentennial.harness.hermes.adapter import (
     PinMismatch,
     _now,
 )
-from bicentennial.harness.hermes.config import HERMES_TOOLSETS
+from bicentennial.harness.hermes.config import (
+    HERMES_TOOLSETS,
+    install_directory,
+    install_file,
+)
 from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
@@ -375,9 +379,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         and any(p.name != MARKER for p in directory.iterdir())):
                     raise SystemRefused(["surface_not_empty"])
             for _, directory in surfaces:
-                directory.mkdir(parents=True, exist_ok=True)
+                install_directory(directory)
                 if not (directory / MARKER).exists():
-                    (directory / MARKER).write_bytes(b"")
+                    install_file(directory / MARKER, b"")
             cell = PluginCell(entry, adapter) if plugin else None
             if cell is not None:
                 installed = cell.install(plugin_source, alias=table.resolve(entry["name"],
@@ -430,7 +434,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         clones = []
                         if probe:
                             checkpoints.append(probe.checkpoint)
-                            settle_checkpoint(probe.checkpoint)
+                            # Settledness was judged at replay end on the real store; probe exits belong to clones.
                             for n, canonical in enumerate([*(p for _, p in surfaces), paths["workspace"]]):
                                 clone = root / "probe" / str(index) / str(n)
                                 clone.parent.mkdir(parents=True, exist_ok=True)

@@ -467,12 +467,12 @@ LEGACY_PACK_HASHES = {
     "pack/G2/Keep/keep-forget@1/s3-d1-none/1": "042d4bed66d006380f8721337a4a33d6bb2ef21a616db4a48cdf7627585d5d68",
     "pack/G2/Keep/keep-forget@1/s3-d1-none/2": "71564ee57313d8923b0f6db58bd5224fc812360faea00bd7cc3af1b3807584b2",
     "pack/G2/Keep/keep-forget@1/s3-d1-none/3": "521e774a905ff2c39344d529cd438ab9540ea5752fc9002a97530c8967eda6a6",
-    "pack/G2/Keep/keep-incidental@1/s2-d1-none/1": "b4116669f6e7e7eb0511e9e94b8e1984bf291242300a208cece5c16dc5d978cc",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-kill/1": "d1cba7ccaff8f769fb08698a4c87f47eec0289ef193fa195d8476684ea49f96c",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-none/1": "6162350a95d300471b0395fb33ba6eeb2ef140ffa2a5a121d697e9495f13fed1",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-none/2": "72b07c452fc4fabd2bd91f3d4e741fdd55c1d9121923c9b5083ac0561188708d",
-    "pack/G2/Keep/keep-incidental@1/s3-d1-none/3": "6b24e8c082311d7843fdf00b100509109b7ef41be064030d97bccfedadb9b053",
-    "pack/G2/Keep/keep-incidental@1/s3-d2-none/1": "844f174d7343c6358f289122f7ac6d9dbcccf508707d7e69d6c24d5fced8214e",
+    "pack/G2/Keep/keep-incidental@1/s2-d1-none/1": "c1e7eab2e9ed2d5aaeb3506c5ae92620ffb9a3bfb23be0af37c1ad8cccd726d7",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-kill/1": "4fc4c4a09d493649d3c2bee1b677d56ac9161ce8e81bb4b2710ba38bb28ddde8",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-none/1": "156240fcdb99c0a9673ca5ba04626ca9c9a5e9122e7796e45e096db3ce758119",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-none/2": "87aa335168658029415c742dc801f972b94eab3d84314a6da73de0895857afd5",
+    "pack/G2/Keep/keep-incidental@1/s3-d1-none/3": "93c4f7832b3fb53dfff4afba13b7e22e1d08e4a0e168134581e35b43bdc9d4f4",
+    "pack/G2/Keep/keep-incidental@1/s3-d2-none/1": "45af22d829407d600da372931bf3ffcff34dc6ee9f5348c422990174231f6461",
     "pack/G2/Keep/keep-neighbour@1/s2-d1-none/1": "7bb38f6bfe76b08066d8c45175228e90ba85c10bfe9063602e102c7ef289d7e8",
     "pack/G2/Keep/keep-neighbour@1/s3-d1-kill/1": "c86a53b01c2ee54514d5782ec4046087ed525bf2139426e4d8d4c799ed6c41b4",
     "pack/G2/Keep/keep-neighbour@1/s3-d1-none/1": "53b165da3a69755f5b4e1ad670ce0150dcc45628c2f56fd9943e59dd05549982",
@@ -494,10 +494,10 @@ CODE_PIN_FIELDS = ("scorer_sha256", "controls_sha256", "reader_sha256")
 # The four code pins at this commit, kept apart from the pack goldens so a pin move shows here alone. A change that
 # moves a pin updates this table from the failure message and says so in prereg/CHANGELOG.md.
 CODE_PINS = {
-    "controls": "91f36194ad5f45ac347452926d1b37dadf6dcb712365b093a28787e369858b4a",
+    "controls": "0b8ddb859ccefbcb16bcadc5b484b59ce4b9bb531f2d249b1be5d02d68e05288",
     "reader": "90ed83e9bed4b80088108199d2434e03d078a2995ca6eca9023858125eb6835f",
     "scoring": "925f3fc812fd80974eea1780b359b58bbcd5f35c338b1f2daf710e6adfe49880",
-    "scorer": "dd712f6a60153af4e5aaa951f9861f1f330f9bdcd479a8fcbabea6423b2fcb46",
+    "scorer": "414486f1178c332a78de6cfcbde39ce1326c6abb02f91f8e16e9f4834ad930e0",
 }
 
 

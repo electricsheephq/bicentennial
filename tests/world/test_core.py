@@ -188,7 +188,9 @@ def test_export_and_hash_across_orders_and_processes(tmp_path):
     outputs = []
     for hashseed in ('0', 'random'):
         output = subprocess.run([sys.executable, '-c', code], input=json.dumps(paths), text=True,
-                                env={'PYTHONHASHSEED': hashseed}, capture_output=True, check=True)
+                                env={'PYTHONHASHSEED': hashseed,
+                                     'PYTHONPATH': str(Path(__file__).resolve().parents[2] / 'src')},
+                                capture_output=True, check=True)
         outputs.append(json.loads(output.stdout))
     assert outputs == [expected, expected]
 

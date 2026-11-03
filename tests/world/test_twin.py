@@ -346,7 +346,10 @@ with tempfile.TemporaryDirectory() as directory:
     result.b1.close()
     db.close()
 '''
-    outputs = [subprocess.check_output([sys.executable, "-c", script], env={"PYTHONHASHSEED": seed})
+    # The script runs this file by a path relative to the repository root.
+    root = Path(__file__).resolve().parents[2]
+    outputs = [subprocess.check_output([sys.executable, "-c", script], cwd=root,
+                                       env={"PYTHONHASHSEED": seed, "PYTHONPATH": str(root / "src")})
                for seed in ("0", "random")]
     assert outputs[0] == outputs[1]
 

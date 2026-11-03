@@ -81,6 +81,7 @@ from bicentennial.score.invariants import (
     INVARIANTS,
     STRESSES,
     VERBATIM,
+    ForgetScan,
     ItemEvidence,
     SystemFault,
     Verdict,
@@ -458,7 +459,7 @@ class _Factory:
                 raise errors[0]
             active.add_note(f"cleanup: {type(errors[0]).__name__}")
 
-    def invariants(self, bound_s):
+    def invariants(self, bound_s, collector=None):
         verdicts = {}
         for invariant in INVARIANTS:
             for attempt in range(3):
@@ -467,7 +468,7 @@ class _Factory:
                 try:
                     try:
                         verdict = adapter_invariant(factory, invariant, bound_s=bound_s,
-                            snapshot=factory.snapshot if self.real else None)
+                            snapshot=factory.snapshot if self.real else None, collector=collector)
                     finally:
                         infra_before_close = len(factory.infra)
                         system_failed = bool(factory.system)
@@ -535,7 +536,7 @@ def _verb_member(pack, item):
 
 
 def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts, *,
-                     baseline_infra=(), session_wakes=False, kept_texts=None):
+                     baseline_infra=(), session_wakes=False, kept_texts=None, collector=None):
     evidence = []
     intrinsic = pack.template.fault if hasattr(pack.template, "fault") else False
     for item in sorted(pack.pack["items"], key=lambda i: i["item_id"]):
@@ -549,7 +550,7 @@ def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
             outcomes[iid]["failure_class"], crosses, False if intrinsic else baseline.get(iid),
             roots[record["branch"]], (kept_texts or {}).get(record["branch"], ())))
     for _ in range(3):
-        verdicts = run_invariants(evidence, tier="T0")
+        verdicts = run_invariants(evidence, tier="T0", collector=collector)
         # A known failure stands: a later attempt's scan fault must not mask it (RING0 E3).
         if not any("infra" in v.reasons and v.status != "FAIL" for v in verdicts.values()):
             break
@@ -921,7 +922,8 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                                  real=real, host_options=options)
     reports, outcomes_by_row, delivery = {}, {}, WriteDelivery()
     try:
-        adapter_verdicts = invariant_factory.invariants(bound_s)
+        forget_scan = ForgetScan()
+        adapter_verdicts = invariant_factory.invariants(bound_s, collector=forget_scan)
         adapter = [adapter_verdicts[i].to_obj() for i in INVARIANTS]
         invariant_audit = _audit([invariant_factory])
         delivery.add(invariant_factory.hosts)
@@ -947,7 +949,7 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                     baseline_infra = [i for i, twin_id in _baseline_members(pack, twin).items()
                                       if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
                 verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
-                    baseline_infra=baseline_infra, session_wakes=real, kept_texts=kept_texts)
+                    baseline_infra=baseline_infra, session_wakes=real, kept_texts=kept_texts, collector=forget_scan)
                 evidence = {id(h): (h.records(), h.egress.summary()) for f in factories for h in f.hosts}
                 _check_egress(list(evidence.values()))
                 audit = _audit(made, evidence)
@@ -975,10 +977,11 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                 outcomes_by_row[pack.meta["row"]["id"]] = outcomes
             finally:
                 _remove_units(factories)
-        if real:
-            for report in reports.values():
+        for report in reports.values():
+            report["suites"][0][1].append(("invariants.forget_scan", canon(forget_scan.to_obj()).decode()))
+            if real:
                 report["suites"][0][1].extend(delivery.properties("t0"))
-                report["junit"] = junit_xml(report["suites"])
+            report["junit"] = junit_xml(report["suites"])
         relation_json, relation_xml = _relations(index, selected, outcomes_by_row, entry["name"])
         for report in reports.values():
             if report["receipt"]["spend_micro_usd"] > 0:
@@ -1042,12 +1045,16 @@ def run_t0(*, system, packs, packs_dir, pack_hash, out, mode="api", workers=1,
                 "SpendRefused" if isinstance(error, SpendRefused) else
                 "gate_refused" if isinstance(error, GateRefused) else "pin_mismatch")
             fields = tuple(sorted(getattr(error, "fields", ())))
+            # A pin mismatch names what was found, as T1 and T2-lite do: the install pin's message carries the computed
+            # fingerprint, shown on stderr and in refusal.json.
+            detail = tuple(getattr(error, "detail", ())) or (
+                (str(error),) if isinstance(error, PinMismatch) and str(error) else ())
             if created:
                 refusal = dict(code=code, fields=list(fields))
-                if getattr(error, "detail", ()):
-                    refusal["detail"] = list(error.detail)
+                if detail:
+                    refusal["detail"] = list(detail)
                 (out / "refusal.json").write_bytes(canon(refusal))
-            print(code, file=sys.stderr)
+            print(code, *(detail if code == "pin_mismatch" else ()), file=sys.stderr)
             return 3
     except Exception:
         print("tool_failure", file=sys.stderr)

@@ -9,6 +9,7 @@ from bicentennial.world import world_hash
 from bicentennial.world.processes.forget import forget_request
 from bicentennial.world.processes.plants import rejection
 
+from .compile import planted_tokens
 from .protocol import CANARY
 
 KINDS = ("stale", "planted", "twin")
@@ -86,6 +87,7 @@ def reader_keys(db, schedule, cut, item, record, *, twin=None) -> dict:
                                           (subject, predicate))}
     stale = {fid for _, fid in sorted(retracts)} & related
     planted = {fid for fid, eid in plants if eid in events} & related
+    planted.update(facts[token] for token in planted_tokens(item) if token in facts)
     twins = set(twin["options"][0]["tokens"]) if twin is not None else set()
     competing = []
     for token in sorted(tokens[fid] for fid in sorted(visible_facts) if fid in tokens):
