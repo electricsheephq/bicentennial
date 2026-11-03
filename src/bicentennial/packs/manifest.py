@@ -43,6 +43,9 @@ def tree_sha256(root):
 
 
 def labels(tier):
+    if tier == "T2":
+        props = json.loads((SCHEMAS / "card_t2.schema.json").read_bytes())["properties"]["labels"]["properties"]
+        return {k: props[k]["enum"][0] for k in sorted(props) if k not in ("act", "signal", "scripted_model")}
     props = json.loads((SCHEMAS / "card_ring0.schema.json").read_bytes())["properties"]["labels"]["properties"]
     return {k: props[k]["enum"][0] for k in sorted(props) if k != "scripted_model" or tier == "T1"}
 

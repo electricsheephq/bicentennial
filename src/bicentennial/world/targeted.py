@@ -56,9 +56,11 @@ def seed_text(n):
     return str(n)
 
 
-def _tier_source(tier):
+def _tier_source(tier, *, lives=None):
+    if tier not in ("T0", "T1", "T2") or tier == "T2" and lives is None:
+        raise PlacementError("composition")
     ring = (ROOT / "specs/ring0/RING0.md").read_text(encoding="utf-8")
-    scale = named("t1") if tier == "T1" else named("t0-micro", sessions=3)
+    scale = named("t0-micro", sessions=3) if tier == "T0" else named(tier.lower())
     common = dict(canary=CANARY, tier=tier, scale=scale.name, window=scale.window,
                   window_label=PROVISIONAL["dev_window"],
                   levers_label=re.search(r'rungs: ([^"]+)', ring)[1])
@@ -77,11 +79,13 @@ def _tier_source(tier):
         compaction=dict(min_sprints=len(scale.sprint_ranges)),
         g1=dict(deadline_at=[[[1, 1], [2, 1]], [[1, 2], [2, 2]]]),
         g2=dict(pref_at={"seat-long": [[1, 1], [2, 1]], "seat-short": [[1, 2], [2, 4]]}),
-        lives=[dict(life="t1-g1", genre="G1", seed=1, reads_session=1),
-               dict(life="t1-g2", genre="G2", seed=2)],
+        lives=([dict(row) for row in lives] if tier == "T2" else
+               [dict(life="t1-g1", genre="G1", seed=1, reads_session=1),
+                dict(life="t1-g2", genre="G2", seed=2)]),
         selection=dict(g1=["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"],
                        g2=["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"],
-                       pinned={"drift-chain-fault": 20, "drift-booking": 20}))
+                       pinned={"drift-chain-fault": scale.checkpoints[-1],
+                               "drift-booking": scale.checkpoints[-1]}))
 
 
 def load_tier(path):
@@ -186,12 +190,14 @@ def expected_state(genre, schedule):
 
 
 def t1_schedule(spec, row):
-    schedule = build_schedule(seed_text(row["seed"]), row["life"], named("t1"))
+    scale = named(spec["scale"])
+    schedule = build_schedule(seed_text(row["seed"]), row["life"], scale)
     kill, swap = spec["kill"], spec["swap"]
     faults = [dict(kind="kill", session=kill["session"], turn=kill["turn"]),
               dict(kind="swap", session=swap["session"], turn=None)]
     sprints = [p.index for p in schedule.sessions if p.long_sprint]
-    if (len(schedule.sessions) != 20 or schedule.scale.checkpoints != (10, 20)
+    if (len(schedule.sessions) != scale.sessions
+            or schedule.scale.checkpoints != tuple(spec["checkpoints"])
             or schedule.scale.window != spec["window"] or schedule.fault_lite() != faults
             or len(sprints) < spec["compaction"]["min_sprints"]
             or not any(s < kill["session"] for s in sprints)
@@ -219,6 +225,7 @@ def _assign_checkpoints(db, schedule, templates, *, spec, principal_id, genre):
     rendered = cut(db, schedule, branch="B0", principal_id=principal_id,
                    expected_state=expected_state(genre, schedule)(db))
     assigned, counts = [], {}
+    checkpoints = tuple(spec["checkpoints"])
 
     def compile_one(template):
         return compile_branch(db, schedule, rendered, (template,)).entries
@@ -230,28 +237,41 @@ def _assign_checkpoints(db, schedule, templates, *, spec, principal_id, genre):
 
     for template in sorted(templates, key=lambda t: t.template_id):
         pin = spec["selection"]["pinned"].get(template.template_id)
-        chosen = replace(template, checkpoint=pin if pin is not None else 20)
+        chosen = replace(template, checkpoint=pin if pin is not None else checkpoints[-1])
         try:
             entries = compile_one(chosen)
         except ValueError:
             if pin is not None:
                 raise
-            chosen = replace(template, checkpoint=10)
-            entries = compile_one(chosen)
-            if counts.get((10, template.kind), 0) + len(entries) > spec[f"{template.kind}_per_checkpoint"]:
+            for checkpoint in reversed(checkpoints[:-1]):
+                chosen = replace(template, checkpoint=checkpoint)
+                try:
+                    entries = compile_one(chosen)
+                except ValueError:
+                    continue
+                break
+            else:
+                raise
+            if counts.get((chosen.checkpoint, template.kind), 0) + len(entries) > spec[f"{template.kind}_per_checkpoint"]:
                 raise PlacementError("composition") from None
         if not entries or not hosts(entries):
             raise PlacementError("hostable")
         limit = spec[f"{template.kind}_per_checkpoint"]
-        if pin is None and chosen.checkpoint == 20 and all(hostable(meta["evidence_session"], 10) for _, meta in entries):
-            try:
-                earlier = replace(template, checkpoint=10)
-                candidates = compile_one(earlier)
-            except ValueError:
-                candidates = ()
-            if (candidates and hosts(candidates)
-                    and counts.get((10, template.kind), 0) + len(candidates) <= limit):
-                chosen, entries = earlier, candidates
+        if pin is None:
+            for checkpoint in checkpoints:
+                if checkpoint >= chosen.checkpoint:
+                    break
+                if not all(hostable(meta["evidence_session"], checkpoint) for _, meta in entries):
+                    continue
+                try:
+                    earlier = replace(template, checkpoint=checkpoint)
+                    candidates = compile_one(earlier)
+                except ValueError:
+                    candidates = ()
+                if (candidates and hosts(candidates)
+                        and counts.get((checkpoint, template.kind), 0) + len(candidates) <= limit):
+                    chosen, entries = earlier, candidates
+                    break
         key = chosen.checkpoint, template.kind
         counts[key] = counts.get(key, 0) + len(entries)
         assigned.append(chosen)
@@ -264,7 +284,8 @@ def _build_t1(path, schedule, *, spec, row):
     path, db = Path(path), None
     try:
         if row["genre"] == "G2":
-            life = build_base(path, seed=seed_text(row["seed"]), life=row["life"], scale=named("t1"), pref_at=spec["g2"]["pref_at"])
+            life = build_base(path, seed=seed_text(row["seed"]), life=row["life"], scale=schedule.scale,
+                              pref_at=spec["g2"]["pref_at"])
             db, principal = life.db, life.people.principal
             if life.schedule.to_json() != schedule.to_json():
                 raise PlacementError("composition")
@@ -426,7 +447,7 @@ def _restart_crossing(schedule, compiled):
 
 
 def generate(spec_or_row, templates, build, *, out_dir, _tier=None):
-    """Build a micro Recipe, or a T1 path factory returning (connection, principal).
+    """Build a micro Recipe, or a tier path factory returning (connection, principal).
 
     The caller owns the returned twin's B1 connection; B0 is closed on return.
     Every failure after reserving the directory removes the entire reservation.
@@ -503,7 +524,7 @@ def generate(spec_or_row, templates, build, *, out_dir, _tier=None):
                 _untouched(db)
             if not micro and genre == "G1":
                 _check_reads(db0, twin.b1, schedule)
-            manifest = dict(canary=CANARY, tier="T0" if micro else "T1", life=schedule.life,
+            manifest = dict(canary=CANARY, tier="T0" if micro else spec["tier"], life=schedule.life,
                             genre=genre, seed=seed, generator_version=meta["generator_version"],
                             spec=spec.to_obj(templates[0]) if micro else dict(row),
                             world_hash_b0=world_hash(db0), world_hash_b1=world_hash(twin.b1),
