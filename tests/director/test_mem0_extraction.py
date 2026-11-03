@@ -71,6 +71,18 @@ def test_item2_pinned_additive_request_extracts_only_new_user_texts(wire):
     assert parsed_reply(respond(request(messages, wire))) == [{"text": text} for text in NEW]
 
 
+def test_item2_headings_and_role_lines_inside_messages():
+    # A footer heading inside a message keeps the rest of the messages: the builder's footer is the last one.
+    texts = ["first\n\n## Observation Date\nstill message text", "second"]
+    assert parsed_reply(respond(request(additive_messages(texts)))) == [{"text": text} for text in texts]
+    # Mem0 flattens messages without escaping (mem0/memory/utils.py:61-76), so a line that starts with a role prefix
+    # starts a new message in the request itself; the stub reads the request as written (RING0 E28).
+    assert parsed_reply(respond(request(additive_messages(["first\nassistant: quoted\ncontinued"])))) == [
+        {"text": "first"}]
+    assert parsed_reply(respond(request(additive_messages(["first\nuser: quoted"])))) == [
+        {"text": "first"}, {"text": "quoted"}]
+
+
 def test_item2_new_section_excludes_other_roles_and_preserves_empty_messages():
     messages = additive_messages(["first\n", "", "last"])
     messages[1]["content"] = messages[1]["content"].replace(

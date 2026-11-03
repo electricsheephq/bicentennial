@@ -84,8 +84,9 @@ def _last_facts(text):
 def _mem0(call, messages):
     # mem0ai 2.2.1: mem0/memory/main.py:950-964 and mem0/configs/prompts.py:1035-1042.
     if [m.get("role") for m in messages] == ["system", "user"]:
+        # The builder's own Observation Date heading is the last one: one inside a message ends nothing.
         section = re.search(r"(?:\A|\n\n)## Existing Memories\n[^\n]*\n\n## New Messages\n"
-                            r"(.*?)\n\n## Observation Date\n",
+                            r"(.*)\n\n## Observation Date\n",
                             _text(messages[1].get("content")), re.DOTALL)
         if section is not None:
             # mem0/memory/utils.py:61-76 flattens messages into role-prefixed text.
