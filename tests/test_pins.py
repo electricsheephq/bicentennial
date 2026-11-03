@@ -363,7 +363,8 @@ def test_preflight_selected_slot_lease_and_first_arm(tier, declared, preflight_r
     monkeypatch.setattr(compare, "run_arms", arm)
     monkeypatch.setattr(t2lite, "_unit", arm)
     login = SimpleNamespace(drain=lambda: [])
-    stack = SimpleNamespace(inner=SimpleNamespace(login=login), close=lambda: None)
+    # T2-lite checks the stack for a latched stop before its first unit (#411); this one never stops.
+    stack = SimpleNamespace(inner=SimpleNamespace(login=login), close=lambda: None, state=lambda: {})
     monkeypatch.setattr(t2lite, "build_live_stack", lambda *a, **kw: stack)
     if declared == "f" * 64:
         assert invoke(tier, sandbox_slot=3) == 3
