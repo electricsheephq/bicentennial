@@ -27,7 +27,9 @@ def test_current_templates():
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                     and node.func.id == "Instance"
-                    and any(kw.arg == "decision_table_ref" for kw in node.keywords)):
+                    and any(kw.arg == "decision_table_ref"
+                            and not (isinstance(kw.value, ast.Constant) and kw.value.value is None)
+                            for kw in node.keywords)):
                 expected.append((path, node.lineno))
     assert expected
     assert len(requests) == len(expected)
@@ -47,6 +49,12 @@ def test_planted_template(tmp_path, prompt):
 def test_recall_template_excluded(tmp_path):
     template(tmp_path, '"What is my usual setting?"', action=False)
     assert not cue_words.check_requests(cue_words.template_requests(tmp_path))
+
+
+def test_recall_template_with_explicit_none_excluded(tmp_path):
+    # None is the field's default, so writing it marks a recall item as leaving it out does.
+    (tmp_path / "sample.py").write_text('Instance(prompt="What is my usual setting?", decision_table_ref=None)\n')
+    assert cue_words.template_requests(tmp_path) == ()
 
 
 def test_fstring_gap(tmp_path):

@@ -37,12 +37,13 @@ class Hit:
 def template_requests(root=TEMPLATES):
     """Read every module recursively, checking each action Instance's literal text.
 
-    Each formatted field is a gap, including fields with a literal expression. Unsupported action
-    prompt expressions, Instance calls with positional or ** arguments, Instance, replace or
-    __replace__ named other than to call it or in an annotation (a renamed import, an assignment, an
-    argument), and a prompt or decision table set through replace() or __replace__() fail rather than
-    silently losing coverage. A name reached dynamically, such as through getattr, is beyond a source
-    walk; pack mode reads the prompts as built.
+    An Instance is an action when its decision_table_ref is present and not None. Each formatted
+    field is a gap, including fields with a literal expression. Unsupported action prompt
+    expressions, Instance calls with positional or ** arguments, Instance, replace or __replace__
+    named other than to call it or in an annotation (a renamed import, an assignment, an argument),
+    and a prompt or decision table set through replace() or __replace__() fail rather than silently
+    losing coverage. A name reached dynamically, such as through getattr, is beyond a source walk;
+    pack mode reads the prompts as built.
     """
     root = Path(root)
     if not root.is_dir():
@@ -76,7 +77,9 @@ def template_requests(root=TEMPLATES):
             if call.args or any(keyword.arg is None for keyword in call.keywords):
                 raise ValueError(f"{path}:{call.lineno}: expected an Instance call with keyword arguments only")
             keywords = {keyword.arg: keyword.value for keyword in call.keywords}
-            if "decision_table_ref" not in keywords:
+            table = keywords.get("decision_table_ref")
+            # No table, left out or written as None, is what the compiler requires of a recall item.
+            if table is None or isinstance(table, ast.Constant) and table.value is None:
                 continue
             prompt = keywords.get("prompt")
             if isinstance(prompt, ast.Constant) and isinstance(prompt.value, str):
