@@ -1,0 +1,94 @@
+"""Per-item surface callers share the existing eviction and diagnostics lock."""
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock, RLock
+
+import pytest
+
+from bicentennial import surface_cache
+from bicentennial.harness.hermes import adapter, plugin_host
+from bicentennial.runner import kept, life
+from bicentennial.sandbox import surfaces
+from bicentennial.systems import controls, hermes_plugin
+
+
+@pytest.mark.parametrize("caller,verify", [(adapter, False), (plugin_host, False), (hermes_plugin, False),
+                                          (controls, False), (plugin_host, True), (hermes_plugin, True),
+                                          (controls, True)])
+def test_per_item_callers_forced_eviction(tmp_path, monkeypatch, caller, verify):
+    paused, resume, contention = Event(), Event(), Event()
+    guard = Lock()
+    iterations = 0
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock, self.calls = RLock(), 0
+
+        def __enter__(self):
+            with guard:
+                self.calls += 1
+                if self.calls == 2:
+                    contention.set()
+                    resume.set()
+            self.lock.acquire()
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    class Listings(dict):
+        def __iter__(self):
+            nonlocal iterations
+            victim = next(super().__iter__())
+            with guard:
+                iterations += 1
+                first = iterations == 1
+            if first:
+                paused.set()
+                assert resume.wait(5)
+            return iter([victim])
+
+        def __delitem__(self, key):
+            super().__delitem__(key)
+            resume.set()
+
+    trees = [tmp_path / str(i) for i in range(2)]
+    for i, tree in enumerate(trees):
+        tree.mkdir()
+        (tree / "value").write_text(str(i))
+    expected = [surfaces.install_hash(tree, [], 1234) for tree in trees]
+    monkeypatch.setattr(surface_cache, "LOCK", ObservedLock())
+    monkeypatch.setattr(surfaces, "_LISTINGS", Listings({str(i): {} for i in range(128)}))
+
+    def access(n):
+        if verify:
+            caller.verify_empty(trees[n], [], expected[n])
+        else:
+            assert caller.surface_hash(trees[n], []) == expected[n]
+
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(access, 0)
+        assert paused.wait(5)
+        second = pool.submit(access, 1)
+        second.result(timeout=10)
+        first.result(timeout=10)
+    assert contention.is_set() and len(surfaces._LISTINGS) == 128
+
+
+def test_direct_clone_and_install_hash_never_access_listings(tmp_path, monkeypatch):
+    class NoCache(dict):
+        def __setitem__(self, *args):
+            pytest.fail("unexpected listing cache write")
+
+        def get(self, *args):
+            pytest.fail("unexpected listing cache read")
+
+        def __getitem__(self, *args):
+            pytest.fail("unexpected listing cache read")
+
+    monkeypatch.setattr(surfaces, "_LISTINGS", NoCache())
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "value").write_text("before")
+    for n, caller in enumerate((life, kept, plugin_host, hermes_plugin)):
+        caller.clone_tree(source, tmp_path / str(n))
+        assert caller.install_hash(source, [], 1234) == surfaces.install_hash(source, [], 1234)

@@ -23,6 +23,7 @@ from bicentennial.report.t2lite_card import _LIVE_ANSWER
 from bicentennial.report.t2lite_flips import BaselineRefused
 from bicentennial.runner import t0
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
+from bicentennial.runner.kept import KeptRefused
 from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
 from bicentennial.runner.lock import SessionGate
 from bicentennial.runner.probe_live import (
@@ -44,6 +45,9 @@ class TierSpec:
     context_roots: Callable
     order: str = "serial"
     min_roots: int = 1
+    probe_mode: str = "ring0"
+    keep_pre_probe: bool = False
+    pre_probe_attribution: bool = False
 
 
 def _t1_roots(marker, admission):
@@ -52,7 +56,7 @@ def _t1_roots(marker, admission):
 
 T1_SPEC = TierSpec("T1", ("G1", "G2"), 2, _t1_roots)
 T2_SPEC = TierSpec("T2", ("G1",) * 5 + ("G2",) * 5, 8,
-                   lambda marker, admission: admission.max_roots, "longest", 4)
+                   lambda marker, admission: admission.max_roots, "longest", 4, "per_item", True, True)
 
 # Only T2 raises these (T1 and T2-lite always admit a root); T2's guide, written with its runner, documents them.
 T2_ONLY_REFUSALS = frozenset({"roots_below_min"})
@@ -238,7 +242,8 @@ class _ArmContext:
         return (self.context.gate if self.entry == self.context.entry else SessionGate(self.lock))
 
 
-def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=0, config=None):
+def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=0, config=None,
+          spec=T1_SPEC, keep=None, unit=None):
     config = config or Arm.from_context(ctx, arm)
     key, arm = config.key, config.role
     ctx = _ArmContext(ctx, config)
@@ -249,7 +254,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
             start_ms=start, end_ms=time.time_ns() // 1_000_000, attempts=len(runs))
 
     try:
-        result = _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops)
+        options = dict(spec=spec, keep=keep, unit=unit) if spec is not T1_SPEC or keep is not None else {}
+        result = _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops, **options)
     except Exception as error:
         with live.launch:
             live.stopped.set()
@@ -257,7 +263,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
     return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=timing())
 
 
-def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
+def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
+                   spec=T1_SPEC, keep=None, unit=None):
     from bicentennial.runner import t1
 
     measured = False
@@ -270,6 +277,9 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
                 worker_argv=t1._worker(ctx, pack.life, branch, arm), visible=pack.visible,
                 honeypot_token=pack.meta["honeypot_token"], live=live, turn_wait_s=ctx.turn_wait_s,
+                probe_mode=spec.probe_mode,
+                keep_pre_probe=spec.keep_pre_probe and arm != "no_memory",
+                pre_probe_attribution=spec.pre_probe_attribution and arm != "no_memory",
                 extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
         except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
@@ -295,7 +305,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             if live.canary:
                 raise t1.T1Refused("canary")
             _check_stop(live)
-            scores = {}
+            scores, excluded = {}, set()
             probes = _read(run._root, "t2lite_probes.json")
             # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
             floor_stop = (floor_stops or {}).get(pack.life + branch)
@@ -318,6 +328,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                     asserted = isinstance(answer, dict) and answer.get("type") != "unknown"
                     result = replace(shadow, selected_option=_LIVE_ANSWER if asserted else None, competing_present=())
                 if not_scored_live:
+                    excluded.add(iid)
                     scores[iid] = dict(identity0(item), infra_reruns=attempt, base_verdict=None,
                         score_milli=None, worst_case_milli=None, accuracy_correct=None,
                         tuesday_class=None, envelope=None, failure_class=None, benign_extra=False)
@@ -333,8 +344,14 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 if cls or isinstance(scores[iid], Infra) or not_scored_live:
                     next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
             _write(out, "t2lite_probes.json", probes)
-            if arm == "no_memory" and (attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())):
+            final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
+            if arm == "no_memory" and final:
                 measured = _floor_measured(pack, branch, run, probes, scores)
+            if keep is not None and arm != "no_memory" and final:
+                kept_scores = {iid: (outcome(identity0(pack.cases[iid].item), None,
+                    cause="INFRA_FAILURE", infra_reruns=2) if isinstance(scored, Infra) else dict(scored))
+                    for iid, scored in scores.items()}
+                keep(unit, run, kept_scores, excluded)
         finally:
             run.cleanup()
         if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
@@ -378,10 +395,10 @@ def reduce_refusals(errors):
     primary = tuple(e for e in errors if not isinstance(e, LatchStop))
     # An unexpected exception must reach the tool-failure handler even alongside real refusals.
     crashes = tuple(e for e in primary if not isinstance(e, (
-        LiveCredentialStop, custody.Stop, BaselineRefused, *t1.REFUSALS)))
+        LiveCredentialStop, custody.Stop, BaselineRefused, KeptRefused, *t1.REFUSALS)))
     errors = crashes or primary or errors
     precedence = {code: rank for rank, code in enumerate(
-        ("canary", "honeypot", "credential_stop", "spend_stop", "live_stop"))}
+        ("canary", "honeypot", "credential_scan", "credential_stop", "spend_stop", "live_stop"))}
 
     def key(error):
         code = refusal_code(error)
@@ -470,7 +487,7 @@ class Collected:
         return self.results
 
 
-def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None, execute=None):
+def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None, execute=None, keep=None):
     """Admit ready units to bounded slots; collect every worker before reducing errors."""
     unit_list = tuple(unit_list)
     if len({u.identity for u in unit_list}) != len(unit_list):
@@ -482,7 +499,13 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
     final = set(floor_stops)
     pending, active, completed = list(range(len(unit_list))), {}, {}
     available = list(range(roots))
+    default_execute = execute is None
     execute = execute or _unit
+    keep_lock = Lock()
+
+    def serialized_keep(unit, run, scores, excluded):
+        with keep_lock:
+            return keep(unit, run, scores, excluded)
 
     def ready(i):
         u = unit_list[i]
@@ -495,8 +518,10 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
             if live.stopped.is_set():
                 return None
         try:
+            options = (dict(spec=spec, keep=serialized_keep if keep is not None else None, unit=u)
+                       if default_execute and (spec is not T1_SPEC or keep is not None) else {})
             return execute(ctx, u.pack, u.branch, u.arm.key, u.scratch, live, u.out,
-                           dict(floor_stops), slot=slot, config=u.arm)
+                           dict(floor_stops), slot=slot, config=u.arm, **options)
         except Exception as error:
             with live.launch:
                 live.stopped.set()
