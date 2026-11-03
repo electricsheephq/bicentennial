@@ -1937,7 +1937,8 @@ def test_forget_scan_property_counts_all_adapter_and_pack_scans(installed, tmp_p
     assert counts == dict(raw=dict(absent=expected + 1, found=0, inconclusive=0),
                           sqlite=dict(absent=0, found=expected, inconclusive=0),
                           opaque=dict(absent=0, found=0, inconclusive=expected))
-    assert collector.to_obj()["hits"] == ["store.db#memory.value"]
+    # The database is UTF-16LE, so the live value is both a raw hit and a value hit.
+    assert collector.to_obj()["hits"] == ["store.db", "store.db#memory.value"]
     for pack in selected:
         xml = ET.parse(out / pack.rel / "junit.xml").getroot()
         props = xml.findall(".//property[@name='invariants.forget_scan']")
