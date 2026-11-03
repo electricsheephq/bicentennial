@@ -276,3 +276,22 @@ def test_unparseable_sidecar_contributes_no_page_versions(tmp_path, monkeypatch,
     assert dict(pages.page_versions(path)) == expected
     assert base_scan(tmp_path, monkeypatch).verdict == "absent"
     assert scan(tmp_path)[0].verdict == "absent"
+
+
+def test_wal_frame_without_page_number_keeps_other_frames(tmp_path, monkeypatch):
+    with residue(tmp_path, "wal", junction="overflow") as (path, left, right):
+        wal = path.with_name(path.name + "-wal")
+        data = wal.read_bytes()
+        wal.write_bytes(data[:32] + bytes(24 + 1024) + data[32:])  # a zeroed frame before every real one
+        assert base_scan(tmp_path, monkeypatch).verdict == "absent"
+        assert scan(tmp_path)[0].hit_paths == ("store.db-wal",)
+        assert_status(tmp_path, "FAIL", "store_hit")
+
+
+def test_incomplete_last_main_page_keeps_complete_pages(tmp_path, monkeypatch):
+    with residue(tmp_path, "main", junction="overflow") as (path, left, right):
+        assert path.with_name(path.name + "-wal").stat().st_size > 32  # WAL frames alone would hide the main file
+        with path.open("ab") as stream:
+            stream.write(bytes(100))
+        assert "store.db" in scan(tmp_path)[0].hit_paths
+        assert_status(tmp_path, "FAIL", "store_hit")

@@ -28,14 +28,14 @@ def _wal(data):
     size = _uint(data, 8)
     if not _page_size(size):
         return []
-    # A partially written trailing frame has no complete page image. Earlier
+    # A partially written trailing frame has no complete page image, and a frame
+    # without a valid page number (a zeroed hole) has none either. The other
     # complete frames, including old generations past the current end, remain.
     pages = []
     for offset in range(32, len(data) - size - 23, size + 24):
         number = _uint(data, offset)
-        if not _page_number(number):
-            return []
-        pages.append((number, data[offset + 24:offset + 24 + size]))
+        if _page_number(number):
+            pages.append((number, data[offset + 24:offset + 24 + size]))
     return pages
 
 
@@ -98,9 +98,9 @@ def page_versions(copy):
             if len(page) == size:
                 versions[number].append((name, page[:usable]))
 
-    if not len(data) % size:
-        add(copy.name, ((offset // size + 1, data[offset:offset + size])
-                        for offset in range(0, len(data), size)))
+    # An incomplete last page (a torn write) has no image; the complete pages count.
+    add(copy.name, ((offset // size + 1, data[offset:offset + size])
+                    for offset in range(0, len(data), size)))
     for suffix, parse in (("-wal", _wal), ("-journal", lambda d: _journal(d, size))):
         path = copy.with_name(copy.name + suffix)
         if path.exists():
