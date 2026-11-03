@@ -406,7 +406,7 @@ def test_guide_documents_publication_guards():
 def test_item3_guide_documents_measured_floor_rule():
     text = (Path(__file__).resolve().parents[2] / "docs/developers/t2lite.md").read_text()
     assert "each unit’s final attempt" in text
-    assert "terminal live `probe_main` answer (status 200, no tool calls)" in text
+    assert "terminal live `probe_main` answer (status 200, no tool calls, text that is not blank)" in text
     assert "malformed answer text still counts, and unscored G2 actions need no answer" in text
 
 
@@ -496,7 +496,7 @@ def test_item1_answer_then_local_failure_propagates_to_remaining_items(scenario,
     assert "floor: not cached" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("reply", ["status_503", "tool_calls", "missing", "scripted", "later_503"])
+@pytest.mark.parametrize("reply", ["status_503", "tool_calls", "missing", "scripted", "later_503", "blank"])
 def test_item1_each_scored_item_needs_terminal_live_answer(scenario, tmp_path, monkeypatch, reply):
     # Two items in one probe session; the first answer cannot stand in for its unanswered peer.
     add_floor_peer(scenario)
@@ -511,7 +511,8 @@ def test_item1_each_scored_item_needs_terminal_live_answer(scenario, tmp_path, m
             failed = reply_record(run._root, final["cursor"],
                 status=503 if reply in ("status_503", "later_503") else 200,
                 served_by="scripted" if reply == "scripted" else "live",
-                text="", tool_calls=[dict(id="call", function=dict(name="synthetic_tool", arguments="{}"))]
+                text=" \n" if reply == "blank" else "",
+                tool_calls=[dict(id="call", function=dict(name="synthetic_tool", arguments="{}"))]
                     if reply == "tool_calls" else ())
             records += ((final,) if reply == "later_503" else ()) + (failed,)
         return replace(run, records=records)

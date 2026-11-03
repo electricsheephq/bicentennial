@@ -170,8 +170,9 @@ def _floor_measured(pack, branch, run, probes, scores):
         if (not run.classes.get(iid, (None, None))[0] and not isinstance(scored, Infra)
                 and final.get("served_by") == "live" and final.get("status") == 200):
             try:
-                calls, _ = output(json.loads(store.get(final["resp"])), "chat")
-                answered = not calls
+                calls, texts = output(json.loads(store.get(final["resp"])), "chat")
+                # A blank reply is no answer: caching it would keep a provider glitch for every later run.
+                answered = not calls and any(t.strip() if isinstance(t, str) else t for t in texts)
             except (OSError, ValueError, KeyError, TypeError, IndexError):
                 pass
         measured.append(answered)
