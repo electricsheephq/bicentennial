@@ -41,51 +41,34 @@ def load_milli(values):
 
 
 def background_summary(arm, ledgers=(), thread_counts=(), *, main_roles) -> dict:
-    """Pool independent ledgers, never comparing arrival times across life attempts.
+    """Pool independent ledgers, never comparing arrival times across life attempts or sessions.
 
-    quoted_turn is derived with the director's matcher before raw blobs are removed.
-    A later session's first cursor request is the ledger's observable end boundary;
-    there is no ledger end event, including for the last session.
+    quoted_turn is derived with the director's matcher before raw blobs are removed. There is no session-end count:
+    the next session starts only after the last one's worker is reaped, so a session's requests are all recorded
+    before the next session's first request (RING0 §13 E30).
     """
-    late, ended, unattributed = [], [], 0
+    late, unattributed = [], 0
     for records in ledgers:
         rows = [r for r in records if r.get("type") == "request"]
         starts = {}
-        sessions = {}
         for r in rows:
             c = r.get("cursor")
             if r.get("role") in main_roles and r.get("subrole") == "cursor" and c and "t" in r:
                 key = r["attempt_id"], c["turn"]
                 starts[key] = min(starts.get(key, r["t"]), r["t"])
-                sessions[r["attempt_id"]] = min(sessions.get(r["attempt_id"], r["t"]), r["t"])
-        # A failed session may have background rows but no main request of its own.
-        order = dict.fromkeys(r["attempt_id"] for r in rows if r.get("attempt_id") is not None)
-        ends, boundary = {}, None
-        for sid in reversed(order):
-            if boundary is not None:
-                ends[sid] = boundary
-            if sid in sessions:
-                boundary = sessions[sid]
         for r in rows:
             if r.get("role") in main_roles:
                 continue
-            sid, arrival = r.get("attempt_id"), r.get("t")
-            boundary = ends.get(sid)
-            # End arrivals are disjoint from late arrivals, even if they quote an old turn.
-            if boundary is not None and arrival is not None and arrival > boundary:
-                ended.append(arrival - boundary)
-                continue
-            quoted = r.get("quoted_turn")
+            quoted, arrival = r.get("quoted_turn"), r.get("t")
             if quoted is None:
                 unattributed += 1
                 continue
-            next_start = starts.get((sid, quoted + 1))
+            next_start = starts.get((r.get("attempt_id"), quoted + 1))
             if next_start is not None and arrival is not None and arrival > next_start:
                 late.append(arrival - next_start)
     counts = [n for n in thread_counts if n is not None]
     return dict(arm=arm, late=dict(count=len(late), max_delay_ms=max(late, default=None)),
         unattributed=dict(count=unattributed),
-        after_session_end=dict(count=len(ended), max_delay_ms=max(ended, default=None)),
         threads_at_turn_start=dict(count=sum(n > 0 for n in counts), max_alive=max(counts, default=0)))
 
 

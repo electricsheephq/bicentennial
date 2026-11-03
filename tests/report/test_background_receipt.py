@@ -77,22 +77,16 @@ def test_quote_attribution_uses_director_blobs_and_arrival(tmp_path, monkeypatch
         d.close()
 
 
-def test_after_session_end_is_separate_and_uses_next_first_main():
-    rows = [request(1, 100, 1), request(2, 200, 2),
-            request(3, 330, quoted=1), request(4, 300, 1, session="s2", role="probe_main")]
+def test_late_is_per_attempt_and_there_is_no_session_end_count():
+    # An s1 request quoting turn 1 is late against s1's turn 2; an s2 request quoting turn 1 has no s2 turn 2 to be
+    # late against and never borrows s1's. A request the next session records without a quote of its own turns (one
+    # still in flight when the old worker was reaped) counts as unattributed.
+    rows = [request(1, 100, 1), request(2, 200, 2), request(3, 260, quoted=1),
+            request(4, 300, 1, session="s2"), request(5, 320, session="s2", quoted=1), request(6, 330, session="s2")]
     result = background_summary("system", [rows])
-    assert result["after_session_end"] == dict(count=1, max_delay_ms=30)
-    assert result["late"] == dict(count=0, max_delay_ms=None)
-    # A retry and a later main turn in the next session do not move the end boundary.
-    rows += [request(5, 301, 1, session="s2", subrole="retry"), request(6, 400, 2, session="s2")]
-    assert background_summary("system", [rows]) == result
-
-
-def test_after_session_end_without_an_old_main_request():
-    rows = [request(1, 330), request(2, 300, 1, session="s2", role="probe_main")]
-    result = background_summary("system", [rows])
-    assert result["after_session_end"] == dict(count=1, max_delay_ms=30)
-    assert result["late"]["count"] == result["unattributed"]["count"] == 0
+    assert result["late"] == dict(count=1, max_delay_ms=60)
+    assert result["unattributed"] == dict(count=1)
+    assert set(result) == {"arm", "late", "unattributed", "threads_at_turn_start"}
 
 
 def test_independent_ledgers_and_unattributed_never_guess():
@@ -100,7 +94,7 @@ def test_independent_ledgers_and_unattributed_never_guess():
     other = [request(1, 50, 1, session="s2")]
     result = background_summary("system", [rows, other], [0, 2, 1, None])
     assert result["unattributed"] == dict(count=1)
-    assert result["late"]["count"] == result["after_session_end"]["count"] == 0
+    assert result["late"]["count"] == 0
     assert result["threads_at_turn_start"] == dict(count=2, max_alive=2)
 
 
@@ -121,7 +115,7 @@ def test_new_receipt_keys_are_required(key):
         validate("receipt", value)
 
 
-@pytest.mark.parametrize("part", ["late", "unattributed", "after_session_end", "threads_at_turn_start"])
+@pytest.mark.parametrize("part", ["late", "unattributed", "threads_at_turn_start"])
 def test_background_fields_are_closed_required_and_bounded(part):
     value = receipt()
     target = value["background"][0][part]
