@@ -11,7 +11,7 @@ Several accepted fixes changed what the kit measures, and each one would have fo
 ## What ran
 
 - **Commit:** `e687fdb9d7782fc692df3d60d882ac2eb6e81026`, `main` after the batch's last pull request ([#436](https://github.com/electricsheephq/bicentennial/pull/436)).
-- **Hosts:** the two dedicated Linux bench hosts used for v0.2's check, with 16 and 12 vCPUs, each running nothing else. The kit and every worker ran at the lowest CPU and I/O priority.
+- **Hosts:** the two dedicated Linux bench hosts used for v0.2's check, with 16 and 12 vCPUs, each running nothing but this check. The kit and every worker ran at the lowest CPU and I/O priority.
   - **Idle host (16 vCPUs):** nothing else ran, and the kit's busy check read the host as idle at every reading (3,090 readings across its 12 receipts).
   - **Loaded host (12 vCPUs):** one `yes` process per CPU at the runs' own priority, for the whole run, as in v0.2's check. The kit's busy check read the host as busy at every reading (3,090), and all 12 `yes` processes were still alive when the last chain ended.
 - **Layout:** on each host, three chains at once, one per reference system (Hermes native, Holographic, Mem0 OSS). Each chain ran T1 twice, base and then run1, and the run script compared run1's cards with base's.

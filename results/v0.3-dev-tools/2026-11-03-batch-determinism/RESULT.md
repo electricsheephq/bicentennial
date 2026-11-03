@@ -132,7 +132,7 @@ Source: receipt.json timings[].sessions[]: drain (the last entry is the session-
 
 ### e687fdb-loaded against e687fdb-idle
 
-| System | Run | W before | W after | Saved |
+| System | Run | W idle | W loaded | Idle minus loaded |
 |---|---|---|---|---|
 | hermes-native | base | 3,713 s | 8,911 s | -5,198 s (-140%) |
 | hermes-native | run1 | 3,709 s | 8,915 s | -5,206 s (-140%) |
@@ -140,6 +140,8 @@ Source: receipt.json timings[].sessions[]: drain (the last entry is the session-
 | holographic | run1 | 3,776 s | 9,085 s | -5,308 s (-141%) |
 | mem0-oss | base | 5,205 s | 12,283 s | -7,078 s (-136%) |
 | mem0-oss | run1 | 5,201 s | 12,372 s | -7,172 s (-138%) |
+
+A negative value is the extra time the loaded host took.
 
 ## Files
 
