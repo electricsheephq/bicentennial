@@ -30,6 +30,7 @@ from bicentennial.controls.cache import (
     ensure,
     read_entry,
 )
+from bicentennial.director.roles import MAIN_ROLES
 from bicentennial.director.routes import RouteTable, route_table_hash
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.gitenv import git_env
@@ -59,6 +60,7 @@ from bicentennial.report.junit import (
 )
 from bicentennial.report.receipt import (
     SpendRefused,
+    background_summary,
     build_receipt,
     busy,
     ledger_latencies,
@@ -386,6 +388,7 @@ class _Factory:
         self.infra = []
         self.system = []
         self.snapshots = 0
+        self.fresh_listings = {}
         self.unit.mkdir(parents=True)
 
     def __call__(self):
@@ -434,10 +437,11 @@ class _Factory:
         destination.mkdir(parents=True)
         if self.real:
             roots = []
-            for i, (surface, _) in enumerate(adapter.surfaces()):
+            for i, ((surface, _), fresh) in enumerate(zip(adapter.surfaces(), adapter.fresh_listings(), strict=True)):
                 root = destination / str(i)
                 clone_tree(surface, root)
                 roots.append(root)
+                self.fresh_listings[root] = fresh
             return tuple(roots)
         (destination / "checkpoint.bin").write_bytes(_Guarded(adapter).checkpoint())
         return (destination,)
@@ -466,7 +470,8 @@ class _Factory:
                 try:
                     try:
                         verdict = adapter_invariant(factory, invariant, bound_s=bound_s,
-                            snapshot=factory.snapshot if self.real else None, collector=collector)
+                            snapshot=factory.snapshot if self.real else None, collector=collector,
+                            fresh=factory.fresh_listings.get if self.real else None)
                     finally:
                         infra_before_close = len(factory.infra)
                         system_failed = bool(factory.system)
@@ -534,7 +539,7 @@ def _verb_member(pack, item):
 
 
 def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts, *,
-                     baseline_infra=(), session_wakes=False, kept_texts=None, collector=None):
+                     baseline_infra=(), session_wakes=False, kept_texts=None, collector=None, fresh_listings=None):
     evidence = []
     intrinsic = pack.template.fault if hasattr(pack.template, "fault") else False
     for item in sorted(pack.pack["items"], key=lambda i: i["item_id"]):
@@ -546,7 +551,9 @@ def _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
                 for kind, session, _ in pack.schedule.wakes()))
         evidence.append(ItemEvidence(item, record, pack.keys[iid], results.get(iid),
             outcomes[iid]["failure_class"], crosses, False if intrinsic else baseline.get(iid),
-            roots[record["branch"]], (kept_texts or {}).get(record["branch"], ())))
+            roots[record["branch"]], (kept_texts or {}).get(record["branch"], ()),
+            tuple(fresh_listings.get(root) for root in roots[record["branch"]])
+            if fresh_listings is not None else None))
     for _ in range(3):
         verdicts = run_invariants(evidence, tier="T0", collector=collector)
         # A known failure stands: a later attempt's scan fault must not mask it (RING0 E3).
@@ -824,6 +831,7 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         runtime_by_role=audit["runtime"], spend_micro_usd=0, store_growth_bytes=audit["growth"],
         process_ids=audit["pids"], ports=audit["ports"], temporary_paths=audit["paths"],
         egress_failed_samples=audit["failed_samples"],
+        background=[background_summary("system", [receipt_records], main_roles=MAIN_ROLES)], turn_wait_s="3.0", units=[],
         raw_body_digest=raw_body_digest(receipt_records))
     return dict(card=card, receipt=receipt, junit=junit, suites=suites, invariants=canon(verdicts),
                 controls=canon(controls), code=1 if gate in ("INVALID", "FAIL") else
@@ -946,7 +954,8 @@ def _execute(prepared, *, packs_dir, pack_hash, out, cache, workers, publication
                     baseline_infra = [i for i, twin_id in _baseline_members(pack, twin).items()
                                       if base_outcomes[twin_id]["failure_class"] == "BLOCKED"]
                 verdicts = _pack_invariants(pack, results, outcomes, roots, baseline, adapter_verdicts,
-                    baseline_infra=baseline_infra, session_wakes=real, kept_texts=kept_texts, collector=forget_scan)
+                    baseline_infra=baseline_infra, session_wakes=real, kept_texts=kept_texts, collector=forget_scan,
+                    fresh_listings={r: listing for f in made for r, listing in f.fresh_listings.items()})
                 evidence = {id(h): (h.records(), h.egress.summary()) for f in factories for h in f.hosts}
                 _check_egress(list(evidence.values()))
                 audit = _audit(made, evidence)

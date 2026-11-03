@@ -40,10 +40,42 @@ def load_milli(values):
     return [milli(Fraction(v)) for v in values]
 
 
+def background_summary(arm, ledgers=(), thread_counts=(), *, main_roles) -> dict:
+    """Pool independent ledgers, never comparing arrival times across life attempts or sessions.
+
+    quoted_turn is derived with the director's matcher before raw blobs are removed. There is no session-end count:
+    the next session starts only after the last one's worker is reaped, so a session's requests are all recorded
+    before the next session's first request (RING0 §13 E30).
+    """
+    late, unattributed = [], 0
+    for records in ledgers:
+        rows = [r for r in records if r.get("type") == "request"]
+        starts = {}
+        for r in rows:
+            c = r.get("cursor")
+            if r.get("role") in main_roles and r.get("subrole") == "cursor" and c and "t" in r:
+                key = r["attempt_id"], c["turn"]
+                starts[key] = min(starts.get(key, r["t"]), r["t"])
+        for r in rows:
+            if r.get("role") in main_roles:
+                continue
+            quoted, arrival = r.get("quoted_turn"), r.get("t")
+            if quoted is None:
+                unattributed += 1
+                continue
+            next_start = starts.get((r.get("attempt_id"), quoted + 1))
+            if next_start is not None and arrival is not None and arrival > next_start:
+                late.append(arrival - next_start)
+    counts = [n for n in thread_counts if n is not None]
+    return dict(arm=arm, late=dict(count=len(late), max_delay_ms=max(late, default=None)),
+        unattributed=dict(count=unattributed),
+        threads_at_turn_start=dict(count=sum(n > 0 for n in counts), max_alive=max(counts, default=0)))
+
+
 def build_receipt(*, run_status, wall_start_ms, wall_end_ms, latency_ms, load_milli,
                   busy_marker_readings, tokens_by_role, runtime_by_role, spend_micro_usd,
                   store_growth_bytes, process_ids, ports, temporary_paths, raw_body_digest,
-                  egress_failed_samples=None, timings=None) -> dict:
+                  egress_failed_samples=None, timings=None, background=None, turn_wait_s="3.0", units=None) -> dict:
     """Validate a volatile receipt, including caller-summed runtime by role."""
     rows = [dict(role=r, input=v[0], output=v[1]) for r, v in sorted(tokens_by_role.items())]
     receipt = dict(canary=json.loads((SCHEMAS / "receipt.schema.json").read_bytes())[
@@ -56,6 +88,7 @@ def build_receipt(*, run_status, wall_start_ms, wall_end_ms, latency_ms, load_mi
         spend_micro_usd=spend_micro_usd, store_growth_bytes=store_growth_bytes,
         egress_failed_samples=dict(egress_failed_samples or {}),
         timings=list(timings or []),
+        background=list(background or []), turn_wait_s=str(turn_wait_s), units=list(units or []),
         process_ids=sorted(set(process_ids)), ports=sorted(set(ports)),
         temporary_paths=sorted(set(temporary_paths)), raw_body_digest=raw_body_digest)
     validate("receipt", receipt)

@@ -96,7 +96,7 @@ def main():
             path = store / f"{sid}.json"
             history = json.loads(path.read_bytes()) if path.exists() else []
             emit({"ok": cmd["session_id"] is None or path.exists(), "session_id": sid,
-                  "history": len(history), "active_memory_providers": [PROVIDER]})
+                  "alive_threads": ["MainThread"], "history": len(history), "active_memory_providers": [PROVIDER]})
             env = HOME / ".env"
             if MEM0 and (not env.exists() or env.read_bytes() != b"MEM0_TELEMETRY=false\n"):
                 post(CFG["model"]["base_url"], "https://telemetry.invalid/track", {}, refused=True)
@@ -120,7 +120,7 @@ def main():
             path.write_text(json.dumps(history))
             if MEM0:
                 sync(cmd["text"], msg["content"])
-            emit({"ok": True, "final": msg["content"], "history": len(history)})
+            emit({"ok": True, "final": msg["content"], "history": len(history), "alive_threads": ["MainThread"]})
         elif cmd["op"] == "end":
             override = HOME / ".fake-end"
             emit({"ok": True, **(json.loads(override.read_bytes()) if override.exists() else {"alive_threads": []})})

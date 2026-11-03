@@ -19,6 +19,11 @@ def ms(t0):
     return int((time.monotonic() - t0) * 1000)
 
 
+def alive_threads():
+    import threading
+    return sorted(t.name for t in threading.enumerate() if t.is_alive())
+
+
 def main():
     t0 = time.monotonic()
     sys.stdout = sys.stderr  # keep Hermes chatter off the control channel
@@ -41,8 +46,9 @@ def main():
                   "active_context_engine": getattr(getattr(getattr(state, "agent", None),
                                                              "context_compressor", None), "name", None),
                   "active_memory_providers": [p.name for p in getattr(memory, "providers", None) or []],
-                  "history": state and len(state.history), "t_ms": ms(t1)})
+                  "history": state and len(state.history), "t_ms": ms(t1), "alive_threads": alive_threads()})
         elif cmd["op"] == "turn":
+            at_start = alive_threads()
             tokens = set_session_vars(session_key=state.session_id, session_id=state.session_id, cwd=state.cwd,
                                       cron_session="")
             os.environ["HERMES_SESSION_ID"] = state.session_id
@@ -59,12 +65,11 @@ def main():
                 mgr.save_session(state.session_id)
             emit({"ok": err is None, "error": err, "final": result.get("final_response") or "",
                   "history": len(state.history), "hermes_session_id": getattr(state.agent, "session_id", None),
-                  "t_ms": ms(t1)})
+                  "t_ms": ms(t1), "alive_threads": at_start})
         elif cmd["op"] == "end":
-            import threading
             mgr.end_all_sessions()
             emit({"ok": True, "ended": True, "t_ms": ms(t1),
-                  "alive_threads": sorted(t.name for t in threading.enumerate() if t.is_alive())})
+                  "alive_threads": alive_threads()})
             break
 
 

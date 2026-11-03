@@ -406,7 +406,9 @@ def test_text_verdict_bytes_and_collector_zero_counts_are_unchanged(tmp_path):
     assert result == inv.StoreSearch("absent", (), ())
     assert report == dict(counts=dict(raw=dict(absent=1, found=0, inconclusive=0),
                                      sqlite=dict(absent=0, found=0, inconclusive=0),
-                                     opaque=dict(absent=0, found=0, inconclusive=0)), hits=[])
+                                     opaque=dict(absent=0, found=0, inconclusive=0),
+                                     unchanged=dict(absent=0, found=0, inconclusive=0)), hits=[],
+                          sqlite_version=sqlite3.sqlite_version)
     (tmp_path / "text").write_text(TOKEN)
     assert_status(tmp_path, "FAIL", "store_hit")
     assert TOKEN not in json.dumps(verdict.to_obj())

@@ -1,5 +1,6 @@
 """Cross-field replay bundle checks, discovered by contracts.run.validate."""
 
+import json
 import re
 
 from bicentennial.corpus.format import (
@@ -13,7 +14,7 @@ from bicentennial.corpus.format import (
 )
 from bicentennial.repro.ddmin import Constraints, is_closed
 
-from .run import register_check
+from . import run
 
 LIFE_FIELDS = frozenset((
     "catalogue_row", "generator_version", "genre", "seed", "recipe", "template",
@@ -44,6 +45,26 @@ def _check_life(life):
 
 
 def check_repro_bundle(bundle):
+    # run._check implements a small schema subset. Select the class branch here,
+    # then delegate its entire structure to the unpinned schema, including context.
+    schema = json.loads((run.SCHEMAS / "repro_bundle.schema.json").read_bytes())
+    repro_class = bundle["repro_class"]
+    expected_version = {"replay-from-schedule": "v0.1", "snapshot-probe": "v0.2",
+                        "live": "v0.2"}[repro_class]
+    _require(bundle["repro_version"] == expected_version, "repro class/version")
+    branch = next(s for s in schema["oneOf"]
+                  if repro_class in s["properties"]["repro_class"]["enum"])
+    run._check(branch, bundle)
+    if repro_class != "replay-from-schedule":
+        identity = bundle["identity"]
+        if "kept" in bundle:
+            expected_kept = "kept/" + "/".join(identity[k] for k in ("life", "branch", "item_id"))
+            _require(bundle["kept"] == expected_kept, "kept identity")
+        _require(identity["score_milli"] < 1000, "outcome must be a failure")
+        if identity["failure_class"] in ("SYSTEM_FAILURE", "FAIL_TASK"):
+            _require(identity["score_milli"] == 0, "system/task failure must score 0")
+        return
+
     schedule = bundle["schedule"]
     events, kept = schedule["events"], schedule["kept"]
     _require(len(events) == len(set(events)), "duplicate schedule event")
@@ -81,4 +102,4 @@ def check_repro_bundle(bundle):
     _check_life(bundle["life"])
 
 
-register_check("repro_bundle", check_repro_bundle)
+run.register_check("repro_bundle", check_repro_bundle)
