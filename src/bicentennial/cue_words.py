@@ -16,6 +16,8 @@ CUE_PHRASES = (
 _PATTERNS = tuple((phrase, re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split()))
                                      + r"\b", re.IGNORECASE)) for phrase in CUE_PHRASES)
 TEMPLATES = Path(__file__).resolve().parent / "items" / "templates"
+# The walker finds these calls by name, so any other use of either name could hide a request.
+_GUARDED = ("Instance", "replace")
 
 
 @dataclass(frozen=True)
@@ -36,9 +38,9 @@ def template_requests(root=TEMPLATES):
     """Read every module recursively, checking each action Instance's literal text.
 
     Each formatted field is a gap, including fields with a literal expression. Unsupported action
-    prompt expressions, Instance calls with positional or ** arguments, Instance named other than to
-    call it or in an annotation (a renamed import, an assignment, an argument), and a prompt or
-    decision table set through replace() fail rather than silently losing coverage.
+    prompt expressions, Instance calls with positional or ** arguments, Instance or replace named
+    other than to call it or in an annotation (a renamed import, an assignment, an argument), and a
+    prompt or decision table set through replace() fail rather than silently losing coverage.
     """
     root = Path(root)
     if not root.is_dir():
@@ -53,13 +55,14 @@ def template_requests(root=TEMPLATES):
                        key=lambda node: (node.lineno, node.col_offset))
         allowed = {id(call.func) for call in calls} | _annotation_nodes(tree)
         for node in ast.walk(tree):
-            renamed = isinstance(node, ast.ImportFrom) and any(
-                alias.name == "Instance" and alias.asname not in (None, "Instance") for alias in node.names)
-            named = ((isinstance(node, ast.Name) and node.id == "Instance")
-                     or (isinstance(node, ast.Attribute) and node.attr == "Instance"))
-            if renamed or (named and id(node) not in allowed):
-                raise ValueError(f"{path}:{node.lineno}: Instance is named other than to call it, "
-                                 "so a request built through that name cannot be checked")
+            for guarded in _GUARDED:
+                renamed = isinstance(node, ast.ImportFrom) and any(
+                    alias.name == guarded and alias.asname not in (None, guarded) for alias in node.names)
+                named = ((isinstance(node, ast.Name) and node.id == guarded)
+                         or (isinstance(node, ast.Attribute) and node.attr == guarded))
+                if renamed or (named and id(node) not in allowed):
+                    raise ValueError(f"{path}:{node.lineno}: {guarded} is named other than to call it, "
+                                     "so a request built through that name cannot be checked")
         for call in calls:
             name = (call.func.id if isinstance(call.func, ast.Name) else
                     call.func.attr if isinstance(call.func, ast.Attribute) else None)
@@ -85,7 +88,7 @@ def template_requests(root=TEMPLATES):
 
 
 def _annotation_nodes(tree):
-    """The ids of every node inside a type annotation, where naming Instance builds nothing."""
+    """The ids of every node inside a type annotation, where naming a guarded name builds nothing."""
     roots = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

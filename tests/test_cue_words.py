@@ -109,6 +109,11 @@ def test_unsupported_action_prompt(tmp_path, prompt):
     ('Act = Instance', "other than to call it"),
     ('Act = protocol.Instance', "other than to call it"),
     ('make(Instance)', "other than to call it"),
+    ('from dataclasses import replace as evolve\n'
+     'evolve(base, prompt="Use the usual setting.")', "other than to call it"),
+    ('r = dataclasses.replace\nr(base, prompt="Use the usual setting.")', "other than to call it"),
+    ('r = copy.replace', "other than to call it"),
+    ('apply(replace)', "other than to call it"),
 ])
 def test_unsupported_instance_call(tmp_path, call, match):
     # An action request the walker cannot read must fail, never vanish from the check.
@@ -130,6 +135,15 @@ def test_instance_in_annotations(tmp_path):
 def test_text_replace_is_not_a_prompt(tmp_path):
     template(tmp_path, 'f"Record the {p.replace(\'_\', \' \')} in {path}."')
     assert len(cue_words.template_requests(tmp_path)) == 1
+
+
+def test_replace_calls_that_set_no_request(tmp_path):
+    # Calling replace is allowed when it sets neither the prompt nor the decision table.
+    (tmp_path / "sample.py").write_text(
+        "from dataclasses import replace\n"
+        "variant = replace(base, target=\"t\")\n"
+        "label = name.replace(\"_\", \" \").replace(\"-\", \" \")\n")
+    assert cue_words.template_requests(tmp_path) == ()
 
 
 def fake_pack(tmp_path, *, cue=True):
