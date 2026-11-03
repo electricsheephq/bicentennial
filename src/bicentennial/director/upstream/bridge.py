@@ -1,5 +1,6 @@
 """S7 chat-to-Responses translation, with reasoning pinned by the live upstream."""
 
+import threading
 from dataclasses import replace
 
 from bicentennial.director.responder import Reply
@@ -96,6 +97,7 @@ class ResponsesBridge:
         if not self.upstreams or any(not up.effort for up in self.upstreams.values()):
             raise ValueError("bridge_effort_unpinned")
         self.inner, self.failure = inner, None
+        self._latch = threading.Lock()
 
     def respond(self, call):
         # A translation failure latches: nothing more is forwarded on either wire, and the inner stack stops.
@@ -110,16 +112,23 @@ class ResponsesBridge:
             body = to_responses(call.body, effort=up.effort)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             # A structural failure latches too, under a fixed code that never echoes the request.
-            self.failure = str(exc) if type(exc) is ValueError else "bridge_malformed"
+            # The first reason latched stays; each caller still raises its own (#447).
+            reason = str(exc) if type(exc) is ValueError else "bridge_malformed"
+            with self._latch:
+                self.failure = self.failure or reason
             if hasattr(self.inner, "stop"):
-                self.inner.stop(self.failure)
-            raise ValueError(self.failure) from None
+                self.inner.stop(reason)
+            raise ValueError(reason) from None
         reply = self.inner.respond(replace(call, wire="responses", body=body))
         return replace(reply, usage=chat_usage(reply.usage))
 
     def state(self):
+        # The inner stack keeps the first reason it was stopped with; the bridge's latch fills in
+        # only when the inner recorded none.
         state = self.inner.state()
-        return dict(state, stopped=True, stop_reason=self.failure) if self.failure else state
+        if not self.failure or state.get("stop_reason"):
+            return state
+        return dict(state, stopped=True, stop_reason=self.failure)
 
     def served_identities(self):
         return self.inner.served_identities()
