@@ -314,6 +314,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         # The wiped arm's wake hook wipes the probe's store after the copy is taken, so the copy
         # would hold text the probe never had.
         raise ValueError("keep_pre_probe is not supported on the wiped arm")
+    if keep_pre_probe:
+        from bicentennial.runner.kept import plain_item_id
+
+        # Each item's copy is a directory named by its id, so the id must not leave that directory.
+        if not all(plain_item_id(i["item_id"]) for i in items):
+            raise ValueError("keep_pre_probe needs item ids that are one plain path component")
     life_dir, scratch = Path(life_dir), Path(scratch)
     life = json.loads((life_dir / "life.json").read_bytes())
     schedule = schedule if schedule is not None else build_schedule(life["seed"], life["life"], named(life["scale"]))

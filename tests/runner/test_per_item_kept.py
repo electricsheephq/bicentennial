@@ -280,6 +280,23 @@ def test_credential_scan_keeps_a_raw_non_utf8_needle(observed, tmp_path):
     run.cleanup()
 
 
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_credential_scan_sees_entry_names(observed, tmp_path, kind):
+    # An entry's name is published with the copy, even when the entry holds nothing.
+    run = run_observed(observed, tmp_path / "attempt")
+    iid, record = next(iter(run.pre_probe.items()))
+    path = record.roots[0] / "x-PLANTED-NEEDLE"
+    if kind == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(b"")
+    with pytest.raises(kept.KeptRefused, match="^credential_scan$"):
+        publish(run, [dict(item_id=iid, score_milli=0, failure_class=None)], tmp_path / "out",
+                credential_needles=[b"PLANTED-NEEDLE"])
+    assert not record.directory.exists()
+    run.cleanup()
+
+
 def test_missing_snapshot_refuses(observed, tmp_path):
     run = run_observed(observed, tmp_path / "attempt")
     with pytest.raises(kept.KeptRefused, match="^pre_probe_missing$"):
@@ -296,6 +313,32 @@ def test_wiped_arm_refuses_pre_probe_copy(lives, tmp_path):
     # Its wake wipe runs after the copy would be taken, so the copy would mislead attribution.
     with pytest.raises(ValueError, match="not supported on the wiped arm"):
         drive(lives["t1-g1", "B0"], tmp_path, arm="wiped", keep_pre_probe=True)
+
+
+@pytest.mark.parametrize("item_id", ["../../../escaped-copy", "..", "a/b", "ABSOLUTE"])
+def test_pre_probe_copy_refuses_an_item_id_that_leaves_its_directory(lives, tmp_path, item_id):
+    # Each copy is a directory named by its item id, so an id that is not one plain component could escape.
+    case = lives["t1-g1", "B0"]
+    item_id = str(tmp_path / "escaped-copy") if item_id == "ABSOLUTE" else item_id
+    item = dict(next(i for i in case["items"] if i["stage"] != "act"), item_id=item_id)
+    with pytest.raises(ValueError, match="one plain path component"):
+        drive(case, tmp_path / "attempt", items=[item], probe_mode="per_item", keep_pre_probe=True)
+    assert not list(tmp_path.rglob("*"))
+
+
+def test_plain_item_id_is_the_repro_bundle_rule():
+    def patterns(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("item_id"), dict):
+                yield node["item_id"]["pattern"]
+            for value in node.values():
+                yield from patterns(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from patterns(value)
+
+    schema = json.loads((Path(__file__).resolve().parents[2] / "schemas/repro_bundle.schema.json").read_bytes())
+    assert set(patterns(schema)) == {f"^{kept._PLAIN_ID.pattern}$"}
 
 
 def test_ring0_opt_in_records_each_slot(lives, unit_sessions, tmp_path):

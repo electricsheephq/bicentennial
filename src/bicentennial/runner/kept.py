@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from bicentennial.sandbox.surfaces import clone_tree, install_hash
 
 # Budget for 16 sessions in each of 20 units, allowing 1 GiB per complete snapshot.
 KEPT_CAP_BYTES = 16 * 20 * (1 << 30)
+# One plain path component, as the repro bundle's item_id (schemas/repro_bundle.schema.json) requires.
+_PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,10 @@ def record_pre_probe(directory, *, surfaces, adapter, probe, slot, session, cloc
     return PreProbe(directory, tuple(roots), probe.checkpoint, fields)
 
 
+def plain_item_id(item_id):
+    return isinstance(item_id, str) and _PLAIN_ID.fullmatch(item_id) is not None
+
+
 class KeptRefused(ValueError):
     """A failed item's snapshot cannot be published safely or within the byte budget."""
 
@@ -104,6 +111,9 @@ def _needle_forms(needles):
 
 def _credential_hit(root, needles):
     for path in root.rglob("*"):
+        # Entry names are published with the copy, so they are scanned too.
+        if any(n in os.fsencode(path.relative_to(root)) for n in needles):
+            return True
         if path.is_symlink():
             if any(n in os.fsencode(os.readlink(path)) for n in needles):
                 return True
