@@ -397,7 +397,8 @@ def test_citation_parity_with_qa(quote, evidence, expected):
 
 
 # Content digests of T0 packs, excluding code pins and SQLite writer-version bytes.
-# Intentional content changes update these from the assertion's failure message.
+# Intentional content changes update these from the assertion's failure message and are recorded in
+# prereg/CHANGELOG.md, with a RING0 erratum when they change what the kit measures.
 LEGACY_PACK_HASHES = {
     "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/1": "15dc9abc9076cbaafe311b954b1e20c67bbc0455fcff38f057ed188d4f417556",
     "pack/G1/Drift/drift-chain-fault@1/s3-d1-kill/2": "454b066e16f23ecbda2ad7842624fb6d55272b3a261a7fb3d12ab0c3ebe74501",
@@ -489,6 +490,24 @@ LEGACY_PACK_HASHES = {
 
 
 CODE_PIN_FIELDS = ("scorer_sha256", "controls_sha256", "reader_sha256")
+
+# The four code pins at this commit, kept apart from the pack goldens so a pin move shows here alone. A change that
+# moves a pin updates this table from the failure message and says so in prereg/CHANGELOG.md.
+CODE_PINS = {
+    "controls": "1080557adb04b83a22f3638b969a382377536655ef713b86288c25ee87583131",
+    "reader": "90ed83e9bed4b80088108199d2434e03d078a2995ca6eca9023858125eb6835f",
+    "scoring": "925f3fc812fd80974eea1780b359b58bbcd5f35c338b1f2daf710e6adfe49880",
+    "scorer": "dd712f6a60153af4e5aaa951f9861f1f330f9bdcd479a8fcbabea6423b2fcb46",
+}
+
+
+def test_code_pins_are_recorded():
+    root = Path(cache.__file__).parents[1]
+    scorer = [p.relative_to(root).as_posix() for p in sorted((root / "score").glob("*.py"))]
+    pins = {name: scoring.code_sha256(files, root=root) for name, files in (
+        ("controls", cache.CONTROL_FILES), ("reader", cache.READER_FILES), ("scoring", scoring.SCORING_FILES),
+        ("scorer", scorer))}
+    assert pins == CODE_PINS, canon(pins).decode()
 
 
 def rehash_projected(stored, original, projected):
