@@ -288,3 +288,42 @@ def test_hit_in_capped_output_still_fails(tmp_path, monkeypatch):
     blob_store(tmp_path, zlib.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 8192))
     assert_no_encoded_token(tmp_path)
     assert_status(tmp_path, "FAIL", "store_hit")
+
+
+def test_many_tiny_zlib_streams_feed_input_once(monkeypatch):
+    # Each stream once received the whole rest of the value: many empty streams cost time in the square of its length.
+    fed, real = [], zlib.decompressobj
+
+    class Counting:
+        def __init__(self, *args):
+            self.decoder = real(*args)
+
+        def decompress(self, data, max_length=0):
+            fed.append(len(data))
+            return self.decoder.decompress(data, max_length)
+
+        def __getattr__(self, name):
+            return getattr(self.decoder, name)
+
+    monkeypatch.setattr(sqlite_scan.zlib, "decompressobj", Counting)
+    value = zlib.compress(b"") * 20000
+    assert sqlite_scan._zlib_streams(value) == (b"", False)
+    assert len(fed) == 20000
+    assert sum(fed) <= 16 * len(value)
+
+
+def test_token_across_many_tiny_zlib_streams_is_store_hit(tmp_path):
+    parts = [b"x"] * 3000 + [TOKEN[:4].encode(), TOKEN[4:].encode()] + [b"y"] * 3000
+    blob_store(tmp_path, b"".join(zlib.compress(part) for part in parts))
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+def test_zlib_error_keeps_output_of_earlier_steps(tmp_path):
+    encoder = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    text = (TOKEN + " " + " ".join(map(str, range(3000)))).encode()
+    body = encoder.compress(text) + encoder.flush(zlib.Z_FULL_FLUSH)
+    # A full flush ends on a block boundary; 0x07 then starts a final block of the reserved type, which raises.
+    blob_store(tmp_path, b"\x78\x9c" + body + b"\x07" + b"\0" * 64)
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")

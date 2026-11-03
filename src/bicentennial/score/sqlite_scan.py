@@ -27,22 +27,30 @@ def _zlib_header(value):
 
 
 def _zlib_streams(value):
-    """Consecutive zlib streams, read as raw deflate, so a bad checksum or trailing bytes lose nothing already read."""
-    output = b""
+    """Consecutive zlib streams, read as raw deflate, so a bad checksum or trailing bytes lose nothing already read.
+
+    Each stream is fed from a view of the value in steps that double from 64 bytes, so an error keeps what earlier
+    steps returned and a value made of many tiny streams costs time in proportion to its length, not its square.
+    """
+    view, parts, size, start = memoryview(value), [], 0, 0
     # A stream with a preset dictionary (FDICT) cannot be read without it.
-    while _zlib_header(value) and not value[1] & 0x20:
-        decoder = zlib.decompressobj(-zlib.MAX_WBITS)
-        try:
-            chunk = decoder.decompress(value[2:], DECOMPRESS_CAP - len(output))
-        except zlib.error:
-            return output, False
-        output += chunk
-        if len(output) >= DECOMPRESS_CAP:
-            return output, True
-        if not decoder.eof:
-            return output, False
-        value = decoder.unused_data[4:]  # past the stream's Adler-32 checksum
-    return output, False
+    while _zlib_header(view[start:]) and not view[start + 1] & 0x20:
+        decoder, pos, step = zlib.decompressobj(-zlib.MAX_WBITS), start + 2, 64
+        while not decoder.eof:
+            piece = view[pos:pos + step]
+            if not piece:
+                return b"".join(parts), False
+            try:
+                chunk = decoder.decompress(piece, DECOMPRESS_CAP - size)
+            except zlib.error:
+                return b"".join(parts), False
+            parts.append(chunk)
+            size += len(chunk)
+            if size >= DECOMPRESS_CAP:
+                return b"".join(parts), True
+            pos, step = pos + len(piece), min(2 * step, 1 << 20)
+        start = pos - len(decoder.unused_data) + 4  # past the stream's Adler-32 checksum
+    return b"".join(parts), False
 
 
 def _read_prefix(stream):
