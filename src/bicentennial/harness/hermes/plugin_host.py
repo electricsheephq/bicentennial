@@ -506,6 +506,10 @@ class HermesMemoryHost(Adapter):
     def surfaces(self):
         return [(d, list(v)) for d, v in self._surfaces]
 
+    def fresh_roots(self):
+        """Install-time copies in surfaces() order, never refreshed by a session."""
+        return tuple(directory for directory, _, _ in self._fresh)
+
     def records(self):
         path = self.paths["root"] / "ledger/ledger.jsonl"
         return [json.loads(line) for line in path.read_bytes().splitlines()] if path.exists() else []

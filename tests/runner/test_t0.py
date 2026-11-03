@@ -1,6 +1,7 @@
 """Offline T0 acceptance over installed public micro packs."""
 
 import ast
+import gzip
 import json
 import os
 import runpy
@@ -406,7 +407,7 @@ def test_retry_lock_change_refuses(installed, tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def fake_hosts(installed, tmp_path, monkeypatch):
+def fake_hosts(installed, tmp_path, monkeypatch, request):
     created = []
 
     class FakeHost(ReferenceStore):
@@ -422,6 +423,10 @@ def fake_hosts(installed, tmp_path, monkeypatch):
             self.paths["workspace"].mkdir()
             self.store = options["root"] / "store"
             self.store.mkdir()
+            if getattr(request, "param", None) == "binary":
+                (self.store / "dictionary.gz").write_bytes(gzip.compress(b"installed dictionary", mtime=0))
+            self.fresh = options["root"] / "fresh"
+            shutil.copytree(self.store, self.fresh)
             self.closed = 0
             self.log = []
             self.records, self.egress = list, SimpleNamespace(summary=dict)
@@ -430,6 +435,9 @@ def fake_hosts(installed, tmp_path, monkeypatch):
         def surfaces(self):
             (self.store / "events.json").write_bytes(self.checkpoint())
             return [(self.store, [])]
+
+        def fresh_roots(self):
+            return (self.fresh,)
 
         def close(self):
             self.closed += 1
@@ -1949,7 +1957,8 @@ def test_forget_scan_property_counts_all_adapter_and_pack_scans(installed, tmp_p
     counts = collector.to_obj()["counts"]
     assert counts == dict(raw=dict(absent=expected + 1, found=0, inconclusive=0),
                           sqlite=dict(absent=0, found=expected, inconclusive=0),
-                          opaque=dict(absent=0, found=0, inconclusive=expected))
+                          opaque=dict(absent=0, found=0, inconclusive=expected),
+                          unchanged=dict(absent=0, found=0, inconclusive=0))
     # The database is UTF-16LE, so the live value is both a raw hit and a value hit.
     assert collector.to_obj()["hits"] == ["store.db", "store.db#memory.value"]
     for pack in selected:
@@ -1957,3 +1966,119 @@ def test_forget_scan_property_counts_all_adapter_and_pack_scans(installed, tmp_p
         props = xml.findall(".//property[@name='invariants.forget_scan']")
         assert len(props) == 1
         assert props[0].attrib["value"].encode() == canon(collector.to_obj())
+
+
+@pytest.mark.parametrize("fake_hosts", ["binary"], indirect=True)
+def test_installed_binary_both_t0_paths(fake_hosts, installed, tmp_path):
+    from bicentennial.score.invariants import ForgetScan
+
+    factory, _ = fake_hosts
+    collector = ForgetScan()
+    adapter = factory.invariants(5, collector=collector)
+    assert adapter["INV-FORGET"].status == "PASS"
+    assert collector.counts["unchanged"]["absent"] > 0
+    without = adapter_invariants(factory, bound_s=5, snapshot=factory.snapshot)["INV-FORGET"]
+    assert (without.status, without.reasons) == ("INCONCLUSIVE", ("opaque_store",))
+    results, outcomes, roots, made, texts = t0._branches(installed[1], factory.pack, factory.entry,
+        installed[2], True, tmp_path / "branches", 1, bound_s=5, host_options={})
+    try:
+        pairs = {root: fresh for f in made for root, fresh in f.fresh_roots.items()}
+        for branch_roots in roots.values():
+            for root in branch_roots:
+                assert (root / "dictionary.gz").read_bytes() == (pairs[root] / "dictionary.gz").read_bytes()
+                assert not (pairs[root] / "events.json").exists()
+        def verdict(**kw):
+            values = t0._pack_invariants(factory.pack, results, outcomes, roots, {}, adapter, kept_texts=texts, **kw)
+            return next(v for v in values if v["invariant"] == "INV-FORGET")
+        assert verdict(fresh_roots=pairs)["status"] == "PASS"
+        assert verdict()["reasons"] == ["opaque_store"]
+    finally:
+        t0._remove_units(made)
+
+
+@pytest.mark.parametrize("with_fresh", [True, False])
+def test_shipped_gzip_full_t0_stub_stack(installed, tmp_path, stub_hosts, git_checkouts, monkeypatch, with_fresh):
+    # Use a locally constructed plug-in source, never repository history.
+    source = git_checkouts.checkout
+    (source / "dictionary.gz").write_bytes(gzip.compress(b"installed words", mtime=0))
+    for args in (["add", "dictionary.gz"], ["commit", "-qm", "synthetic dictionary"]):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True)
+    archive = subprocess.run(["git", "-C", str(source), "archive", "--format=tar", "HEAD"],
+                             check=True, capture_output=True).stdout
+    options, created, denied = stub_hosts
+    kwargs = options()
+    entry = load(REGISTRY / "holographic.toml")
+    entry["fresh_install_hash"] = ZERO_HASH
+    entry["artifact"]["sha256"] = sha256(archive).hexdigest()
+    kwargs.update(system="holographic", entry=entry, plugin_source=source)
+    pack = next(p for p in packs(installed) if p.meta["row"]["id"] == "g2-keep-forget-mft-1")
+    # Measure this synthetic install before the runner's normal admission checks.
+    lock = t0._lock(installed[1], pack, entry, installed[2], True)
+    measurement = t0._Factory(pack, "B0", tmp_path / "measurement", entry, lock, real=True,
+                              host_options=dict(kwargs["host_overrides"], plugin_source=source))
+    try:
+        entry["fresh_install_hash"] = measurement().fresh_install_hash
+    finally:
+        measurement.close()
+    if not with_fresh:
+        original = t0._Factory.snapshot
+        def snapshot(factory, adapter):
+            roots = original(factory, adapter)
+            factory.fresh_roots.clear()
+            return roots
+        monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
+    out = tmp_path / "binary-run"
+    code = run(installed, out, packs=[pack.rel], **kwargs)
+    if denied:
+        raise denied[0]
+    assert code in (0, 1)
+    for path in (out / "adapter_invariants.json", out / pack.rel / "invariants.json"):
+        forget = next(v for v in json.loads(path.read_bytes()) if v["invariant"] == "INV-FORGET")
+        assert forget["status"] == ("PASS" if with_fresh else "INCONCLUSIVE")
+        assert forget["reasons"] == ([] if with_fresh else ["opaque_store"])
+    assert created
+    for host in created:
+        for (_surface, _), fresh in zip(host.surfaces(), host.fresh_roots(), strict=True):
+            # Hosts may be cleaned up by the runner; the mapping is still the original install-time one.
+            assert fresh.parent.name == "t0-fresh"
+
+
+@pytest.mark.parametrize("fake_hosts", ["binary"], indirect=True)
+@pytest.mark.parametrize("with_fresh", [True, False])
+def test_installed_binary_full_t0_fake_run(fake_hosts, installed, tmp_path, monkeypatch, with_fresh):
+    factory, _ = fake_hosts
+    fake_worker_python(tmp_path)
+    empty_audit = t0._audit([])
+    monkeypatch.setattr(t0, "_audit", lambda factories, *args: dict(empty_audit))
+    if not with_fresh:
+        original = t0._Factory.snapshot
+        def snapshot(factory, adapter):
+            roots = original(factory, adapter)
+            factory.fresh_roots.clear()
+            return roots
+        monkeypatch.setattr(t0._Factory, "snapshot", snapshot)
+    out = tmp_path / "fake-binary-run"
+    assert run(installed, out, packs=[factory.pack.rel], system="hermes-native", hermes=tmp_path) == 0
+    for path in (out / "adapter_invariants.json", out / factory.pack.rel / "invariants.json"):
+        forget = next(v for v in json.loads(path.read_bytes()) if v["invariant"] == "INV-FORGET")
+        assert forget["status"] == ("PASS" if with_fresh else "INCONCLUSIVE")
+        assert forget["reasons"] == ([] if with_fresh else ["opaque_store"])
+    prop = ET.parse(out / factory.pack.rel / "junit.xml").find(".//property[@name='invariants.forget_scan']")
+    counts = json.loads(prop.attrib["value"])["counts"]
+    assert counts["unchanged"]["absent"] > 0 if with_fresh else counts["opaque"]["inconclusive"] > 0
+
+
+def test_snapshot_pairs_multiple_surfaces(fake_hosts, tmp_path):
+    factory, _ = fake_hosts
+    host = factory()
+    other, other_fresh = tmp_path / "other", tmp_path / "other-fresh"
+    other.mkdir()
+    (other / "binary").write_bytes(b"\0second surface")
+    shutil.copytree(other, other_fresh)
+    original = host.surfaces
+    host.host.surfaces = lambda: [*original(), (other, [])]
+    host.host.fresh_roots = lambda: (host.host.fresh, other_fresh)
+    roots = factory.snapshot(host)
+    assert factory.fresh_roots[roots[0]] == host.host.fresh
+    assert factory.fresh_roots[roots[1]] == other_fresh
+    assert (roots[1] / "binary").read_bytes() == (other_fresh / "binary").read_bytes()

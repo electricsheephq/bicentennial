@@ -1,8 +1,11 @@
 """S05 acceptance fixtures; script mode emits canonical, token-free verdicts."""
 
 import ast
+import gzip
 import json
+import os
 import runpy
+import shutil
 import sqlite3
 import sys
 from compression import zstd
@@ -608,3 +611,125 @@ def test_api_snapshot_error_without_checkpoint_hit_is_infra():
     assert v.failed == ()
     assert v.infra == ("forget-store",)
     assert (v.status, v.reasons) == ("INFRA_FAILURE", ("infra",))
+
+
+@pytest.fixture
+def installed_tree(tmp_path):
+    store, fresh = tmp_path / "store", tmp_path / "fresh"
+    store.mkdir()
+    (store / "dictionaries").mkdir()
+    (store / "dictionaries/words.gz").write_bytes(gzip.compress(b"quartz orchid " * 500, mtime=0))
+    shutil.copytree(store, fresh)
+    return store, fresh
+
+
+def test_unchanged_gzip_absent(installed_tree):
+    store, fresh = installed_tree
+    collector = inv.ForgetScan()
+    assert inv.search_store(store, [b"missing"], collector, fresh=fresh) == inv.StoreSearch("absent", (), ())
+    assert collector.counts["unchanged"] == dict(absent=1, found=0, inconclusive=0)
+    assert collector.counts["opaque"] == collector.counts["raw"] == dict(absent=0, found=0, inconclusive=0)
+    assert inv.search_store(store, [b"missing"], fresh=None).reason == "opaque_store"
+
+
+@pytest.mark.parametrize("change", ["one-byte", "new"])
+def test_changed_or_new_gzip_stays_opaque(installed_tree, change):
+    store, fresh = installed_tree
+    path = store / "dictionaries/words.gz"
+    if change == "one-byte":
+        before = path.stat()
+        data = path.read_bytes()
+        path.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert path.stat().st_size == (fresh / path.relative_to(store)).stat().st_size
+        assert path.stat().st_mtime_ns == (fresh / path.relative_to(store)).stat().st_mtime_ns
+    else:
+        path.rename(store / "dictionaries/new.gz")
+    scan = inv.search_store(store, [b"missing"], fresh=fresh)
+    assert (scan.verdict, scan.reason) == ("inconclusive", "opaque_store")
+
+
+def test_unchanged_raw_hit_still_fails(installed_tree):
+    store, fresh = installed_tree
+    for root in (store, fresh):
+        with (root / "dictionaries/words.gz").open("ab") as stream:
+            stream.write(TOKEN.encode())
+    collector = inv.ForgetScan()
+    scan = inv.search_store(store, inv.needles_for([TOKEN]), collector, fresh=fresh)
+    assert scan.verdict == "found" and scan.hit_paths == ("dictionaries/words.gz",)
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(store,))
+    verdict = inv.run_invariants([replace(e, fresh_roots=(fresh,))], tier="T0")["INV-FORGET"]
+    assert (verdict.status, verdict.reasons) == ("FAIL", ("store_hit",))
+    assert collector.counts["unchanged"]["absent"] == 0
+
+
+@pytest.mark.parametrize("tree", ["store", "fresh"])
+@pytest.mark.parametrize("kind", ["file", "directory", "root", "fifo"])
+def test_symlink_or_nonregular_never_exempt(installed_tree, tmp_path, tree, kind):
+    store, fresh = installed_tree
+    root = store if tree == "store" else fresh
+    path = root / "dictionaries/words.gz" if kind in ("file", "fifo") else root / "dictionaries" if kind == "directory" else root
+    outside = tmp_path / "outside"
+    path.rename(outside)
+    if kind == "fifo":
+        os.mkfifo(path)
+    else:
+        path.symlink_to(outside, target_is_directory=kind != "file")
+    collector = inv.ForgetScan()
+    if tree == "store" and kind == "root":
+        with pytest.raises(ValueError, match="real directory"):
+            inv.search_store(store, [b"missing"], collector, fresh=fresh)
+    else:
+        scan = inv.search_store(store, [b"missing"], collector, fresh=fresh)
+        # Store links/non-regular entries are skipped by the existing scanner.
+        assert scan.verdict == ("absent" if tree == "store" else "inconclusive")
+    assert collector.counts["unchanged"]["absent"] == 0
+
+
+def test_plugin_like_install_and_text_scope(installed_tree):
+    store, fresh = installed_tree
+    for root in (store, fresh):
+        (root / "provider.py").write_text("# installed provider\n")
+        (root / "config.json").write_text("{}\n")
+        (root / "dictionaries/other.gz").write_bytes(gzip.compress(b"other words", mtime=0))
+    collector = inv.ForgetScan()
+    assert inv.search_store(store, [b"missing"], collector, fresh=fresh).verdict == "absent"
+    assert collector.counts["unchanged"]["absent"] == 2
+    assert collector.counts["raw"]["absent"] == 2
+    assert inv.search_store(store, [b"missing"]).reason == "opaque_store"
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(store,))
+    assert inv.run_invariants([replace(e, fresh_roots=(fresh,))], tier="T0")["INV-FORGET"].status == "PASS"
+    assert inv.run_invariants([e], tier="T0")["INV-FORGET"].reasons == ("opaque_store",)
+    batch = inv.adapter_invariants(ReferenceStore, bound_s=5, snapshot=lambda adapter: (store,),
+                                   fresh=lambda root: fresh)
+    assert batch["INV-FORGET"].status == "PASS"
+
+
+def test_unchanged_database_and_sidecar_keep_sqlite_scan(tmp_path):
+    store, fresh = tmp_path / "store", tmp_path / "fresh"
+    store.mkdir()
+    with sqlite3.connect(store / "memory.db") as db:
+        db.execute("CREATE TABLE memory(value)")
+    (store / "memory.db-journal").write_bytes(b"\0" * 1024)
+    shutil.copytree(store, fresh)
+    collector = inv.ForgetScan()
+    assert inv.search_store(store, [b"missing"], collector, fresh=fresh).verdict == "absent"
+    assert collector.counts["sqlite"]["absent"] == 1
+    assert collector.counts["unchanged"]["absent"] == 0
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="requires file read permission enforcement")
+@pytest.mark.parametrize("hit", [False, True])
+def test_unreadable_fresh_copy_keeps_doubt_or_hit(installed_tree, hit):
+    store, fresh = installed_tree
+    path = fresh / "dictionaries/words.gz"
+    path.chmod(0)
+    try:
+        with pytest.raises(PermissionError):
+            path.read_bytes()
+        if hit:
+            (store / "memory.txt").write_text(TOKEN)
+        scan = inv.search_store(store, inv.needles_for([TOKEN]), fresh=fresh)
+        assert (scan.verdict, scan.reason) == ("found" if hit else "inconclusive", "opaque_store")
+    finally:
+        path.chmod(0o600)
