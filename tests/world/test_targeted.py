@@ -745,7 +745,7 @@ b.twin.b1.close()
     outputs = []
     for seed in ("0", "random"):
         result = subprocess.run([sys.executable, "-c", script, str(tmp_path / seed)], cwd=ROOT,
-                                env={"PYTHONHASHSEED": seed}, capture_output=True)
+                                env={"PYTHONHASHSEED": seed, "PYTHONPATH": str(ROOT / "src")}, capture_output=True)
         assert result.returncode == 0, result.stderr.decode()
         outputs.append(result.stdout)
     assert outputs[0] == outputs[1]

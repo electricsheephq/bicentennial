@@ -561,6 +561,8 @@ def test_session_timing_boundaries_without_worker(tmp_path, monkeypatch, hook, r
             return False
 
     a = object.__new__(adapter.HermesAdapter)
+    a._receipt_sessions, a.background_threads, a._baseline_threads = {}, [], None
+    a.clock = SimpleNamespace(step_s=60)
     a.script = {"sessions": [{"index": 1, "kind": "replay",
                                "turns": [{"n": 1, "user": "u", "assistant": "a"}]}]}
     a.schedule = SimpleNamespace(at=lambda *args: [{"kind": "restart"}] if restart else [])
@@ -570,7 +572,7 @@ def test_session_timing_boundaries_without_worker(tmp_path, monkeypatch, hook, r
     a.kill_mode, a.turn_wait_s = "boundary", 3.0
     a.egress = SimpleNamespace(forking=Forking())
     a.director = SimpleNamespace(route={"alias": "main"},
-        start_session=lambda *args: advance(0.5),
+        ctx=SimpleNamespace(cursor=0), start_session=lambda *args: advance(0.5),
         control=lambda: {"write_failures": 0, "stopped": False, "inflight": 0}, summariser_requests=0)
     a._gate = lambda readings: (advance(0.125), readings.append({"exit": 0, "state": "idle"}))
 
@@ -631,12 +633,13 @@ def test_spawn_import_follows_each_worker(tmp_path, monkeypatch, imports):
 
         def call(self, **op):
             clock[0] += 0.125
-            return {"ok": True, "session_id": "sid", "history": 1}
+            return {"ok": True, "session_id": "sid", "history": 1, "alive_threads": ["main", "baseline"]}
 
     monkeypatch.setattr(adapter, "_Worker", Worker)
     t = {"spawn": [], "open": [], "import": []}
     a._spawn_open("session_start", None, t)
     a._spawn_open("restart", "sid", t)
+    assert a._baseline_threads == {"main": 1, "baseline": 1}
     assert t == {"spawn": [125, 125], "open": [125, 125], "import": list(imports)}
 
 

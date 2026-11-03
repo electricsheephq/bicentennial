@@ -83,6 +83,56 @@ def assert_timeline(schedule):
         assert selected == sorted(expected)
 
 
+def test_item_1_t1_literal_shape_unchanged():
+    assert named("t1") == Scale(
+        name="t1", sessions=20, window=scales.DEV_WINDOW, checkpoints=(10, 20),
+        kill=11, swap=15, restart=None, compaction=None,
+        sprint_ranges=((2, 10), (12, 20)), long_gap_ranges=((1, 10), (11, 20)))
+
+
+def test_item_1_t2_literal_shape():
+    expected = Scale(
+        name="t2", sessions=10, window=scales.DEV_WINDOW, checkpoints=(5, 10),
+        kill=6, swap=8, restart=None, compaction=None,
+        sprint_ranges=((2, 5), (7, 10)), long_gap_ranges=((1, 5), (6, 10)))
+    assert named("t2") == named("t2", sessions=10) == expected
+
+
+def test_item_2_t2_schedule_sprints_gaps_and_fault_lite():
+    for case in range(200):
+        schedule = build_schedule(f"t2-shape-{case}", "life-a", named("t2"))
+        assert len(schedule.sessions) == 10
+        assert_timeline(schedule)
+        contracts(schedule)
+        assert schedule.fault_lite() == [dict(kind="kill", session=6, turn=1),
+                                         dict(kind="swap", session=8, turn=None)]
+        for selected, ranges in (
+            ([s.index for s in schedule.sessions if s.long_sprint], ((2, 5), (7, 10))),
+            ([s.index for s in schedule.sessions if "gap" in s.wake_before], ((1, 5), (6, 10))),
+        ):
+            assert len(selected) == 2
+            assert all(lo <= k <= hi for k, (lo, hi) in zip(selected, ranges, strict=True))
+            assert not {1, 6, 8}.intersection(selected)
+
+
+@pytest.mark.parametrize("changes", [
+    {"sessions": 9}, {"sessions": 11}, {"checkpoints": (4, 10)}, {"kill": 5},
+    {"window": scales.FULL_WINDOW}, {"swap": 7}, {"restart": 9}, {"compaction": 9},
+])
+def test_item_2_t2_fixed_shape_refusals(changes):
+    scale = replace(named("t2"), **changes)
+    with pytest.raises(ValueError):
+        check(scale)
+    with pytest.raises(ValueError):
+        build_schedule("t2-shape", "life-a", scale)
+
+
+@pytest.mark.parametrize("ranges", [((2, 5),), ((2, 3), (4, 5)), ((2, 7), (9, 10))])
+def test_item_2_t2_requires_sprint_each_side(ranges):
+    with pytest.raises(ValueError, match="sprint on each side"):
+        check(replace(named("t2"), sprint_ranges=ranges))
+
+
 @pytest.mark.parametrize("name,count,kill,swap,sprints,gaps,floor", [
     ("t1", 20, 11, 15, 2, 2, 20_480), ("full", 200, 110, 150, 8, 4, 163_840),
 ])
@@ -141,10 +191,11 @@ def test_micro_wake(count, wake):
 
 @pytest.mark.parametrize("name,kwargs", [
     ("unknown", {}), ("t1", {"sessions": 5}), ("full", {"sessions": 20}),
+    ("t2", {"sessions": 9}), ("t2", {"sessions": 11}), ("t2", {"sessions": 10.0}),
     ("t0-micro", {"sessions": 4}), ("t0-micro", {"sessions": 0}), ("t0-micro", {}),
     ("t0-micro", {"sessions": True}), ("t0-micro", {"sessions": 2, "wake": "unknown"}),
     *[("t0-micro", {"sessions": 1, "wake": w}) for w in ("kill", "swap", "restart", "compaction", "gap")],
-    *[(name, {"wake": w}) for name in ("t1", "full") for w in ("kill", "gap", "unknown")],
+    *[(name, {"wake": w}) for name in ("t1", "t2", "full") for w in ("kill", "gap", "unknown")],
 ])
 def test_named_refusals(name, kwargs):
     with pytest.raises(ValueError):

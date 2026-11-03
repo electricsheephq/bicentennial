@@ -53,7 +53,7 @@ python -c 'import xml.etree.ElementTree as E; root = E.parse("build/t2lite-offli
 
 ## What a run costs
 
-Only `probe_main` goes live among director requests; replay, write, extraction, compaction and every other role stay scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, floors are stored under a key made of pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. A non-default wait appends `turn_wait_s=<seconds>` to the key; at 3.0 seconds the key is unchanged. An entry is reused only when its recorded served identity matches the identity request’s observed served model. When the identity request gets a forwarded reply, it is the run's first observed send, so the card's `served_identity` and the drift flags on later probes are measured against its served model. A missing, damaged, incomplete or unverified entry runs the floor again; without a cache it always runs. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. The identity request is never in the receipt or scored. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
+Only `probe_main` goes live among director requests; replay, write, extraction, compaction and every other role stay scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, floors are stored under a key made of pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. A non-default wait appends `turn_wait_s=<seconds>` to the key; at 3.0 seconds the key is unchanged. An entry is reused only when its recorded served identity matches the identity request’s observed served model. When the identity request gets a forwarded reply, it is the run's first observed send, so the card's `served_identity` and the drift flags on later probes are measured against its served model. A missing, damaged, incomplete or unverified entry runs the floor again; without a cache it always runs. A floor is saved only if every scored item in each unit’s final attempt has a terminal live `probe_main` answer (status 200, no tool calls, text that is not blank), with no propagated cause or stop; malformed answer text still counts, and unscored G2 actions need no answer. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. The identity request is never in the receipt or scored. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
 
 `--max-sends` is a required nonnegative limit on upstream sends, including retries, the uncached floor and the identity request’s tries (up to four per hold cycle, more under rate holds); zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED while the live stack remains active; a latched stop ends the run without retrying the unit.
 
@@ -64,7 +64,7 @@ Only `probe_main` goes live among director requests; replay, write, extraction, 
 | Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain from infrastructure failures that did not latch a live stack stop. |
 | Credential, spend or live stop | Exit 3; no card or new floor cache entry; `refusal.json` with `credential_stop`, `spend_stop` or `live_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. For `live_stop`, the stop reason is in `refusal.json` `detail` and on stderr as `live_stop <reason>`; a reason containing login material gives `credential_scan` instead. |
 | INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. When a stop ends the run, a canary, a honeypot hit and an isolation breach seen before the stop outrank it, in that order; egress the stopped attempt could not sample does not. A unit that completes with a breach refuses `isolation` at once, ahead of a canary, a honeypot hit or a stop. |
-| Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later preparation/reference refusals send nothing but can leave `refusal.json`. |
+| Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later refusals send nothing but can leave `refusal.json`; they come in this order: the login's operator marker and account lock (`operator_identity`, `account_busy`); preparation (pins, packs, system); inside the sandbox lease, the slot (`sandbox_busy`) and the measured install pin (`pin_mismatch`); then the selection, baseline and reference checks. A context-engine system's pin is not measured here: its first system-arm install refuses a wrong pin, after the no-memory floor has run or been checked against the cache. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
 A card is published only after scanning all outputs for login secrets. A refusal can therefore replace an otherwise complete run. Inspect stderr when no output directory was created.
@@ -86,7 +86,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 | `custody.json` | Drained login custody events, without login secrets. |
 | `disclosures.json` | Top-level `honeypot_hits` (0 on every published run), `turn_wait_s` (a decimal string, in seconds), `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
 | `spend.json` | Locked reservation and settlement accounting. |
-| `receipt.json` | COMPLETE status, actual work, tokens, latency and runtime. |
+| `receipt.json` | COMPLETE status, actual work, tokens, latency, runtime, per-arm `background` disclosures, decimal-string `turn_wait_s`, and `units` with life, branch, arm, slot, start/end ms and attempts (including retries and executed floor units). |
 | `flips.json` | Comparison against the baseline, if supplied. |
 | `no_memory/<life>/<branch>/t2lite_probes.json` | Uncached floor probe, envelope and shadow diagnostics. |
 | `repetitions/0/<life>/<branch>/t2lite_probes.json` | System probe diagnostics for repetition 0 (and similarly each later number). |
@@ -95,7 +95,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 
 | File | Meaning |
 |---|---|
-| `refusal.json` | Stop code; `live_stop` includes the stop reason in `detail`. |
+| `refusal.json` | Stop code, with `detail` when the refusal has one: the stop reason for `live_stop`, the computed fingerprint for an install `pin_mismatch`, the holder pid for `sandbox_busy`; spend stops retain the same file set. |
 | `receipt.json` | INFRA_FAILURE receipt for work actually performed. |
 | `custody.json` | Secret-free custody records explaining the stop. |
 
@@ -171,7 +171,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `operator_identity` | Operator-marked login cannot run lcm-x. |
 | `out_exists` | Output already exists, including a symlink. |
 | `output_overlap` | Output overlaps login, packs or cache. |
-| `pin_mismatch` | Checkout does not match its pin. |
+| `pin_mismatch` | Checkout or measured fresh install does not match its pin; for the install pin, stderr and `refusal.json` show the computed value. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `pins_unstable` | `bicentennial pins` only: two install measurements, in distinct roots on distinct director ports, differ. |
 | `plugin_deps_check_failed` | Worker inspection cannot start, times out, lacks marker support, or returns invalid output. |
@@ -181,7 +181,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `refused` | Install CLI or `bicentennial pins` filesystem or value error; `bicentennial pins` adds the error text. |
 | `rerun_arguments` | Incompatible references, checkpoint or repetition arguments. |
 | `route_unroutable` | Registered model route cannot be resolved. |
-| `sandbox_busy` | The selected slot is locked; exit 3. |
+| `sandbox_busy` | The selected slot is locked; `detail` names the holder pid; exit 3. |
 | `sandbox_overlap` | An input, login, reference, output or cache overlaps a destructive sandbox slot. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |

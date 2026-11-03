@@ -7,7 +7,6 @@ import sqlite3
 import stat
 import subprocess
 import sys
-import tarfile
 import tempfile
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -22,9 +21,12 @@ from bicentennial.harness.hermes.config import (
     _PROXIES,
     PLACEHOLDER_KEY,
     hermes_config,
+    install_directory,
+    install_file,
     worker_env,
     write_config,
 )
+from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.spansearch import span_search
 from bicentennial.sandbox.surfaces import (
     clone_tree,
@@ -401,6 +403,12 @@ def worker_properties(system, checkout, repo, tier, refused, worker_argv=None):
     return tuple(props)
 
 
+def verify_install_pin(entry, computed):
+    declared = entry["fresh_install_hash"]
+    if declared != "0" * 64 and declared != computed:
+        raise PinMismatch(f"fresh install differs from the pin: computed {computed}")
+
+
 class PluginCell:
     def __init__(self, entry, adapter):
         validate_maps()
@@ -443,11 +451,17 @@ class PluginCell:
             target = home / "plugins" / plugin_dir(self.entry["name"])
             if target.exists():
                 raise ValueError("plug-in directory exists")
-            target.parent.mkdir(parents=True, exist_ok=True)
+            install_directory(target.parent)
             archive.seek(0)
             with tempfile.TemporaryDirectory(dir=target.parent) as unpacked:
-                with tarfile.open(fileobj=archive) as tree:
-                    tree.extractall(unpacked, filter="data")
+                Path(unpacked).chmod(0o700)
+                # Directory modes under the data filter come from the extractor's umask.
+                # Set it in the child only: other cells may already have running workers. The child writes into
+                # the leased sandbox, so like a worker it holds the lease until it exits.
+                subprocess.run([sys.executable, "-I", "-c",
+                    "import sys, tarfile\nwith tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as tree:\n"
+                    "    tree.extractall(sys.argv[1], filter='data')", unpacked],
+                    stdin=archive, check=True, env={}, umask=0o022, pass_fds=fixedroot.held())
                 (Path(unpacked) / (recipe[1] if len(recipe) > 1 else ".")).rename(target)
         port = int(self.adapter.director.run_values["director_port"])
         name = self.entry["name"]
@@ -466,13 +480,13 @@ class PluginCell:
                            "vector_store": {"provider": "qdrant", "config": {
                                "path": "~/.mem0/qdrant", "collection_name": "mem0"}}}}
             pending = home / ".mem0.json.pending"
-            pending.write_bytes(canon(cfg) + b"\n")
+            install_file(pending, canon(cfg) + b"\n")
             os.replace(pending, home / "mem0.json")
-            (home / ".env").write_bytes(b"MEM0_TELEMETRY=false\n")
+            install_file(home / ".env", b"MEM0_TELEMETRY=false\n")
         self.snapshots = []
         for i, (surface, directory) in enumerate(self.surfaces):
-            directory.mkdir(parents=True, exist_ok=True)
-            (directory / MARKER).write_bytes(b"")
+            install_directory(directory)
+            install_file(directory / MARKER, b"")
             snapshot = self.adapter.paths["root"] / "fresh" / str(i)
             snapshot.parent.mkdir(exist_ok=True)
             clone_tree(directory, snapshot)
@@ -480,6 +494,7 @@ class PluginCell:
         hashes = [{"relative": s["relative"], "root": s["root"],
                    "tree_hash": install_hash(d, s["volatile_paths"], port)} for s, d in self.surfaces]
         self.fresh_install_hash = hashes[0]["tree_hash"] if len(hashes) == 1 else sha256(canon(hashes)).hexdigest()
+        verify_install_pin(self.entry, self.fresh_install_hash)
         self.baseline = self._listing()
         return self.surface_hash()
 

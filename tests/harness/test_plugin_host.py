@@ -111,6 +111,8 @@ def factory(tmp_path, monkeypatch, git_checkouts):
         entry = load(REGISTRY / f"{name}.toml")
         log = tmp_path / f"calls-{counter}" / "stub-calls.jsonl"
         if live is None:
+            # Synthetic installs use the explicit measurement placeholder.
+            entry["fresh_install_hash"] = "0" * 64
             checkout = write_tree(tmp_path / f"stub-{counter}", log=log, mode=mode, sync_ms=sync_ms,
                                   max_length=max_length)
             kw = dict(checkout=checkout, worker_argv=[sys.executable, str(WORKER)])

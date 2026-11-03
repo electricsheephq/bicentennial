@@ -40,7 +40,7 @@ class Scale:
 
 
 def named(name, *, sessions=None, wake=None) -> Scale:
-    if name not in ("t0-micro", "t1", "full"):
+    if name not in ("t0-micro", "t1", "t2", "full"):
         raise ValueError("unknown scale")
     if name == "t0-micro":
         if wake not in (None, "kill", "swap", "restart", "compaction", "gap"):
@@ -52,18 +52,21 @@ def named(name, *, sessions=None, wake=None) -> Scale:
                       sprint_ranges=(),
                       long_gap_ranges=((sessions, sessions),) if wake == "gap" else ())
     else:
-        count = 20 if name == "t1" else 200
+        count = {"t1": 20, "t2": 10, "full": 200}[name]
         if wake is not None or (sessions is not None and
                                 (type(sessions) is not int or sessions != count)):
             raise ValueError("preset sessions and wakes are fixed")
+        lite = name in ("t1", "t2")
+        half = count // 2
+        kill = -(-11 * count // 20)
         scale = Scale(name=name, sessions=count,
-                      window=DEV_WINDOW if name == "t1" else FULL_WINDOW,
-                      checkpoints=(10, 20) if name == "t1" else (20, 60, 120, 200),
-                      kill=-(-11 * count // 20), swap=-(-3 * count // 4),
+                      window=DEV_WINDOW if lite else FULL_WINDOW,
+                      checkpoints=(half, count) if lite else (20, 60, 120, 200),
+                      kill=kill, swap=-(-3 * count // 4),
                       restart=None, compaction=None,
-                      sprint_ranges=((2, 10), (12, 20)) if name == "t1" else
+                      sprint_ranges=((2, kill - 1), (kill + 1, count)) if lite else
                       tuple((k, k + BLOCK - 1) for k in range(1, 201, BLOCK)),
-                      long_gap_ranges=((1, 10), (11, 20)) if name == "t1" else
+                      long_gap_ranges=((1, half), (half + 1, count)) if lite else
                       ((1, 20), (21, 60), (61, 120), (121, 200)))
     check(scale)
     return scale
@@ -77,13 +80,13 @@ def candidates(scale: Scale, bounds: tuple[int, int]) -> list[int]:
 
 def check(scale: Scale) -> None:
     s = scale.sessions
-    if scale.name not in ("t0-micro", "t1", "full") or type(s) is not int:
+    if scale.name not in ("t0-micro", "t1", "t2", "full") or type(s) is not int:
         raise ValueError("unknown scale or non-integer session count")
     micro = scale.name == "t0-micro"
-    if (micro and not 1 <= s <= 3) or (not micro and s != (20 if scale.name == "t1" else 200)):
+    if (micro and not 1 <= s <= 3) or (not micro and s != {"t1": 20, "t2": 10, "full": 200}[scale.name]):
         raise ValueError("invalid session count")
     window = FULL_WINDOW if scale.name == "full" else DEV_WINDOW
-    checkpoints = (s,) if micro else ((10, 20) if s == 20 else (20, 60, 120, 200))
+    checkpoints = (s,) if micro else ((s // 2, s) if scale.name in ("t1", "t2") else (20, 60, 120, 200))
     if (type(scale.window) is not int or scale.window != window or
             scale.checkpoints != checkpoints or
             any(type(k) is not int for k in scale.checkpoints)):
@@ -113,10 +116,10 @@ def check(scale: Scale) -> None:
                 raise ValueError("overlapping or empty candidate range")
             occupied.update(values)
     ranges = scale.sprint_ranges
-    if scale.name == "t1" and (len(ranges) != 2 or
+    if scale.name in ("t1", "t2") and (len(ranges) != 2 or
                               sum(hi < scale.kill for lo, hi in ranges) != 1 or
                               sum(lo > scale.kill for lo, hi in ranges) != 1):
-        raise ValueError("t1 needs a sprint on each side of the kill")
+        raise ValueError(f"{scale.name} needs a sprint on each side of the kill")
     if scale.name == "full":
         if len(ranges) < 8 or any(not any(b <= lo <= hi < b + BLOCK for lo, hi in ranges)
                                  for b in range(1, s + 1, BLOCK)):

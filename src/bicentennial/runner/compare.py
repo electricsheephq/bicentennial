@@ -16,6 +16,7 @@ from bicentennial.controls.cache import (
 )
 from bicentennial.corpus.format import CORPUS_PATH, load_corpus
 from bicentennial.corpus.run import corpus_suite, run_case
+from bicentennial.director.roles import MAIN_ROLES
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder, stub_disclosures
 from bicentennial.harness.hermes.adapter import HarnessFailed
@@ -37,6 +38,7 @@ from bicentennial.report.junit import (
 )
 from bicentennial.report.receipt import (
     SpendRefused,
+    background_summary,
     build_receipt,
     busy,
     ledger_latencies,
@@ -322,7 +324,12 @@ def _receipt(run, arm, status, start, end, corpus_rows=(), corpus_gates=(), corp
         store_growth_bytes=sum(m["growth"] for m in evidence),
         process_ids=[p for m in evidence for p in m["pids"]],
         egress_failed_samples=failed_samples,
-        timings=timings,
+        timings=timings, turn_wait_s=run.ctx.turn_wait_s, units=[],
+        background=[background_summary(a,
+            [f.background_records or f.records for f in runs if f.arm == a] +
+            ([corpus_rows] if a == arm else []),
+            [n for f in runs if f.arm == a for n in f.background_threads], main_roles=MAIN_ROLES)
+            for a in ((arm, "no_memory") if arm == "system" else (arm,))],
         ports=[int(r.run_values["director_port"]) for r in runs if r.run_values] + [
             p for m in corpus_measurements for p in m["ports"]],
         temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values] + [
@@ -484,6 +491,7 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
             publication = t0._Publication(out)
             fixedroot.validate_slot(sandbox_slot, T1Refused)
             with fixedroot.lease(sandbox_slot, T1Refused) as sandbox:
+                t1.check_install(ctx, sandbox)
                 code = _execute(ctx, out=out, packs_dir=packs_dir, pack_hash=pack_hash, baseline=data,
                     cache=cache, corpus_host=corpus_host, start=start, publication=publication,
                     sandbox=sandbox, sandbox_slot=sandbox_slot)
@@ -501,7 +509,7 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
                 if getattr(error, "detail", ()):
                     refusal["detail"] = list(error.detail)
                 (out / "refusal.json").write_bytes(canon(refusal))
-            print(code, file=t0.sys.stderr)
+            print(code, *(getattr(error, "detail", ()) if code == "pin_mismatch" else ()), file=t0.sys.stderr)
             return 3
     except Exception:
         print("tool_failure", file=t0.sys.stderr)

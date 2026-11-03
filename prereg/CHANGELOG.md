@@ -7,6 +7,33 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 - **Pins:** the controls pin moves because `contracts/repro_bundle.py` settles the class/version, kept-pointer and failure checks. Packs built before this change refuse and must be rebuilt in the kit batch's final rebuild. The reader, scoring and scorer pins stay unchanged. The `repro` command and pre-probe capture are separate work.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
+## Kit, 2026-11-03: volatile background work, turn wait and unit timing (#378, #388, #391)
+- **RING0 §13 E30 and §14.10:** execution receipts require per-arm background disclosures, decimal-string `turn_wait_s` and unit wall boundaries with attempts. T2-lite records units; T1 leaves units empty. The developer report's wait-comparability rule is specified here; its refusal is implemented separately. These disclosures change no score, card, stable output or frozen quantity. The controls pin moves because `report/receipt.py` is in its closure; the reader, scoring and scorer pins stay unchanged. Rebuild packs for the new controls pin.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-03: settle each checkpoint once on the real store (#410)
+- **RING0 §13 E29 (§6, §11):** from the next kit, the life runner judges settledness once at checkpoint replay end on the real store. Probe exits on clones cannot reclassify items. A real store that is unsettled still classes every checkpoint item SYSTEM_FAILURE `unsettled`, with one checkpoint record. E29 narrows ERRATA-v2.2 E6's timing for life-runner probes.
+- **Impact:** no code pin moves. T1 results for mem0-oss and omega can change when the defect fires; hermes-native and holographic outcomes keep their rule. Published results are unchanged.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0, 2026-11-03: Mem0's scripted additive extraction reply (#208)
+- **RING0 §2 and §13 E28:** from this kit, the stub answers mem0ai 2.2.1's additive extraction call with the `memory` list it reads: one text-only entry per new user message, cut at 240 characters and bounded by the reply budget. Automatic extraction is exercised, and `<tier>.extraction` discloses the scripted extractive reply; E28 supersedes E11.
+- **Pins and results:** no code pin moves. Mem0's T0 and T1 results can change, because T0's memory-layer host makes the same extraction call on every ingest; both are measured by the owner with runs before and after. Explicit `mem0_add` writes and other systems' replies are unchanged.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-03: Keep incidental decoys are declared competing values (#293)
+- **RING0 §13 E27 (§1):** from the next kit, visible decoy option tokens of `keep-incidental-v1` are `planted` competing values, excluding required and forbidden tokens. First-match scoring stays unchanged: T0 and T1 item outcomes, scores and selected options do not change. Per-kind competing counters in item reports accompanying cards with these items now count decoys in context; cards' existing `competing_milli` share already uses `competing_present` and stays unchanged.
+- **Pins and packs:** the controls pin moves through the compiler's option-role helper; reader, scoring and scorer pins stay unchanged. Every T0 and T1 pack's controls cache and manifest move with the controls pin, and packs containing these items also change reader keys and their dependent hashes and build diagnostics. Rebuild earlier packs. The frozen template source, world content and `world_hash` stay unchanged; no schema changes.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-03: the T2 shape (#391, §13 E25, §15)
+- **RING0 §13 E25, §15:** adds the named `t2` preset, T1's shape rules at 10 sessions, and extends T1's 6 QA / 2 action probe cap to T2, on both compile paths (with and without fixture bindings). §15 records per-item probe isolation, the inherited provisional W = 16K window, G2 action scoring deferred until #118, and Ring 1's alternating G1/G2 composition for any life count. Only the controls pin moves; pack trees and hashes change and packs are rebuilt once with the kit batch (#389). T0 and T1 item outcomes do not change.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 contract change, 2026-11-03: INV-FORGET reads SQLite contents (#276)
+- **RING0 §13 E26 (§7):** from the next kit, INV-FORGET searches private SQLite copies and their sidecars before recovery, in UTF-8 and both UTF-16 encodings, reads all SQL values, and requires integrity and zero-filled free pages to certify absence. Raw hits remain `store_hit`; binary formats other than SQLite remain `opaque_store`. The new doubt reasons are `sqlite_unreadable` and `sqlite_freelist`, ordered after `opaque_store`. Canonical host checkpoints are scanned by their carried files. T0 adds canonical JUnit property `invariants.forget_scan` with run-wide method/result counts and hit locations; verdict objects and T1 outputs are unchanged. A token split across pages in superseded copies (main-file pages that newer WAL frames replace, old WAL frames, a persisted journal) is a known gap, tracked in #417. The scorer pin (`scorer_sha256`, over `score/*.py`) moves, so packs built before this change no longer verify and are rebuilt. v0.1's frozen kit keeps its rule.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Kit, 2026-11-03: pack hashes no longer depend on the build host's SQLite (#327)
 - **Pack builder:** from the next kit, sealed SQLite copies have fixed zeros at header offsets 92–99 before hashing. Raw DB hashes, pack manifests, pack tree hashes and tier indexes/hashes move; rebuild earlier packs. The generator's output stays unchanged. The builder's SQLite version is returned by the build API and printed on the build command's stderr, outside the hashed tier directory.
 - **Kept:** all four code pins, scores, verdicts, world content and `world_hash` stay unchanged, as do the host-free pack digests. This covers writer header metadata, not future SQLite page-layout changes.

@@ -11,10 +11,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+from bicentennial.audit.readback import output
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.responder import Call, Reply
+from bicentennial.director.roles import MAIN_ROLES
 from bicentennial.director.upstream import login as custody
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.protocol import CANARY
@@ -22,6 +24,7 @@ from bicentennial.ledger import BlobStore, Guard
 from bicentennial.packs.install import verify
 from bicentennial.probe.scripted_reader import ReaderResult
 from bicentennial.report.receipt import (
+    background_summary,
     build_receipt,
     ledger_latencies,
     load_milli,
@@ -147,7 +150,49 @@ def _check_stop(live):
         raise t1.T1Refused("spend_stop")
 
 
-def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
+def _floor_measured(pack, branch, run, probes, scores):
+    """Check each scored item's terminal live reply before this attempt's blobs are removed."""
+    if run.stopped or run.audit.get("status") != "OK":
+        return False
+    store = BlobStore(run._root / "run/ledger/blobs", Guard([]))
+    sessions = {p["item_id"]: p["probe_session"] for p in probes}
+    turns, measured = {}, []
+    # The compiler preserves item order within each probe session, including its separate act sessions.
+    for item in pack.items[branch]:
+        iid = item["item_id"]
+        session = sessions[iid]
+        turns[session] = turns.get(session, 0) + 1
+        scored = scores[iid]
+        if (pack.genre == "G2" and item["stage"] == "act"
+                and not isinstance(scored, Infra) and scored["failure_class"] is None):
+            continue
+        final = next((r for r in reversed(run.records) if r.get("role") == "probe_main"
+            and r.get("cursor") == dict(session=session, turn=turns[session])), {})
+        answered = False
+        if (not run.classes.get(iid, (None, None))[0] and not isinstance(scored, Infra)
+                and final.get("served_by") == "live" and final.get("status") == 200):
+            try:
+                calls, texts = output(json.loads(store.get(final["resp"])), "chat")
+                # A blank reply is no answer: caching it would keep a provider glitch for every later run.
+                answered = not calls and any(t.strip() if isinstance(t, str) else t for t in texts)
+            except (OSError, ValueError, KeyError, TypeError, IndexError):
+                pass
+        measured.append(answered)
+    return all(measured)
+
+
+def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, units=None):
+    start, before = time.time_ns() // 1_000_000, len(runs)
+    try:
+        return _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops)
+    finally:
+        if units is not None:
+            units.append(dict(life=pack.life, branch=branch, arm=arm, slot=0,
+                start_ms=start, end_ms=time.time_ns() // 1_000_000, attempts=len(runs) - before))
+
+
+def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
+    measured = False
     for attempt in range(3):
         try:
             run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
@@ -213,6 +258,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 if cls or isinstance(scores[iid], Infra) or not_scored_live:
                     next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
             _write(out, "t2lite_probes.json", probes)
+            if arm == "no_memory" and (attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())):
+                measured = _floor_measured(pack, branch, run, probes, scores)
         finally:
             run.cleanup()
         if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
@@ -225,7 +272,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
         row = scores[probe["item_id"]]
         if row["failure_class"] is None:
             row["selected_option"] = probe["shadow"]["selected_option"]
-    return scores, probes
+    return scores, probes, measured
 
 
 def _joined(pack, branch, scores, probes):
@@ -267,7 +314,7 @@ def _holds(rows):
     return dict(waits=waits, held_ms=held_ms, reasons=sorted(reasons))
 
 
-def _receipt(runs, start, status):
+def _receipt(runs, start, status, turn_wait_s=3.0, units=()):
     rows = [r for run in runs for r in run.records]
     tokens, runtime, failed = {}, {}, {}
     for run in runs:
@@ -286,6 +333,11 @@ def _receipt(runs, start, status):
         process_ids=[p for r in runs for p in r.process_ids], ports=[int(r.run_values["director_port"])
             for r in runs if r.run_values], temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values],
         raw_body_digest=raw_body_digest(rows), egress_failed_samples=failed,
+        turn_wait_s=turn_wait_s, units=units,
+        background=[background_summary(arm,
+            [r.background_records or r.records for r in runs if r.arm == arm],
+            [n for r in runs if r.arm == arm for n in r.background_threads], main_roles=MAIN_ROLES)
+            for arm in sorted({r.arm for r in runs} | {"system"})],
         timings=[dict(arm=r.arm, life=r.life, branch=r.branch,
             attempt=r.attempt, egress_pid_samples=r.egress.get("samples"),
             egress_sample_ms=r.egress.get("sample_ms"), **r.timings) for r in runs if r.timings])
@@ -380,6 +432,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None, turn_wait_s=3.0):
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
+    units = []
     needles, pending_cache, live, custody_rows = set(), None, None, []
     try:
         turn_wait_s = t1.validate_turn_wait(turn_wait_s)
@@ -415,27 +468,28 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv,
             turn_wait_s=turn_wait_s)
         ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2lite-" + uuid4().hex, "turn_wait_s": turn_wait_s}))
-        selection, keep = _select(ctx, only)
-        references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
-                                           aa_of, aa_prime)
-        # A run whose --aa-of and --baseline name one directory is that run's A′, and its own outcomes are the band.
-        # Decided before any send, by file identity: a symlink or another spelling on a case-insensitive disk is the
-        # same directory, a copy at another path is not.
-        self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
-        # The benchmark commit stands for the director, reader and scorer code the floor ran.
-        key_parts = [ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
-                     ctx.pins["benchmark_commit"]]
-        if turn_wait_s != 3.0:
-            key_parts.append(f"turn_wait_s={turn_wait_s}")
-        key = sha256_canon(key_parts)
-        floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
-        floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
-                              {p.life + b for p in ctx.packs for b in ("B0", "B1")})
-        cached = floor is not None
-        identity_check = None
-        floor_message = "floor: ran live"
-        needles = _secrets(home)
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
+            t1.check_install(ctx, scratch)
+            selection, keep = _select(ctx, only)
+            references, outcomes = _references(_card(ctx, [], prime=aa_of is not None), selection, baseline,
+                                               aa_of, aa_prime)
+            # A run whose --aa-of and --baseline name one directory is that run's A′, and its own outcomes are the band.
+            # Decided before any send, by file identity: a symlink or another spelling on a case-insensitive disk is the
+            # same directory, a copy at another path is not.
+            self_band = aa_of is not None and baseline is not None and os.path.samefile(aa_of, baseline)
+            # The benchmark commit stands for the director, reader and scorer code the floor ran.
+            key_parts = [ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
+                         ctx.pins["benchmark_commit"]]
+            if turn_wait_s != 3.0:
+                key_parts.append(f"turn_wait_s={turn_wait_s}")
+            key = sha256_canon(key_parts)
+            floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
+            floor = _cached_floor(floor_path, {i["item_id"] for p in ctx.packs for b in ("B0", "B1") for i in p.items[b]},
+                                  {p.life + b for p in ctx.packs for b in ("B0", "B1")})
+            cached = floor is not None
+            identity_check = None
+            floor_message = "floor: ran live"
+            needles = _secrets(home)
             stack = build_live_stack(out / "spend.json", login_home=home, run=ctx.run_id,
                 token_url=os.environ[LIVE_ENV[0]], client_id=os.environ[LIVE_ENV[1]],
                 base_url=os.environ[LIVE_ENV[2]],
@@ -461,28 +515,32 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 floor_stops = floor["stops"] if cached else {}
                 if not cached:
                     floor = {"outcomes": {}, "stops": floor_stops}
+                    measured = True
                     for pack in ctx.packs:
                         for branch in ("B0", "B1"):
                             _check_stop(live)
-                            scores, _ = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
-                                live, runs, out / "no_memory" / pack.life / branch)
+                            scores, _, unit_measured = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
+                                live, runs, out / "no_memory" / pack.life / branch, units=units)
+                            measured &= unit_measured
                             floor["outcomes"].update(scores)
                             stopped = runs[-1].stopped
                             floor_stops[pack.life + branch] = list(stopped) if stopped else None
                     ids = stack.served_identities()
                     floor["served_identity"] = canon(ids).decode() if ids else "unobserved"
-                    if (floor_path and ids and "unidentified" not in ids.values()
+                    if (floor_path and measured and ids and "unidentified" not in ids.values()
                             and stack.state().get("identity_drift") is None
                             and not any(r["failure_class"] == "BLOCKED" for r in floor["outcomes"].values())):
                         pending_cache = (floor_path, floor)
+                    elif floor_path and not measured:
+                        print("floor: not cached (an item was not measured from a live answer)", file=sys.stderr)
                 print(floor_message, file=sys.stderr)
                 repetitions = []
                 for rep in range(repeat):
                     scores, joined = {}, {}
                     for pack, branch in selection:
                         _check_stop(live)
-                        values, probes = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
-                            live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops)
+                        values, probes, _ = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
+                            live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops, units=units)
                         rows = _joined(pack, branch, values, probes)
                         if keep is not None:
                             values = {i: v for i, v in values.items() if i in keep}
@@ -521,7 +579,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
                     current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
                 _write(out, "flips.json", report)
-            _write(out, ".receipt.json", _receipt(runs, start, "COMPLETE"))
+            _write(out, ".receipt.json", _receipt(runs, start, "COMPLETE", ctx.turn_wait_s, units))
             _write(out, ".card.json", card)
             _scan(out, needles)
             if pending_cache:
@@ -558,18 +616,22 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 out.mkdir()
                 if code in ("credential_stop", "spend_stop", "live_stop"):
                     # L1's custody rows say why: the drained log, and a Stop's own records.
-                    files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE")),
+                    files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE", turn_wait_s, units)),
                              "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"
                     else:
                         for name, data in files.items():
                             (out / name).write_bytes(data)
-                _write(out, "refusal.json", dict(code=code, detail=[error.reason]) if code == "live_stop" else dict(code=code))
+                detail = [error.reason] if code == "live_stop" else list(getattr(error, "detail", ()))
+                _write(out, "refusal.json", dict(code=code, **({"detail": detail} if detail else {})))
         except Exception:
             # A failure while refusing goes the tool_failure way, which removes everything written.
             return _tool_failure(out, created)
-        print(code + " " + error.reason if code == "live_stop" else code, file=sys.stderr)
+        if code == "live_stop":
+            print(code + " " + error.reason, file=sys.stderr)
+        else:
+            print(code, *(getattr(error, "detail", ()) if code == "pin_mismatch" else ()), file=sys.stderr)
         return 3
     except Exception:
         return _tool_failure(out, created)
