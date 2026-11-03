@@ -635,12 +635,14 @@ def test_existing_pack_trees_are_unchanged(t0_pack_build, tmp_path):
     assert host_free_tree_sha256(copied) == LEGACY_PACK_HASHES[rel]
 
 
-# T1's two public lives, fixed the same way (#391): each life's generator manifest, and each pack's tree with the code
-# pins projected out and world DBs hashed by content, so neither a pin move nor the builder's SQLite changes them.
+# T1's two public lives, fixed the same way (#391): each life's generator manifest, the tier index without its pins and
+# pack identities, and each pack's tree with the code pins projected out and world DBs hashed by content, so neither a
+# pin move nor the builder's SQLite changes them.
 T1_GENERATOR_MANIFESTS = {
     "t1-g1": "71b50442b18c977febe8af8a59222e9638a175c1871de9590145ef156850c635",
     "t1-g2": "fb82438e39bec7dc36121fe9bde391d1b08ac73311841f93c7d73b85606ff2c3",
 }
+T1_INDEX_SHA256 = "2df23d8ac082e42bcdf6f1460c7f7d3c3bf68e55486444818490551f54995114"
 LEGACY_T1_PACK_HASHES = {
     "pack/G1/t1-g1/1": "36878603fee6c944c03bb17b823ffe860f7b6a069cbb9e5e8aa3db447812d979",
     "pack/G2/t1-g2/2": "ad039d89a42cda22719efd31b2c62f68113c9491c437ad157bc7e35e6e7684bc",
@@ -657,10 +659,15 @@ def test_existing_t1_pack_trees_are_unchanged(tmp_path):
         generators[meta["life"]] = sha256_canon(meta["generator"])
     # An intentional T1 content change updates these tables from the failure messages.
     assert generators == T1_GENERATOR_MANIFESTS, canon(generators).decode()
+    index = {key: value for key, value in result["index"].items() if key not in ("pins", "packs")}
+    assert sha256_canon(index) == T1_INDEX_SHA256, sha256_canon(index)
     digests = {rel: host_free_tree_sha256(root / rel) for rel in packs}
     assert digests == LEGACY_T1_PACK_HASHES, canon(digests).decode()
     expected = dict(scorer_sha256=CODE_PINS["scorer"], controls_sha256=CODE_PINS["controls"],
                     reader_sha256=CODE_PINS["reader"])
+    pins = result["index"]["pins"]
+    assert {name: pins[name] for name in CODE_PIN_FIELDS} == expected
+    assert pins["scoring_code_sha256"] == CODE_PINS["scoring"]
     for rel, identity in packs.items():
         pack = root / rel
         assert manifest.tree_sha256(pack) == identity["tree_sha256"]
