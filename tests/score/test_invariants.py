@@ -311,7 +311,7 @@ def test_host_kept_disclosure(tmp_path, kept, hit, checkpoint):
     assert counts(v) == counts(inv.run_invariants([e], tier="T0")["INV-FORGET"])
 
 
-def test_sqlite_hit_and_encoded_miss(tmp_path):
+def test_sqlite_hit_and_clean_value_absence(tmp_path):
     for encoded in (False, True):
         directory = tmp_path / str(encoded)
         directory.mkdir()
@@ -321,10 +321,12 @@ def test_sqlite_hit_and_encoded_miss(tmp_path):
             connection.execute("INSERT INTO memory VALUES (?)", (TOKEN.encode().hex() if encoded else TOKEN,))
             connection.commit()
             result = inv.search_store(directory, inv.needles_for([TOKEN]))
-            assert result.verdict == ("inconclusive" if encoded else "found")
+            assert result.verdict == ("absent" if encoded else "found")
             if not encoded:
                 assert "store.sqlite-wal" in result.hit_paths
-            assert "store.sqlite" in result.opaque_paths and "store.sqlite-wal" in result.opaque_paths
+            assert result.opaque_paths == ()
+            if not encoded:
+                assert "store.sqlite#memory.value" in result.hit_paths
             assert not inv.searchable(directory / "store.sqlite")
             assert not inv.searchable_bytes((directory / "store.sqlite").read_bytes())
     for suffix in ("-wal", "-shm", "-journal"):
@@ -536,9 +538,9 @@ def test_hygiene(cases):
                 values = getattr(verdict, field)
                 assert values == tuple(sorted(set(values)))
     tree = ast.parse(Path(inv.__file__).read_text())
-    allowed = {"codecs", "json", "os", "stat", "unicodedata", "dataclasses", "pathlib", "collections.abc",
+    allowed = {"codecs", "json", "os", "shutil", "stat", "tempfile", "unicodedata", "dataclasses", "pathlib", "collections.abc",
                "bicentennial.canon", "bicentennial.contracts.run", "bicentennial.api.contract",
-               "bicentennial.probe.scripted_reader", "bicentennial.sandbox.spansearch", "bicentennial.audit.readback"}
+               "bicentennial.probe.scripted_reader", "bicentennial.sandbox.spansearch", "bicentennial.audit.readback", "bicentennial.score.sqlite_scan"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             assert all(a.name in allowed for a in node.names)
