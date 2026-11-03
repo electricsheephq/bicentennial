@@ -36,6 +36,19 @@ class LiveCredentialStop(Exception):
         super().__init__(reason)
 
 
+class LiveStop(LiveCredentialStop):
+    """A non-credential stop, propagated through the life runner's stop cleanup."""
+
+
+def check_live_stop(state):
+    reason = state.get("stop_reason")
+    if reason in CREDENTIAL_STOPS or state.get("login_stop"):
+        raise LiveCredentialStop(reason if reason in CREDENTIAL_STOPS else state["login_stop"])
+    # Spend retains its own refusal in the tier runner.
+    if not state.get("spend_stopped") and (state.get("stopped") or reason):
+        raise LiveStop(reason or "stopped")
+
+
 def live_probe_code(row):
     return row.get("served") if row.get("role") == "probe_main" and row.get("served") in LIVE_FAILURES else None
 
@@ -80,9 +93,7 @@ class ProbeLiveLeg:
         if drift != self.drift and previous is not None:
             self.identity_flags.add(previous)
         self.drift = drift
-        reason = state.get("stop_reason")
-        if reason in CREDENTIAL_STOPS or state.get("login_stop"):
-            raise LiveCredentialStop(reason if reason in CREDENTIAL_STOPS else state["login_stop"])
+        check_live_stop(state)
 
     def results(self):
         return dict(self.latest)
