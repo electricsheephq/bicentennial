@@ -255,6 +255,20 @@ def test_credential_scan_removes_candidate(observed, tmp_path, location):
     run.cleanup()
 
 
+@pytest.mark.parametrize("secret,ascii_only", [("PLANTED\nNEEDLE", False), ('PLANTED"NEEDLE', False),
+                                               ("PLANTED\\NEEDLE", False), ("PLANTED-N\u00c9EDLE", True)])
+def test_credential_scan_sees_json_escaped_needle(observed, tmp_path, secret, ascii_only):
+    # The captured inputs are JSON, which escapes a quote, a backslash or a newline in a credential.
+    run = run_observed(observed, tmp_path / "attempt")
+    iid, record = next(iter(run.pre_probe.items()))
+    (record.directory / "context/planted.json").write_text(json.dumps({"TOKEN": secret}, ensure_ascii=ascii_only))
+    with pytest.raises(kept.KeptRefused, match="^credential_scan$"):
+        publish(run, [dict(item_id=iid, score_milli=0, failure_class=None)], tmp_path / "out",
+                credential_needles=[secret])
+    assert not record.directory.exists()
+    run.cleanup()
+
+
 def test_missing_snapshot_refuses(observed, tmp_path):
     run = run_observed(observed, tmp_path / "attempt")
     with pytest.raises(kept.KeptRefused, match="^pre_probe_missing$"):
@@ -265,6 +279,12 @@ def test_missing_snapshot_refuses(observed, tmp_path):
 def test_pre_attribution_requires_copy(lives, tmp_path):
     with pytest.raises(ValueError, match="requires keep_pre_probe"):
         drive(lives["t1-g1", "B0"], tmp_path, pre_probe_attribution=True)
+
+
+def test_wiped_arm_refuses_pre_probe_copy(lives, tmp_path):
+    # Its wake wipe runs after the copy would be taken, so the copy would mislead attribution.
+    with pytest.raises(ValueError, match="not supported on the wiped arm"):
+        drive(lives["t1-g1", "B0"], tmp_path, arm="wiped", keep_pre_probe=True)
 
 
 def test_ring0_opt_in_records_each_slot(lives, unit_sessions, tmp_path):

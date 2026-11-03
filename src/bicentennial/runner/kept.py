@@ -88,6 +88,20 @@ def _bytes(root):
     return sum(p.lstat().st_size for p in root.rglob("*") if p.is_file() and not p.is_symlink())
 
 
+def _needle_forms(needles):
+    # A credential inside a JSON file is escaped (a quote, a backslash, a newline, or non-ASCII
+    # from an ASCII-only writer), so each needle is also scanned in those spellings.
+    forms = dict.fromkeys(needles)
+    for needle in needles:
+        try:
+            text = needle.decode()
+        except UnicodeDecodeError:
+            continue
+        for ascii_only in (False, True):
+            forms.setdefault(json.dumps(text, ensure_ascii=ascii_only)[1:-1].encode())
+    return tuple(forms)
+
+
 def _credential_hit(root, needles):
     for path in root.rglob("*"):
         if path.is_symlink():
@@ -114,6 +128,7 @@ def keep_failed(run, scores, out, *, pack_hash, pins, canary, excluded=(), crede
     needles = tuple(n.encode() if isinstance(n, str) else n for n in credential_needles)
     if any(not n for n in needles):
         raise ValueError("credential needle must not be empty")
+    needles = _needle_forms(needles)
     scores = list(scores.values()) if isinstance(scores, dict) else list(scores)
     failed = {s["item_id"]: s for s in scores if s["item_id"] not in excluded
               and s["score_milli"] is not None and s["score_milli"] < 1000}

@@ -310,6 +310,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         raise ValueError("invalid arm or branch")
     if pre_probe_attribution and not keep_pre_probe:
         raise ValueError("pre_probe_attribution requires keep_pre_probe")
+    if keep_pre_probe and arm == "wiped":
+        # The wiped arm's wake hook wipes the probe's store after the copy is taken, so the copy
+        # would hold text the probe never had.
+        raise ValueError("keep_pre_probe is not supported on the wiped arm")
     life_dir, scratch = Path(life_dir), Path(scratch)
     life = json.loads((life_dir / "life.json").read_bytes())
     schedule = schedule if schedule is not None else build_schedule(life["seed"], life["life"], named(life["scale"]))
