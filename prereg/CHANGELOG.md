@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-03: reproduction bundles v0.2 (§13 E31, #393)
+- **Bundle contract:** `snapshot-probe` and `live` share the T2 item identity and failed outcome; snapshots identify the kept copy and D6 startup inputs, and live bundles identify the system artifact. Existing v0.1 `replay-from-schedule` bundles and writer bytes stay unchanged. Replay-context members live only in the schema, outside every code pin, so they can grow without moving a pin. Exactness means identical starting conditions, not identical answers, and awaits the restored-probe test.
+- **Pins:** the controls pin moves because `contracts/repro_bundle.py` settles the class/version, kept-pointer and failure checks. Packs built before this change refuse and must be rebuilt in the kit batch's final rebuild. The reader, scoring and scorer pins stay unchanged. The `repro` command and pre-probe capture are separate work.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Kit, 2026-11-03: volatile background work, turn wait and unit timing (#378, #388, #391)
 - **RING0 §13 E30 and §14.10:** execution receipts require per-arm background disclosures, decimal-string `turn_wait_s` and unit wall boundaries with attempts. T2-lite records units; T1 leaves units empty. The developer report's wait-comparability rule is specified here; its refusal is implemented separately. These disclosures change no score, card, stable output or frozen quantity. The controls pin moves because `report/receipt.py` is in its closure; the reader, scoring and scorer pins stay unchanged. Rebuild packs for the new controls pin.
 No PREREG version change; PREREG-v0.5 remains frozen.

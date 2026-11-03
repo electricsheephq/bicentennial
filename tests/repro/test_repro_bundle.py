@@ -233,6 +233,14 @@ def test_builder_detaches_life(life):
     assert bundle["life"]["fault_points"] == [{"kind": "kill", "session": 3, "turn": 1}]
 
 
+@pytest.mark.parametrize("name,budget", [("default", None), ("budget", 3)])
+def test_replay_writer_is_byte_identical_to_base(life, name, budget):
+    # Captured from the unchanged v0.1 writer before the v0.2 contract change.
+    # Keep these bytes; this test must also work in a one-commit source clone.
+    path = Path(__file__).resolve().parents[1] / f"fixtures/repro/replay_v01_{name}.json"
+    assert canon(make_bundle(life, max_tests=budget)) == path.read_bytes()
+
+
 def test_registry_and_schema_bytes(life):
     path = Path(__file__).resolve().parents[1] / "fixtures/repro/contracts.json"
     registry = json.loads(path.read_bytes())
