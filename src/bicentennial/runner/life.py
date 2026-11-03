@@ -130,7 +130,7 @@ class LifeRun:
     background_records: tuple = ()  # quote-attributed volatile copies, never used by a card
     background_threads: tuple = ()
     _root: Path | None = field(default=None, repr=False)
-    pre_probe: dict = field(default_factory=dict)
+    pre_probe: dict | None = None  # with keep_pre_probe, a record per item whose probe was reached
 
     def cleanup(self):
         """Release this attempt after its evidence has been scored."""
@@ -315,7 +315,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
     schedule = schedule if schedule is not None else build_schedule(life["seed"], life["life"], named(life["scale"]))
     root = scratch / branch
     root.mkdir(parents=True)
-    evidence = LifeRun(arm, life["life"], branch, attempt, _root=root)
+    evidence = LifeRun(arm, life["life"], branch, attempt, _root=root, pre_probe={} if keep_pre_probe else None)
     sessions, transforms, adapter = [], [], None
     workspace_ms = {}
     stopped, hooks, verified = None, (), {}

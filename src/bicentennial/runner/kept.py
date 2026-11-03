@@ -108,7 +108,8 @@ def keep_failed(run, scores, out, *, pack_hash, pins, canary, excluded=(), crede
     """Move failed scored copies to their contract paths; append all captured hashes to the index.
 
     Call once per final unit attempt, before cleanup, with the same exclusion set as scoring.
-    A scored failure without a pre-session record refuses rather than losing a miss silently.
+    A scored failure without a pre-session record refuses rather than losing a miss silently, unless the life stopped
+    before that item's probe: its row then says it was not reached, and it keeps no copy.
     """
     needles = tuple(n.encode() if isinstance(n, str) else n for n in credential_needles)
     if any(not n for n in needles):
@@ -116,15 +117,25 @@ def keep_failed(run, scores, out, *, pack_hash, pins, canary, excluded=(), crede
     scores = list(scores.values()) if isinstance(scores, dict) else list(scores)
     failed = {s["item_id"]: s for s in scores if s["item_id"] not in excluded
               and s["score_milli"] is not None and s["score_milli"] < 1000}
-    if failed.keys() - run.pre_probe.keys():
+    if run.pre_probe is None:
+        raise KeptRefused("pre_probe_missing")
+    # A record is written for every item of a probe before the probe runs, so a failed item without one was never
+    # probed: the life stopped before its session, and it stays a miss in the scores with no copy to keep. A life
+    # that ran to its end probed every item, so there a missing record would lose a miss's copy.
+    unreached = failed.keys() - run.pre_probe.keys()
+    if unreached and run.stopped is None:
         raise KeptRefused("pre_probe_missing")
     out = Path(out)
     kept = out / "kept"
     index_path = kept / "index.json"
     rows = json.loads(index_path.read_bytes()) if index_path.exists() else []
     pending = []
-    for iid, record in sorted(run.pre_probe.items()):
-        row = dict(life=run.life, branch=run.branch, item_id=iid, **record.fields, kept=None, bytes=0)
+    for iid in sorted(run.pre_probe.keys() | unreached):
+        if iid in unreached:
+            rows.append(dict(life=run.life, branch=run.branch, item_id=iid, reached=False, kept=None, bytes=0))
+            continue
+        record = run.pre_probe[iid]
+        row = dict(life=run.life, branch=run.branch, item_id=iid, reached=True, **record.fields, kept=None, bytes=0)
         if iid in failed:
             score = failed[iid]
             relative = f"kept/{run.life}/{run.branch}/{iid}"

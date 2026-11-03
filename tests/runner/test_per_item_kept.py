@@ -2,6 +2,7 @@
 
 import json
 import runpy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -186,6 +187,47 @@ def test_cause_generated_crash_is_a_kept_miss(lives, unit_sessions, tmp_path, mo
     assert score["failure_class"] == "SYSTEM_FAILURE" and score["score_milli"] == 0
     rows = publish(run, [score], tmp_path / "out")
     assert rows[0]["bytes"] > 0
+    run.cleanup()
+
+
+def test_crash_keeps_reached_copies_and_marks_unreached(lives, unit_sessions, tmp_path, monkeypatch):
+    case = lives["t1-g1", "B0"]
+    items = case["items"]
+    session = adapter.HermesAdapter.run_session
+
+    def crash(self, index, **kwargs):
+        if next(s for s in self.script["sessions"] if s["index"] == index)["kind"] == "probe":
+            raise HarnessFailed("turn_failed")
+        return session(self, index, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", crash)
+    run = drive(case, tmp_path / "attempt", items=items, probe_mode="per_item", keep_pre_probe=True)
+    assert run.stopped is not None and len(items) >= 3
+    reached = set(run.pre_probe)
+    assert len(reached) == 1
+    # The crash stops the life, so every later item is a SYSTEM_FAILURE miss (scored 0) that no probe reached.
+    assert all(run.classes[i["item_id"]] == ("SYSTEM_FAILURE", "turn_failed") for i in items)
+    scores = [dict(item_id=i["item_id"], score_milli=0, failure_class="SYSTEM_FAILURE") for i in items]
+    out = tmp_path / "out"
+    rows = publish(run, scores, out)
+    assert sorted(r["item_id"] for r in rows) == sorted(i["item_id"] for i in items)
+    for row in rows:
+        if row["item_id"] in reached:
+            assert row["reached"] is True and row["bytes"] > 0
+            assert (out / row["kept"] / "bundle.json").is_file()
+        else:
+            assert row == dict(life=run.life, branch=run.branch, item_id=row["item_id"], reached=False,
+                               kept=None, bytes=0)
+    assert json.loads((out / "kept/index.json").read_bytes()) == rows
+    run.cleanup()
+
+
+def test_capture_off_refuses(observed, tmp_path):
+    run = run_observed(observed, tmp_path / "attempt")
+    iid = next(iter(run.pre_probe))
+    with pytest.raises(kept.KeptRefused, match="^pre_probe_missing$"):
+        publish(replace(run, pre_probe=None), [dict(item_id=iid, score_milli=0, failure_class=None)], tmp_path / "out")
+    assert not (tmp_path / "out").exists()
     run.cleanup()
 
 
