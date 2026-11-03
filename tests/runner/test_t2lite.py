@@ -24,11 +24,20 @@ from bicentennial.report.t2lite_card import validate_t2lite_card
 from bicentennial.runner import t2lite as runner
 from bicentennial.runner.hermes_score import Infra
 from bicentennial.runner.life import LifeRun
-from bicentennial.runner.probe_live import LiveCredentialStop
+from bicentennial.runner.probe_live import LiveCredentialStop, LiveStop
 from bicentennial.systems.hermes_plugin import cache_digest
 
 ANSWER = dict(type="entity", value="synthetic", confidence_milli=900, citation=None)
 SHADOW_ANSWER = dict(type="entity", value="shadow-only", confidence_milli=800, citation=None)
+
+
+def reply_record(root, cursor, *, status=200, served_by="live", text=None, tool_calls=()):
+    store = BlobStore(root / "run/ledger/blobs", Guard([]))
+    message = dict(role="assistant", content=canon(UNKNOWN).decode() if text is None else text)
+    if tool_calls:
+        message["tool_calls"] = list(tool_calls)
+    response = dict(choices=[dict(message=message)]) if status == 200 else dict(error=dict(message="unavailable"))
+    return dict(role="probe_main", served_by=served_by, status=status, cursor=cursor, resp=store.put(response))
 
 
 def row(iid, score=1000):
@@ -76,7 +85,7 @@ class Stack:
         self.values.update(response.get("state", {}))
         if served == "live" and response.get("observe", self.observe):
             self.identities.setdefault(call.model, self.identity)
-        return Reply(200, served, "live", call.model, text=canon(UNKNOWN).decode(),
+        return Reply(response.get("status", 200), served, "live", call.model, text=canon(UNKNOWN).decode(),
             upstream=response.get("upstream", ({"kind": "try"},)))
 
 
@@ -116,7 +125,7 @@ def scenario(tmp_path, monkeypatch):
             keys={iid: {} for iid in records}, cases={i["item_id"]: SimpleNamespace(item=i)
                 for branch in items.values() for i in branch}, scoring={"evidence": {}},
             pack={"bundles": []}, life_dir=tmp_path, visible={}, meta={"honeypot_token": "synthetic-honey"}))
-    ctx = SimpleNamespace(entry={"name": "hermes-native"}, pack_hash="a" * 64,
+    ctx = SimpleNamespace(entry={"name": "hermes-native", "fresh_install_hash": "a" * 64}, pack_hash="a" * 64,
         pins={k: "b" * (64 if k in ("harness_hash", "seed_hash") else 40)
               for k in (*runner.PIN_FIELDS, "seed_hash")}, packs=packs, run_id="synthetic",
         harness_pin={}, hermes=None, plugin_source=None, worker_argv=None, model_cache=None,
@@ -140,11 +149,13 @@ def scenario(tmp_path, monkeypatch):
         if state.mode == "gate":
             raise GateRefused("machine guard refused")
         call = Call("probe_main", "", "chat", {"messages": [{"role": "user", "content":
-            CANARY if state.mode in ("canary", "canary_credential") else "synthetic prompt"}]}, runner.MODEL,
+            CANARY if state.mode in ("canary", "canary_credential", "canary_live_stop") else "synthetic prompt"}]}, runner.MODEL,
             {"session": 21, "turn": 1}, "synthetic")
-        live.respond(call)
+        reply = live.respond(call)
         if state.mode in ("credential", "canary_credential"):
             raise LiveCredentialStop("upstream_401")
+        if state.mode in ("live_stop", "canary_live_stop"):
+            raise LiveStop("upstream_invalid_request_4xx")
         if state.mode == "spend":
             live.stack.values["spend_stopped"] = True
         root = kw["scratch"] / kw["branch"]
@@ -156,10 +167,12 @@ def scenario(tmp_path, monkeypatch):
                 | state.matches.get(i["item_id"], {}),
             live=dict(served_by="live", served="responder_live", identity_flag=state.mode == "identity"))
             for i in kw["items"]]
-        runner._write(root, "t2lite_probes.json", probes)
-        rows = ({"role": "probe_main", "served_by": "live"},)
+        runner._write(root, "t2lite_probes.json", sorted(probes, key=lambda p: p["item_id"]))
+        rows = tuple(reply_record(root, dict(session=21, turn=n), status=reply.status,
+            served_by=reply.served_by, text=reply.text, tool_calls=reply.tool_calls)
+            for n, _ in enumerate(kw["items"], 1))
         if state.mode == "holds" and kw["items"][0]["item_id"] == "t1-g1B0":
-            rows = (hold_rows()[0 if kw["arm"] == "no_memory" else 1],)
+            rows = (dict(rows[0], **hold_rows()[0 if kw["arm"] == "no_memory" else 1]),)
         if state.mode == "live_replay":
             rows = ({"role": "replay_main", "served_by": "live"},)
         if state.mode == "live_upstream":
@@ -204,6 +217,9 @@ def scenario(tmp_path, monkeypatch):
                 competing_present=list(kw["result"].competing_present)))
         return scored
     monkeypatch.setattr(runner.t1, "prepare", lambda **kw: ctx)
+    # These synthetic lives exercise live boundaries; install measurement has dedicated coverage.
+    monkeypatch.setattr(runner.t1.install_pins, "measure_once",
+                        lambda entry, sandbox, **kw: {"fresh_install_hash": entry["fresh_install_hash"]})
     monkeypatch.setattr(runner, "verify", lambda *args, **kw: None, raising=False)
     monkeypatch.setattr(runner.t1, "_crosses", lambda *args: False)
     monkeypatch.setattr(runner, "build_live_stack", build)
@@ -304,9 +320,12 @@ def test_honeypot_invalid_outranks_stop_with_canary_first(scenario, tmp_path, mo
 
 @pytest.mark.parametrize("sent,mode,code", [("synthetic-honey", "credential", "honeypot"),
     ("synthetic prompt", "credential", "credential_stop"), (None, "credential", "credential_stop"),
-    ("synthetic-honey", "canary_credential", "canary")])
-def test_credential_stop_counts_the_stopped_attempts_requests(scenario, monkeypatch, sent, mode, code):
-    # A honeypot read before a credential stop in the same attempt still voids the run, after the canary.
+    ("synthetic-honey", "canary_credential", "canary"),
+    ("synthetic prompt", "live_stop", "live_stop"), (None, "live_stop", "live_stop"),
+    ("synthetic-honey", "live_stop", "honeypot"),
+    ("synthetic-honey", "canary_live_stop", "canary")])
+def test_item3_stop_counts_the_stopped_attempts_requests(scenario, monkeypatch, sent, mode, code):
+    # A honeypot read before a stop in the same attempt still voids the run, after the canary.
     drive = runner.run_life
     def send_then_stop(**kw):
         if sent is not None:
@@ -321,9 +340,14 @@ def test_credential_stop_counts_the_stopped_attempts_requests(scenario, monkeypa
     monkeypatch.setattr(runner, "run_life", send_then_stop)
     assert scenario.invoke() == 3
     assert len(scenario.seen) == 1
-    assert runner._read(scenario.out, "refusal.json") == {"code": code}
+    assert runner._read(scenario.out, "refusal.json") == (
+        {"code": code, "detail": ["upstream_invalid_request_4xx"]} if code == "live_stop" else {"code": code})
     assert sorted(p.name for p in scenario.out.iterdir()) == (
-        ["custody.json", "receipt.json", "refusal.json"] if code == "credential_stop" else ["refusal.json"])
+        ["custody.json", "receipt.json", "refusal.json"] if code in ("credential_stop", "live_stop") else ["refusal.json"])
+    if code == "live_stop":
+        receipt = runner._read(scenario.out, "receipt.json")
+        assert receipt["run_status"] == "INFRA_FAILURE"
+        assert receipt["tokens"] == ({"input": 2, "output": 1} if sent else {"input": 0, "output": 0})
 
 
 def test_honeypot_in_earlier_repetition_preserves_cached_floor(scenario, tmp_path, monkeypatch):
@@ -382,6 +406,13 @@ def test_guide_documents_publication_guards():
     assert "pins, pack and model cache are re-verified before any completed-run file is written" in text
 
 
+def test_item3_guide_documents_measured_floor_rule():
+    text = (Path(__file__).resolve().parents[2] / "docs/developers/t2lite.md").read_text()
+    assert "each unit’s final attempt" in text
+    assert "terminal live `probe_main` answer (status 200, no tool calls, text that is not blank)" in text
+    assert "malformed answer text still counts, and unscored G2 actions need no answer" in text
+
+
 def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     s = scenario
     assert s.invoke(cache=tmp_path / "cache") == 0
@@ -403,6 +434,160 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     assert len(s.seen) == 12
     assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
+
+
+def add_floor_peer(scenario):
+    pack = scenario.ctx.packs[0]
+    peer = dict(pack.items["B0"][0], item_id="another-item")
+    pack.items["B0"].append(peer)
+    pack.records[peer["item_id"]] = dict(item_id=peer["item_id"], template_id="synthetic", template_version=1)
+    pack.cases[peer["item_id"]] = SimpleNamespace(item=peer)
+    pack.keys[peer["item_id"]] = {}
+    return peer["item_id"]
+
+
+def test_item1_identity_miss_then_all_floor_sends_503_without_stop(scenario, tmp_path, capsys):
+    s, cache = scenario, tmp_path / "cache"
+    assert s.invoke(cache=cache) == 0
+    entry, = cache.iterdir()
+    before = entry.read_bytes()
+    capsys.readouterr()
+    s.seen.clear()
+    s.mode = 503
+    s.stack_options = {"identity": "another-identity", "responses": {
+        "identity_check": {"status": 200},
+        "probe_main": {"status": 503, "served": "live_unavailable", "observe": False}}}
+    assert s.invoke("outage", cache=cache) == 0
+    stack = s.stacks[-1]
+    assert stack.calls[0].role == "identity_check"
+    assert stack.served_identities() == {runner.MODEL: "another-identity"}
+    assert not stack.state().get("stopped") and not stack.state().get("stop_reason")
+    assert s.seen == [("no_memory", n) for _ in range(4) for n in range(3)] + [
+        ("system", n) for _ in range(4) for n in range(3)]
+    floor = runner._read(tmp_path / "outage", "no_memory.json")
+    assert floor["served_identity"] == canon(stack.served_identities()).decode()
+    assert {r["failure_class"] for r in floor["outcomes"].values()} == {"BLOCKED"}
+    assert runner._read(tmp_path / "outage", "disclosures.json")["identity_check"] == dict(
+        served="live", observed=floor["served_identity"], matched=False, tries=1, held_ms=0)
+    assert list(cache.iterdir()) == [entry] and entry.read_bytes() == before
+    assert "floor: not cached (an item was not measured from a live answer)" in capsys.readouterr().err
+
+
+def test_item1_answer_then_local_failure_propagates_to_remaining_items(scenario, tmp_path, monkeypatch, capsys):
+    peer = add_floor_peer(scenario)
+    scenario.ctx.packs[0].items["B0"][-1]["probe_point"] = 3
+    drive, score = runner.run_life, runner.score_item
+    def life(**kw):
+        run = drive(**kw)
+        if kw["arm"] == "no_memory" and kw["items"][0]["item_id"] == "t1-g1B0":
+            probes = runner._read(run._root, "t2lite_probes.json")
+            next(p for p in probes if p["item_id"] == peer)["probe_session"] = 22
+            runner._write(run._root, "t2lite_probes.json", probes)
+            return replace(run, records=run.records[:1], classes={peer: ("SYSTEM_FAILURE", "turn_timeout")},
+                stopped=("SYSTEM_FAILURE", "turn_timeout", 21))
+        return run
+    def scoring(item, **kw):
+        if kw["cls"]:
+            return runner.outcome(runner.identity0(item), None, cause=kw["cls"])
+        return score(item, **kw)
+    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    floor = runner._read(scenario.out, "no_memory.json")["outcomes"]
+    assert floor["t1-g1B0"]["failure_class"] is None and floor[peer]["failure_class"] == "SYSTEM_FAILURE"
+    assert not (tmp_path / "cache").exists()
+    assert "floor: not cached" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("reply", ["status_503", "tool_calls", "missing", "scripted", "later_503", "blank"])
+def test_item1_each_scored_item_needs_terminal_live_answer(scenario, tmp_path, monkeypatch, reply):
+    # Two items in one probe session; the first answer cannot stand in for its unanswered peer.
+    add_floor_peer(scenario)
+    drive = runner.run_life
+    def life(**kw):
+        run = drive(**kw)
+        if kw["arm"] != "no_memory" or kw["items"][0]["item_id"] != "t1-g1B0":
+            return run
+        final = run.records[-1]
+        records = run.records[:-1]
+        if reply != "missing":
+            failed = reply_record(run._root, final["cursor"],
+                status=503 if reply in ("status_503", "later_503") else 200,
+                served_by="scripted" if reply == "scripted" else "live",
+                text=" \n" if reply == "blank" else "",
+                tool_calls=[dict(id="call", function=dict(name="synthetic_tool", arguments="{}"))]
+                    if reply == "tool_calls" else ())
+            records += ((final,) if reply == "later_503" else ()) + (failed,)
+        return replace(run, records=records)
+    monkeypatch.setattr(runner, "run_life", life)
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    assert not (tmp_path / "cache").exists()
+    assert (scenario.out / "no_memory.json").is_file()
+    assert runner._read(scenario.out, "card.json")["counts"]["floor_cached"] == 0
+
+
+def test_item1_malformed_live_answer_still_measured(scenario, tmp_path, monkeypatch):
+    from bicentennial.score.qa import parse_envelope
+    drive, score = runner.run_life, runner.score_item
+    def life(**kw):
+        run = drive(**kw)
+        if kw["arm"] == "no_memory":
+            text = "This is not an answer envelope."
+            assert parse_envelope(text) is None
+            return replace(run, records=tuple(reply_record(run._root, r["cursor"], text=text)
+                for r in run.records), envelopes={i["item_id"]: None for i in kw["items"]})
+        return run
+    def scoring(item, **kw):
+        if kw["envelope"] is None:
+            return dict(row(item["item_id"], 0), envelope=None, failure_class="SYSTEM_FAILURE",
+                worst_case_milli=-1000)
+        return score(item, **kw)
+    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(runner, "score_item", scoring)
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    floor = runner._read(scenario.out, "no_memory.json")
+    assert json.loads(entry.read_bytes()) == floor
+    assert {r["failure_class"] for r in floor["outcomes"].values()} == {"SYSTEM_FAILURE"}
+
+
+def test_item1_one_answered_floor_unit_cannot_cover_an_unanswered_unit(scenario, tmp_path, monkeypatch):
+    drive = runner.run_life
+    def life(**kw):
+        run = drive(**kw)
+        return replace(run, records=()) if kw["arm"] == "no_memory" and kw["branch"] == "B1" else run
+    monkeypatch.setattr(runner, "run_life", life)
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    assert not (tmp_path / "cache").exists()
+
+
+def test_item1_only_final_floor_attempt_counts(scenario, tmp_path, monkeypatch):
+    drive = runner.run_life
+    def life(**kw):
+        run = drive(**kw)
+        if kw["arm"] == "no_memory" and kw["items"][0]["item_id"] == "t1-g1B0":
+            if kw["attempt"] == 0:
+                return replace(run, classes={kw["items"][0]["item_id"]: ("INFRA_FAILURE", "synthetic")})
+            return replace(run, records=())
+        return run
+    monkeypatch.setattr(runner, "run_life", life)
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    assert ("no_memory", 1) in scenario.seen
+    assert not (tmp_path / "cache").exists()
+
+
+def test_item1_unscored_g2_action_needs_no_answer(scenario, tmp_path, monkeypatch):
+    pack = scenario.ctx.packs[1]
+    scenario.ctx.packs[1] = replace(pack, genre="G2")
+    pack.items["B0"][0]["stage"] = "act"
+    drive = runner.run_life
+    def life(**kw):
+        run = drive(**kw)
+        return replace(run, records=()) if kw["items"][0]["item_id"] == "t1-g2B0" else run
+    monkeypatch.setattr(runner, "run_life", life)
+    assert scenario.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    assert json.loads(entry.read_bytes())["outcomes"]["t1-g2B0"]["score_milli"] is None
 
 
 def test_identity_check_matches_before_units(scenario, tmp_path, capsys):
@@ -429,7 +614,7 @@ def test_identity_check_matches_before_units(scenario, tmp_path, capsys):
     assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("response", ["different", "not_forwarded", "unobserved", "unidentified", "invalid"])
+@pytest.mark.parametrize("response", ["different", "not_forwarded", "unobserved", "unidentified"])
 def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
     s = scenario
     assert s.invoke(cache=tmp_path / "cache") == 0
@@ -438,9 +623,7 @@ def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
     s.seen.clear()
     s.stack_options = {"identity": "new-identity"}
     if response != "different":
-        reply = ({"served": "live_unavailable"} if response == "not_forwarded" else
-                 {"observe": False} if response == "unobserved" else
-                 {"served": "live_stopped", "state": {"stop_reason": "upstream_invalid_request_400"}})
+        reply = {"served": "live_unavailable"} if response == "not_forwarded" else {"observe": False}
         s.stack_options["responses"] = {"identity_check": reply}
         if response == "unidentified":
             s.stack_options = {"identity": "unidentified"}
@@ -448,25 +631,20 @@ def test_identity_check_miss_runs_floor(scenario, tmp_path, capsys, response):
     assert s.seen == [("no_memory", 0)] * 4 + [("system", 0)] * 4
     assert [c.role for c in s.stacks[-1].calls] == ["identity_check"] + ["probe_main"] * 8
     disclosure = runner._read(tmp_path / "miss", "disclosures.json")["identity_check"]
-    observed = ("unobserved" if response in ("not_forwarded", "unobserved", "invalid") else
+    observed = ("unobserved" if response in ("not_forwarded", "unobserved") else
                 canon({runner.MODEL: "unidentified" if response == "unidentified" else "new-identity"}).decode())
     assert disclosure == dict(served=s.stacks[-1].responses.get("identity_check", {}).get("served", "live"),
         observed=observed, matched=False, tries=1, held_ms=0)
     card = runner._read(tmp_path / "miss", "card.json")
     assert card["counts"]["floor_cached"] == 0
     floor = runner._read(tmp_path / "miss", "no_memory.json")
-    assert floor["served_identity"] == card["served_identity"] == (
-        "unobserved" if response == "invalid" else canon(s.stacks[-1].served_identities()).decode())
+    assert floor["served_identity"] == card["served_identity"] == canon(s.stacks[-1].served_identities()).decode()
     assert list((tmp_path / "cache").iterdir()) == [entry]
-    if response in ("unidentified", "invalid"):
-        # Neither floor is written: one measured on an unidentified model, and one whose every send met the stop
-        # the identity request latched. The old entry stays as it was.
+    if response == "unidentified":
+        # A floor measured on an unidentified model does not replace the old entry.
         assert entry.read_bytes() == before
     else:
         assert json.loads(entry.read_bytes()) == floor
-    if response == "invalid":
-        live = runner._read(tmp_path / "miss", "disclosures.json")["live"]
-        assert live["stop_reason"] == "upstream_invalid_request_400"
     message = "differs from the cache entry" if response == "different" else "not confirmed"
     assert f"floor: ran live (served identity {message})" in capsys.readouterr().err
 
@@ -519,6 +697,138 @@ def test_identity_check_latched_stop_precedes_units(scenario, tmp_path, state, c
     receipt = runner._read(tmp_path / "stopped", "receipt.json")
     assert receipt["run_status"] == "INFRA_FAILURE" and receipt["tokens"] == {"input": 0, "output": 0}
     assert runner._read(tmp_path / "stopped", "custody.json") == [{"type": "holder"}]
+
+
+@pytest.mark.parametrize("reason", ["upstream_invalid_request_4xx", "upstream_failures_3_in_a_row",
+                                  "upstream_unparsed_3_in_a_row", "responder_error:x"])
+def test_items1_2_3_first_floor_stop_refuses_without_retry(scenario, tmp_path, monkeypatch, capsys, reason):
+    s = scenario
+    s.stack_options = {"responses": {"probe_main": {"served": "live_stopped",
+        "state": {"stopped": True, "stop_reason": reason}}}}
+    # A stopped attempt would score INFRA and retry if the post-attempt check were absent.
+    drive = runner.run_life
+    def infra(**kw):
+        return replace(drive(**kw), classes={i["item_id"]: ("INFRA_FAILURE", "responder_live_stopped")
+                                             for i in kw["items"]})
+    monkeypatch.setattr(runner, "run_life", infra)
+    assert s.invoke(cache=tmp_path / "cache") == 3
+    assert s.seen == [("no_memory", 0)] and len(s.stacks[-1].calls) == 1
+    assert runner._read(s.out, "refusal.json") == {"code": "live_stop", "detail": [reason]}
+    assert capsys.readouterr().err.splitlines() == ["live_stop " + reason]
+    assert sorted(p.name for p in s.out.iterdir()) == ["custody.json", "receipt.json", "refusal.json"]
+    receipt = runner._read(s.out, "receipt.json")
+    assert receipt["run_status"] == "INFRA_FAILURE" and receipt["tokens"] == {"input": 2, "output": 1}
+    assert runner._read(s.out, "custody.json") == [{"type": "holder"}]
+    assert s.stacks[-1].closed and s.stacks[-1].drained
+    assert not (tmp_path / "cache").exists()
+
+
+def test_items1_3_cached_identity_live_stop(scenario, tmp_path, capsys):
+    s = scenario
+    assert s.invoke(cache=tmp_path / "cache") == 0
+    entry, = (tmp_path / "cache").iterdir()
+    before = entry.read_bytes()
+    s.seen.clear()
+    capsys.readouterr()
+    reason = "upstream_invalid_request_4xx"
+    s.stack_options = {"responses": {"identity_check": {"served": "live_stopped",
+        "state": {"stopped": True, "stop_reason": reason}}}}
+    assert s.invoke("stopped", cache=tmp_path / "cache") == 3
+    out = tmp_path / "stopped"
+    assert s.seen == [] and [c.role for c in s.stacks[-1].calls] == ["identity_check"]
+    assert runner._read(out, "refusal.json") == {"code": "live_stop", "detail": [reason]}
+    assert capsys.readouterr().err.splitlines() == ["live_stop " + reason]
+    assert sorted(p.name for p in out.iterdir()) == ["custody.json", "receipt.json", "refusal.json"]
+    assert runner._read(out, "receipt.json")["run_status"] == "INFRA_FAILURE"
+    assert list((tmp_path / "cache").iterdir()) == [entry] and entry.read_bytes() == before
+
+
+def test_item3_system_live_stop_discards_pending_floor(scenario, tmp_path, monkeypatch):
+    s, drive = scenario, runner.run_life
+    def stop_in_system(**kw):
+        if kw["arm"] == "system":
+            kw["live"].stack.responses["probe_main"] = {"served": "live_stopped",
+                "state": {"stopped": True, "stop_reason": "upstream_invalid_request_4xx"}}
+        return drive(**kw)
+    monkeypatch.setattr(runner, "run_life", stop_in_system)
+    assert s.invoke(cache=tmp_path / "cache") == 3
+    assert s.seen == [("no_memory", 0)] * 4 + [("system", 0)]
+    assert runner._read(s.out, "refusal.json") == {"code": "live_stop", "detail": ["upstream_invalid_request_4xx"]}
+    assert not (s.out / "card.json").exists() and not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize("arm", ["no_memory", "system"])
+def test_item1_stop_before_each_unit(scenario, tmp_path, monkeypatch, arm):
+    s, unit = scenario, runner._unit
+    def latch_between_units(*args, **kwargs):
+        result = unit(*args, **kwargs)
+        if args[3] == arm:
+            args[5].stack.values.update(stopped=True, stop_reason="upstream_invalid_request_4xx")
+        return result
+    monkeypatch.setattr(runner, "_unit", latch_between_units)
+    assert s.invoke(cache=tmp_path / "cache") == 3
+    assert s.seen == ([("no_memory", 0)] if arm == "no_memory" else [("no_memory", 0)] * 4 + [("system", 0)])
+    assert runner._read(s.out, "refusal.json") == {"code": "live_stop", "detail": ["upstream_invalid_request_4xx"]}
+    assert not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize("canary,code", [(False, "honeypot"), (True, "canary")])
+def test_item3_invalid_outranks_live_stop(scenario, monkeypatch, canary, code):
+    s, drive = scenario, runner.run_life
+    def invalid_then_stop(**kw):
+        run = drive(**kw)
+        kw["live"].canary = canary
+        kw["live"].stack.values.update(stopped=True, stop_reason="upstream_invalid_request_4xx")
+        return replace(run, honeypot_hits=1)
+    monkeypatch.setattr(runner, "run_life", invalid_then_stop)
+    assert s.invoke() == 3 and len(s.seen) == 1
+    assert runner._read(s.out, "refusal.json") == {"code": code}
+    assert [p.name for p in s.out.iterdir()] == ["refusal.json"]
+
+
+@pytest.mark.parametrize("stop", ["credential", "live"])
+@pytest.mark.parametrize("seen,code", [("egress", "isolation"), ("records", "isolation"), ("unobserved", None)])
+def test_item3_isolation_seen_before_a_stop_outranks_it(scenario, monkeypatch, stop, seen, code):
+    # run_life hands the stopped attempt's egress over with the stop. A breach seen before the stop outranks it, as a
+    # canary or honeypot does; egress the attempt could not sample is the stop's doing and does not.
+    def stopped(**kw):
+        ledger = kw["scratch"] / kw["branch"] / "run/ledger"
+        ledger.mkdir(parents=True)
+        rows = [{"type": "response", "role": "replay_main", "served_by": "live"}] if seen == "records" else []
+        (ledger / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows))
+        error = LiveCredentialStop("upstream_401") if stop == "credential" else LiveStop("upstream_invalid_request_4xx")
+        error.egress = ({"non_loopback": ["synthetic:443"]} if seen == "egress" else
+                        {"alive_at_stop": True, "unsampled": ["egress unsampled pid=1 log=worker"]})
+        raise error
+    monkeypatch.setattr(runner, "run_life", stopped)
+    assert scenario.invoke() == 3
+    expected = code or ("credential_stop" if stop == "credential" else "live_stop")
+    assert runner._read(scenario.out, "refusal.json")["code"] == expected
+    assert sorted(p.name for p in scenario.out.iterdir()) == (
+        ["refusal.json"] if code else ["custody.json", "receipt.json", "refusal.json"])
+
+
+@pytest.mark.parametrize("secret_in", ["output", "receipt", "custody", "reason"])
+def test_item3_live_stop_uses_needle_scan(scenario, monkeypatch, capsys, secret_in):
+    s, drive = scenario, runner.run_life
+    def stop(**kw):
+        run = drive(**kw)
+        kw["live"].stack.values.update(stopped=True, stop_reason="responder_error:x" if secret_in != "reason" else
+                                       "bridge_unmapped_key:synthetic-access-token")
+        if secret_in == "output":
+            runner._write(s.out, "planted.json", "synthetic-access-token")
+        return run
+    monkeypatch.setattr(runner, "run_life", stop)
+    if secret_in == "receipt":
+        monkeypatch.setattr(runner, "_receipt", lambda *args: {"planted": "synthetic-access-token"})
+    elif secret_in == "custody":
+        s.stack_options["inner"] = SimpleNamespace(login=SimpleNamespace(
+            needles=lambda: {}, drain=lambda: [{"planted": "synthetic-access-token"}]))
+    assert s.invoke() == 3
+    assert runner._read(s.out, "refusal.json") == {"code": "credential_scan"}
+    assert [p.name for p in s.out.iterdir()] == ["refusal.json"]
+    err = capsys.readouterr().err
+    assert err.splitlines()[-1] == "credential_scan" and "synthetic-access-token" not in err
 
 
 def test_identity_check_absent_without_cache_entry(scenario, tmp_path):

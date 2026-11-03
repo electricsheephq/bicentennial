@@ -573,7 +573,8 @@ def snapshot():
 def test_subprocess_determinism():
     code = "import runpy,sys; sys.stdout.buffer.write(runpy.run_path('tests/items/test_checks.py')['snapshot']())"
     results = [subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True, capture_output=True,
-                              env={"PATH": os.defpath, "PYTHONHASHSEED": seed}, timeout=60).stdout
+                              env={"PATH": os.defpath, "PYTHONPATH": str(ROOT / "src"),
+                                   "PYTHONHASHSEED": seed}, timeout=60).stdout
                for seed in ("0", "random")]
     assert results[0] == results[1] == snapshot()
 
