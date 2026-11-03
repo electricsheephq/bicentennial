@@ -67,7 +67,7 @@ def test_build_existing_tier_unchanged(ready, tmp_path, capsys, name):
     assert (build.file_manifest(tmp_path), target.stat().st_mode) == before
 
 
-@pytest.mark.parametrize("args", [["--tier", "T2", "--out", "unused"],
+@pytest.mark.parametrize("args", [["--tier", "T3", "--out", "unused"],
                                   ["--out", "unused"], ["--tier", "T0"],
                                   ["--tier", "T0", "--out", "unused", "extra"]])
 def test_build_usage(ready, capsys, args):
