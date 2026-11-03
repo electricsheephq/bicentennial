@@ -123,6 +123,8 @@ class LifeRun:
     store_growth_bytes: int = 0
     process_ids: tuple = ()
     timings: dict | None = None
+    background_records: tuple = ()  # quote-attributed volatile copies, never used by a card
+    background_threads: tuple = ()
     _root: Path | None = field(default=None, repr=False)
 
     def cleanup(self):
@@ -544,6 +546,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             "session": s.session, "kind": s.kind, "workspace": workspace_ms.get(s.session),
             **{k: s.timings_ms.get(k, []) for k in (
                 "gate", "egress_wait", "spawn", "import", "open", "turn", "drain", "resume")},
+            "background_threads": s.timings_ms.get("background_threads", []),
             **{k: s.timings_ms.get(k) for k in ("wall", "shutdown_hook", "close", "finish")},
         } for s in sessions]}
         return replace(evidence, results=dict(sorted(results.results().items())), transforms=tuple(sorted(transforms)),
@@ -552,6 +555,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             audit=_audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=leg is not None),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
-            egress=egress, timings=timings, hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified,
+            egress=egress, timings=timings, background_records=tuple(adapter.background_records()),
+            background_threads=tuple(adapter.background_threads),
+            hooks=hooks, harness_record=adapter.harness_record(), verified_empty=verified,
             tokens_by_role=_tokens(root / "run" / "ledger", rows), process_ids=tuple(adapter.pids),
             store_growth_bytes=_surface_bytes(surfaces) - initial_bytes if initial_bytes is not None else 0)

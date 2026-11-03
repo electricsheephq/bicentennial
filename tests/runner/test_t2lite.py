@@ -391,6 +391,14 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     receipt = runner._read(s.out, "receipt.json")
     assert {t["arm"] for t in receipt["timings"]} == {"system", "no_memory"}
     assert receipt["tokens"] == {"input": 16, "output": 8}
+    assert receipt["turn_wait_s"] == "3.0"
+    assert len(receipt["units"]) == 8
+    assert {(u["life"], u["branch"], u["arm"]) for u in receipt["units"]} == {
+        (p.life, b, a) for p in s.ctx.packs for b in ("B0", "B1") for a in ("system", "no_memory")}
+    for u in receipt["units"]:
+        assert set(u) == {"life", "branch", "arm", "slot", "start_ms", "end_ms", "attempts"}
+        assert u["slot"] == 0 and u["attempts"] == 1
+        assert receipt["wall_start_ms"] <= u["start_ms"] <= u["end_ms"] <= receipt["wall_end_ms"]
     assert card["counts"] == {"floor_cached": 0, "null_citation": 0}
     assert card["answer_contract_sha256"] == runner.answer_contract.contract_hash()
     assert runner._read(s.out, "custody.json") == [{"type": "holder"}]
@@ -400,6 +408,7 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     cached_receipt = runner._read(tmp_path / "second", "receipt.json")
     assert {t["arm"] for t in cached_receipt["timings"]} == {"system"}
     assert cached_receipt["tokens"] == {"input": 8, "output": 4}
+    assert len(cached_receipt["units"]) == 4 and all(u["arm"] == "system" for u in cached_receipt["units"])
     assert len(s.seen) == 12
     assert "floor: reused from the cache (served identity matched)" in capsys.readouterr().err
     assert all(p.read_bytes() == canon(json.loads(p.read_bytes())) for p in s.out.rglob("*.json"))
@@ -630,6 +639,9 @@ def test_unscored_action_keeps_the_unit_retry_attempt(action_scenario):
         assert target["t1-g2B0"]["infra_reruns"] == 1
         assert target["t1-g2B0"]["score_milli"] is None
     assert "t1-g2B0" not in {iid for iid, _, _ in s.scored}
+    units = runner._read(s.out, "receipt.json")["units"]
+    retried = [u for u in units if u["life"] == s.ctx.packs[1].life and u["branch"] == "B0"]
+    assert len(retried) == 2 and all(u["attempts"] == 2 for u in retried)
 
 
 @pytest.mark.parametrize("failure,expected", [("system", "SYSTEM_FAILURE"), ("infra", "BLOCKED"),
@@ -1369,6 +1381,7 @@ def test_turn_wait_disclosure_and_every_arm(scenario, monkeypatch, capsys, wait)
     assert scenario.invoke(turn_wait_s=wait) == 0
     assert "turn_wait_s" not in capsys.readouterr().err
     assert runner._read(scenario.out, "disclosures.json")["turn_wait_s"] == str(wait)
+    assert runner._read(scenario.out, "receipt.json")["turn_wait_s"] == str(wait)
     assert len(seen) == 8 and {arm for arm, _ in seen} == {"no_memory", "system"}
     assert all(value == wait for _, value in seen)
 

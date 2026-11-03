@@ -15,6 +15,7 @@ from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.responder import Call, Reply
+from bicentennial.director.roles import MAIN_ROLES
 from bicentennial.director.upstream import login as custody
 from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.harness.hermes.plugin_host import GateRefused
@@ -23,6 +24,7 @@ from bicentennial.ledger import BlobStore, Guard
 from bicentennial.packs.install import verify
 from bicentennial.probe.scripted_reader import ReaderResult
 from bicentennial.report.receipt import (
+    background_summary,
     build_receipt,
     ledger_latencies,
     load_milli,
@@ -129,7 +131,17 @@ def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):
         answer_contract_sha256=answer_contract.contract_hash())
 
 
-def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
+def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, units=None):
+    start, before = time.time_ns() // 1_000_000, len(runs)
+    try:
+        return _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops)
+    finally:
+        if units is not None:
+            units.append(dict(life=pack.life, branch=branch, arm=arm, slot=0,
+                start_ms=start, end_ms=time.time_ns() // 1_000_000, attempts=len(runs) - before))
+
+
+def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
     for attempt in range(3):
         try:
             run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
@@ -249,7 +261,7 @@ def _holds(rows):
     return dict(waits=waits, held_ms=held_ms, reasons=sorted(reasons))
 
 
-def _receipt(runs, start, status):
+def _receipt(runs, start, status, turn_wait_s=3.0, units=()):
     rows = [r for run in runs for r in run.records]
     tokens, runtime, failed = {}, {}, {}
     for run in runs:
@@ -268,6 +280,11 @@ def _receipt(runs, start, status):
         process_ids=[p for r in runs for p in r.process_ids], ports=[int(r.run_values["director_port"])
             for r in runs if r.run_values], temporary_paths=[r.run_values["sandbox_root"] for r in runs if r.run_values],
         raw_body_digest=raw_body_digest(rows), egress_failed_samples=failed,
+        turn_wait_s=turn_wait_s, units=units,
+        background=[background_summary(arm,
+            [r.background_records or r.records for r in runs if r.arm == arm],
+            [n for r in runs if r.arm == arm for n in r.background_threads], main_roles=MAIN_ROLES)
+            for arm in sorted({r.arm for r in runs} | {"system"})],
         timings=[dict(arm=r.arm, life=r.life, branch=r.branch,
             attempt=r.attempt, egress_pid_samples=r.egress.get("samples"),
             egress_sample_ms=r.egress.get("sample_ms"), **r.timings) for r in runs if r.timings])
@@ -362,6 +379,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None, turn_wait_s=3.0):
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
+    units = []
     needles, pending_cache, live, custody_rows = set(), None, None, []
     try:
         turn_wait_s = t1.validate_turn_wait(turn_wait_s)
@@ -451,7 +469,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     for pack in ctx.packs:
                         for branch in ("B0", "B1"):
                             scores, _ = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
-                                live, runs, out / "no_memory" / pack.life / branch)
+                                live, runs, out / "no_memory" / pack.life / branch, units=units)
                             floor["outcomes"].update(scores)
                             stopped = runs[-1].stopped
                             floor_stops[pack.life + branch] = list(stopped) if stopped else None
@@ -467,7 +485,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     scores, joined = {}, {}
                     for pack, branch in selection:
                         values, probes = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
-                            live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops)
+                            live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops, units=units)
                         rows = _joined(pack, branch, values, probes)
                         if keep is not None:
                             values = {i: v for i, v in values.items() if i in keep}
@@ -506,7 +524,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 report["served_identity"] = dict(baseline=references["baseline"]["served_identity"],
                     current=card["served_identity"], changed=references["baseline"]["served_identity"] != card["served_identity"])
                 _write(out, "flips.json", report)
-            _write(out, ".receipt.json", _receipt(runs, start, "COMPLETE"))
+            _write(out, ".receipt.json", _receipt(runs, start, "COMPLETE", ctx.turn_wait_s, units))
             _write(out, ".card.json", card)
             _scan(out, needles)
             if pending_cache:
@@ -538,7 +556,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 out.mkdir()
                 if code in ("credential_stop", "spend_stop"):
                     # L1's custody rows say why: the drained log, and a Stop's own records.
-                    files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE")),
+                    files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE", turn_wait_s, units)),
                              "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"

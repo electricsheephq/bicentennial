@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Kit, 2026-11-03: volatile background work, turn wait and unit timing (#378, #388, #391)
+- **RING0 §13 E30 and §14.10:** execution receipts require per-arm background disclosures, decimal-string `turn_wait_s` and unit wall boundaries with attempts. T2-lite records units; T1 leaves units empty. The developer report's wait-comparability rule is specified here; its refusal is implemented separately. These disclosures change no score, card, stable output or frozen quantity. The controls pin moves because `report/receipt.py` is in its closure; the reader, scoring and scorer pins stay unchanged. Rebuild packs for the new controls pin.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Kit, 2026-11-03: pack hashes no longer depend on the build host's SQLite (#327)
 - **Pack builder:** from the next kit, sealed SQLite copies have fixed zeros at header offsets 92–99 before hashing. Raw DB hashes, pack manifests, pack tree hashes and tier indexes/hashes move; rebuild earlier packs. The generator's output stays unchanged. The builder's SQLite version is returned by the build API and printed on the build command's stderr, outside the hashed tier directory.
 - **Kept:** all four code pins, scores, verdicts, world content and `world_hash` stay unchanged, as do the host-free pack digests. This covers writer header metadata, not future SQLite page-layout changes.

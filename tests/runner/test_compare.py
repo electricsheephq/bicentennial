@@ -132,7 +132,16 @@ def completed(installed, cases, tmp_path_factory):
     patch.setattr(t1, "run_life", drive)
     patch.setattr(compare, "t1_gate", gated)
     try:
+        original_call = adapter._Worker.call
+
+        def without_thread_report(self, **kwargs):
+            result = original_call(self, **kwargs)
+            if result is not None and kwargs.get("op") in ("open", "turn"):
+                result.pop("alive_threads", None)
+            return result
+
         for name in ("one", "two"):
+            patch.setattr(adapter._Worker, "call", original_call if name == "one" else without_thread_report)
             out = root / name
             code = invoke(installed, out)
             assert code == 0, gates[-2:]
@@ -177,6 +186,12 @@ def test_full_run(completed, installed, cases):
         ms, busy = loop_time(read(out, arm, "receipt.json"))
         assert ms > 0 and busy is False
         receipt = read(out, arm, "receipt.json")
+        assert {b["arm"] for b in receipt["background"]} == (
+            {"system", "no_memory"} if arm == "system" else {"wiped"})
+        assert receipt["units"] == []
+        assert all(b["late"]["count"] == 0 for b in receipt["background"])
+        assert all(n == 0 for row in receipt["timings"] for session in row["sessions"]
+                   for n in session["background_threads"])
         pooled = [f for f in completed.runs[:12] if f.arm in (
             ("system", "no_memory") if arm == "system" else ("wiped",))]
         assert receipt["store_growth_bytes"] == sum(f.store_growth_bytes for f in pooled) > 0
@@ -853,6 +868,12 @@ def test_execute_pools_lives_and_corpus(synth, installed, tmp_path, monkeypatch,
     valid(out)
     for arm in compare.GATED:
         receipt = read(out, arm, "receipt.json")
+        assert {b["arm"] for b in receipt["background"]} == (
+            {"system", "no_memory"} if arm == "system" else {"wiped"})
+        assert receipt["units"] == []
+        assert all(b["late"]["count"] == 0 for b in receipt["background"])
+        assert all(n == 0 for row in receipt["timings"] for session in row["sessions"]
+                   for n in session["background_threads"])
         pooled = compare._runs(run, ("system", "no_memory") if arm == "system" else ("wiped",))
         assert len(receipt["timings"]) == len(pooled)
         count = 4 * len(cases)
@@ -1088,6 +1109,7 @@ def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch,
         assert invoke(installed, out, turn_wait_s=wait) == 0
         assert "turn_wait_s" not in capsys.readouterr().err
         assert all(properties(out, arm)["t1.turn_wait_s"] == str(wait) for arm in compare.GATED)
+        assert all(read(out, arm, "receipt.json")["turn_wait_s"] == str(wait) for arm in compare.GATED)
         outputs.append(out)
     for arm in compare.GATED:
         assert (outputs[0] / arm / "card.json").read_bytes() == (outputs[1] / arm / "card.json").read_bytes()
