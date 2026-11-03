@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sqlite3
 from contextlib import ExitStack, closing
 from dataclasses import asdict, replace
 from hashlib import sha256
@@ -227,6 +228,18 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
     return pack_id, cases, pins
 
 
+def _normalise_sqlite_headers(root):
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            with path.open("r+b") as file:
+                if file.read(16) == b"SQLite format 3\0":
+                    # Fix version-valid-for (92-95) and writer version (96-99) at
+                    # zero so sealed bytes name content, not the builder's SQLite.
+                    # All DB connections are closed; only the sealed copies change.
+                    file.seek(92)
+                    file.write(b"\0" * 8)
+
+
 def _build_pack(t, path, **kwargs):
     t.twin.b1.close()
     with ExitStack() as stack:
@@ -241,6 +254,7 @@ def _build_pack(t, path, **kwargs):
     for b in ("B0", "B1"):
         (life / f"items.{b}.json").write_bytes(canon([
             c.item for c in cases if c.record["branch"] == b]) + b"\n")
+    _normalise_sqlite_headers(life)
     files = file_manifest(path)
     manifest = dict(canary=CANARY, pack_id=pack_id, tier=kwargs["tier"], genre=t.genre,
                     path=kwargs["rel"], labels=labels(kwargs["tier"]), honeypot="visible/answer_key.json",
@@ -318,7 +332,7 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None):
         _write(staging / "index.json", index)
         shutil.rmtree(work)
         staging.rename(dest)
-        return dict(index=index, pack_hash=tree_sha256(dest))
+        return dict(index=index, pack_hash=tree_sha256(dest), sqlite_version=sqlite3.sqlite_version)
     except BaseException:
         for t in lives:
             t.twin.b1.close()
