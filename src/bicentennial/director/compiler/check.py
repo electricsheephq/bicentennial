@@ -99,7 +99,7 @@ def _compare(adapter, calls):
 
 
 def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None,
-                  answer_contract=None):
+                  answer_contract=None, probe_mode="ring0"):
     """Hold scratch exclusively for the call: its job roots have fixed names (#282)."""
     import fcntl
     import os
@@ -119,7 +119,7 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
         with holding(fd):  # workers inherit the lock, so a killed caller's live workers keep scratch busy
             return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
                                   checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv,
-                                  answer_contract=answer_contract)
+                                  answer_contract=answer_contract, probe_mode=probe_mode)
     finally:
         os.close(fd)
 
@@ -144,7 +144,7 @@ def _check_contract(compiled, items, answer_contract):
 
 
 def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s, worker_argv,
-                   answer_contract=None):
+                   answer_contract=None, probe_mode="ring0"):
     """Execute each check session in a fresh home and compare its durable tool-result receipts."""
     import sqlite3
     from pathlib import Path
@@ -181,7 +181,7 @@ def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scrat
                 raise ValueError("world seed differs")
             items = json.loads((life_dir / f"items.{branch}.json").read_bytes())
             compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=step_s,
-                                      answer_contract=answer_contract)
+                                      answer_contract=answer_contract, probe_mode=probe_mode)
             _check_contract(compiled, items, answer_contract)
             if meta["canary"] != compiled.script["canary"]:
                 raise ValueError("life canary differs")
