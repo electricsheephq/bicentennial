@@ -1,6 +1,7 @@
 """Private-copy SQLite evidence for forgetting checks."""
 
 import bz2
+import gzip
 import io
 import lzma
 import shutil
@@ -18,8 +19,6 @@ SQLITE_VERSION = sqlite3.sqlite_version
 SIDECARS = ("-wal", "-shm", "-journal")
 # Larger than a realistic memory record; bounded reads also contain expansion bombs.
 DECOMPRESS_CAP = 64 * 1024 * 1024
-GZIP_MAGIC = b"\x1f\x8b"
-GZIP_WBITS = 16 + zlib.MAX_WBITS
 
 
 def _zlib_header(value):
@@ -27,49 +26,57 @@ def _zlib_header(value):
             and int.from_bytes(value[:2], "big") % 31 == 0)
 
 
-def _streams(value, header, wbits):
-    """Decode consecutive complete zlib streams or gzip members; bytes after the last complete one are ordinary."""
+def _zlib_streams(value):
+    """Consecutive zlib streams, read as raw deflate, so a bad checksum or trailing bytes lose nothing already read."""
     output = b""
-    while header(value):
-        decoder = zlib.decompressobj(wbits)
+    # A stream with a preset dictionary (FDICT) cannot be read without it.
+    while _zlib_header(value) and not value[1] & 0x20:
+        decoder = zlib.decompressobj(-zlib.MAX_WBITS)
         try:
-            chunk = decoder.decompress(value, DECOMPRESS_CAP - len(output))
+            chunk = decoder.decompress(value[2:], DECOMPRESS_CAP - len(output))
         except zlib.error:
-            # As with zlib.decompress, a complete preceding stream survives trailing junk.
-            return output, False
-        if len(output) + len(chunk) >= DECOMPRESS_CAP:
-            return output + chunk, True
-        if not decoder.eof:
             return output, False
         output += chunk
-        # gzip readers skip zero padding between members.
-        value = decoder.unused_data.lstrip(b"\0") if wbits == GZIP_WBITS else decoder.unused_data
+        if len(output) >= DECOMPRESS_CAP:
+            return output, True
+        if not decoder.eof:
+            return output, False
+        value = decoder.unused_data[4:]  # past the stream's Adler-32 checksum
     return output, False
 
 
-def _decompressed(value):
-    """One level only. Return searchable output and whether any content is opaque.
+def _read_prefix(stream):
+    """Everything a file decoder yields before it stops, read in steps so a later error loses nothing earlier."""
+    parts, size = [], 0
+    try:
+        while size < DECOMPRESS_CAP:
+            chunk = stream.read1(DECOMPRESS_CAP - size)
+            if not chunk:
+                break
+            parts.append(chunk)
+            size += len(chunk)
+    except (OSError, EOFError, zlib.error, lzma.LZMAError):
+        pass
+    return b"".join(parts), size >= DECOMPRESS_CAP
 
-    Invalid streams are ordinary bytes. Consecutive complete zlib streams and gzip members are searched up to the
-    first bytes that do not continue them; bz2 and xz readers keep their standard-library handling of
-    concatenated streams and padding.
+
+def _decompressed(value):
+    """One level only. Return what decoding yields before it stops, and whether any content is opaque.
+
+    Output read before invalid bytes, a truncation or a bad checksum is searched; a header that yields nothing is
+    ordinary bytes. gzip, bz2 and xz readers follow their own concatenated members and padding.
     """
     if value.startswith((b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")):
         return b"", True
     if _zlib_header(value):
-        return _streams(value, _zlib_header, zlib.MAX_WBITS)
-    if value.startswith(GZIP_MAGIC):
-        return _streams(value, lambda rest: rest.startswith(GZIP_MAGIC), GZIP_WBITS)
-    opener = next((opener for header, opener in ((b"BZh", bz2.BZ2File), (b"\xfd7zXZ\0", lzma.LZMAFile))
+        return _zlib_streams(value)
+    opener = next((opener for header, opener in ((b"\x1f\x8b", gzip.open), (b"BZh", bz2.BZ2File),
+                                                (b"\xfd7zXZ\0", lzma.LZMAFile))
                    if value.startswith(header)), None)
     if opener is None:
         return b"", False
-    try:
-        with opener(io.BytesIO(value), mode="rb") as stream:
-            output = stream.read(DECOMPRESS_CAP)
-    except (OSError, EOFError, lzma.LZMAError):
-        return b"", False
-    return output, len(output) >= DECOMPRESS_CAP
+    with opener(io.BytesIO(value), mode="rb") as stream:
+        return _read_prefix(stream)
 
 
 def _quoted(name):
@@ -145,8 +152,9 @@ def scan_sqlite(source, relative, needles, *, sidecars=SIDECARS):
                 hits.update(relative + p[len(source.name):] for p in linked_hits(copy, blobs))
             except (OSError, ValueError):
                 reason = "sqlite_unreadable"
-            if reason:
+            if not copy.exists():
                 return tuple(sorted(hits)), reason
+            # A doubt so far still lets SQLite read the values: any hit outranks it.
             connection = sqlite3.connect(copy)
             try:
                 tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
