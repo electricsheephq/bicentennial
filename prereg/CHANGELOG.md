@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-03: INV-FORGET reads SQLite contents (#276)
+- **RING0 §13 E26 (§7):** from the next kit, INV-FORGET searches private SQLite copies and their sidecars before recovery, reads all SQL values, and requires integrity and zero-filled free pages to certify absence. Raw hits remain `store_hit`; binary formats other than SQLite remain `opaque_store`. The new doubt reasons are `sqlite_unreadable` and `sqlite_freelist`, ordered after `opaque_store`. Canonical host checkpoints are scanned by their carried files. T0 adds canonical JUnit property `invariants.forget_scan` with run-wide method/result counts and hit locations; verdict objects and T1 outputs are unchanged. The scorer pin (`scorer_sha256`, over `score/*.py`) moves, so packs built before this change no longer verify and are rebuilt. v0.1's frozen kit keeps its rule.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0, 2026-11-02: the v0.3 developer loop's terms (§14) and the v0.3/v0.4 split (§13 E24)
 - **RING0 §14:** defines the terms of PREREG §8's developer-product acceptance bar for v0.3 (the baseline `naive-rag-dev`, real-stack, the surfacing run and the selected failure, reproduced, fixed, confirmed on Ring 1, the budgets and the declaration, what the bar publishes) and the developer report's statistics, before any run they govern. Developer tiers still carry no decision bar.
 - **RING0 §13 E24 (§3, §6, §7):** live G2 action scoring and the T0 Hermes-replay fallback move to v0.4 (ERRATA-v2.2 E16), and T1's cut order starts with the costs that should change nothing on its cards, such as the wait after each turn (v0.2's A/B could not decide that, #383), each checked by an A/B at one commit.
