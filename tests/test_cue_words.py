@@ -208,4 +208,6 @@ def test_cli_usage_error(tmp_path, case):
     result = cli(*args)
     assert result.returncode == 2
     assert "error:" in result.stderr
+    guard = {"templates-missing": "not a template directory", "no-items": "no branch item files"}.get(case)
+    assert guard is None or guard in result.stderr
     assert result.stdout == ""
