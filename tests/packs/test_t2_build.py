@@ -158,6 +158,7 @@ def test_t2_spec_rejects_wrong_shape(tmp_path, before, after):
 
 def test_t2_cli_reaches_builder(tmp_path, monkeypatch):
     seen = []
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
     monkeypatch.setattr(cli, "reexec_niced", lambda argv: None)
     monkeypatch.setattr(build, "build_tier", lambda tier, out, **kwargs:
                         seen.append((tier, out)) or dict(pack_hash="a" * 64, sqlite_version="test"))
