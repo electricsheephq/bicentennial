@@ -11,7 +11,7 @@ from pathlib import Path
 CUE_PHRASES = (
     "usual", "as usual", "as always", "established", "our regular", "like last time",
     "the same as before", "the usual", "my usual", "as before", "same as last time",
-    "as we discussed", "as agreed", "the regular", "routine",
+    "as we discussed", "as agreed", "the regular", "my regular", "your regular", "routine",
 )
 _PATTERNS = tuple((phrase, re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split()))
                                      + r"\b", re.IGNORECASE)) for phrase in CUE_PHRASES)

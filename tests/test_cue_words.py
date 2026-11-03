@@ -71,7 +71,7 @@ def test_boundaries(text, phrase):
 @pytest.mark.parametrize("phrase", [
     "usual", "as usual", "as always", "established", "our regular", "like last time",
     "the same as before", "the usual", "my usual", "as before", "same as last time",
-    "as we discussed", "as agreed", "the regular", "routine",
+    "as we discussed", "as agreed", "the regular", "my regular", "your regular", "routine",
 ])
 def test_vocabulary(phrase):
     hits = cue_words.check_requests([
