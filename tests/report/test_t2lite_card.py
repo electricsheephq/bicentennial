@@ -494,7 +494,7 @@ CODE_PIN_FIELDS = ("scorer_sha256", "controls_sha256", "reader_sha256")
 # The four code pins at this commit, kept apart from the pack goldens so a pin move shows here alone. A change that
 # moves a pin updates this table from the failure message and says so in prereg/CHANGELOG.md.
 CODE_PINS = {
-    "controls": "1080557adb04b83a22f3638b969a382377536655ef713b86288c25ee87583131",
+    "controls": "91f36194ad5f45ac347452926d1b37dadf6dcb712365b093a28787e369858b4a",
     "reader": "90ed83e9bed4b80088108199d2434e03d078a2995ca6eca9023858125eb6835f",
     "scoring": "925f3fc812fd80974eea1780b359b58bbcd5f35c338b1f2daf710e6adfe49880",
     "scorer": "dd712f6a60153af4e5aaa951f9861f1f330f9bdcd479a8fcbabea6423b2fcb46",
