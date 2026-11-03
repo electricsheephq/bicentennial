@@ -269,6 +269,17 @@ def test_credential_scan_sees_json_escaped_needle(observed, tmp_path, secret, as
     run.cleanup()
 
 
+def test_credential_scan_keeps_a_raw_non_utf8_needle(observed, tmp_path):
+    # A needle that is not UTF-8 has no JSON spelling; its raw bytes are still scanned.
+    run = run_observed(observed, tmp_path / "attempt")
+    iid, record = next(iter(run.pre_probe.items()))
+    (record.roots[0] / "planted").write_bytes(b"x\xff\xfePLANTED")
+    with pytest.raises(kept.KeptRefused, match="^credential_scan$"):
+        publish(run, [dict(item_id=iid, score_milli=0, failure_class=None)], tmp_path / "out",
+                credential_needles=[b"\xff\xfePLANTED"])
+    run.cleanup()
+
+
 def test_missing_snapshot_refuses(observed, tmp_path):
     run = run_observed(observed, tmp_path / "attempt")
     with pytest.raises(kept.KeptRefused, match="^pre_probe_missing$"):
