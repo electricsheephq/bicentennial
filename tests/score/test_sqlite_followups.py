@@ -1,0 +1,221 @@
+"""Real SQLite stores for E32's compression, naming and disclosure rules."""
+
+import bz2
+import gzip
+import lzma
+import sqlite3
+import zlib
+from pathlib import Path
+
+import pytest
+
+from bicentennial.canon import canon
+from bicentennial.score import invariants as inv
+from bicentennial.score import sqlite_scan
+from tests.score.test_sqlite_scan import (
+    NEEDLES,
+    TOKEN,
+    assert_status,
+    checkpoint,
+    database,
+    scan,
+)
+
+CODECS = [zlib, gzip, bz2, lzma]
+ENCODINGS = ["utf-8", "utf-16-le", "utf-16-be"]
+
+
+def blob_store(root, value):
+    _, db = database(root)
+    db.execute("INSERT INTO memory(value) VALUES (?)", (value,))
+    db.commit()
+    db.close()
+
+
+def assert_no_encoded_token(root):
+    encoded = [TOKEN.encode(e) for e in ENCODINGS]
+    assert all(not any(n in p.read_bytes() for n in encoded) for p in root.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
+@pytest.mark.parametrize("encoding", ENCODINGS)
+def test_compressed_blob_token_is_store_hit(tmp_path, codec, encoding):
+    blob_store(tmp_path, codec.compress(("x" * 1024 + TOKEN + "y" * 1024).encode(encoding)))
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+    result, report = scan(tmp_path)
+    assert result.hit_paths == ("store.db#memory.value",)
+    assert report["counts"]["sqlite"]["found"] == 1
+
+
+@pytest.mark.parametrize("magic", [bytes.fromhex("28b52ffd"), bytes.fromhex("04224d18")], ids=["zstd", "lz4"])
+def test_unsupported_compression_is_opaque(tmp_path, magic):
+    blob_store(tmp_path, magic + b"\xff\0unreadable")
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "INCONCLUSIVE", "opaque_store")
+    result, report = scan(tmp_path)
+    assert (result.verdict, result.reason) == ("inconclusive", "opaque_store")
+    assert report["counts"]["sqlite"]["inconclusive"] == 1
+
+
+@pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
+@pytest.mark.parametrize("extra", [0, 1], ids=["at-cap", "past-cap"])
+def test_decompression_cap_is_opaque(tmp_path, monkeypatch, codec, extra):
+    # A small injected cap checks the exact boundary for each decoder without large fixtures.
+    monkeypatch.setattr(sqlite_scan, "DECOMPRESS_CAP", 1024, raising=False)
+    blob_store(tmp_path, codec.compress(b"x" * (1024 + extra)))
+    assert_status(tmp_path, "INCONCLUSIVE", "opaque_store")
+
+
+def test_production_decompression_cap_is_opaque(tmp_path):
+    # Exercise the actual production limit too, without assuming that the constant already exists.
+    cap = getattr(sqlite_scan, "DECOMPRESS_CAP", 64 * 1024 * 1024)
+    blob_store(tmp_path, zlib.compress(b"x" * cap))
+    assert_status(tmp_path, "INCONCLUSIVE", "opaque_store")
+
+
+@pytest.mark.parametrize("header", [b"\x78\x9c", b"\x1f\x8b", b"BZh9", b"\xfd7zXZ\0"],
+                         ids=["zlib", "gzip", "bz2", "xz"])
+def test_invalid_compression_header_keeps_absent(tmp_path, header):
+    blob_store(tmp_path, header + bytes.fromhex("e731a952f008c619"))
+    assert_status(tmp_path, "PASS", "")
+    assert scan(tmp_path)[0].verdict == "absent"
+
+
+@pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
+def test_compressed_blob_without_token_keeps_absent(tmp_path, codec):
+    blob_store(tmp_path, codec.compress(b"unrelated memory"))
+    assert_status(tmp_path, "PASS", "")
+    assert scan(tmp_path)[0].verdict == "absent"
+
+
+def named_database(root, name, *, wal=False):
+    path, db = database(root)
+    db.close()
+    path.rename(root / name)
+    db = sqlite3.connect(root / name)
+    if wal:
+        assert db.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        db.execute("PRAGMA wal_autocheckpoint=0")
+    return root / name, db
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_database_named_like_sidefile_has_own_sql_scan(tmp_path, suffix):
+    path, db = named_database(tmp_path, "store" + suffix)
+    db.execute("PRAGMA secure_delete=ON")
+    for prefix in range(1024):
+        db.execute("DELETE FROM memory")
+        db.execute("INSERT INTO memory(value) VALUES (?)", ("x" * prefix + TOKEN + "y" * 3000,))
+        db.commit()
+        db.execute("VACUUM")
+        if TOKEN.encode() not in path.read_bytes():
+            break
+    else:
+        pytest.fail("could not split token across real SQLite overflow pages")
+    db.close()
+    # Build the other database separately so SQLite cannot interpret its database sibling as a WAL.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    base, db = database(staging)
+    db.close()
+    base.rename(tmp_path / "store")
+    staging.rmdir()
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+    result, report = scan(tmp_path)
+    assert "store" + suffix + "#memory.value" in result.hit_paths
+    assert report["counts"]["sqlite"] == dict(absent=1, found=1, inconclusive=0)
+
+
+def test_database_named_like_sidefile_has_own_wal(tmp_path):
+    _, db = named_database(tmp_path, "store-wal", wal=True)
+    try:
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.execute("INSERT INTO memory(value) VALUES (?)", (TOKEN,))
+        db.commit()
+        assert TOKEN.encode() in (tmp_path / "store-wal-wal").read_bytes()
+        assert TOKEN.encode() not in (tmp_path / "store-wal").read_bytes()
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        base, other = database(staging)
+        other.close()
+        base.rename(tmp_path / "store")
+        staging.rmdir()
+        assert_status(tmp_path, "FAIL", "store_hit")
+        result, report = scan(tmp_path)
+        assert "store-wal-wal" in result.hit_paths
+        assert "store-wal#memory.value" in result.hit_paths
+        assert report["counts"]["sqlite"] == dict(absent=1, found=1, inconclusive=0)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("with_database", [False, True])
+def test_scan_discloses_sqlite_version_even_without_database(tmp_path, with_database):
+    if with_database:
+        _, db = database(tmp_path)
+        db.close()
+    assert scan(tmp_path)[1]["sqlite_version"] == sqlite3.sqlite_version
+    assert inv.ForgetScan().to_obj()["sqlite_version"] == sqlite3.sqlite_version
+
+
+@pytest.mark.parametrize("kind", ["header", "boundary", "materialization-error", "legacy"])
+def test_whole_checkpoint_hit_has_found_count(tmp_path, monkeypatch, kind):
+    # Carried stores, where present, are real SQLite databases; these hits belong to framing or boundaries.
+    path, db = database(tmp_path)
+    db.close()
+    if kind == "header":
+        header = dict(format=inv.CHECKPOINT_FORMAT, files=[], metadata=TOKEN)
+        data = canon(header) + b"\n"
+    elif kind == "boundary":
+        data = checkpoint([(0, "store", path.read_bytes()), (0, "a", b"GATE-"), (0, "b", b"4410")])
+    elif kind == "materialization-error":
+        data = checkpoint([(0, "store", path.read_bytes()), (0, "text", TOKEN.encode())])
+
+        def broken(*args, **kwargs):
+            raise OSError("synthetic materialization failure")
+
+        monkeypatch.setattr(Path, "write_bytes", broken)
+    else:
+        data = TOKEN.encode()
+    collector = inv.ForgetScan()
+    result = inv.search_checkpoint(data, NEEDLES, collector)
+    assert result.verdict == "found"
+    assert result.hit_paths == ("<checkpoint>",)
+    assert collector.to_obj()["hits"] == ["<checkpoint>"]
+    assert collector.to_obj()["counts"]["raw"]["found"] == 1
+
+
+@pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
+def test_concatenated_compressed_members_are_searched(tmp_path, codec):
+    value = codec.compress(b"first member") + codec.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 1024)
+    blob_store(tmp_path, value)
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+@pytest.mark.parametrize("codec", CODECS, ids=["zlib", "gzip", "bz2", "xz"])
+def test_truncated_compression_keeps_ordinary_bytes(tmp_path, codec):
+    blob_store(tmp_path, codec.compress(b"unrelated memory" * 128)[:-8])
+    assert_status(tmp_path, "PASS", "")
+
+
+def test_opaque_compressed_value_doubt_and_hit_precedence(tmp_path):
+    blob_store(tmp_path, bytes.fromhex("28b52ffd") + b"unreadable")
+    db = sqlite3.connect(tmp_path / "store.db")
+    db.execute("PRAGMA writable_schema=ON")
+    db.execute("INSERT INTO sqlite_schema VALUES ('table','unavailable','unavailable',0,"
+               "'CREATE VIRTUAL TABLE unavailable USING absent_module(value)')")
+    db.commit()
+    db.close()
+    assert_status(tmp_path, "INCONCLUSIVE", "opaque_store")
+    (tmp_path / "text").write_text(TOKEN)
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
+def test_hit_in_capped_output_still_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(sqlite_scan, "DECOMPRESS_CAP", 4096, raising=False)
+    blob_store(tmp_path, zlib.compress(b"x" * 1024 + TOKEN.encode() + b"y" * 8192))
+    assert_no_encoded_token(tmp_path)
+    assert_status(tmp_path, "FAIL", "store_hit")

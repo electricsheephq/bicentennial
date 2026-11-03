@@ -16,7 +16,12 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS, validate
 from bicentennial.probe.scripted_reader import ReaderResult, api_task, read_api
 from bicentennial.sandbox.spansearch import span_search
-from bicentennial.score.sqlite_scan import SIDECARS, SQLITE_HEADER, scan_sqlite
+from bicentennial.score.sqlite_scan import (
+    SIDECARS,
+    SQLITE_HEADER,
+    SQLITE_VERSION,
+    scan_sqlite,
+)
 
 INVARIANTS = ("INV-VERB", "INV-NEW", "INV-PAIR", "INV-FORGET")
 STATUSES = ("PASS", "FAIL", "INCONCLUSIVE", "NOT_EXERCISED", "INFRA_FAILURE")
@@ -115,7 +120,7 @@ class ForgetScan:
         self.hits.update(hits)
 
     def to_obj(self):
-        return dict(counts=self.counts, hits=sorted(self.hits))
+        return dict(counts=self.counts, hits=sorted(self.hits), sqlite_version=SQLITE_VERSION)
 
 
 @dataclass(frozen=True)
@@ -158,7 +163,7 @@ def search_store(root, needles, collector=None) -> StoreSearch:
                 with path.open("rb") as stream:
                     if stream.read(16) == SQLITE_HEADER:
                         databases.add(relative)
-    siblings = {p + suffix for p in databases for suffix in SIDECARS}
+    siblings = {p + suffix for p in databases for suffix in SIDECARS} - databases
     if databases:
         # Keep SQLite's pre-recovery byte evidence confined to its private copies.
         with TemporaryDirectory(prefix="forget-raw-") as temporary:
@@ -177,7 +182,8 @@ def search_store(root, needles, collector=None) -> StoreSearch:
         if relative in siblings:
             continue
         if relative in databases:
-            hits, reason = scan_sqlite(path, relative, needles)
+            sidecars = tuple(suffix for suffix in SIDECARS if relative + suffix not in databases)
+            hits, reason = scan_sqlite(path, relative, needles, sidecars=sidecars)
             scan = StoreSearch("found" if hits else "inconclusive" if reason else "absent",
                                hits, (), (reason,) if reason else ())
             method = "sqlite"
@@ -253,12 +259,12 @@ def search_checkpoint(data, needles, collector=None):
         # A known checkpoint byte hit survives a later materialization failure.
         scans.append(StoreSearch("found", ("<checkpoint>",), ()))
         if collector is not None:
-            collector.hits.add("<checkpoint>")
+            collector.add("raw", "found", ("<checkpoint>",))
     if raw_hit and not any(s.verdict == "found" for s in scans):
         # Preserve header hits and matches across carried-file boundaries too.
         scans.append(StoreSearch("found", ("<checkpoint>",), ()))
         if collector is not None:
-            collector.hits.add("<checkpoint>")
+            collector.add("raw", "found", ("<checkpoint>",))
     return _combined(scans)
 
 
