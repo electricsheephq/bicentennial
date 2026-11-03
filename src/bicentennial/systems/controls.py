@@ -9,10 +9,9 @@ from bicentennial.contracts.surfaces import tree_listing
 from bicentennial.harness.hermes.adapter import HermesAdapter
 from bicentennial.sandbox.surfaces import (
     clone_tree,
-    surface_hash,
-    verify_empty,
     wipe_to_fresh,
 )
+from bicentennial.surface_cache import surface_hash, verify_empty
 from bicentennial.systems.registry import REGISTRY, SystemRefused, check, load
 
 CANARY = "c168e5f8-3948-4553-8554-7aa162054723"

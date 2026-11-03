@@ -1,14 +1,17 @@
-"""Shared serial unit execution and tier admission policy."""
+"""Shared unit execution and tier admission policy."""
 
 import json
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from copy import deepcopy
 from dataclasses import dataclass, replace
+from functools import cached_property
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import Callable
 
 from bicentennial.audit.readback import output
-from bicentennial.canon import canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.responder import Reply
 from bicentennial.director.upstream import login as custody
@@ -21,7 +24,13 @@ from bicentennial.report.t2lite_flips import BaselineRefused
 from bicentennial.runner import t0
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
-from bicentennial.runner.probe_live import LiveCredentialStop, LiveStop, check_live_stop
+from bicentennial.runner.lock import SessionGate
+from bicentennial.runner.probe_live import (
+    LatchStop,
+    LiveCredentialStop,
+    LiveStop,
+    check_live_stop,
+)
 from bicentennial.sandbox.envserver.honeypot import hits
 from bicentennial.score.classes import outcome
 from bicentennial.systems.hermes_plugin import is_plugin, resolve_worker_env
@@ -33,6 +42,8 @@ class TierSpec:
     composition: tuple[str, ...]
     roots: int
     context_roots: Callable
+    order: str = "serial"
+    min_roots: int = 1
 
 
 def _t1_roots(marker, admission):
@@ -40,6 +51,11 @@ def _t1_roots(marker, admission):
 
 
 T1_SPEC = TierSpec("T1", ("G1", "G2"), 2, _t1_roots)
+T2_SPEC = TierSpec("T2", ("G1",) * 5 + ("G2",) * 5, 8,
+                   lambda marker, admission: admission.max_roots, "longest", 4)
+
+# Only T2 raises these (T1 and T2-lite always admit a root); T2's guide, written with its runner, documents them.
+T2_ONLY_REFUSALS = frozenset({"roots_below_min"})
 
 
 @dataclass(frozen=True)
@@ -65,6 +81,7 @@ class _Guard:
     def __init__(self, stack):
         self.stack = stack
         self._canary, self.stopped = Event(), Event()
+        self.launch = Lock()
 
     @property
     def canary(self):
@@ -82,6 +99,7 @@ class _Guard:
     def state(self):
         state = dict(self.stack.state())
         if self.stopped.is_set():
+            state["latch_stopped"] = not (state.get("stopped") or state.get("stop_reason"))
             state["stopped"] = True
         return state
 
@@ -171,19 +189,72 @@ def _floor_measured(pack, branch, run, probes, scores):
     return all(measured)
 
 
-def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None):
+class _ArmGate:
+    """Pass the run-local arm key through the life runner's role-based interface."""
+
+    def __init__(self, context, key):
+        self.context, self.key = context, key
+
+    def start_session(self, current_lock, role, life, branch, session, attempt):
+        return self.context.session_gate.start_session(
+            current_lock, self.key, life, branch, session, attempt)
+
+
+class _ArmContext:
+    """An arm's entry pins over the run's detached baseline and fresh pin checks."""
+
+    def __init__(self, context, config):
+        self.context, self.entry = context, config.entry
+        self.plugin_source, self.model_cache = config.plugin_source, config.model_cache
+        self.worker_argv = config.worker_argv
+        self.gate = _ArmGate(self, config.key)
+
+    def __getattr__(self, name):
+        return getattr(self.context, name)
+
+    def _entry_lock(self, lock):
+        # make_units keeps every arm on the run's system, so its route table is the run's, and these are the
+        # two fields of t1._lock that an arm's entry can change.
+        return lock | dict(system_artifacts=[deepcopy(self.entry["artifact"])],
+            tool_lists_hash=sha256_canon({k: self.entry.get(k)
+                for k in ("read_tools", "recall", "write_tools")}))
+
+    @cached_property
+    def lock(self):
+        return (self.context.lock if self.entry == self.context.entry
+                else self._entry_lock(self.context.lock))
+
+    @cached_property
+    def pins(self):
+        return (self.context.pins if self.entry == self.context.entry else
+                self.context.pins | dict(system_hash=sha256_canon(self.lock["system_artifacts"])))
+
+    def current_lock(self):
+        lock = self.context.current_lock()
+        return lock if self.entry == self.context.entry else self._entry_lock(lock)
+
+    @cached_property
+    def session_gate(self):
+        return (self.context.gate if self.entry == self.context.entry else SessionGate(self.lock))
+
+
+def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=0, config=None):
+    config = config or Arm.from_context(ctx, arm)
+    key, arm = config.key, config.role
+    ctx = _ArmContext(ctx, config)
     start, runs = time.time_ns() // 1_000_000, []
 
     def timing():
-        return dict(life=pack.life, branch=branch, arm=arm, slot=0,
+        return dict(life=pack.life, branch=branch, arm=key, slot=slot,
             start_ms=start, end_ms=time.time_ns() // 1_000_000, attempts=len(runs))
 
     try:
         result = _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops)
     except Exception as error:
-        live.stopped.set()
-        raise UnitRefusal(error, tuple(runs), timing()) from error
-    return replace(result, timing=timing())
+        with live.launch:
+            live.stopped.set()
+        raise UnitRefusal(error, tuple(replace(r, arm=key) for r in runs), timing()) from error
+    return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=timing())
 
 
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
@@ -210,6 +281,13 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
                 tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot,
                 egress=getattr(error, "egress", None) or {}))
+            if isinstance(error, LatchStop):
+                # Another unit's latch stopped this one early. The reduction drops latch stops, so keep the refusal
+                # this unit's own checks below would make, judging the partial run as a stop's relabel does.
+                if _breached(runs[-1]):
+                    raise t1.T1Refused("isolation") from error
+                if live.canary:
+                    raise t1.T1Refused("canary") from error
             raise
         runs.append(run)
         try:
@@ -294,7 +372,14 @@ def refusal_code(error, *, live=None, runs=(), needles=()):
 
 def reduce_refusals(errors):
     """Choose a unit refusal by reason, independently of worker completion order."""
+    from bicentennial.runner import t1
+
     errors = tuple(errors)
+    primary = tuple(e for e in errors if not isinstance(e, LatchStop))
+    # An unexpected exception must reach the tool-failure handler even alongside real refusals.
+    crashes = tuple(e for e in primary if not isinstance(e, (
+        LiveCredentialStop, custody.Stop, BaselineRefused, *t1.REFUSALS)))
+    errors = crashes or primary or errors
     precedence = {code: rank for rank, code in enumerate(
         ("canary", "honeypot", "credential_stop", "spend_stop", "live_stop"))}
 
@@ -304,3 +389,177 @@ def reduce_refusals(errors):
                 tuple(sorted(getattr(error, "detail", ()))), tuple(sorted(getattr(error, "fields", ()))))
 
     return min(errors, key=key) if errors else None
+
+
+@dataclass(frozen=True)
+class Arm:
+    """Run-local identity, independent of the entry name and the life runner's role."""
+
+    key: str
+    entry: dict
+    plugin_source: object = None
+    model_cache: object = None
+    worker_argv: object = None
+    role: str = "system"
+
+    def __post_init__(self):
+        if not self.key or self.key in (".", "..") or "/" in self.key or "\\" in self.key:
+            raise ValueError("invalid arm key")
+        if self.role not in ("system", "no_memory") or (self.key == "no_memory") != (self.role == "no_memory"):
+            raise ValueError("invalid arm role")
+
+    @classmethod
+    def from_context(cls, ctx, key="system"):
+        return cls(key, ctx.entry, ctx.plugin_source, ctx.model_cache, ctx.worker_argv,
+                   "no_memory" if key == "no_memory" else "system")
+
+
+@dataclass(frozen=True)
+class Unit:
+    arm: Arm
+    pack: object
+    branch: str
+    scratch: Path
+    out: Path
+
+    @property
+    def identity(self):
+        return self.arm.key, self.pack.life, self.branch
+
+
+# Design D10: predicted seconds per replay session and per probe session.
+REPLAY_SESSION_SECONDS = 43
+PROBE_SESSION_SECONDS = 49
+
+
+def predicted_seconds(unit):
+    # T2 uses one probe session per item. The shared floor has no replay sessions.
+    replay = len(unit.pack.schedule.sessions) if unit.arm.role != "no_memory" else 0
+    return replay * REPLAY_SESSION_SECONDS + len(unit.pack.items[unit.branch]) * PROBE_SESSION_SECONDS
+
+
+def make_units(ctx, arms, scratch, out):
+    """One shared floor followed by each arm, in card/life/branch order."""
+    arms = tuple(arms)
+    if len({a.key for a in arms}) != len(arms) or any(a.role != "system" for a in arms):
+        raise ValueError("duplicate or reserved system arm")
+    if not arms:
+        raise ValueError("missing system arm")
+    # An arm of another system would bypass the run's admission and keep the run's route table in its lock.
+    if any(a.entry.get("name") != ctx.entry["name"] for a in arms):
+        raise ValueError("an arm runs another system than the run's")
+    floor = replace(arms[0], key="no_memory", role="no_memory")
+    return tuple(Unit(a, p, b, Path(scratch) / a.key / p.life / b, Path(out) / a.key / p.life / b)
+                 for a in (floor, *arms) for p in ctx.packs for b in ("B0", "B1"))
+
+
+@dataclass(frozen=True)
+class Collected:
+    results: dict
+    runs: tuple
+    timings: tuple
+    errors: tuple
+
+    def merge(self, runs, timings):
+        """Retain all attempts before the caller maps the selected error to publication."""
+        runs.extend(self.runs)
+        timings.extend(self.timings)
+        error = reduce_refusals(self.errors)
+        if error is not None:
+            raise error
+        return self.results
+
+
+def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None, execute=None):
+    """Admit ready units to bounded slots; collect every worker before reducing errors."""
+    unit_list = tuple(unit_list)
+    if len({u.identity for u in unit_list}) != len(unit_list):
+        raise ValueError("duplicate unit")
+    roots = ctx.roots if roots is None else roots
+    if roots < 1:
+        raise ValueError("invalid roots")
+    floor_stops = dict(floor_stops or {})
+    final = set(floor_stops)
+    pending, active, completed = list(range(len(unit_list))), {}, {}
+    available = list(range(roots))
+    execute = execute or _unit
+
+    def ready(i):
+        u = unit_list[i]
+        return (u.arm.role == "no_memory" or not is_plugin(u.arm.entry["name"])
+                or u.pack.life + u.branch in final)
+
+    def run(i, slot):
+        u = unit_list[i]
+        with live.launch:
+            if live.stopped.is_set():
+                return None
+        try:
+            return execute(ctx, u.pack, u.branch, u.arm.key, u.scratch, live, u.out,
+                           dict(floor_stops), slot=slot, config=u.arm)
+        except Exception as error:
+            with live.launch:
+                live.stopped.set()
+            return error
+
+    class InlineExecutor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def submit(self, function, *args):
+            future = Future()
+            future.set_result(function(*args))
+            return future
+
+    executor = InlineExecutor() if roots == 1 else ThreadPoolExecutor(max_workers=roots)
+    with executor as pool:
+        try:
+            while pending or active:
+                while pending and available and not live.stopped.is_set():
+                    candidates = [i for i in pending if ready(i)]
+                    if not candidates:
+                        break
+                    i = min(candidates, key=lambda i: (-predicted_seconds(unit_list[i]), i)
+                            if spec.order == "longest" else (i,))
+                    pending.remove(i)
+                    slot = available.pop(0)
+                    active[pool.submit(run, i, slot)] = (i, slot)
+                if not active:
+                    if pending and not live.stopped.is_set():
+                        raise ValueError("missing final floor")
+                    break
+                done, _ = wait(active, return_when=FIRST_COMPLETED)
+                for future in done:
+                    i, slot = active.pop(future)
+                    available.append(slot)
+                    value = future.result()
+                    if value is not None:
+                        completed[i] = value
+                    if isinstance(value, UnitResult) and unit_list[i].arm.role == "no_memory":
+                        key = unit_list[i].pack.life + unit_list[i].branch
+                        floor_stops[key] = value.stop
+                        final.add(key)
+                available.sort()
+        except BaseException:
+            with live.launch:
+                live.stopped.set()
+            for future in active:
+                future.cancel()
+            raise
+    results, runs, timings, errors = {}, [], [], []
+    for i in sorted(completed):
+        value = completed[i]
+        if isinstance(value, UnitRefusal):
+            runs.extend(value.runs)
+            timings.append(value.timing)
+            errors.append(value.error)
+        elif isinstance(value, Exception):
+            errors.append(value)
+        else:
+            results[unit_list[i].identity] = value
+            runs.extend(value.runs)
+            timings.append(value.timing)
+    return Collected(results, tuple(runs), tuple(timings), tuple(errors))

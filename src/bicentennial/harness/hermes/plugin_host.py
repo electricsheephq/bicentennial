@@ -45,10 +45,9 @@ from bicentennial.runtime.faultlite import FaultLite
 from bicentennial.sandbox.surfaces import (
     clone_tree,
     install_hash,
-    surface_hash,
-    verify_empty,
     wipe_to_fresh,
 )
+from bicentennial.surface_cache import surface_hash, verify_empty
 from bicentennial.systems.hermes_plugin import (
     ENABLED,
     MARKER,

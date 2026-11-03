@@ -31,10 +31,9 @@ from bicentennial.sandbox.spansearch import span_search
 from bicentennial.sandbox.surfaces import (
     clone_tree,
     install_hash,
-    surface_hash,
-    verify_empty,
     wipe_to_fresh,
 )
+from bicentennial.surface_cache import surface_hash, verify_empty
 from bicentennial.systems.settle import SettleResult, settle
 
 PROVIDERS = {"holographic": "holographic", "mem0-oss": "mem0", "omega": "omega"}

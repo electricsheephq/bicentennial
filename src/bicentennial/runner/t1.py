@@ -257,6 +257,14 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     harness_pin = dict(sorted(load(REGISTRY / "hermes-native.toml")["artifact"].items()))
     if (hermes is None and worker_argv is None) or (is_plugin(system) and plugin_source is None):
         raise T1Refused("missing_input")
+    early_admission = None
+    if spec.min_roots > 1:
+        marker = read_marker()
+        early_admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=spec.roots)
+        if not early_admission.admitted:
+            raise T1Refused(early_admission.reason)
+        if early_admission.max_roots < spec.min_roots:
+            raise T1Refused("roots_below_min")
     validate_maps()
     model_cache, model_cache_sha256 = prepare_cache(system, model_cache, T1Refused)
     if entry["settle"]["kind"] == "hook" and system not in SETTLE_THREADS:
@@ -275,10 +283,15 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     properties = ()
     if system in DEPENDENCIES:
         properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
-    marker = read_marker()
-    admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=spec.roots)
+    if early_admission is None:
+        marker = read_marker()
+        admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=spec.roots)
+    else:
+        admission = early_admission
     if not admission.admitted:
         raise T1Refused(admission.reason)
+    if admission.max_roots < spec.min_roots:
+        raise T1Refused("roots_below_min")
     if system not in DEPENDENCIES:
         properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     index = verify(packs, pack_hash=pack_hash)

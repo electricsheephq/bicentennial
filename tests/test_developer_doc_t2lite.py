@@ -14,6 +14,7 @@ import pytest
 from bicentennial import cli
 from bicentennial.runner import t2lite
 from bicentennial.runner.spend import Price, Spend
+from bicentennial.runner.units import T2_ONLY_REFUSALS
 
 REPO = Path(__file__).resolve().parents[1]
 SHARED = runpy.run_path(str(REPO / "tests/test_developer_doc.py"))
@@ -108,7 +109,7 @@ def _code_refusals():
         for reason in (_evaluate(invalid, side=t2lite.ROLES["baseline"]),
                        _evaluate(comparison, prefix="", field="<field>")):
             codes.add(_evaluate(rename, role=role, error=SimpleNamespace(reason=reason)))
-    return codes
+    return codes - T2_ONLY_REFUSALS
 
 
 def test_doc_codes():

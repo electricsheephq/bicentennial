@@ -36,7 +36,7 @@ from bicentennial.ledger import BlobStore, Guard, stable_digest
 from bicentennial.runner.guard import admit, assert_niced, read_marker
 from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.envserver.honeypot import hits
-from bicentennial.sandbox.surfaces import surface_hash
+from bicentennial.surface_cache import surface_hash
 from bicentennial.systems.registry import SystemRefused, check
 
 ENTRYPOINT = "acp_adapter.session.SessionManager in process (S6a fallback)"

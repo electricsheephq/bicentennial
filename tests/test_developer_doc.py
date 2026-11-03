@@ -15,6 +15,7 @@ from bicentennial import cli
 from bicentennial.harness.hermes import plugin_host
 from bicentennial.packs import install
 from bicentennial.runner import compare, t0, t1
+from bicentennial.runner.units import T2_ONLY_REFUSALS
 
 REPO = Path(__file__).resolve().parents[1]
 GUIDE = REPO / "docs/developers/ring0.md"
@@ -231,7 +232,7 @@ def _code_refusals():
 
 def test_doc_codes():
     text = GUIDE.read_text()
-    codes = _code_refusals()
+    codes = _code_refusals() - T2_ONLY_REFUSALS
     table = text.split("| Code | Cause |\n|---|---|\n", 1)[1].split("\n\n", 1)[0]
     listed = set(re.findall(r"^\| `([^`]+)` \|", table, re.MULTILINE))
     assert listed
