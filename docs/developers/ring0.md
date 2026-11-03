@@ -13,6 +13,8 @@ The v0.1 feedback is stage attribution per failed item (`items[].stage_attributi
 - the failure taxonomy card or MDE diff;
 - rung results or operating-metric deltas.
 
+The reproduction-bundle contract keeps v0.1 `replay-from-schedule` and adds v0.2 `snapshot-probe` (kept pre-probe copy and schema-defined startup context) and `live` (life replay with a chosen system artifact); bundle exactness means identical starting conditions, not identical answers, and is claimed only after the restored-probe test passes ([RING0 E31](../../specs/ring0/RING0.md#13-v01-errata)).
+
 No result ever carries advice on any system's internals ([DESIGN §9.1](../DESIGN.md#91-developer-rings-and-tiers-no-decision-bar)).
 
 ## 2. Limits, stated plainly

@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-03: reproduction bundles v0.2 (§13 E31, #393)
+- **Bundle contract:** `snapshot-probe` and `live` share the T2 item identity and failed outcome; snapshots identify the kept copy and D6 startup inputs, and live bundles identify the system artifact. Existing v0.1 `replay-from-schedule` bundles and writer bytes stay unchanged. Replay-context members live only in the schema, outside every code pin, so they can grow without moving a pin. Exactness means identical starting conditions, not identical answers, and awaits the restored-probe test.
+- **Pins:** the controls pin moves because `contracts/repro_bundle.py` settles the class/version, kept-pointer and failure checks. Packs built before this change refuse and must be rebuilt in the kit batch's final rebuild. The reader, scoring and scorer pins stay unchanged. The `repro` command and pre-probe capture are separate work.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Kit, 2026-11-03: pack hashes no longer depend on the build host's SQLite (#327)
 - **Pack builder:** from the next kit, sealed SQLite copies have fixed zeros at header offsets 92–99 before hashing. Raw DB hashes, pack manifests, pack tree hashes and tier indexes/hashes move; rebuild earlier packs. The generator's output stays unchanged. The builder's SQLite version is returned by the build API and printed on the build command's stderr, outside the hashed tier directory.
 - **Kept:** all four code pins, scores, verdicts, world content and `world_hash` stay unchanged, as do the host-free pack digests. This covers writer header metadata, not future SQLite page-layout changes.
