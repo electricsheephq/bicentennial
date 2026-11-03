@@ -101,7 +101,7 @@ def test_entries_exact(name):
              "properties": {"facts": {"type": "array", "items": string}}},
             {"type": "object", "additionalProperties": False, "required": ["memory"],
              "properties": {"memory": {"type": "array", "items": {
-                 "type": "object", "additionalProperties": False, "required": ["event", "id", "text"],
+                 "type": "object", "additionalProperties": False, "required": ["text"],
                  "properties": {"event": {"enum": ["ADD"]}, "id": string, "text": string}}}}},
         ]}
         expected["structured_formats"] = {"extraction": {"kind": "json", "schema": schema}}

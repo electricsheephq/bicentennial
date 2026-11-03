@@ -82,6 +82,22 @@ def _last_facts(text):
 
 
 def _mem0(call, messages):
+    # mem0ai 2.2.1: mem0/memory/main.py:950-964 and mem0/configs/prompts.py:1035-1042.
+    if [m.get("role") for m in messages] == ["system", "user"]:
+        section = re.search(r"(?:\A|\n\n)## Existing Memories\n[^\n]*\n\n## New Messages\n"
+                            r"(.*?)\n\n## Observation Date\n",
+                            _text(messages[1].get("content")), re.DOTALL)
+        if section is not None:
+            # mem0/memory/utils.py:61-76 flattens messages into role-prefixed text.
+            facts = [m.removesuffix("\n")[:240] for m in re.findall(
+                r"^user: (.*?)(?=^(?:system|user|assistant): |\Z)", section[1], re.MULTILINE | re.DOTALL)]
+            while True:
+                text = canon({"memory": [{"text": f} for f in facts]}).decode()
+                if _cut(text, call) == text:
+                    return text
+                if not facts:
+                    raise _Refusal("reply_over_budget")
+                facts.pop()
     users = [_text(m.get("content")) for m in messages if m.get("role") == "user"]
     update = len(users) == 1 and not any(m.get("role") in ("system", "developer") for m in messages)
     facts = [f[:240] for f in _last_facts(users[0])] if update else [t[:240] for t in users if t]
@@ -123,9 +139,9 @@ def stub_disclosures(entry, tier):
             "over D-1 hashed token coordinates; similarity order preserved; hybrid weights and absolute "
             "thresholds not validated."))
     if "extraction" in entry.get("structured_formats", {}):
-        properties.append((f"{tier}.extraction", "Automatic extraction not exercised (RING0 E11, #208): "
-            "the stub's reply format is not the one the pinned release reads; results cover explicit-write "
-            "storage and recall."))
+        properties.append((f"{tier}.extraction", "Automatic extraction exercised with the scripted extractive reply "
+            "(RING0 E28): one memory per new user message, cut to 240 characters and the reply budget; "
+            "extraction quality is not measured."))
     return properties
 
 
