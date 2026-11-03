@@ -60,7 +60,9 @@ def measured(name="hermes-native"):
     for field in ("sha256",):
         if entry["artifact"][field] == "0" * 64:
             entry["artifact"][field] = "1" * 64
-    entry["fresh_install_hash"] = "1" * 64
+    # A measured registry pin stays, so preflight compares the real install; a placeholder becomes non-zero.
+    if entry["fresh_install_hash"] == "0" * 64:
+        entry["fresh_install_hash"] = "1" * 64
     return entry
 
 
@@ -110,6 +112,8 @@ def environment(monkeypatch):
     monkeypatch.delenv("BICENTENNIAL_BUSY_CMD", raising=False)
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.05)
     monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
+    # These tests exercise packs and arm policy with injected workers.
+    monkeypatch.setattr(t1.install_pins, "measure_once", lambda entry, sandbox, **kw: {"fresh_install_hash": entry["fresh_install_hash"]})
     monkeypatch.setattr(t1, "check_compile", lambda *a, **kw: {"ok": True})
 
 
@@ -1018,6 +1022,21 @@ def test_engine_relabel_and_model_env(policy, monkeypatch, tmp_path):
         assert unit.stop_reclassified is (arm != "no_memory")
         assert seen[-1]["extra_env"] == (None if arm == "no_memory" else {"MODEL_HOME": str(tmp_path / "models")})
         assert seen[-1]["plugin_source"] == (None if arm == "no_memory" else ctx.plugin_source)
+
+
+@pytest.mark.parametrize("provider", [False, True])
+def test_engine_install_pin_is_left_to_its_arm(policy, monkeypatch, tmp_path, provider):
+    from bicentennial.systems import hermes_plugin as hp
+
+    # The memory-layer host refuses an engine ("no T0 mapping") or installs it without the engine, so the preflight
+    # must not measure it, even when the declared pin is wrong: the arm's own install checks the pin.
+    name = "fixture-engine"
+    monkeypatch.setitem(hp.ENGINES, name, "fixture_engine")
+    if provider:
+        monkeypatch.setitem(hp.PROVIDERS, name, "fixture_engine")
+    monkeypatch.setattr(t1.install_pins, "measure_once", lambda *a, **kw: pytest.fail("measured an engine install"))
+    ctx = replace(policy.ctx, entry=dict(policy.ctx.entry, name=name, fresh_install_hash="f" * 64))
+    assert t1.check_install(ctx, tmp_path) is None
 
 
 def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp_path):

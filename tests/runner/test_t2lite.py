@@ -125,7 +125,7 @@ def scenario(tmp_path, monkeypatch):
             keys={iid: {} for iid in records}, cases={i["item_id"]: SimpleNamespace(item=i)
                 for branch in items.values() for i in branch}, scoring={"evidence": {}},
             pack={"bundles": []}, life_dir=tmp_path, visible={}, meta={"honeypot_token": "synthetic-honey"}))
-    ctx = SimpleNamespace(entry={"name": "hermes-native"}, pack_hash="a" * 64,
+    ctx = SimpleNamespace(entry={"name": "hermes-native", "fresh_install_hash": "a" * 64}, pack_hash="a" * 64,
         pins={k: "b" * (64 if k in ("harness_hash", "seed_hash") else 40)
               for k in (*runner.PIN_FIELDS, "seed_hash")}, packs=packs, run_id="synthetic",
         harness_pin={}, hermes=None, plugin_source=None, worker_argv=None, model_cache=None,
@@ -217,6 +217,9 @@ def scenario(tmp_path, monkeypatch):
                 competing_present=list(kw["result"].competing_present)))
         return scored
     monkeypatch.setattr(runner.t1, "prepare", lambda **kw: ctx)
+    # These synthetic lives exercise live boundaries; install measurement has dedicated coverage.
+    monkeypatch.setattr(runner.t1.install_pins, "measure_once",
+                        lambda entry, sandbox, **kw: {"fresh_install_hash": entry["fresh_install_hash"]})
     monkeypatch.setattr(runner, "verify", lambda *args, **kw: None, raising=False)
     monkeypatch.setattr(runner.t1, "_crosses", lambda *args: False)
     monkeypatch.setattr(runner, "build_live_stack", build)
