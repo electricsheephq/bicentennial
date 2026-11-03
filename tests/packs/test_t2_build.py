@@ -69,7 +69,7 @@ def test_t2_deterministic_controls_receipt(built_t2):
         assert {i["probe_point"] for i in pack["items"]} == {5, 10}
         receipt = build.validate_t2_receipt(path)
         assert receipt["check_pack"]["ok"]
-        assert "validation_receipt.json" in manifest["files"]
+        assert "build_receipt.json" in manifest["files"]
         assert receipt["controls_broken"] == json.loads((path / "sealed/controls.json").read_bytes())["broken"]
 
 
@@ -78,10 +78,10 @@ def test_receipt_required_to_finish(tmp_path, monkeypatch):
 
     def remove(root):
         original(root)
-        (root.parent.parent / "validation_receipt.json").unlink(missing_ok=True)
+        (root.parent.parent / "build_receipt.json").unlink(missing_ok=True)
 
     monkeypatch.setattr(build, "_normalise_sqlite_headers", remove)
-    with pytest.raises(build.PackRefused, match="^validation_receipt$"):
+    with pytest.raises(build.PackRefused, match="^build_receipt$"):
         build_pair(tmp_path, monkeypatch)
     assert not (tmp_path / "T2").exists()
 
@@ -91,7 +91,7 @@ def test_receipt_validates_beside_pack(built_t2, change):
     out, first, _ = built_t2
     rel = next(iter(first["index"]["packs"]))
     path = out / "first/T2" / rel
-    receipt = path / "validation_receipt.json"
+    receipt = path / "build_receipt.json"
     before = receipt.read_bytes()
     try:
         if change == "remove":
@@ -101,7 +101,7 @@ def test_receipt_validates_beside_pack(built_t2, change):
             value["competing"] = []
             value["check_pack"]["ok"] = False
             receipt.write_bytes(canon(value))
-        with pytest.raises(build.PackRefused, match="^validation_receipt$"):
+        with pytest.raises(build.PackRefused, match="^build_receipt$"):
             build.validate_t2_receipt(path)
     finally:
         receipt.write_bytes(before)

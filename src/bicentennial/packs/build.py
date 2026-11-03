@@ -232,7 +232,7 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
                      competing=competing, controls_broken=entry["broken"])
     _write(sealed / "build_log.json", build_log)
     if tier == "T2":
-        _write(path / "validation_receipt.json", dict(build_log, tier=tier, pack_id=pack_id))
+        _write(path / "build_receipt.json", dict(build_log, tier=tier, pack_id=pack_id))
     pins = dict(common_pins, **{k: entry["key"][k] for k in
                 ("scorer_sha256", "controls_sha256", "reader_sha256")},
                 scoring_sha256=sha256_canon(obj), controls_key_sha256=entry["key_sha256"],
@@ -244,17 +244,20 @@ def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
 
 
 def validate_t2_receipt(path):
-    """Require a published receipt that agrees with this pack's sealed build checks."""
+    """Require a published build receipt that equals the sealed build log written beside it.
+
+    A guard against code regressions: nothing is recomputed, so it cannot catch a wrong check result.
+    """
     try:
-        receipt = json.loads((path / "validation_receipt.json").read_bytes())
-        validate("pack_validation_receipt", receipt)
+        receipt = json.loads((path / "build_receipt.json").read_bytes())
+        validate("pack_build_receipt", receipt)
         pack = json.loads((path / "sealed/pack.json").read_bytes())
         log = json.loads((path / "sealed/build_log.json").read_bytes())
         if (receipt != dict(log, tier="T2", pack_id=pack["pack_id"])
                 or not receipt["check_pack"]["ok"]):
             raise ValueError("receipt mismatch")
     except (OSError, ValueError, KeyError, TypeError):
-        raise PackRefused("validation_receipt") from None
+        raise PackRefused("build_receipt") from None
     return receipt
 
 
