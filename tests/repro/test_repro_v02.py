@@ -8,6 +8,7 @@ import pytest
 
 from bicentennial.canon import canon
 from bicentennial.contracts import run
+from bicentennial.contracts.bundle import NONRESULTS
 from bicentennial.controls.cache import (
     CONTROL_FILES,
     PACKAGE_ROOT,
@@ -84,6 +85,14 @@ def test_live_optional_kept_must_match_identity():
 def test_v02_refuses_passing_outcome(tier_bundle):
     tier_bundle["identity"]["score_milli"] = 1000
     with pytest.raises(ValueError, match="outcome must be a failure"):
+        run.validate("repro_bundle", tier_bundle)
+
+
+@pytest.mark.parametrize("failure_class", NONRESULTS)
+def test_v02_refuses_nonresult_class(tier_bundle, failure_class):
+    # The card gives a non-result a null score, so no failed scored item carries one.
+    tier_bundle["identity"]["failure_class"] = failure_class
+    with pytest.raises(ValueError, match=r'\["identity"\]\["failure_class"\]: invalid enum value'):
         run.validate("repro_bundle", tier_bundle)
 
 
