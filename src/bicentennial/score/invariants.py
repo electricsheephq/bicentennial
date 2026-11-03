@@ -7,6 +7,7 @@ import shutil
 import stat
 import unicodedata
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -16,7 +17,12 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS, validate
 from bicentennial.probe.scripted_reader import ReaderResult, api_task, read_api
 from bicentennial.sandbox.spansearch import span_search
-from bicentennial.score.sqlite_scan import SIDECARS, SQLITE_HEADER, scan_sqlite
+from bicentennial.score.sqlite_scan import (
+    SIDECARS,
+    SQLITE_HEADER,
+    SQLITE_VERSION,
+    scan_sqlite,
+)
 
 INVARIANTS = ("INV-VERB", "INV-NEW", "INV-PAIR", "INV-FORGET")
 STATUSES = ("PASS", "FAIL", "INCONCLUSIVE", "NOT_EXERCISED", "INFRA_FAILURE")
@@ -107,7 +113,7 @@ class ForgetScan:
 
     def __init__(self):
         self.counts = {method: dict.fromkeys(("absent", "found", "inconclusive"), 0)
-                       for method in ("raw", "sqlite", "opaque")}
+                       for method in ("raw", "sqlite", "opaque", "unchanged")}
         self.hits = set()
 
     def add(self, method, result, hits):
@@ -115,7 +121,7 @@ class ForgetScan:
         self.hits.update(hits)
 
     def to_obj(self):
-        return dict(counts=self.counts, hits=sorted(self.hits))
+        return dict(counts=self.counts, hits=sorted(self.hits), sqlite_version=SQLITE_VERSION)
 
 
 @dataclass(frozen=True)
@@ -139,7 +145,31 @@ def _combined(scans):
                        hits, opaque, reasons)
 
 
-def search_store(root, needles, collector=None) -> StoreSearch:
+def _unchanged(root, listing, relative):
+    """Whether a regular file under real directories has the size and SHA-256 its install listing recorded.
+
+    The host keeps that listing in memory from before any session, so nothing a system writes can change it.
+    """
+    row = listing.get(relative)
+    if row is None or row.get("kind") != "file":
+        return False
+    path = root
+    for part in Path(relative).parts[:-1]:
+        path /= part
+        if not stat.S_ISDIR(path.lstat().st_mode):
+            return False
+    path /= Path(relative).name
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size != row["size"]:
+        return False
+    digest = sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == row["sha256"]
+
+
+def search_store(root, needles, collector=None, *, fresh=None) -> StoreSearch:
     root = Path(root)
     if not stat.S_ISDIR(root.lstat().st_mode):
         raise ValueError("expected a real directory")
@@ -158,7 +188,7 @@ def search_store(root, needles, collector=None) -> StoreSearch:
                 with path.open("rb") as stream:
                     if stream.read(16) == SQLITE_HEADER:
                         databases.add(relative)
-    siblings = {p + suffix for p in databases for suffix in SIDECARS}
+    siblings = {p + suffix for p in databases for suffix in SIDECARS} - databases
     if databases:
         # Keep SQLite's pre-recovery byte evidence confined to its private copies.
         with TemporaryDirectory(prefix="forget-raw-") as temporary:
@@ -177,7 +207,8 @@ def search_store(root, needles, collector=None) -> StoreSearch:
         if relative in siblings:
             continue
         if relative in databases:
-            hits, reason = scan_sqlite(path, relative, needles)
+            sidecars = tuple(suffix for suffix in SIDECARS if relative + suffix not in databases)
+            hits, reason = scan_sqlite(path, relative, needles, sidecars=sidecars)
             scan = StoreSearch("found" if hits else "inconclusive" if reason else "absent",
                                hits, (), (reason,) if reason else ())
             method = "sqlite"
@@ -186,6 +217,14 @@ def search_store(root, needles, collector=None) -> StoreSearch:
             hits = (relative,) if relative in raw_paths else ()
             scan = StoreSearch("found" if hits else "inconclusive" if opaque else "absent", hits, opaque)
             method = "opaque" if opaque else "raw"
+            if opaque and not hits and fresh is not None:
+                try:
+                    unchanged = _unchanged(root, fresh, relative)
+                except OSError:
+                    unchanged = False
+                if unchanged:
+                    scan = StoreSearch("absent", (), ())
+                    method = "unchanged"
         scans.append(scan)
         if collector is not None:
             collector.add(method, scan.verdict, scan.hit_paths)
@@ -253,12 +292,12 @@ def search_checkpoint(data, needles, collector=None):
         # A known checkpoint byte hit survives a later materialization failure.
         scans.append(StoreSearch("found", ("<checkpoint>",), ()))
         if collector is not None:
-            collector.hits.add("<checkpoint>")
+            collector.add("raw", "found", ("<checkpoint>",))
     if raw_hit and not any(s.verdict == "found" for s in scans):
         # Preserve header hits and matches across carried-file boundaries too.
         scans.append(StoreSearch("found", ("<checkpoint>",), ()))
         if collector is not None:
-            collector.hits.add("<checkpoint>")
+            collector.add("raw", "found", ("<checkpoint>",))
     return _combined(scans)
 
 
@@ -338,7 +377,7 @@ def _probe(adapter, bound, i, query, token, *, old=None, forbidden=False, spans=
     return read_api(_Query(adapter), view, keys, 100, injected=tuple(injected))
 
 
-def _api_script(factory, invariant, bound, snapshot, collector=None):
+def _api_script(factory, invariant, bound, snapshot, collector=None, *, fresh=None):
     holder = [_call(factory)]
     _call(holder[0].reset)
 
@@ -403,7 +442,9 @@ def _api_script(factory, invariant, bound, snapshot, collector=None):
     scans = [search_checkpoint(data, needles, collector)]
     if scans[0].verdict != "found" and snapshot:
         for root in snapshot(holder[0]):
-            scans.append(search_store(root, needles) if collector is None else search_store(root, needles, collector))
+            options = dict(fresh=fresh(root)) if fresh is not None else {}
+            scans.append(search_store(root, needles, **options) if collector is None else
+                         search_store(root, needles, collector, **options))
             if scans[-1].verdict == "found":
                 break
     scan = _combined(scans)
@@ -415,8 +456,8 @@ def _api_script(factory, invariant, bound, snapshot, collector=None):
         yield ("forget-store", "INCONCLUSIVE" if scan.reason else "PASS", scan.reason)
 
 
-def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None, collector=None) -> Verdict:
-    """Run one API-mode invariant against an adapter factory."""
+def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None, collector=None, fresh=None) -> Verdict:
+    """Run one API-mode invariant against an adapter factory; fresh maps a snapshot root to its install listing."""
     ids, reason = {
         "INV-VERB": (("verb-1", "verb-2", "verb-3"), "absent_after_fault"),
         "INV-NEW": (("new-a", "new-b"), "not_newest"),
@@ -425,7 +466,7 @@ def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None, collec
     }[invariant]
     rows = []
     try:
-        for i, s, r in _api_script(factory, invariant, bound_s, snapshot, collector):
+        for i, s, r in _api_script(factory, invariant, bound_s, snapshot, collector, fresh=fresh):
             rows.append((i, s, r or (reason if s == "FAIL" else "")))
     except SystemFault:
         rows = [(i, "FAIL", "system_failure") for i in ids]
@@ -434,7 +475,7 @@ def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None, collec
     return _verdict(invariant, rows)
 
 
-def adapter_invariants(factory, *, bound_s: int, snapshot=None, collector=None) -> dict[str, Verdict]:
+def adapter_invariants(factory, *, bound_s: int, snapshot=None, collector=None, fresh=None) -> dict[str, Verdict]:
     """Run API-mode invariants against an adapter factory.
 
     API-mode INV-PAIR certifies that the call and its result both survive the crash;
@@ -442,7 +483,7 @@ def adapter_invariants(factory, *, bound_s: int, snapshot=None, collector=None) 
     Call/result linkage is certified in Hermes mode, where the requests' call and
     output ids are observable.
     """
-    return {inv: adapter_invariant(factory, inv, bound_s=bound_s, snapshot=snapshot, collector=collector)
+    return {inv: adapter_invariant(factory, inv, bound_s=bound_s, snapshot=snapshot, collector=collector, fresh=fresh)
             for inv in INVARIANTS}
 
 
@@ -457,6 +498,7 @@ class ItemEvidence:
     baseline_in_context: bool | None = None
     roots: tuple | None = None
     kept_texts: tuple[str, ...] = ()
+    fresh_listings: tuple | None = None
 
 
 def run_invariants(evidence, *, tier, requests=None, expected_call_ids=(), collector=None) -> dict[str, Verdict]:
@@ -499,10 +541,12 @@ def run_invariants(evidence, *, tier, requests=None, expected_call_ids=(), colle
                 status, reason = "INCONCLUSIVE", "no_snapshot"
             else:
                 try:
-                    for root in e.roots:
+                    listings = e.fresh_listings if e.fresh_listings is not None else (None,) * len(e.roots)
+                    for root, fresh in zip(e.roots, listings, strict=True):
                         needles = needles_for(e.keys["forbidden"])
-                        scan = (search_store(root, needles) if collector is None else
-                                search_store(root, needles, collector))
+                        options = dict(fresh=fresh) if fresh is not None else {}
+                        scan = (search_store(root, needles, **options) if collector is None else
+                                search_store(root, needles, collector, **options))
                         if scan.verdict == "found":
                             status, reason = "FAIL", "store_hit"
                             if _host_kept(e.kept_texts, needles_for(e.keys["forbidden"])):

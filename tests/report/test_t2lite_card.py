@@ -497,7 +497,7 @@ CODE_PINS = {
     "controls": "848935cdb04ff6dd3937a00d592f3cf933a42d69d96f8ca7d36e1506c31c1b63",
     "reader": "90ed83e9bed4b80088108199d2434e03d078a2995ca6eca9023858125eb6835f",
     "scoring": "925f3fc812fd80974eea1780b359b58bbcd5f35c338b1f2daf710e6adfe49880",
-    "scorer": "414486f1178c332a78de6cfcbde39ce1326c6abb02f91f8e16e9f4834ad930e0",
+    "scorer": "0e5979ff5aff33f28ee6bd2d508174356dcd0c644e05f1208746257cae976f82",
 }
 
 
@@ -633,6 +633,49 @@ def test_existing_pack_trees_are_unchanged(t0_pack_build, tmp_path):
         db_path.write_bytes(bytes(data))
     assert manifest.tree_sha256(copied) != packs[rel]["tree_sha256"]
     assert host_free_tree_sha256(copied) == LEGACY_PACK_HASHES[rel]
+
+
+# T1's two public lives, fixed the same way (#391): each life's generator manifest, the tier index without its pins and
+# pack identities, and each pack's tree with the code pins projected out and world DBs hashed by content, so neither a
+# pin move nor the builder's SQLite changes them.
+T1_GENERATOR_MANIFESTS = {
+    "t1-g1": "71b50442b18c977febe8af8a59222e9638a175c1871de9590145ef156850c635",
+    "t1-g2": "fb82438e39bec7dc36121fe9bde391d1b08ac73311841f93c7d73b85606ff2c3",
+}
+T1_INDEX_SHA256 = "2df23d8ac082e42bcdf6f1460c7f7d3c3bf68e55486444818490551f54995114"
+LEGACY_T1_PACK_HASHES = {
+    "pack/G1/t1-g1/1": "36878603fee6c944c03bb17b823ffe860f7b6a069cbb9e5e8aa3db447812d979",
+    "pack/G2/t1-g2/2": "ad039d89a42cda22719efd31b2c62f68113c9491c437ad157bc7e35e6e7684bc",
+}
+
+
+def test_existing_t1_pack_trees_are_unchanged(tmp_path):
+    result = build.build_tier("T1", tmp_path, harness_artifacts=[
+        dict(name="hermes", version="test", sha256="a" * 64)])
+    root, packs = tmp_path / "T1", result["index"]["packs"]
+    generators = {}
+    for rel in packs:
+        meta = json.loads((root / rel / "sealed/meta.json").read_bytes())
+        generators[meta["life"]] = sha256_canon(meta["generator"])
+    # An intentional T1 content change updates these tables from the failure messages.
+    assert generators == T1_GENERATOR_MANIFESTS, canon(generators).decode()
+    index = {key: value for key, value in result["index"].items() if key not in ("pins", "packs")}
+    assert sha256_canon(index) == T1_INDEX_SHA256, sha256_canon(index)
+    digests = {rel: host_free_tree_sha256(root / rel) for rel in packs}
+    assert digests == LEGACY_T1_PACK_HASHES, canon(digests).decode()
+    expected = dict(scorer_sha256=CODE_PINS["scorer"], controls_sha256=CODE_PINS["controls"],
+                    reader_sha256=CODE_PINS["reader"])
+    pins = result["index"]["pins"]
+    assert {name: pins[name] for name in CODE_PIN_FIELDS} == expected
+    assert pins["scoring_code_sha256"] == CODE_PINS["scoring"]
+    for rel, identity in packs.items():
+        pack = root / rel
+        assert manifest.tree_sha256(pack) == identity["tree_sha256"]
+        pins = json.loads((pack / "manifest.json").read_bytes())["pins"]
+        key = json.loads((pack / "sealed/controls.json").read_bytes())["key"]
+        assert {name: pins[name] for name in CODE_PIN_FIELDS} == expected, rel
+        assert {name: key[name] for name in CODE_PIN_FIELDS} == expected, rel
+        assert json.loads((pack / "sealed/scoring.json").read_bytes())["code_sha256"] == CODE_PINS["scoring"], rel
 
 
 def test_every_pack_carries_the_recorded_code_pins(t0_pack_build):

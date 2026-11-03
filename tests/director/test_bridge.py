@@ -184,6 +184,41 @@ def test_structural_failure_latches_like_any_other():
     assert inner.calls == [] and inner.stops == ["bridge_malformed"]
 
 
+class FirstReasonLive(RecordingLive):
+    """Keeps the first stop reason, as LiveResponder does; stopped may also be set without one."""
+
+    def __init__(self, stopped=False):
+        super().__init__()
+        self.reason, self.stopped = None, stopped
+
+    def stop(self, reason):
+        self.reason = self.reason or reason
+
+    def state(self):
+        return {"stopped": self.stopped or self.reason is not None, "stop_reason": self.reason,
+                "sends": len(self.calls)}
+
+
+def test_later_failure_never_relabels_the_inner_stop():
+    # The inner stack stopped first; a later translation failure is still raised (#447).
+    inner = FirstReasonLive()
+    bridge = ResponsesBridge(inner)
+    inner.stop("upstream_401")
+    with pytest.raises(ValueError, match="^bridge_unmapped_key:temperature$"):
+        bridge.respond(call({"temperature": 0}))
+    assert bridge.state()["stop_reason"] == "upstream_401"
+
+
+def test_bridge_names_the_reason_when_the_inner_has_none():
+    # Stopped by the pacer without a reason: the bridge's own latch supplies it.
+    inner = FirstReasonLive(stopped=True)
+    bridge = ResponsesBridge(inner)
+    inner.stop = lambda reason: None
+    with pytest.raises(ValueError, match="^bridge_malformed$"):
+        bridge.respond(call({"tools": [1]}))
+    assert bridge.state() == {"stopped": True, "stop_reason": "bridge_malformed", "sends": 0}
+
+
 @pytest.mark.parametrize("extra,expected", [({"strict": True}, True), ({"strict": False}, False),
                                             ({"strict": None}, False), ({}, False)])
 def test_tool_strictness_keeps_chat_semantics(extra, expected):

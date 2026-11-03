@@ -598,3 +598,49 @@ def test_manifest_import_boundary():
     imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert {n for n in imports if n.startswith("bicentennial")} == {
         "bicentennial.canon", "bicentennial.contracts.run"}
+
+
+def test_t2_labels():
+    props = load(SCHEMAS / "card_t2.schema.json")["properties"]["labels"]["properties"]
+    labels = mf.labels("T2")
+    assert not {"scripted_model", "act", "signal"} & labels.keys()
+    assert labels == {k: v["enum"][0] for k, v in props.items()
+                      if k not in ("scripted_model", "act", "signal")}
+    ring = load(SCHEMAS / "card_ring0.schema.json")["properties"]["labels"]["properties"]
+    assert mf.labels("T1") == {k: v["enum"][0] for k, v in ring.items()}
+    assert mf.labels("T0") == {k: v["enum"][0] for k, v in ring.items() if k != "scripted_model"}
+
+
+@pytest.mark.parametrize("genre,seed", [("G1", 4), ("G2", 17)])
+def test_t2_life_pack_schema(tmp_path, genre, seed):
+    from bicentennial.world.targeted import _tier_source, t1_life
+
+    row = dict(life="t2-g1-1" if genre == "G1" else "t2-g2-test", genre=genre, seed=seed)
+    if genre == "G1":
+        row["reads_session"] = 1
+    spec = _tier_source("T2", lives=[row])
+    templates = (build.g1 if genre == "G1" else build.g2).TEMPLATES
+    life = t1_life(spec, row, templates, out_dir=tmp_path / "work")
+    path = tmp_path / "pack"
+    try:
+        manifest, cases = build._build_pack(
+            life, path, tier="T2", rel=f"pack/{genre}/{life.life}/{seed}", row=row,
+            spec=spec, entries=build.c7_entries(ROOT / "specs/ring0/c7-partial.json"),
+            common_pins=dict(harness_pin=sha256_canon(A)))
+        pack = load(path / "sealed/pack.json")
+        validate("pack", pack)
+        assert pack["tier"] == manifest["tier"] == "T2"
+        assert manifest["labels"] == mf.labels("T2")
+        meta = load(path / "sealed/meta.json")
+        assert meta["not_exercised"] == sorted(spec["not_exercised"])
+        assert meta["generator"]["tier"] == "T2"
+        assert {c.item["probe_point"] for c in cases} == {5, 10}
+        audit_life(life, path, cases)
+    finally:
+        life.twin.b1.close()
+
+
+def test_t2_build_path_stays_closed(tmp_path):
+    with pytest.raises(ValueError, match="tier"):
+        build.build_tier("T2", tmp_path, harness_artifacts=A)
+    assert list(tmp_path.iterdir()) == []

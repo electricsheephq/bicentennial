@@ -1,8 +1,11 @@
 """S05 acceptance fixtures; script mode emits canonical, token-free verdicts."""
 
 import ast
+import gzip
 import json
+import os
 import runpy
+import shutil
 import sqlite3
 import sys
 from compression import zstd
@@ -20,6 +23,7 @@ from bicentennial.api.adapters.reference_store import ReferenceStore
 from bicentennial.canon import canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.run import SCHEMAS, validate
+from bicentennial.contracts.surfaces import tree_listing
 from bicentennial.items.levers import STRESS_TAGS
 from bicentennial.items.protocol import DIRECTIONS
 from bicentennial.keyed import choice, uniform_int
@@ -538,7 +542,7 @@ def test_hygiene(cases):
                 values = getattr(verdict, field)
                 assert values == tuple(sorted(set(values)))
     tree = ast.parse(Path(inv.__file__).read_text())
-    allowed = {"codecs", "json", "os", "shutil", "stat", "tempfile", "unicodedata", "dataclasses", "pathlib", "collections.abc",
+    allowed = {"codecs", "json", "os", "shutil", "stat", "tempfile", "unicodedata", "dataclasses", "hashlib", "pathlib", "collections.abc",
                "bicentennial.canon", "bicentennial.contracts.run", "bicentennial.api.contract",
                "bicentennial.probe.scripted_reader", "bicentennial.sandbox.spansearch", "bicentennial.audit.readback", "bicentennial.score.sqlite_scan"}
     for node in ast.walk(tree):
@@ -608,3 +612,152 @@ def test_api_snapshot_error_without_checkpoint_hit_is_infra():
     assert v.failed == ()
     assert v.infra == ("forget-store",)
     assert (v.status, v.reasons) == ("INFRA_FAILURE", ("infra",))
+
+
+@pytest.fixture
+def installed_tree(tmp_path):
+    store, fresh = tmp_path / "store", tmp_path / "fresh"
+    store.mkdir()
+    (store / "dictionaries").mkdir()
+    (store / "dictionaries/words.gz").write_bytes(gzip.compress(b"quartz orchid " * 500, mtime=0))
+    shutil.copytree(store, fresh)
+    return store, fresh
+
+
+def listing(tree):
+    """A tree's install listing as the host keeps it: path -> kind, mode, size and sha256."""
+    return {row["path"]: row for row in tree_listing(tree, ())}
+
+
+def test_unchanged_gzip_absent(installed_tree):
+    store, fresh = installed_tree
+    collector = inv.ForgetScan()
+    assert inv.search_store(store, [b"missing"], collector, fresh=listing(fresh)) == inv.StoreSearch("absent", (), ())
+    assert collector.counts["unchanged"] == dict(absent=1, found=0, inconclusive=0)
+    assert collector.counts["opaque"] == collector.counts["raw"] == dict(absent=0, found=0, inconclusive=0)
+    assert inv.search_store(store, [b"missing"], fresh=None).reason == "opaque_store"
+
+
+@pytest.mark.parametrize("change", ["one-byte", "new"])
+def test_changed_or_new_gzip_stays_opaque(installed_tree, change):
+    store, fresh = installed_tree
+    installed = listing(fresh)
+    path = store / "dictionaries/words.gz"
+    if change == "one-byte":
+        before = path.stat()
+        data = path.read_bytes()
+        path.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert path.stat().st_size == installed["dictionaries/words.gz"]["size"]
+        assert path.stat().st_mtime_ns == (fresh / path.relative_to(store)).stat().st_mtime_ns
+    else:
+        path.rename(store / "dictionaries/new.gz")
+    scan = inv.search_store(store, [b"missing"], fresh=installed)
+    assert (scan.verdict, scan.reason) == ("inconclusive", "opaque_store")
+
+
+def test_install_listing_not_the_disk_copy_decides(installed_tree):
+    # A system can write the on-disk fresh copy; it cannot reach the listing recorded before any session.
+    store, fresh = installed_tree
+    installed = listing(fresh)
+    data = (store / "dictionaries/words.gz").read_bytes()
+    for root in (store, fresh):
+        (root / "dictionaries/words.gz").write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+    scan = inv.search_store(store, [b"missing"], fresh=installed)
+    assert (scan.verdict, scan.reason) == ("inconclusive", "opaque_store")
+    assert inv.search_store(store, [b"missing"], fresh=listing(fresh)).verdict == "absent"
+
+
+def test_unchanged_raw_hit_still_fails(installed_tree):
+    store, fresh = installed_tree
+    for root in (store, fresh):
+        with (root / "dictionaries/words.gz").open("ab") as stream:
+            stream.write(TOKEN.encode())
+    installed = listing(fresh)
+    collector = inv.ForgetScan()
+    scan = inv.search_store(store, inv.needles_for([TOKEN]), collector, fresh=installed)
+    assert scan.verdict == "found" and scan.hit_paths == ("dictionaries/words.gz",)
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(store,))
+    verdict = inv.run_invariants([replace(e, fresh_listings=(installed,))], tier="T0")["INV-FORGET"]
+    assert (verdict.status, verdict.reasons) == ("FAIL", ("store_hit",))
+    assert collector.counts["unchanged"]["absent"] == 0
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "root", "fifo"])
+def test_store_symlink_or_nonregular_never_exempt(installed_tree, tmp_path, kind):
+    store, fresh = installed_tree
+    installed = listing(fresh)
+    path = {"file": store / "dictionaries/words.gz", "fifo": store / "dictionaries/words.gz",
+            "directory": store / "dictionaries", "root": store}[kind]
+    outside = tmp_path / "outside"
+    path.rename(outside)
+    if kind == "fifo":
+        os.mkfifo(path)
+    else:
+        path.symlink_to(outside, target_is_directory=kind != "file")
+    collector = inv.ForgetScan()
+    if kind == "root":
+        with pytest.raises(ValueError, match="real directory"):
+            inv.search_store(store, [b"missing"], collector, fresh=installed)
+    else:
+        # The existing scanner skips store links and non-regular entries.
+        assert inv.search_store(store, [b"missing"], collector, fresh=installed).verdict == "absent"
+    assert collector.counts["unchanged"]["absent"] == 0
+
+
+@pytest.mark.parametrize("row", ["symlink", "dir", "missing"])
+def test_install_row_must_be_a_file(installed_tree, row):
+    store, fresh = installed_tree
+    installed = listing(fresh)
+    path = "dictionaries/words.gz"
+    if row == "missing":
+        del installed[path]
+    else:
+        installed[path] = (dict(path=path, kind="symlink", target="elsewhere") if row == "symlink" else
+                           dict(path=path, kind="dir", mode=0o755))
+    scan = inv.search_store(store, [b"missing"], fresh=installed)
+    assert (scan.verdict, scan.reason) == ("inconclusive", "opaque_store")
+
+
+def test_plugin_like_install_and_text_scope(installed_tree):
+    store, fresh = installed_tree
+    for root in (store, fresh):
+        (root / "provider.py").write_text("# installed provider\n")
+        (root / "config.json").write_text("{}\n")
+        (root / "dictionaries/other.gz").write_bytes(gzip.compress(b"other words", mtime=0))
+    installed = listing(fresh)
+    collector = inv.ForgetScan()
+    assert inv.search_store(store, [b"missing"], collector, fresh=installed).verdict == "absent"
+    assert collector.counts["unchanged"]["absent"] == 2
+    assert collector.counts["raw"]["absent"] == 2
+    assert inv.search_store(store, [b"missing"]).reason == "opaque_store"
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(store,))
+    assert inv.run_invariants([replace(e, fresh_listings=(installed,))], tier="T0")["INV-FORGET"].status == "PASS"
+    assert inv.run_invariants([e], tier="T0")["INV-FORGET"].reasons == ("opaque_store",)
+    batch = inv.adapter_invariants(ReferenceStore, bound_s=5, snapshot=lambda adapter: (store,),
+                                   fresh=lambda root: installed)
+    assert batch["INV-FORGET"].status == "PASS"
+
+
+def test_exempt_files_leave_a_later_doubt_as_the_reason(installed_tree):
+    store, fresh = installed_tree
+    installed = listing(fresh)
+    (store / "memory.db").write_bytes(inv.SQLITE_HEADER + b"\xff" * 4080)
+    e = evidence("t-forget", "KEEP-FORGET", None, "", forbidden=[TOKEN], roots=(store,))
+    without = inv.run_invariants([e], tier="T0")["INV-FORGET"]
+    assert (without.status, without.reasons) == ("INCONCLUSIVE", ("opaque_store",))
+    exempt = inv.run_invariants([replace(e, fresh_listings=(installed,))], tier="T0")["INV-FORGET"]
+    assert (exempt.status, exempt.reasons) == ("INCONCLUSIVE", ("sqlite_unreadable",))
+
+
+def test_unchanged_database_and_sidecar_keep_sqlite_scan(tmp_path):
+    store, fresh = tmp_path / "store", tmp_path / "fresh"
+    store.mkdir()
+    with sqlite3.connect(store / "memory.db") as db:
+        db.execute("CREATE TABLE memory(value)")
+    (store / "memory.db-journal").write_bytes(b"\0" * 1024)
+    shutil.copytree(store, fresh)
+    collector = inv.ForgetScan()
+    assert inv.search_store(store, [b"missing"], collector, fresh=listing(fresh)).verdict == "absent"
+    assert collector.counts["sqlite"]["absent"] == 1
+    assert collector.counts["unchanged"]["absent"] == 0
