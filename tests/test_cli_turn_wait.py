@@ -38,7 +38,7 @@ def test_turn_wait_cli_default_and_range(monkeypatch, command, value):
     monkeypatch.setattr(cli, "reexec_niced", lambda argv: None)
     monkeypatch.setattr(cli, "run_" + command, lambda **kw: seen.append(kw) or 0)
     assert cli.main(arguments(command) + ([] if value is None else ["--turn-wait", value])) == 0
-    assert seen[0]["turn_wait_s"] == (3.0 if value is None else float(value))
+    assert seen[0]["turn_wait_s"] == (1.0 if value is None else float(value))
 
 
 @pytest.mark.parametrize("command", ["t1", "t2lite"])
@@ -59,7 +59,7 @@ def test_direct_runner_wait_refusal_precedes_preparation(monkeypatch, tmp_path, 
 def test_developer_guides_document_turn_wait(guide):
     text = (Path(__file__).resolve().parents[1] / "docs/developers" / guide).read_text()
     row = next(line for line in text.splitlines() if line.startswith("| `--turn-wait SECONDS` |"))
-    for required in ("ordinary scripted turn", "0.5 to 3.0 inclusive", "default 3.0", "Outside the lock",
+    for required in ("ordinary scripted turn", "0.5 to 3.0 inclusive", "default 1.0", "Outside the lock",
                      "published setting", "one-commit A/B", "your own", "kill or restart", "exit 3"):
         assert required in row
     assert ("`t1.turn_wait_s`" if guide == "ring0.md" else "`turn_wait_s`") in text
@@ -83,4 +83,5 @@ def test_t2lite_outputs_table_documents_turn_wait():
 def test_t2lite_cache_key_documents_nondefault_turn_wait():
     text = (Path(__file__).resolve().parents[1] / "docs/developers/t2lite.md").read_text()
     paragraph = next(line for line in text.splitlines() if "floors are stored under a key" in line)
-    assert 'A non-default wait appends `turn_wait_s=<seconds>` to the key; at 3.0 seconds the key is unchanged.' in paragraph
+    assert ('A non-default wait appends `turn_wait_s=<seconds>` to the key; at the default, 1.0 seconds, the key '
+            'is unchanged.') in paragraph

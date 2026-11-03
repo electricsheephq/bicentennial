@@ -115,7 +115,7 @@ class T1Context:
     model_cache: object = None
     model_cache_sha256: str | None = None
     worker_properties: tuple = ()
-    turn_wait_s: float = 3.0
+    turn_wait_s: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -236,7 +236,7 @@ def _lock(index, packs, entry, table, pack_hash):
 
 
 def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=None,
-            worker_argv=None, model_cache=None, turn_wait_s=3.0, spec=T1_SPEC) -> T1Context:
+            worker_argv=None, model_cache=None, turn_wait_s=1.0, spec=T1_SPEC) -> T1Context:
     """Refuse invalid inputs and pin both lives before constructing any adapter."""
     turn_wait_s = validate_turn_wait(turn_wait_s)
     if entry is None:

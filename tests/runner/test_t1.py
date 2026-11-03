@@ -1040,7 +1040,7 @@ def test_engine_install_pin_is_left_to_its_arm(policy, monkeypatch, tmp_path, pr
 
 
 def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp_path):
-    full, short = prepare(installed), prepare(installed, turn_wait_s=1.0)
+    full, short = prepare(installed, turn_wait_s=3.0), prepare(installed)
     assert full.turn_wait_s == 3.0 and short.turn_wait_s == 1.0
     assert full.lock == short.lock and full.pins == short.pins and full.run_id == short.run_id
     assert full.current_lock() == short.current_lock() == full.lock
