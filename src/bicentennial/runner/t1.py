@@ -26,6 +26,7 @@ from bicentennial.runner.guard import admit, read_marker
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.life import SEGMENTS, STEP_S, LifeRun, run_life
 from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock, lock_hash
+from bicentennial.runner.units import T1_SPEC
 from bicentennial.sandbox.fixedroot import remove_tree
 from bicentennial.score.bundle import make_bundle
 from bicentennial.score.classes import outcome
@@ -235,7 +236,7 @@ def _lock(index, packs, entry, table, pack_hash):
 
 
 def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=None,
-            worker_argv=None, model_cache=None, turn_wait_s=3.0) -> T1Context:
+            worker_argv=None, model_cache=None, turn_wait_s=3.0, spec=T1_SPEC) -> T1Context:
     """Refuse invalid inputs and pin both lives before constructing any adapter."""
     turn_wait_s = validate_turn_wait(turn_wait_s)
     if entry is None:
@@ -275,18 +276,18 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if system in DEPENDENCIES:
         properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     marker = read_marker()
-    admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=2)
+    admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=spec.roots)
     if not admission.admitted:
         raise T1Refused(admission.reason)
     if system not in DEPENDENCIES:
         properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     index = verify(packs, pack_hash=pack_hash)
-    if index["tier"] != "T1":
+    if index["tier"] != spec.pack_tier:
         raise T1Refused("tier")
     if index["harness_artifacts"] != [harness_pin]:
         raise T1Refused("harness_artifact_mismatch")
     rels = sorted(index["packs"])
-    if sorted(_json(Path(packs) / rel / "sealed/meta.json")["genre"] for rel in rels) != ["G1", "G2"]:
+    if sorted(_json(Path(packs) / rel / "sealed/meta.json")["genre"] for rel in rels) != sorted(spec.composition):
         raise T1Refused("tier_composition")
     packed = tuple(_pack(Path(packs), rel) for rel in rels)
     freeze, cells = c7_entries(REPO / "specs/ring0/c7-partial.json"), c7.cells(REPO)
@@ -312,7 +313,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         system_hash=sha256_canon(lock["system_artifacts"]), **_boundaries(packed))
     return T1Context(entry, harness_pin, index, pack_hash, packed, lock, dict(sorted(pins.items())),
         SessionGate(lock), current_lock, mint_id(canon(["t1", lock_hash(lock), system]).decode(), 0),
-        2 if marker.exit == 0 else 1, marker, hermes, plugin_source, worker_argv, table, model_cache, model_cache_sha256,
+        spec.context_roots(marker, admission), marker, hermes, plugin_source, worker_argv, table, model_cache, model_cache_sha256,
         properties, turn_wait_s)
 
 

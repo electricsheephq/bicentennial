@@ -22,6 +22,7 @@ from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.probe.scripted_reader import UNKNOWN, ReaderResult
 from bicentennial.report.t2lite_card import validate_t2lite_card
 from bicentennial.runner import t2lite as runner
+from bicentennial.runner import units
 from bicentennial.runner.hermes_score import Infra
 from bicentennial.runner.life import LifeRun
 from bicentennial.runner.probe_live import LiveCredentialStop, LiveStop
@@ -223,8 +224,8 @@ def scenario(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "verify", lambda *args, **kw: None, raising=False)
     monkeypatch.setattr(runner.t1, "_crosses", lambda *args: False)
     monkeypatch.setattr(runner, "build_live_stack", build)
-    monkeypatch.setattr(runner, "run_life", life)
-    monkeypatch.setattr(runner, "score_item", score)
+    monkeypatch.setattr(units, "run_life", life)
+    monkeypatch.setattr(units, "score_item", score)
     monkeypatch.setattr(runner.fixedroot, "PARENT", str(tmp_path))
     state.invoke = lambda name="out", **kw: runner.run_t2lite(**dict(system="hermes-native", packs_dir=tmp_path / "packs",
         pack_hash=ctx.pack_hash, out=tmp_path / name, login_home=home, max_sends=20) | kw)
@@ -243,7 +244,7 @@ def test_clean_guard_disclosure_preserves_card_bytes(scenario):
 @pytest.mark.parametrize("arm", ["system", "no_memory"])
 @pytest.mark.parametrize("retry", [False, True])
 def test_honeypot_refuses_every_live_attempt(scenario, tmp_path, monkeypatch, arm, retry):
-    drive, attempts = runner.run_life, []
+    drive, attempts = units.run_life, []
     def hit(**kw):
         run = drive(**kw)
         if kw["arm"] == arm and not attempts:
@@ -251,7 +252,7 @@ def test_honeypot_refuses_every_live_attempt(scenario, tmp_path, monkeypatch, ar
             return replace(run, honeypot_hits=2, classes={i["item_id"]: ("INFRA_FAILURE", "synthetic")
                 for i in kw["items"]} if retry else run.classes)
         return run
-    monkeypatch.setattr(runner, "run_life", hit)
+    monkeypatch.setattr(units, "run_life", hit)
     assert scenario.invoke(cache=tmp_path / "cache") == 3
     assert runner._read(scenario.out, "refusal.json") == {"code": "honeypot"}
     assert sorted(p.name for p in scenario.out.iterdir()) == ["refusal.json"]
@@ -268,7 +269,7 @@ def test_publication_checks_after_close_before_any_completed_file(scenario, tmp_
     artifact = s.ctx.model_cache / "artifact"
     artifact.write_bytes(b"original")
     s.ctx.model_cache_sha256 = cache_digest(s.ctx.model_cache, runner.t1.T1Refused)
-    drive, write = runner.run_life, runner._write
+    drive, write = units.run_life, runner._write
     def changed(**kw):
         run = drive(**kw)
         if len(s.seen) == 8:
@@ -287,7 +288,7 @@ def test_publication_checks_after_close_before_any_completed_file(scenario, tmp_
             raise PinMismatch("synthetic")
         if failure == "pinned_artifact_changed":
             raise PinnedArtifactChanged(("scorer_sha256",))
-    monkeypatch.setattr(runner, "run_life", changed)
+    monkeypatch.setattr(units, "run_life", changed)
     monkeypatch.setattr(runner, "_write", record)
     monkeypatch.setattr(runner, "verify", verify)
     assert s.invoke(cache=tmp_path / "cache") == (3 if failure else 0)
@@ -302,7 +303,7 @@ def test_publication_checks_after_close_before_any_completed_file(scenario, tmp_
 
 @pytest.mark.parametrize("stop", ["credential", "spend", "canary_credential", "canary_spend"])
 def test_honeypot_invalid_outranks_stop_with_canary_first(scenario, tmp_path, monkeypatch, stop):
-    drive = runner.run_life
+    drive = units.run_life
     def stop_after_hit(**kw):
         if len(scenario.seen) == 1:
             scenario.mode = "canary" if stop == "canary_spend" else stop
@@ -310,7 +311,7 @@ def test_honeypot_invalid_outranks_stop_with_canary_first(scenario, tmp_path, mo
                 kw["live"].stack.values["spend_stopped"] = True
         run = drive(**kw)
         return replace(run, honeypot_hits=1 if len(scenario.seen) == 1 else 0)
-    monkeypatch.setattr(runner, "run_life", stop_after_hit)
+    monkeypatch.setattr(units, "run_life", stop_after_hit)
     assert scenario.invoke(cache=tmp_path / "cache") == 3
     assert len(scenario.seen) == 2
     assert runner._read(scenario.out, "refusal.json") == {"code": "canary" if "canary" in stop else "honeypot"}
@@ -326,7 +327,7 @@ def test_honeypot_invalid_outranks_stop_with_canary_first(scenario, tmp_path, mo
     ("synthetic-honey", "canary_live_stop", "canary")])
 def test_item3_stop_counts_the_stopped_attempts_requests(scenario, monkeypatch, sent, mode, code):
     # A honeypot read before a stop in the same attempt still voids the run, after the canary.
-    drive = runner.run_life
+    drive = units.run_life
     def send_then_stop(**kw):
         if sent is not None:
             ledger = kw["scratch"] / kw["branch"] / "run/ledger"
@@ -337,7 +338,7 @@ def test_item3_stop_counts_the_stopped_attempts_requests(scenario, monkeypatch, 
             (ledger / "ledger.jsonl").write_bytes(b"".join(canon(r) + b"\n" for r in rows))
         scenario.mode = mode
         return drive(**kw)
-    monkeypatch.setattr(runner, "run_life", send_then_stop)
+    monkeypatch.setattr(units, "run_life", send_then_stop)
     assert scenario.invoke() == 3
     assert len(scenario.seen) == 1
     assert runner._read(scenario.out, "refusal.json") == (
@@ -356,11 +357,11 @@ def test_honeypot_in_earlier_repetition_preserves_cached_floor(scenario, tmp_pat
     entry, = (tmp_path / "cache").iterdir()
     before = entry.read_bytes()
     s.seen.clear()
-    drive = runner.run_life
+    drive = units.run_life
     def hit(**kw):
         run = drive(**kw)
         return replace(run, honeypot_hits=int(len(s.seen) == 1))
-    monkeypatch.setattr(runner, "run_life", hit)
+    monkeypatch.setattr(units, "run_life", hit)
     assert s.invoke("repeated", cache=tmp_path / "cache", only=("t1-g1", "B0", 2), repeat=2) == 3
     assert s.seen == [("system", 0)] * 2
     assert runner._read(tmp_path / "repeated", "refusal.json") == {"code": "honeypot"}
@@ -375,7 +376,7 @@ def test_real_pack_edit_after_last_unit_refused(scenario, installed, tmp_path, m
     verify_pack(installed.root, pack_hash=installed.digest)
     artifact = installed.root / "index.json"
     before = artifact.read_bytes()
-    drive = runner.run_life
+    drive = units.run_life
     def changed(**kw):
         run = drive(**kw)
         if len(s.seen) == 8:
@@ -383,7 +384,7 @@ def test_real_pack_edit_after_last_unit_refused(scenario, installed, tmp_path, m
             artifact.write_bytes(before + b"\n")
             artifact.chmod(0o444)
         return run
-    monkeypatch.setattr(runner, "run_life", changed)
+    monkeypatch.setattr(units, "run_life", changed)
     try:
         assert s.invoke(packs_dir=installed.root, pack_hash=installed.digest, cache=tmp_path / "cache") == 3
         assert len(s.seen) == 8 and s.stacks[-1].closed
@@ -485,7 +486,7 @@ def test_item1_identity_miss_then_all_floor_sends_503_without_stop(scenario, tmp
 def test_item1_answer_then_local_failure_propagates_to_remaining_items(scenario, tmp_path, monkeypatch, capsys):
     peer = add_floor_peer(scenario)
     scenario.ctx.packs[0].items["B0"][-1]["probe_point"] = 3
-    drive, score = runner.run_life, runner.score_item
+    drive, score = units.run_life, units.score_item
     def life(**kw):
         run = drive(**kw)
         if kw["arm"] == "no_memory" and kw["items"][0]["item_id"] == "t1-g1B0":
@@ -499,8 +500,8 @@ def test_item1_answer_then_local_failure_propagates_to_remaining_items(scenario,
         if kw["cls"]:
             return runner.outcome(runner.identity0(item), None, cause=kw["cls"])
         return score(item, **kw)
-    monkeypatch.setattr(runner, "run_life", life)
-    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(units, "run_life", life)
+    monkeypatch.setattr(units, "score_item", scoring)
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     floor = runner._read(scenario.out, "no_memory.json")["outcomes"]
     assert floor["t1-g1B0"]["failure_class"] is None and floor[peer]["failure_class"] == "SYSTEM_FAILURE"
@@ -512,7 +513,7 @@ def test_item1_answer_then_local_failure_propagates_to_remaining_items(scenario,
 def test_item1_each_scored_item_needs_terminal_live_answer(scenario, tmp_path, monkeypatch, reply):
     # Two items in one probe session; the first answer cannot stand in for its unanswered peer.
     add_floor_peer(scenario)
-    drive = runner.run_life
+    drive = units.run_life
     def life(**kw):
         run = drive(**kw)
         if kw["arm"] != "no_memory" or kw["items"][0]["item_id"] != "t1-g1B0":
@@ -528,7 +529,7 @@ def test_item1_each_scored_item_needs_terminal_live_answer(scenario, tmp_path, m
                     if reply == "tool_calls" else ())
             records += ((final,) if reply == "later_503" else ()) + (failed,)
         return replace(run, records=records)
-    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(units, "run_life", life)
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     assert not (tmp_path / "cache").exists()
     assert (scenario.out / "no_memory.json").is_file()
@@ -537,7 +538,7 @@ def test_item1_each_scored_item_needs_terminal_live_answer(scenario, tmp_path, m
 
 def test_item1_malformed_live_answer_still_measured(scenario, tmp_path, monkeypatch):
     from bicentennial.score.qa import parse_envelope
-    drive, score = runner.run_life, runner.score_item
+    drive, score = units.run_life, units.score_item
     def life(**kw):
         run = drive(**kw)
         if kw["arm"] == "no_memory":
@@ -551,8 +552,8 @@ def test_item1_malformed_live_answer_still_measured(scenario, tmp_path, monkeypa
             return dict(row(item["item_id"], 0), envelope=None, failure_class="SYSTEM_FAILURE",
                 worst_case_milli=-1000)
         return score(item, **kw)
-    monkeypatch.setattr(runner, "run_life", life)
-    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(units, "run_life", life)
+    monkeypatch.setattr(units, "score_item", scoring)
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     entry, = (tmp_path / "cache").iterdir()
     floor = runner._read(scenario.out, "no_memory.json")
@@ -561,17 +562,17 @@ def test_item1_malformed_live_answer_still_measured(scenario, tmp_path, monkeypa
 
 
 def test_item1_one_answered_floor_unit_cannot_cover_an_unanswered_unit(scenario, tmp_path, monkeypatch):
-    drive = runner.run_life
+    drive = units.run_life
     def life(**kw):
         run = drive(**kw)
         return replace(run, records=()) if kw["arm"] == "no_memory" and kw["branch"] == "B1" else run
-    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(units, "run_life", life)
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     assert not (tmp_path / "cache").exists()
 
 
 def test_item1_only_final_floor_attempt_counts(scenario, tmp_path, monkeypatch):
-    drive = runner.run_life
+    drive = units.run_life
     def life(**kw):
         run = drive(**kw)
         if kw["arm"] == "no_memory" and kw["items"][0]["item_id"] == "t1-g1B0":
@@ -579,7 +580,7 @@ def test_item1_only_final_floor_attempt_counts(scenario, tmp_path, monkeypatch):
                 return replace(run, classes={kw["items"][0]["item_id"]: ("INFRA_FAILURE", "synthetic")})
             return replace(run, records=())
         return run
-    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(units, "run_life", life)
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     assert ("no_memory", 1) in scenario.seen
     assert not (tmp_path / "cache").exists()
@@ -589,11 +590,11 @@ def test_item1_unscored_g2_action_needs_no_answer(scenario, tmp_path, monkeypatc
     pack = scenario.ctx.packs[1]
     scenario.ctx.packs[1] = replace(pack, genre="G2")
     pack.items["B0"][0]["stage"] = "act"
-    drive = runner.run_life
+    drive = units.run_life
     def life(**kw):
         run = drive(**kw)
         return replace(run, records=()) if kw["items"][0]["item_id"] == "t1-g2B0" else run
-    monkeypatch.setattr(runner, "run_life", life)
+    monkeypatch.setattr(units, "run_life", life)
     assert scenario.invoke(cache=tmp_path / "cache") == 0
     entry, = (tmp_path / "cache").iterdir()
     assert json.loads(entry.read_bytes())["outcomes"]["t1-g2B0"]["score_milli"] is None
@@ -715,11 +716,11 @@ def test_items1_2_3_first_floor_stop_refuses_without_retry(scenario, tmp_path, m
     s.stack_options = {"responses": {"probe_main": {"served": "live_stopped",
         "state": {"stopped": True, "stop_reason": reason}}}}
     # A stopped attempt would score INFRA and retry if the post-attempt check were absent.
-    drive = runner.run_life
+    drive = units.run_life
     def infra(**kw):
         return replace(drive(**kw), classes={i["item_id"]: ("INFRA_FAILURE", "responder_live_stopped")
                                              for i in kw["items"]})
-    monkeypatch.setattr(runner, "run_life", infra)
+    monkeypatch.setattr(units, "run_life", infra)
     assert s.invoke(cache=tmp_path / "cache") == 3
     assert s.seen == [("no_memory", 0)] and len(s.stacks[-1].calls) == 1
     assert runner._read(s.out, "refusal.json") == {"code": "live_stop", "detail": [reason]}
@@ -753,13 +754,13 @@ def test_items1_3_cached_identity_live_stop(scenario, tmp_path, capsys):
 
 
 def test_item3_system_live_stop_discards_pending_floor(scenario, tmp_path, monkeypatch):
-    s, drive = scenario, runner.run_life
+    s, drive = scenario, units.run_life
     def stop_in_system(**kw):
         if kw["arm"] == "system":
             kw["live"].stack.responses["probe_main"] = {"served": "live_stopped",
                 "state": {"stopped": True, "stop_reason": "upstream_invalid_request_4xx"}}
         return drive(**kw)
-    monkeypatch.setattr(runner, "run_life", stop_in_system)
+    monkeypatch.setattr(units, "run_life", stop_in_system)
     assert s.invoke(cache=tmp_path / "cache") == 3
     assert s.seen == [("no_memory", 0)] * 4 + [("system", 0)]
     assert runner._read(s.out, "refusal.json") == {"code": "live_stop", "detail": ["upstream_invalid_request_4xx"]}
@@ -783,13 +784,13 @@ def test_item1_stop_before_each_unit(scenario, tmp_path, monkeypatch, arm):
 
 @pytest.mark.parametrize("canary,code", [(False, "honeypot"), (True, "canary")])
 def test_item3_invalid_outranks_live_stop(scenario, monkeypatch, canary, code):
-    s, drive = scenario, runner.run_life
+    s, drive = scenario, units.run_life
     def invalid_then_stop(**kw):
         run = drive(**kw)
         kw["live"].canary = canary
         kw["live"].stack.values.update(stopped=True, stop_reason="upstream_invalid_request_4xx")
         return replace(run, honeypot_hits=1)
-    monkeypatch.setattr(runner, "run_life", invalid_then_stop)
+    monkeypatch.setattr(units, "run_life", invalid_then_stop)
     assert s.invoke() == 3 and len(s.seen) == 1
     assert runner._read(s.out, "refusal.json") == {"code": code}
     assert [p.name for p in s.out.iterdir()] == ["refusal.json"]
@@ -809,7 +810,7 @@ def test_item3_isolation_seen_before_a_stop_outranks_it(scenario, monkeypatch, s
         error.egress = ({"non_loopback": ["synthetic:443"]} if seen == "egress" else
                         {"alive_at_stop": True, "unsampled": ["egress unsampled pid=1 log=worker"]})
         raise error
-    monkeypatch.setattr(runner, "run_life", stopped)
+    monkeypatch.setattr(units, "run_life", stopped)
     assert scenario.invoke() == 3
     expected = code or ("credential_stop" if stop == "credential" else "live_stop")
     assert runner._read(scenario.out, "refusal.json")["code"] == expected
@@ -819,7 +820,7 @@ def test_item3_isolation_seen_before_a_stop_outranks_it(scenario, monkeypatch, s
 
 @pytest.mark.parametrize("secret_in", ["output", "receipt", "custody", "reason"])
 def test_item3_live_stop_uses_needle_scan(scenario, monkeypatch, capsys, secret_in):
-    s, drive = scenario, runner.run_life
+    s, drive = scenario, units.run_life
     def stop(**kw):
         run = drive(**kw)
         kw["live"].stack.values.update(stopped=True, stop_reason="responder_error:x" if secret_in != "reason" else
@@ -827,7 +828,7 @@ def test_item3_live_stop_uses_needle_scan(scenario, monkeypatch, capsys, secret_
         if secret_in == "output":
             runner._write(s.out, "planted.json", "synthetic-access-token")
         return run
-    monkeypatch.setattr(runner, "run_life", stop)
+    monkeypatch.setattr(units, "run_life", stop)
     if secret_in == "receipt":
         monkeypatch.setattr(runner, "_receipt", lambda *args: {"planted": "synthetic-access-token"})
     elif secret_in == "custody":
@@ -885,7 +886,7 @@ def action_scenario(scenario, monkeypatch):
     pack.records[failed["item_id"]] = dict(item_id=failed["item_id"], template_id="synthetic", template_version=1)
     pack.cases[failed["item_id"]] = SimpleNamespace(item=failed)
     pack.keys[failed["item_id"]] = {}
-    drive, score = runner.run_life, runner.score_item
+    drive, score = units.run_life, units.score_item
     def life(**kw):
         run = drive(**kw)
         classes = {i["item_id"]: ("SYSTEM_FAILURE", "final_mismatch")
@@ -909,8 +910,8 @@ def action_scenario(scenario, monkeypatch):
                       base_verdict="PASS", accuracy_correct=True)
         validate("item_outcome", result)
         return result
-    monkeypatch.setattr(runner, "run_life", life)
-    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(units, "run_life", life)
+    monkeypatch.setattr(units, "score_item", scoring)
     return s
 
 
@@ -960,8 +961,8 @@ def test_g2_action_failures_keep_t1_handling(action_scenario, monkeypatch, failu
     s = action_scenario
     s.failure = failure
     if failure == "relabel":
-        monkeypatch.setattr(runner, "is_plugin", lambda name: True)
-        monkeypatch.setattr(runner, "resolve_worker_env", lambda *args: None)
+        monkeypatch.setattr(units, "is_plugin", lambda name: True)
+        monkeypatch.setattr(units, "resolve_worker_env", lambda *args: None)
     assert s.invoke() == 0
     card = runner._read(s.out, "card.json")
     assert card["not_scored_live"] == []
@@ -1165,14 +1166,14 @@ def test_aa_of_own_baseline_uses_final_outcomes(scenario, tmp_path, monkeypatch,
     reference = tmp_path / "alias" if alias else baseline
     if alias:
         reference.symlink_to(baseline, target_is_directory=True)
-    score, report = runner.score_item, runner.flip_report
+    score, report = units.score_item, runner.flip_report
     calls = []
     def scoring(item, **kw):
         return row(item["item_id"], 0) if flipped and item["item_id"] == "t1-g1B1" else score(item, **kw)
     def reporting(*args, **kw):
         calls.append((args, kw))
         return report(*args, **kw)
-    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(units, "score_item", scoring)
     monkeypatch.setattr(runner, "flip_report", reporting)
     assert s.invoke(aa_of=reference, baseline=baseline) == 0
     result = runner._read(s.out, "flips.json")
@@ -1213,14 +1214,14 @@ def test_aa_of_band_decided_before_any_send(scenario, tmp_path, monkeypatch):
     assert s.invoke("baseline") == 0
     copytree(baseline, other)
     alias.symlink_to(baseline, target_is_directory=True)
-    score = runner.score_item
+    score = units.score_item
     def scoring(item, **kw):
         # Once the run is sending, the alias names the copy instead; the band was already decided.
         if alias.resolve() != other.resolve():
             alias.unlink()
             alias.symlink_to(other, target_is_directory=True)
         return score(item, **kw)
-    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(units, "score_item", scoring)
     assert s.invoke(aa_of=alias, baseline=baseline) == 0
     assert alias.resolve() == other.resolve()
     report = runner._read(s.out, "flips.json")
@@ -1282,7 +1283,7 @@ def test_guard_delegates_stack_and_never_forwards_canary():
 
 
 def test_publication_waits_for_scan_and_discloses_transforms(scenario, monkeypatch):
-    scan, drive = runner._scan, runner.run_life
+    scan, drive = runner._scan, units.run_life
     checked = []
     def verify(out, needles):
         assert not (out / "card.json").exists() and not (out / "receipt.json").exists()
@@ -1291,7 +1292,7 @@ def test_publication_waits_for_scan_and_discloses_transforms(scenario, monkeypat
     def transformed(**kw):
         return replace(drive(**kw), transforms=(kw["arm"] + "-transformed",))
     monkeypatch.setattr(runner, "_scan", verify)
-    monkeypatch.setattr(runner, "run_life", transformed)
+    monkeypatch.setattr(units, "run_life", transformed)
     assert scenario.invoke() == 0 and checked == [scenario.out]
     disclosures = runner._read(scenario.out, "disclosures.json")
     assert disclosures["t1.transforms"] == ["system-transformed"]
@@ -1398,11 +1399,11 @@ def test_rerun_replays_the_branch_and_keeps_the_checkpoint(scenario, monkeypatch
         pack.records_b["B0"].append(pack.records[iid])
         pack.keys[iid] = {}
         pack.cases[iid] = SimpleNamespace(item=extra)
-    drive, ran = runner.run_life, []
+    drive, ran = units.run_life, []
     def capture(**kw):
         ran.append((kw["arm"], sorted(i["item_id"] for i in kw["items"])))
         return drive(**kw)
-    monkeypatch.setattr(runner, "run_life", capture)
+    monkeypatch.setattr(units, "run_life", capture)
     assert s.invoke(only=("t1-g1", "B0", 2), repeat=2) == 0
     # Each repetition replays the whole branch, so both items run; only the checkpoint's are kept.
     assert [ids for arm, ids in ran if arm == "system"] == [["t1-g1B0", "t1-g1B0-later", "t1-g1B0-same"]] * 2
@@ -1428,8 +1429,8 @@ def test_relabel_follows_t1(scenario, monkeypatch, mode, blocked):
     # A plug-in's stop that the floor shared is the harness's. An item's own different stop code, or a stop
     # the floor did not share, stays the system's.
     scenario.mode = mode
-    monkeypatch.setattr(runner, "is_plugin", lambda name: True)
-    monkeypatch.setattr(runner, "resolve_worker_env", lambda *args: None)
+    monkeypatch.setattr(units, "is_plugin", lambda name: True)
+    monkeypatch.setattr(units, "resolve_worker_env", lambda *args: None)
     assert scenario.invoke() == 0
     classes = {i["item_id"]: i["failure_class"] for i in runner._read(scenario.out, "card.json")["items"]}
     assert {iid for iid, c in classes.items() if c == "BLOCKED"} == blocked and len(classes) == 4
@@ -1464,7 +1465,7 @@ def test_match_fields_follow_the_scored_envelope(scenario, tmp_path, monkeypatch
     s = scenario
     s.matches = {"t1-g1B0": dict(value_match=False, citation_match=False)}
     assert s.invoke("baseline") == 0
-    drive, score = runner.run_life, runner.score_item
+    drive, score = units.run_life, units.score_item
     # An unsettled checkpoint is the system's class; an infrastructure stop becomes BLOCKED after its reruns.
     planted = {"t1-g2B0": ("SYSTEM_FAILURE", "turn_timeout"), "t1-g2B1": ("INFRA_FAILURE", "synthetic")}
     def life(**kw):
@@ -1475,8 +1476,8 @@ def test_match_fields_follow_the_scored_envelope(scenario, tmp_path, monkeypatch
     def scoring(item, **kw):
         from bicentennial.runner.hermes_score import score_item
         return score_item(item, **kw) if kw["cls"] == "SYSTEM_FAILURE" else score(item, **kw)
-    monkeypatch.setattr(runner, "run_life", life)
-    monkeypatch.setattr(runner, "score_item", scoring)
+    monkeypatch.setattr(units, "run_life", life)
+    monkeypatch.setattr(units, "score_item", scoring)
     assert s.invoke(baseline=tmp_path / "baseline") == 0
     outcomes = runner._read(s.out, "outcomes.json")
     report = runner._read(s.out, "flips.json")
@@ -1636,7 +1637,7 @@ def _full_fake_worker(installed, tmp_path, monkeypatch, honeypot_arm=None):
         observations.append(result)
         return result
     monkeypatch.setattr(runner, "build_live_stack", build)
-    monkeypatch.setattr(runner, "run_life", drive)
+    monkeypatch.setattr(units, "run_life", drive)
     args = dict(system="hermes-native", packs_dir=installed.root, pack_hash=installed.digest,
         login_home=home, max_sends=10000, entry=SHARED["measured"](), worker_argv=installed.worker,
         cache=tmp_path / "cache")
@@ -1682,11 +1683,11 @@ def _full_fake_worker(installed, tmp_path, monkeypatch, honeypot_arm=None):
 
 @pytest.mark.parametrize("wait", [3.0, 1.0, 0.5])
 def test_turn_wait_disclosure_and_every_arm(scenario, monkeypatch, capsys, wait):
-    seen, real = [], runner.run_life
+    seen, real = [], units.run_life
     def drive(**kw):
         seen.append((kw["arm"], kw["turn_wait_s"]))
         return real(**kw)
-    monkeypatch.setattr(runner, "run_life", drive)
+    monkeypatch.setattr(units, "run_life", drive)
     capsys.readouterr()
     assert scenario.invoke(turn_wait_s=wait) == 0
     assert "turn_wait_s" not in capsys.readouterr().err

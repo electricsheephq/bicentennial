@@ -64,7 +64,8 @@ def _mapped_literals(node):
 
 
 def _code_refusals():
-    tree = ast.parse((REPO / "src/bicentennial/runner/t2lite.py").read_text())
+    tree = ast.parse("\n".join((REPO / "src/bicentennial/runner" / name).read_text()
+                               for name in ("t2lite.py", "units.py")))
     codes = SHARED["_code_refusals"]()
     for call in _calls(tree, "T1Refused"):
         arg = call.args[0]
