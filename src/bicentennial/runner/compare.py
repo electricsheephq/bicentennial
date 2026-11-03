@@ -484,6 +484,7 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
             publication = t0._Publication(out)
             fixedroot.validate_slot(sandbox_slot, T1Refused)
             with fixedroot.lease(sandbox_slot, T1Refused) as sandbox:
+                t1.check_install(ctx, sandbox)
                 code = _execute(ctx, out=out, packs_dir=packs_dir, pack_hash=pack_hash, baseline=data,
                     cache=cache, corpus_host=corpus_host, start=start, publication=publication,
                     sandbox=sandbox, sandbox_slot=sandbox_slot)
@@ -501,7 +502,7 @@ def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
                 if getattr(error, "detail", ()):
                     refusal["detail"] = list(error.detail)
                 (out / "refusal.json").write_bytes(canon(refusal))
-            print(code, file=t0.sys.stderr)
+            print(code, *(getattr(error, "detail", ()) if code == "pin_mismatch" else ()), file=t0.sys.stderr)
             return 3
     except Exception:
         print("tool_failure", file=t0.sys.stderr)

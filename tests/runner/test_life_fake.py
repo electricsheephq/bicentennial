@@ -594,6 +594,8 @@ def plugin_source(tmp_path):
     archive = subprocess.run(["git", "-C", str(source), "archive", "--format=tar", "HEAD"], capture_output=True, check=True)
     entry = load(REGISTRY / "holographic.toml")
     entry["artifact"]["sha256"] = sha256(archive.stdout).hexdigest()
+    # The stand-in is not the registry's install, so it declares the measurement placeholder.
+    entry["fresh_install_hash"] = "0" * 64
     return source, entry
 
 
@@ -929,7 +931,7 @@ def test_engine_only_life_uses_plugin_wake_and_env(lives, tmp_path, monkeypatch,
 
     name, engine = "fixture-engine", "fixture_engine"
     source, pinned = plugin_source(tmp_path)
-    entry = dict(ENTRY, name=name, artifact=pinned["artifact"])
+    entry = dict(ENTRY, name=name, artifact=pinned["artifact"], fresh_install_hash=pinned["fresh_install_hash"])
     monkeypatch.setitem(hp.ENGINES, name, engine)
     monkeypatch.setitem(hp.TREES, name, ("HEAD",))
     monkeypatch.setitem(WRITE_ARGS, name, WRITE_ARGS["hermes-native"])

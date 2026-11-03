@@ -1,12 +1,14 @@
-"""Black-box fault and forgetting checks; only text misses certify absence."""
+"""Black-box fault and forgetting checks with explicit store absence evidence."""
 
 import codecs
 import json
 import os
+import shutil
 import stat
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from bicentennial.api.contract import shape
 from bicentennial.audit.readback import calls_in, results
@@ -14,6 +16,7 @@ from bicentennial.canon import canon
 from bicentennial.contracts.run import SCHEMAS, validate
 from bicentennial.probe.scripted_reader import ReaderResult, api_task, read_api
 from bicentennial.sandbox.spansearch import span_search
+from bicentennial.score.sqlite_scan import SIDECARS, SQLITE_HEADER, scan_sqlite
 
 INVARIANTS = ("INV-VERB", "INV-NEW", "INV-PAIR", "INV-FORGET")
 STATUSES = ("PASS", "FAIL", "INCONCLUSIVE", "NOT_EXERCISED", "INFRA_FAILURE")
@@ -24,7 +27,7 @@ NEW_CELLS = ("DRIFT-CUR", "DRIFT-PART", "DRIFT-PROC", "FAULT-NEWEST")
 VERBATIM = "verbatim retention"
 STRESSES = ("compaction", "crash")
 _REASONS = ("absent_after_fault", "not_newest", "orphan_result", "surfaced", "store_hit",
-            "opaque_store", "no_snapshot", "system_failure", "blocked", "infra", "host_kept")
+            "opaque_store", "sqlite_unreadable", "sqlite_freelist", "no_snapshot", "system_failure", "blocked", "infra", "host_kept")
 
 
 class SystemFault(Exception):
@@ -94,30 +97,169 @@ def searchable(path) -> bool:
         return False
 
 
+# Must equal harness/hermes/plugin_host.py's CHECKPOINT_FORMAT without importing the harness.
+CHECKPOINT_FORMAT = "bicentennial-t0-host-1"
+DOUBTS = ("opaque_store", "sqlite_unreadable", "sqlite_freelist")
+
+
+class ForgetScan:
+    """Run-wide file counts and locations; contains no searched values."""
+
+    def __init__(self):
+        self.counts = {method: dict.fromkeys(("absent", "found", "inconclusive"), 0)
+                       for method in ("raw", "sqlite", "opaque")}
+        self.hits = set()
+
+    def add(self, method, result, hits):
+        self.counts[method][result] += 1
+        self.hits.update(hits)
+
+    def to_obj(self):
+        return dict(counts=self.counts, hits=sorted(self.hits))
+
+
 @dataclass(frozen=True)
 class StoreSearch:
     verdict: str
     hit_paths: tuple[str, ...]
     opaque_paths: tuple[str, ...]
+    sqlite_reasons: tuple[str, ...] = ()
+
+    @property
+    def reason(self):
+        return next((r for r in DOUBTS if r in
+                     (("opaque_store",) if self.opaque_paths else ()) + self.sqlite_reasons), "")
 
 
-def search_store(root, needles) -> StoreSearch:
+def _combined(scans):
+    hits = tuple(sorted({p for s in scans for p in s.hit_paths}))
+    opaque = tuple(sorted({p for s in scans for p in s.opaque_paths}))
+    reasons = tuple(sorted({r for s in scans for r in s.sqlite_reasons}))
+    return StoreSearch("found" if hits else "inconclusive" if opaque or reasons else "absent",
+                       hits, opaque, reasons)
+
+
+def search_store(root, needles, collector=None) -> StoreSearch:
     root = Path(root)
-    hits = span_search(root, list(needles))
-    opaque = []
+    if not stat.S_ISDIR(root.lstat().st_mode):
+        raise ValueError("expected a real directory")
+    files, databases = {}, set()
 
     def fail(error):
         raise error
 
-    for directory, dirs, files in os.walk(root, followlinks=False, onerror=fail):
+    for directory, dirs, names in os.walk(root, followlinks=False, onerror=fail):
         dirs.sort()
-        for name in sorted(files):
+        for name in sorted(names):
             path = Path(directory) / name
-            if stat.S_ISREG(path.lstat().st_mode) and not searchable(path):
-                opaque.append(path.relative_to(root).as_posix())
-    paths = tuple(sorted({p for group in hits.values() for p in group}))
-    return StoreSearch("found" if paths else "inconclusive" if opaque else "absent",
-                       paths, tuple(sorted(opaque)))
+            if stat.S_ISREG(path.lstat().st_mode):
+                relative = path.relative_to(root).as_posix()
+                files[relative] = path
+                with path.open("rb") as stream:
+                    if stream.read(16) == SQLITE_HEADER:
+                        databases.add(relative)
+    siblings = {p + suffix for p in databases for suffix in SIDECARS}
+    if databases:
+        # Keep SQLite's pre-recovery byte evidence confined to its private copies.
+        with TemporaryDirectory(prefix="forget-raw-") as temporary:
+            raw_root = Path(temporary)
+            for relative, path in files.items():
+                if relative not in databases | siblings:
+                    target = raw_root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(path, target)
+            raw = span_search(raw_root, list(needles))
+    else:
+        raw = span_search(root, list(needles))
+    raw_paths = {p for group in raw.values() for p in group}
+    scans = []
+    for relative, path in sorted(files.items()):
+        if relative in siblings:
+            continue
+        if relative in databases:
+            hits, reason = scan_sqlite(path, relative, needles)
+            scan = StoreSearch("found" if hits else "inconclusive" if reason else "absent",
+                               hits, (), (reason,) if reason else ())
+            method = "sqlite"
+        else:
+            opaque = () if searchable(path) else (relative,)
+            hits = (relative,) if relative in raw_paths else ()
+            scan = StoreSearch("found" if hits else "inconclusive" if opaque else "absent", hits, opaque)
+            method = "opaque" if opaque else "raw"
+        scans.append(scan)
+        if collector is not None:
+            collector.add(method, scan.verdict, scan.hit_paths)
+    return _combined(scans)
+
+
+def _checkpoint_files(data):
+    """Recognize canonical host framing and validate paths before materializing it."""
+    raw, separator, payload = data.partition(b"\n")
+    try:
+        header = json.loads(raw)
+        if not separator or not isinstance(header, dict) or canon(header) != raw or header.get("format") != CHECKPOINT_FORMAT:
+            return None
+        rows = header["files"]
+        if not isinstance(rows, list):
+            return None
+        seen = set()
+        for row in rows:
+            if any(type(row[k]) is not int or row[k] < 0 for k in ("surface", "mode", "size")):
+                return None
+            path = Path(row["path"])
+            if (not isinstance(row["path"], str) or path.is_absolute() or ".." in path.parts or
+                    path == Path(".") or "\0" in row["path"] or path.as_posix() != row["path"]):
+                return None
+            key = row["surface"], row["path"]
+            if key in seen:
+                return None
+            seen.add(key)
+        if sum(r["size"] for r in rows) != len(payload):
+            return None
+        # A carried file cannot also be the parent directory of another file.
+        if any((surface, parent.as_posix()) in seen for surface, name in seen for parent in Path(name).parents):
+            return None
+        return rows, payload
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        return None
+
+
+def search_checkpoint(data, needles, collector=None):
+    framing = _checkpoint_files(data)
+    raw_hit = any(n in data for n in needles)
+    if framing is None:
+        opaque = not searchable_bytes(data)
+        scan = StoreSearch("found" if raw_hit else "inconclusive" if opaque else "absent",
+                           ("<checkpoint>",) if raw_hit else (), ("<checkpoint>",) if opaque else ())
+        if collector is not None:
+            collector.add("opaque" if opaque else "raw", scan.verdict, scan.hit_paths)
+        return scan
+    rows, payload = framing
+    scans = []
+    try:
+        with TemporaryDirectory(prefix="forget-checkpoint-") as temporary:
+            roots, offset = {}, 0
+            for row in rows:
+                root = roots.setdefault(row["surface"], Path(temporary) / str(row["surface"]))
+                path = root / row["path"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(payload[offset:offset + row["size"]])
+                offset += row["size"]
+            for root in roots.values():
+                scans.append(search_store(root, needles, collector))
+    except OSError:
+        if not raw_hit:
+            raise
+        # A known checkpoint byte hit survives a later materialization failure.
+        scans.append(StoreSearch("found", ("<checkpoint>",), ()))
+        if collector is not None:
+            collector.hits.add("<checkpoint>")
+    if raw_hit and not any(s.verdict == "found" for s in scans):
+        # Preserve header hits and matches across carried-file boundaries too.
+        scans.append(StoreSearch("found", ("<checkpoint>",), ()))
+        if collector is not None:
+            collector.hits.add("<checkpoint>")
+    return _combined(scans)
 
 
 def needles_for(tokens) -> tuple[bytes, ...]:
@@ -196,7 +338,7 @@ def _probe(adapter, bound, i, query, token, *, old=None, forbidden=False, spans=
     return read_api(_Query(adapter), view, keys, 100, injected=tuple(injected))
 
 
-def _api_script(factory, invariant, bound, snapshot):
+def _api_script(factory, invariant, bound, snapshot, collector=None):
     holder = [_call(factory)]
     _call(holder[0].reset)
 
@@ -258,27 +400,22 @@ def _api_script(factory, invariant, bound, snapshot):
                 for i, q in (("forget-1", "yard gate code"), ("forget-2", "loading")))
     data = _checkpoint(holder[0], bound)
     needles = needles_for(["GATE-4410"])
-    if any(n in data for n in needles):
+    scans = [search_checkpoint(data, needles, collector)]
+    if scans[0].verdict != "found" and snapshot:
+        for root in snapshot(holder[0]):
+            scans.append(search_store(root, needles) if collector is None else search_store(root, needles, collector))
+            if scans[-1].verdict == "found":
+                break
+    scan = _combined(scans)
+    if scan.verdict == "found":
         yield ("forget-store", "FAIL", "store_hit")
         if _host_kept(kept_texts, needles):
             yield ("forget-store", "FAIL", "host_kept")
-        return
-    scans = []
-    if snapshot:
-        for root in snapshot(holder[0]):
-            scan = search_store(root, needles).verdict
-            if scan == "found":
-                yield ("forget-store", "FAIL", "store_hit")
-                if _host_kept(kept_texts, needles):
-                    yield ("forget-store", "FAIL", "host_kept")
-                return
-            scans.append(scan)
-    opaque = not searchable_bytes(data) or "inconclusive" in scans
-    yield ("forget-store", "INCONCLUSIVE" if opaque else "PASS",
-           "opaque_store" if opaque else "")
+    else:
+        yield ("forget-store", "INCONCLUSIVE" if scan.reason else "PASS", scan.reason)
 
 
-def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None) -> Verdict:
+def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None, collector=None) -> Verdict:
     """Run one API-mode invariant against an adapter factory."""
     ids, reason = {
         "INV-VERB": (("verb-1", "verb-2", "verb-3"), "absent_after_fault"),
@@ -288,7 +425,7 @@ def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None) -> Ver
     }[invariant]
     rows = []
     try:
-        for i, s, r in _api_script(factory, invariant, bound_s, snapshot):
+        for i, s, r in _api_script(factory, invariant, bound_s, snapshot, collector):
             rows.append((i, s, r or (reason if s == "FAIL" else "")))
     except SystemFault:
         rows = [(i, "FAIL", "system_failure") for i in ids]
@@ -297,7 +434,7 @@ def adapter_invariant(factory, invariant, *, bound_s: int, snapshot=None) -> Ver
     return _verdict(invariant, rows)
 
 
-def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Verdict]:
+def adapter_invariants(factory, *, bound_s: int, snapshot=None, collector=None) -> dict[str, Verdict]:
     """Run API-mode invariants against an adapter factory.
 
     API-mode INV-PAIR certifies that the call and its result both survive the crash;
@@ -305,7 +442,7 @@ def adapter_invariants(factory, *, bound_s: int, snapshot=None) -> dict[str, Ver
     Call/result linkage is certified in Hermes mode, where the requests' call and
     output ids are observable.
     """
-    return {inv: adapter_invariant(factory, inv, bound_s=bound_s, snapshot=snapshot)
+    return {inv: adapter_invariant(factory, inv, bound_s=bound_s, snapshot=snapshot, collector=collector)
             for inv in INVARIANTS}
 
 
@@ -322,7 +459,7 @@ class ItemEvidence:
     kept_texts: tuple[str, ...] = ()
 
 
-def run_invariants(evidence, *, tier, requests=None, expected_call_ids=()) -> dict[str, Verdict]:
+def run_invariants(evidence, *, tier, requests=None, expected_call_ids=(), collector=None) -> dict[str, Verdict]:
     if tier not in ("T0", "T1"):
         raise ValueError("invalid tier")
     rows, seen = {inv: [] for inv in INVARIANTS}, set()
@@ -363,14 +500,17 @@ def run_invariants(evidence, *, tier, requests=None, expected_call_ids=()) -> di
             else:
                 try:
                     for root in e.roots:
-                        scan = search_store(root, needles_for(e.keys["forbidden"])).verdict
-                        if scan == "found":
+                        needles = needles_for(e.keys["forbidden"])
+                        scan = (search_store(root, needles) if collector is None else
+                                search_store(root, needles, collector))
+                        if scan.verdict == "found":
                             status, reason = "FAIL", "store_hit"
                             if _host_kept(e.kept_texts, needles_for(e.keys["forbidden"])):
                                 rows[inv].append((i, "FAIL", "host_kept"))
                             break
-                        if scan == "inconclusive":
-                            status, reason = "INCONCLUSIVE", "opaque_store"
+                        if scan.verdict == "inconclusive":
+                            status = "INCONCLUSIVE"
+                            reason = min(filter(None, (reason, scan.reason)), key=DOUBTS.index)
                 except Exception:
                     status, reason = "INFRA_FAILURE", "infra"
             rows[inv].append((i, status, reason))
