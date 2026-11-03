@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-03: settle each checkpoint once on the real store (#410)
+- **RING0 §13 E29 (§6, §11):** from the next kit, the life runner judges settledness once at checkpoint replay end on the real store. Probe exits on clones cannot reclassify items. A real store that is unsettled still classes every checkpoint item SYSTEM_FAILURE `unsettled`, with one checkpoint record. E29 narrows ERRATA-v2.2 E6's timing for life-runner probes.
+- **Impact:** no code pin moves. T1 results for mem0-oss and omega can change when the defect fires; hermes-native and holographic outcomes keep their rule. Published results are unchanged.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0, 2026-11-03: Mem0's scripted additive extraction reply (#208)
 - **RING0 §2 and §13 E28:** from this kit, the stub answers mem0ai 2.2.1's additive extraction call with the `memory` list it reads: one text-only entry per new user message, cut at 240 characters and bounded by the reply budget. Automatic extraction is exercised, and `<tier>.extraction` discloses the scripted extractive reply; E28 supersedes E11.
 - **Pins and results:** no code pin moves. Mem0's T0 and T1 results can change, because T0's memory-layer host makes the same extraction call on every ingest; both are measured by the owner with runs before and after. Explicit `mem0_add` writes and other systems' replies are unchanged.
