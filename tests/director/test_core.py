@@ -707,8 +707,10 @@ def test_responses_wire_ids_and_compact(tmp_path):
     events = responses.parse_sse(data)
     assert status == 200 and events[0]["response"]["id"] == mint_id("attempt-s1", 1)
     assert answer(ctype, data) == (TURN1["assistant"], [])
+    assert d.summariser_requests == 0
     status, _, data = post(d, "/v1/responses/compact", {"model": "m", "input": "compact this"})
     assert status == 200 and json.loads(data)["output"][0]["content"][0]["text"] == "fake summariser text, discard me"
+    assert d.summariser_requests == 1  # the adapter keeps this turn's full settle
     a, b = records(tmp_path)
     assert (a["n_messages"], a["n_tools"], b["role"], b["subrole"]) == (1, 2, "summariser", "compression")
 

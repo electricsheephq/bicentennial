@@ -30,6 +30,12 @@ bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-ha
 bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-hash "$PACK_HASH" --hermes checkouts/hermes --login-home developer-login --max-sends 10000 --cache runs/t2lite-cache --baseline runs/A --aa-prime runs/A-prime --out runs/B
 ```
 
+| T2-lite flag | Meaning |
+|---|---|
+| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 3.0; invalid values refuse with exit 3 before execution. Session end, turns followed by kill or restart, and compaction turns (a scheduled compaction, or a compaction request recorded during the turn or its quiet time) keep 3.0 s, counted from the first sample of the current stretch with nothing in flight. Outside the lock, lock hash, attempt id and card. The default is the published setting until the one-commit A/B passes; results at another value are your own. |
+
+The setting is recorded in `disclosures.json` as `turn_wait_s`, a decimal string in seconds.
+
 The send limit is an example, not a promised budget. Earlier cards must match system, pack, seed, model, effort, answer contract, profile and all code/harness pins. A candidate can change its implementation while keeping those comparability fields fixed. Checkpoint reruns use `--only LIFE:B0:CHECKPOINT` (or B1) and optionally `--repeat N`, a positive integer. They replay the whole branch and keep all items at that checkpoint. Repeats above one require a checkpoint; checkpoint runs cannot take references. `--aa-prime` requires `--baseline`; `--aa-of` cannot accompany `--aa-prime`. `--sandbox-slot` chooses an available slot from 0 through 9.
 
 To see a complete run offline, use this acceptance with a fake upstream and fake worker. It exercises real preparation, director, shadow, scoring, cards and checkpoint replay, without a live login. The final check makes a socket-related skip fail this path. The fresh-clone CI job runs these exact lines after T0:
@@ -47,17 +53,17 @@ python -c 'import xml.etree.ElementTree as E; root = E.parse("build/t2lite-offli
 
 ## What a run costs
 
-Only `probe_main` goes live among director requests; replay, write, extraction, compaction and every other role stay scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, floors are stored under a key made of pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. An entry is reused only when its recorded served identity matches the identity request’s observed served model. When the identity request gets a forwarded reply, it is the run's first observed send, so the card's `served_identity` and the drift flags on later probes are measured against its served model. A missing, damaged, incomplete or unverified entry runs the floor again; without a cache it always runs. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. The identity request is never in the receipt or scored. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
+Only `probe_main` goes live among director requests; replay, write, extraction, compaction and every other role stay scripted as at T1. A run which finds a cached floor first sends one fixed identity request with no pack content and the same pinned effort, disclosed as `identity_check`. The model is pinned to `gpt-6.1-sol`, effort `medium`. No-memory probes also go live. With `--cache`, floors are stored under a key made of pack hash, model, effort, answer-contract hash, harness hash and benchmark commit. A non-default wait appends `turn_wait_s=<seconds>` to the key; at 3.0 seconds the key is unchanged. An entry is reused only when its recorded served identity matches the identity request’s observed served model. When the identity request gets a forwarded reply, it is the run's first observed send, so the card's `served_identity` and the drift flags on later probes are measured against its served model. A missing, damaged, incomplete or unverified entry runs the floor again; without a cache it always runs. An uncacheable floor is not saved. A cached floor contributes no sends or tokens to this run's receipt. The identity request is never in the receipt or scored. Do not reuse the cache while editing benchmark code: uncommitted edits do not change HEAD's cache key.
 
-`--max-sends` is a required nonnegative limit on upstream sends, including retries, the uncached floor and the identity request’s tries (up to four per hold cycle, more under rate holds); zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED.
+`--max-sends` is a required nonnegative limit on upstream sends, including retries, the uncached floor and the identity request’s tries (up to four per hold cycle, more under rate holds); zero permits no sends. This is the practical bound, not a dollar estimate. The current stack uses zero-price spend accounting and the receipt reports zero spend; that does not promise free service. The token reservation bound is not sent as a model output cap. Read tokens and runtime in the receipt and live state in disclosures. Infrastructure items retry twice before becoming BLOCKED while the live stack remains active; a latched stop ends the run without retrying the unit.
 
 ## How a run ends
 
 | End | What remains |
 |---|---|
-| Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain. |
-| Credential or spend stop | No card; `refusal.json` with `credential_stop` or `spend_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. |
-| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. Canary and honeypot outrank a stop; canary comes first. |
+| Complete | Card, records, custody and a COMPLETE receipt; BLOCKED items can remain from infrastructure failures that did not latch a live stack stop. |
+| Credential, spend or live stop | Exit 3; no card or new floor cache entry; `refusal.json` with `credential_stop`, `spend_stop` or `live_stop`, an INFRA_FAILURE receipt and custody, only if secret-free. For `live_stop`, the stop reason is in `refusal.json` `detail` and on stderr as `live_stop <reason>`; a reason containing login material gives `credential_scan` instead. |
+| INVALID | Isolation breach, canary in a live body, honeypot hit or credential scan: only `refusal.json`. When a stop ends the run, a canary, a honeypot hit and an isolation breach seen before the stop outrank it, in that order; egress the stopped attempt could not sample does not. A unit that completes with a breach refuses `isolation` at once, ahead of a canary, a honeypot hit or a stop. |
 | Refused before anything runs | Argument, live-setting and login-home checks create nothing. Later preparation/reference refusals send nothing but can leave `refusal.json`. |
 | Tool failure | Cleanup removes outputs and writes `refusal.json` with `tool_failure`; stderr has a traceback. If cleanup itself fails, an exception can escape with partial files and no card. |
 
@@ -78,7 +84,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 | `repetitions.json` | Joined outcomes for every repetition. |
 | `no_memory.json` | Floor outcomes, per-unit stops and `served_identity`, possibly reused. |
 | `custody.json` | Drained login custody events, without login secrets. |
-| `disclosures.json` | Top-level `honeypot_hits` (0 on every published run), `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
+| `disclosures.json` | Top-level `honeypot_hits` (0 on every published run), `turn_wait_s` (a decimal string, in seconds), `identity_check` (null without an entry; otherwise served status, observed identity, match, tries and held milliseconds), live stack state, including `live.holds` (`waits`, `held_ms`, sorted `reasons`), and transforms disclosed per arm. Holds count waits across every arm that sent live; each wait's time counts once even with multiple reasons. With no holds these are 0, 0 and []. |
 | `spend.json` | Locked reservation and settlement accounting. |
 | `receipt.json` | COMPLETE status, actual work, tokens, latency and runtime. |
 | `flips.json` | Comparison against the baseline, if supplied. |
@@ -89,7 +95,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 
 | File | Meaning |
 |---|---|
-| `refusal.json` | Stop code; spend stops retain the same file set. |
+| `refusal.json` | Stop code; `live_stop` includes the stop reason in `detail`. |
 | `receipt.json` | INFRA_FAILURE receipt for work actually performed. |
 | `custody.json` | Secret-free custody records explaining the stop. |
 
@@ -101,7 +107,7 @@ Paths below are relative to the output directory; `<life>` and `<branch>` stand 
 
 `excluded` carries both sides and a `reason`: INFRA, INFRA_FAILURE, BLOCKED or `not_scored_live` for G2 actions. These do not appear as flips. `counts` reports items, flips, exclusions, scored comparisons, `aa_prime_scored` and `unstable`. `q0` is the fraction of scored A/A′ items that changed score or failure class, independent of the candidate: an exact fraction in lowest terms (`numerator`, `denominator`) plus a milli rendering. Because it is reduced, its denominator is not always the item count (0 changed of 11 is written 0/1, and 2 of 10 is written 1/5); `counts.unstable` and `counts.aa_prime_scored` give the unreduced counts. It is null for an empty scored intersection or absent A′. Without A′, labels include "no A/A′ band". A row's `unstable` is true when its A/A′ outcomes differ, false when they agree, and null without A′ or when either side is excluded. It is a diagnostic, not a significance test or bar. `twin_flip` is true when the bundle partner's own score or failure class changed between baseline and current and false when it did not; it is null without a bundle, for a bundle that is not a pair, or when the partner is excluded. It is a diagnostic that never changes which answers are flips or any count. `served_identity` discloses baseline/current identities and whether they changed; identity drift does not silently suppress flips.
 
-`rerun` is a shell command for three checkpoint repetitions. Fill every literal placeholder: `<packs>` is the installed pack directory, `<hermes checkout>` the pinned checkout, `<plugin checkout>` the plug-in source when present, `<model cache>` the staged model cache when present, `<login home>` the private login directory, `<max sends>` your send bound and `<new dir>` a fresh output directory. Quote paths as needed. It carries the system, pack hash, `--only` checkpoint and `--repeat 3`; it needs the same private live settings. The developer's flip list and rerun commands are their own regression set.
+`rerun` is a shell command for three checkpoint repetitions. Fill every literal placeholder: `<packs>` is the installed pack directory, `<hermes checkout>` the pinned checkout, `<plugin checkout>` the plug-in source when present, `<model cache>` the staged model cache when present, `<login home>` the private login directory, `<max sends>` your send bound and `<new dir>` a fresh output directory. Quote paths as needed. It carries the system, pack hash, `--only` checkpoint and `--repeat 3`, and `--turn-wait` when the run used a non-default wait; it needs the same private live settings. The developer's flip list and rerun commands are their own regression set.
 
 ## Refusal codes
 
@@ -136,6 +142,9 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `credential_scan` | Output contains login material: INVALID. |
 | `credential_stop` | Login custody or upstream credentials stopped the run. |
 | `egress_unobserved` | Worker egress sampling could not establish isolation. |
+| `embedding_dim_invalid` | An embeddings role requires an integer `embedding_dim` of at least 2. |
+| `forget_mapping_missing` | A system with write tools lacks a forget mapping; required unless the system is engine-only. |
+| `forget_search_undeclared:<tool>` | The forget search tool is absent from `read_tools`. |
 | `gate_refused` | Host machine gate refused a spawn. |
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `harness_extra_missing:mcp` | Pinned Hermes environment cannot import mcp. |
@@ -149,13 +158,14 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `items:<side>` | Card does not vouch for its outcomes. |
 | `licence_not_osi` | Registration lacks an accepted licence. |
 | `live_config` | A required live setting is missing. |
+| `live_stop` | A non-credential, non-spend live stack stop ended the run; `detail` and stderr give the reason, including `responder_error:*`. |
 | `lock_mismatch` | Current run lock differs from expected lock. |
 | `login_home` | No auth.json in the supplied login home. |
 | `missing_input` | Required checkout/cache missing, or unused model cache supplied. |
 | `mode_unavailable:hermes` | T0 fallback unavailable. |
 | `model_cache_changed` | Model-cache digest changed during the run. |
 | `model_cache_invalid` | Model cache is not a real directory of regular files and directories. |
-| `no T0 mapping` | A T0 host detects no write/forget mapping; coverage is not universal. |
+| `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `only` | No matching checkpoint items. |
 | `operator_identity` | Operator-marked login cannot run lcm-x. |
@@ -196,10 +206,13 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `visible_canary` | Canary found in agent-visible input. |
 | `visible_pack_overlaps_surface` | The agent-visible pack directory overlaps the workspace or a memory surface. |
 | `visible_path_escape` | An agent-visible file would be written outside the pack directory. |
+| `write_mapping_action:<tool>` | A fixed write or forget-delete action is absent from the tool's non-empty declared actions. |
+| `write_mapping_missing:<tool>` | First declared write tool differs from the mapped write tool, or a declared tool has no write, forget-delete or unscripted mapping. |
+| `write_mapping_unknown:<tool>` | A mapped write-side tool is absent from the declared write tools. |
 
 ## Exit codes
 
-0 means complete, including cards with BLOCKED rows. 3 means refusal or stop; malformed CLI usage also exits 3. 70 means unexpected tool failure, normally with a traceback and refusal. A cleanup double fault can escape as exit 1 with partial files and no card. Pre-output refusals leave no refusal file.
+0 means complete, including cards with BLOCKED rows from failures that did not latch a live stack stop. 3 means refusal or stop; malformed CLI usage also exits 3. 70 means unexpected tool failure, normally with a traceback and refusal. A cleanup double fault can escape as exit 1 with partial files and no card. Pre-output refusals leave no refusal file.
 
 ## Limits
 

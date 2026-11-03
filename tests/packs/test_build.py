@@ -3,6 +3,7 @@
 import ast
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ from bicentennial.packs import manifest as mf
 from bicentennial.sandbox.envserver.honeypot import plant
 from bicentennial.score.check_selftest import score_plan
 from bicentennial.score.qa import score_qa
+from bicentennial.world import world_hash
 
 ROOT = Path(__file__).resolve().parents[2]
 A = [dict(name="hermes", version="test", sha256="a" * 64)]
@@ -59,7 +61,10 @@ def audit_life(t, path, cases):
     assert {c.item["item_id"] for c in cases} == expected
     for source in t.out_dir.iterdir():
         if source.is_file() and not source.name.startswith("items."):
-            assert (path / "sealed/life" / source.name).read_bytes() == source.read_bytes()
+            expected = source.read_bytes()
+            if expected.startswith(b"SQLite format 3\0"):
+                expected = expected[:92] + b"\0" * 8 + expected[100:]
+            assert (path / "sealed/life" / source.name).read_bytes() == expected
     for cut in t.twin.cuts:
         rows = [r for r in cut.rows if "agent" in r["audience"]]
         events = load(path / f"visible/events.{cut.branch}.json")["events"]
@@ -111,6 +116,93 @@ def test_one_pack(tmp_path, monkeypatch):
     row = catalogue().by_id()["g2-keep-incidental-mft-1"]
     result = build.build_tier("T0", tmp_path, harness_artifacts=A, rows=[row])
     assert len(result["index"]["packs"]) == 1
+
+
+@pytest.fixture
+def small_sealed_pack(tmp_path, monkeypatch):
+    monkeypatch.setattr(build, "check_distribution", lambda *a, **kw: report(True))
+    original = build._build_pack
+    observed = {}
+
+    def inspected(t, path, **kwargs):
+        t.twin.b1.close()
+        # Check magic-based detection in both directions, independently of suffix.
+        (t.out_dir / "snapshot.bin").write_bytes((t.out_dir / "world.B0.db").read_bytes())
+        (t.out_dir / "notes.db").write_bytes(b"non-SQLite content" * 8)
+        observed["before"] = {p.name: p.read_bytes() for p in t.out_dir.iterdir() if p.is_file()}
+        observed["world_hashes"] = {}
+        for name, data in observed["before"].items():
+            if data.startswith(b"SQLite format 3\0"):
+                with closing(build.open_world(t.out_dir / name)) as db:
+                    observed["world_hashes"][name] = world_hash(db)
+        result = original(t, path, **kwargs)
+        observed["after"] = {p.name: p.read_bytes() for p in t.out_dir.iterdir() if p.is_file()}
+        return result
+
+    monkeypatch.setattr(build, "_build_pack", inspected)
+    row = catalogue().by_id()["g2-keep-incidental-mft-1"]
+    result = build.build_tier("T0", tmp_path, harness_artifacts=A, rows=[row])
+    rel, = result["index"]["packs"]
+    return tmp_path / "T0" / rel, observed
+
+
+def test_sealed_sqlite_headers_integrity_and_world_hash(small_sealed_pack):
+    root, observed = small_sealed_pack
+    sqlite_files = {p.name: p for p in root.rglob("*")
+                    if p.is_file() and p.read_bytes().startswith(b"SQLite format 3\0")}
+    assert set(sqlite_files) == {"world.B0.db", "world.B1.db", "snapshot.bin"}
+    for name, path in sqlite_files.items():
+        data = path.read_bytes()
+        source = observed["before"][name]
+        assert data[92:100] == b"\0" * 8, name
+        assert data[:92] == source[:92] and data[100:] == source[100:]
+        with closing(build.open_world(path, readonly=True)) as db:
+            assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert world_hash(db) == observed["world_hashes"][name]
+    assert (root / "sealed/life/notes.db").read_bytes() == observed["before"]["notes.db"]
+
+
+def test_sqlite_normalisation_preserves_generator_output(small_sealed_pack):
+    _, observed = small_sealed_pack
+    assert observed["after"] == observed["before"]
+    assert all(observed["after"][name][92:100] != b"\0" * 8 for name in observed["world_hashes"])
+
+
+@pytest.mark.parametrize("change", ["headers", "reported_version"])
+def test_pack_hash_independent_of_builder_sqlite(tmp_path, monkeypatch, change):
+    monkeypatch.setattr(build, "check_distribution", lambda *a, **kw: report(True))
+    row = catalogue().by_id()["g2-keep-incidental-mft-1"]
+    monkeypatch.setattr(sqlite3, "sqlite_version", "simulated-first-version")
+    first = build.build_tier("T0", tmp_path / "first", harness_artifacts=A, rows=[row])
+    original = build._build_pack
+    rewritten = []
+
+    def other_headers(t, path, **kwargs):
+        t.twin.b1.close()
+        for source in t.out_dir.iterdir():
+            if source.is_file():
+                data = source.read_bytes()
+                if data.startswith(b"SQLite format 3\0"):
+                    data = data[:92] + (123456).to_bytes(4, "big") + (3045001).to_bytes(4, "big") + data[100:]
+                    source.write_bytes(data)
+                    rewritten.append(source.name)
+        return original(t, path, **kwargs)
+
+    if change == "headers":
+        monkeypatch.setattr(build, "_build_pack", other_headers)
+    else:
+        monkeypatch.setattr(sqlite3, "sqlite_version", "simulated-second-version")
+    second = build.build_tier("T0", tmp_path / "second", harness_artifacts=A, rows=[row])
+    if change == "headers":
+        assert set(rewritten) == {"world.B0.db", "world.B1.db"}
+        assert first["sqlite_version"] == second["sqlite_version"] == "simulated-first-version"
+    else:
+        assert first["sqlite_version"] == "simulated-first-version"
+        assert second["sqlite_version"] == "simulated-second-version"
+    assert first["pack_hash"] == second["pack_hash"]
+    assert mf.file_manifest(tmp_path / "first/T0") == mf.file_manifest(tmp_path / "second/T0")
+    for tier in (tmp_path / "first/T0", tmp_path / "second/T0"):
+        assert all(b"simulated-" not in p.read_bytes() for p in tier.rglob("*") if p.is_file())
 
 
 @pytest.fixture(scope="module")

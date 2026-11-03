@@ -6,6 +6,11 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 - **RING0 §13 E25, §15:** adds the named `t2` preset, T1's shape rules at 10 sessions, and extends T1's 6 QA / 2 action probe cap to T2. §15 records per-item probe isolation, the inherited provisional W = 16K window, G2 action scoring deferred until #118, and Ring 1's alternating G1/G2 composition for any life count. Only the controls pin moves; pack trees and hashes change and packs are rebuilt once with the kit batch (#389). T0 and T1 item outcomes do not change.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
+## Kit, 2026-11-03: pack hashes no longer depend on the build host's SQLite (#327)
+- **Pack builder:** from the next kit, sealed SQLite copies have fixed zeros at header offsets 92–99 before hashing. Raw DB hashes, pack manifests, pack tree hashes and tier indexes/hashes move; rebuild earlier packs. The generator's output stays unchanged. The builder's SQLite version is returned by the build API and printed on the build command's stderr, outside the hashed tier directory.
+- **Kept:** all four code pins, scores, verdicts, world content and `world_hash` stay unchanged, as do the host-free pack digests. This covers writer header metadata, not future SQLite page-layout changes.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0, 2026-11-02: the v0.3 developer loop's terms (§14) and the v0.3/v0.4 split (§13 E24)
 - **RING0 §14:** defines the terms of PREREG §8's developer-product acceptance bar for v0.3 (the baseline `naive-rag-dev`, real-stack, the surfacing run and the selected failure, reproduced, fixed, confirmed on Ring 1, the budgets and the declaration, what the bar publishes) and the developer report's statistics, before any run they govern. Developer tiers still carry no decision bar.
 - **RING0 §13 E24 (§3, §6, §7):** live G2 action scoring and the T0 Hermes-replay fallback move to v0.4 (ERRATA-v2.2 E16), and T1's cut order starts with the costs that should change nothing on its cards, such as the wait after each turn (v0.2's A/B could not decide that, #383), each checked by an A/B at one commit.

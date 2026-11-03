@@ -296,7 +296,7 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
-             live=None, live_model=None) -> LifeRun:
+             live=None, live_model=None, turn_wait_s=3.0) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -348,7 +348,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             responder=ProbeLiveRouter(responder, leg) if leg is not None else responder, clock=clock,
             root=root / "run", scratch=scratch, life=life["life"], branch=branch, run=run,
             checkout=hermes, harness_pin=harness_pin, worker_argv=worker_argv,
-            toolsets=HERMES_TOOLSETS, env_server=wiring)
+            toolsets=HERMES_TOOLSETS, env_server=wiring, turn_wait_s=turn_wait_s)
+        halted = None
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
                 plugin=PROVIDERS.get(entry["name"]), context_engine=ENGINES.get(entry["name"]),
@@ -522,7 +523,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     break
             if leg is not None:
                 leg.check_session(previous_session)
-        except (SystemRefused, PinMismatch, LockMismatch, GateRefused, LiveCredentialStop):
+        except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+            raise
+        except LiveCredentialStop as stop:
+            halted = stop
             raise
         except Exception as error:
             cause = _cause(error)
@@ -531,6 +535,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         finally:
             if adapter is not None:
                 egress = adapter.close()
+                if halted is not None:
+                    # A breach seen before the stop still outranks it (runner/t2lite.py), so the egress goes with it.
+                    halted.egress = egress
         if adapter is None:
             if leg is not None:
                 leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, schedule, records)
