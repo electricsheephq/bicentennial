@@ -7,7 +7,8 @@ import pytest
 
 from bicentennial.score import sqlite_pages as pages
 from bicentennial.score import sqlite_scan
-from tests.score.test_sqlite_scan import NEEDLES, TOKEN, assert_status, scan
+
+from .test_sqlite_scan import NEEDLES, TOKEN, assert_status, scan
 
 
 def varint(data, offset):

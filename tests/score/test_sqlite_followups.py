@@ -12,7 +12,8 @@ import pytest
 from bicentennial.canon import canon
 from bicentennial.score import invariants as inv
 from bicentennial.score import sqlite_scan
-from tests.score.test_sqlite_scan import (
+
+from .test_sqlite_scan import (
     NEEDLES,
     TOKEN,
     assert_status,
