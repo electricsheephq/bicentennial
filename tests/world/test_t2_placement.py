@@ -131,3 +131,58 @@ def test_dry_run_preserves_existing_directory(tmp_path):
     with pytest.raises(FileExistsError):
         t.t2_dry_run(spec, TEMPLATES, root=tmp_path)
     assert sentinel.read_text() == "original"
+
+
+def test_replacements_capped(tmp_path, monkeypatch):
+    calls = []
+
+    def always(spec, row, templates, **kwargs):
+        calls.append(row["seed"])
+        if len(calls) > 50:
+            raise RuntimeError("unbounded replacement loop")
+        raise t.PlacementError("hostable")
+
+    monkeypatch.setattr(t, "t1_life", always)
+    spec = t._tier_source("T2", lives=[ROWS[0], ROWS[5]])
+    with pytest.raises(t.PlacementError, match="^replacements$") as exc:
+        t.t2_dry_run(spec, TEMPLATES, root=tmp_path)
+    assert calls == [4, *range(14, 14 + t.MAX_REPLACEMENTS)]
+    assert exc.value.__cause__.rule == "hostable"
+    assert not (tmp_path / ROWS[0]["life"]).exists()
+
+
+def test_template_composition_not_replaced(tmp_path, monkeypatch):
+    original, calls = t._select_templates, []
+
+    def counted(*args):
+        calls.append(1)
+        if len(calls) > 50:
+            raise RuntimeError("unbounded replacement loop")
+        return original(*args)
+
+    monkeypatch.setattr(t, "_select_templates", counted)
+    missing = {"G1": tuple(x for x in g1.TEMPLATES if x.template_id != "recall-value"), "G2": g2.TEMPLATES}
+    with pytest.raises(t.PlacementError, match="^composition$"):
+        t.t2_dry_run(t._tier_source("T2", lives=[ROWS[0]]), missing, root=tmp_path)
+    assert len(calls) == 1
+    assert not (tmp_path / ROWS[0]["life"]).exists()
+
+
+def test_dry_run_reserves_life_directory(tmp_path, monkeypatch):
+    life_dir, seen = tmp_path / ROWS[0]["life"], []
+
+    def rival(spec, row, templates, **kwargs):
+        try:
+            life_dir.mkdir()  # a concurrent run claiming the same life
+        except FileExistsError:
+            seen.append("reserved")
+        else:
+            (life_dir / "keep").write_text("theirs")
+            seen.append("stolen")
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(t, "t1_life", rival)
+    with pytest.raises(RuntimeError, match="^stop$"):
+        t.t2_dry_run(t._tier_source("T2", lives=[ROWS[0]]), TEMPLATES, root=tmp_path)
+    assert seen == ["reserved"]
+    assert not life_dir.exists()

@@ -47,6 +47,8 @@ from .twin import IndependenceError, TwinLife, apply, plan, twin_life
 
 MIN_DISTANCE_SESSIONS = 2
 MAX_ATTEMPTS = 8
+# A design row that fails this many replacement seeds in a row is a systematic failure, not bad luck.
+MAX_REPLACEMENTS = 8
 NO_ENV_HASH = sha256_canon({})
 NO_ENV_LABEL = "no env server in v0.1"
 WAKES = ("none", "kill", "swap", "restart", "compaction", "gap")
@@ -702,13 +704,13 @@ def t2_dry_run(spec, templates_by_genre, *, root):
     for original in spec["lives"]:
         row = dict(original)
         life_dir = Path(root) / row["life"]
-        if life_dir.exists() or life_dir.is_symlink():
-            raise FileExistsError(life_dir)
-        first = True
+        _select_templates(spec, row, templates_by_genre[row["genre"]])  # seed-independent: raise, never replace
+        first, failures = True, 0
         while True:
             life = None
+            life_dir.mkdir(parents=True)  # exclusive reservation; on FileExistsError nothing is removed
             try:
-                life = t1_life(spec, row, templates_by_genre[row["genre"]], out_dir=Path(root) / row["life"])
+                life = t1_life(spec, row, templates_by_genre[row["genre"]], out_dir=life_dir / "life")
                 compiled = life.twin.compiled
                 _check_t1(spec, compiled)
                 _check_t2(spec, compiled)
@@ -732,6 +734,9 @@ def t2_dry_run(spec, templates_by_genre, *, root):
                 design_failures += first
                 if design_failures > 1:
                     raise PlacementError("design_failures") from error
+                failures += 1
+                if failures > MAX_REPLACEMENTS:
+                    raise PlacementError("replacements") from error
                 while next_seed in used:
                     next_seed += 1
                 replacement = next_seed
@@ -744,5 +749,5 @@ def t2_dry_run(spec, templates_by_genre, *, root):
             finally:
                 if life is not None:
                     life.twin.b1.close()
-                shutil.rmtree(Path(root) / row["life"], ignore_errors=True)
+                shutil.rmtree(life_dir, ignore_errors=True)
     return _tier_source("T2", lives=rows, replacements=replacements), table
