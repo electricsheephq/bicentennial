@@ -302,7 +302,7 @@ Card `failure_class` values are FAIL_TASK, SYSTEM_FAILURE, BLOCKED, N/A_EXPOSURE
 
 The `engine_inactive` HarnessFailed stop label means the configured context engine is not active, so Hermes fell back.
 
-Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. Corpus statuses are PASS, FAIL (`mismatch`, `system_failure`, `stale_case`) and INFRA_FAILURE. Unsettled checkpoints still execute probes on clones, but every item becomes SYSTEM_FAILURE `unsettled`, regardless of reader result ([RING0 E2](../../specs/ring0/RING0.md#13-v01-errata)).
+Invariant statuses are PASS, FAIL, INCONCLUSIVE, NOT_EXERCISED, INFRA_FAILURE. Corpus statuses are PASS, FAIL (`mismatch`, `system_failure`, `stale_case`) and INFRA_FAILURE. The life runner judges settledness once per checkpoint at replay end on the real store, before any probe; probes run on clones, and their exits cannot change that judgment. Unsettled checkpoints still execute probes on clones, but every item becomes SYSTEM_FAILURE `unsettled`, regardless of reader result ([RING0 E2, E29](../../specs/ring0/RING0.md#13-v01-errata)).
 
 `stage_attribution`, the reader's `failing_stage`, is stored, retained, retrieved, used or unknown. The reader uses whatever is present, so "used" never fails at Ring 0 ([RING0 §1](../../specs/ring0/RING0.md#1-the-scripted-reader)). Remember, Survive and Act are reported separately; never sum them.
 

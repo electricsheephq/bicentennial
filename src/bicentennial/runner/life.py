@@ -427,7 +427,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         clones = []
                         if probe:
                             checkpoints.append(probe.checkpoint)
-                            settle_checkpoint(probe.checkpoint)
+                            # Settledness was judged at replay end on the real store; probe exits belong to clones.
                             for n, canonical in enumerate([*(p for _, p in surfaces), paths["workspace"]]):
                                 clone = root / "probe" / str(index) / str(n)
                                 clone.parent.mkdir(parents=True, exist_ok=True)
