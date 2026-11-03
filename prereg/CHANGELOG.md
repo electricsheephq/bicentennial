@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-03: Keep incidental decoys are declared competing values (#293)
+- **RING0 §13 E27 (§1):** from the next kit, visible decoy option tokens of `keep-incidental-v1` are `planted` competing values, excluding required and forbidden tokens. First-match scoring stays unchanged: T0 and T1 item outcomes, scores and selected options do not change. Per-kind competing counters in item reports accompanying cards with these items now count decoys in context; cards' existing `competing_milli` share already uses `competing_present` and stays unchanged.
+- **Pins and packs:** the controls pin moves through the compiler's option-role helper; reader, scoring and scorer pins stay unchanged. Every T0 and T1 pack's controls cache and manifest move with the controls pin, and packs containing these items also change reader keys and their dependent hashes and build diagnostics. Rebuild earlier packs. The frozen template source, world content and `world_hash` stay unchanged; no schema changes.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-03: the T2 shape (#391, §13 E25, §15)
 - **RING0 §13 E25, §15:** adds the named `t2` preset, T1's shape rules at 10 sessions, and extends T1's 6 QA / 2 action probe cap to T2, on both compile paths (with and without fixture bindings). §15 records per-item probe isolation, the inherited provisional W = 16K window, G2 action scoring deferred until #118, and Ring 1's alternating G1/G2 composition for any life count. Only the controls pin moves; pack trees and hashes change and packs are rebuilt once with the kit batch (#389). T0 and T1 item outcomes do not change.
 No PREREG version change; PREREG-v0.5 remains frozen.

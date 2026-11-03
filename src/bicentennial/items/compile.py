@@ -79,6 +79,13 @@ def _options(db, schedule, cut, template, instance, item_id):
     return [options[key] for key in order]
 
 
+def planted_tokens(item):
+    """The planted decoy tokens of a frozen incidental v1 item: every non-gold token-bearing option is a decoy."""
+    if item["decision_table_ref"] != "keep-incidental-v1":
+        return ()
+    return tuple(token for option in item["options"][1:] for token in option["tokens"])
+
+
 def _entry(db, schedule, cut, t, i):
     k = i.probe_point
     if type(k) is not int or not any(p.index == k and p.probe_point for p in schedule.sessions):
