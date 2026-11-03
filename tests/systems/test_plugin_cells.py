@@ -35,6 +35,7 @@ from bicentennial.ledger import BlobStore, Guard, verify
 from bicentennial.runner.life import PluginWake
 from bicentennial.runtime.clock import SimClock
 from bicentennial.runtime.faultlite import FaultLite
+from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.surfaces import surface_hash, verify_empty
 from bicentennial.systems import hermes_plugin
 from bicentennial.systems.hermes_plugin import (
@@ -316,6 +317,34 @@ def test_install_ignores_git_location_variables(tmp_path, git_checkouts, monkeyp
     for name, value in git_checkouts.conflict.items():
         monkeypatch.setenv(name, value)
     assert install("conflicting-install") == clean
+
+
+def test_extractor_holds_the_lease(tmp_path, git_checkouts, monkeypatch):
+    # A runner killed mid-extraction releases its lease; the extractor child must keep it until the child exits.
+    original, calls = subprocess.run, []
+
+    def run(argv, **kwargs):
+        if argv[:2] == [sys.executable, "-I"]:
+            calls.append(kwargs.get("pass_fds"))
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(hermes_plugin.subprocess, "run", run)
+    root = tmp_path / "install"
+    paths = {name: root / name for name in ("home", "hermes_home", "workspace", "tmp")}
+    for path in paths.values():
+        path.mkdir(parents=True)
+    paths["root"] = root
+    stub = SimpleNamespace(paths=paths, director=SimpleNamespace(run_values={"director_port": 12345}))
+    e = entry("holographic")
+    e["fresh_install_hash"] = ZERO_HASH
+    e["artifact"]["sha256"] = sha256(git_checkouts.archive).hexdigest()
+    fd = os.open(tmp_path / "lease", os.O_RDONLY | os.O_CREAT)
+    try:
+        with fixedroot.holding(fd):
+            PluginCell(e, stub).install(git_checkouts.checkout, alias="bicentennial-main")
+    finally:
+        os.close(fd)
+    assert calls == [(fd,)]
 
 
 def test_mem0_archive_repeatable(tmp_path):

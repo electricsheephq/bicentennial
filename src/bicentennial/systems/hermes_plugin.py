@@ -26,6 +26,7 @@ from bicentennial.harness.hermes.config import (
     worker_env,
     write_config,
 )
+from bicentennial.sandbox import fixedroot
 from bicentennial.sandbox.spansearch import span_search
 from bicentennial.sandbox.surfaces import (
     clone_tree,
@@ -455,11 +456,12 @@ class PluginCell:
             with tempfile.TemporaryDirectory(dir=target.parent) as unpacked:
                 Path(unpacked).chmod(0o700)
                 # Directory modes under the data filter come from the extractor's umask.
-                # Set it in the child only: other cells may already have running workers.
+                # Set it in the child only: other cells may already have running workers. The child writes into
+                # the leased sandbox, so like a worker it holds the lease until it exits.
                 subprocess.run([sys.executable, "-I", "-c",
                     "import sys, tarfile\nwith tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as tree:\n"
                     "    tree.extractall(sys.argv[1], filter='data')", unpacked],
-                    stdin=archive, check=True, env={}, umask=0o022)
+                    stdin=archive, check=True, env={}, umask=0o022, pass_fds=fixedroot.held())
                 (Path(unpacked) / (recipe[1] if len(recipe) > 1 else ".")).rename(target)
         port = int(self.adapter.director.run_values["director_port"])
         name = self.entry["name"]

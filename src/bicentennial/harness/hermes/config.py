@@ -158,7 +158,8 @@ def write_config(hermes_home, cfg: dict) -> Path:
 
 
 def install_directory(path):
-    """Create missing install directories with the modes produced by umask 022."""
+    """Create missing install directories with the modes produced by umask 022. Every run root is inside a
+    fixed-root lease, whose base is 0700 (sandbox/fixedroot.py), so other users cannot reach them."""
     path = Path(path)
     missing = []
     while not path.exists():
