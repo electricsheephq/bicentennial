@@ -69,10 +69,10 @@ def test_additional_properties_schema():
 ENTRY_KEYS = ("arm", "life", "branch", "attempt", "pin_check_ms",
               "egress_pid_samples", "egress_sample_ms", "sessions")
 SESSION_KEYS = ("session", "kind", "wall", "gate", "egress_wait", "spawn", "import",
-                "open", "turn", "drain", "resume", "shutdown_hook", "close", "finish", "workspace")
+                "open", "turn", "drain", "resume", "shutdown_hook", "close", "finish", "workspace", "background_threads")
 NULLABLE = {"egress_pid_samples", "egress_sample_ms", "wall", "shutdown_hook",
             "close", "finish", "workspace"}
-ARRAYS = {"gate", "egress_wait", "spawn", "import", "open", "turn", "drain", "resume"}
+ARRAYS = {"gate", "egress_wait", "spawn", "import", "open", "turn", "drain", "resume", "background_threads"}
 
 
 def timing_receipt():

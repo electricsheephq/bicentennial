@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Kit, 2026-11-03: volatile background work, turn wait and unit timing (#378, #388, #391)
+- **RING0 §13 E30 and §14.10:** execution receipts require per-arm background disclosures, decimal-string `turn_wait_s` and unit wall boundaries with attempts. T2-lite records units; T1 leaves units empty. The developer report's wait-comparability rule is specified here; its refusal is implemented separately. These disclosures change no score, card, stable output or frozen quantity. The controls pin moves because `report/receipt.py` is in its closure; the reader, scoring and scorer pins stay unchanged. Rebuild packs for the new controls pin.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-03: settle each checkpoint once on the real store (#410)
 - **RING0 §13 E29 (§6, §11):** from the next kit, the life runner judges settledness once at checkpoint replay end on the real store. Probe exits on clones cannot reclassify items. A real store that is unsettled still classes every checkpoint item SYSTEM_FAILURE `unsettled`, with one checkpoint record. E29 narrows ERRATA-v2.2 E6's timing for life-runner probes.
 - **Impact:** no code pin moves. T1 results for mem0-oss and omega can change when the defect fires; hermes-native and holographic outcomes keep their rule. Published results are unchanged.
