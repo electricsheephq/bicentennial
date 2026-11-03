@@ -346,7 +346,8 @@ with tempfile.TemporaryDirectory() as directory:
     result.b1.close()
     db.close()
 '''
-    outputs = [subprocess.check_output([sys.executable, "-c", script], env={"PYTHONHASHSEED": seed})
+    src = str(Path(__file__).resolve().parents[2] / "src")
+    outputs = [subprocess.check_output([sys.executable, "-c", script], env={"PYTHONHASHSEED": seed, "PYTHONPATH": src})
                for seed in ("0", "random")]
     assert outputs[0] == outputs[1]
 

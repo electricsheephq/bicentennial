@@ -588,7 +588,8 @@ def test_determinism_subprocesses(tmp_path):
         root = tmp_path / seed
         root.mkdir()
         run = subprocess.run([sys.executable, "-c", script, str(root)], cwd=ROOT,
-                             env={"PYTHONHASHSEED": seed}, capture_output=True, timeout=60)
+                             env={"PYTHONPATH": str(ROOT / "src"), "PYTHONHASHSEED": seed},
+                             capture_output=True, timeout=60)
         assert run.returncode == 0, run.stderr.decode()
         outputs.append(run.stdout)
     assert outputs[0] == outputs[1]
