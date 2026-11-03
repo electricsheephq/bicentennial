@@ -186,6 +186,44 @@ def test_old_wal_frame_is_raw_store_hit_before_recovery(tmp_path):
         db.close()
 
 
+@pytest.mark.parametrize("wal", [False, True], ids=["page", "wal-frame"])
+def test_d1_deleted_utf16_text_is_raw_store_hit(tmp_path, wal):
+    # A UTF-16 database keeps deleted text in UTF-16: inside a live page without secure_delete, or in an old WAL frame.
+    _, db = database(tmp_path, encoding="UTF-16le", wal=wal)
+    try:
+        db.execute(f"PRAGMA secure_delete={'ON' if wal else 'OFF'}")
+        db.execute("INSERT INTO memory(value) VALUES ('keep this row')")
+        db.execute("INSERT INTO memory(value) VALUES (?)", (TOKEN,))
+        db.commit()
+        db.execute("DELETE FROM memory WHERE value=?", (TOKEN,))
+        db.commit()
+        name = "store.db-wal" if wal else "store.db"
+        assert TOKEN.encode() not in (tmp_path / name).read_bytes()
+        assert TOKEN.encode("utf-16-le") in (tmp_path / name).read_bytes()
+        result, _ = scan(tmp_path)
+        assert result.verdict == "found"
+        assert name in result.hit_paths
+        assert "store.db#memory.value" not in result.hit_paths
+        assert_status(tmp_path, "FAIL", "store_hit")
+    finally:
+        db.close()
+
+
+def test_d1_deleted_utf16_blob_in_utf8_database_is_raw_store_hit(tmp_path):
+    path, db = database(tmp_path)
+    db.execute("PRAGMA secure_delete=OFF")
+    db.execute("INSERT INTO memory(value) VALUES ('keep this row')")
+    db.execute("INSERT INTO memory(value) VALUES (?)", (TOKEN.encode("utf-16-be"),))
+    db.commit()
+    db.execute("DELETE FROM memory WHERE typeof(value)='blob'")
+    db.commit()
+    db.close()
+    assert TOKEN.encode("utf-16-be") in path.read_bytes()
+    result, _ = scan(tmp_path)
+    assert (result.verdict, result.hit_paths) == ("found", ("store.db",))
+    assert_status(tmp_path, "FAIL", "store_hit")
+
+
 @pytest.mark.parametrize("value,token", [(441012345, "441012345"), (4410.25, "4410.25")])
 def test_d4_numeric_values_use_sqlite_text_form(tmp_path, value, token):
     path, db = database(tmp_path)

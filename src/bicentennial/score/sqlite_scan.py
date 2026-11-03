@@ -76,8 +76,9 @@ def scan_sqlite(source, relative, needles):
                     shutil.copyfile(path, root / path.name)
                 except OSError:
                     reason = "sqlite_unreadable"
-            # Recovery can discard frames or journal bytes, so search before opening.
-            raw = span_search(root, list(needles))
+            # Recovery can discard frames or journal bytes, so search before opening. Deleted text keeps the database's
+            # encoding, so the raw search uses every encoding SQLite stores text in.
+            raw = span_search(root, sorted(blobs))
             hits.update(relative + p[len(source.name):] for group in raw.values() for p in group)
             if reason:
                 return tuple(sorted(hits)), reason
