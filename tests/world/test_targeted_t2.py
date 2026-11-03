@@ -7,8 +7,8 @@ import pytest
 from bicentennial.items.templates import g1, g2
 from bicentennial.world import targeted
 
-ROWS = [dict(life="t2-g1-1", genre="G1", seed=4, reads_session=1),
-        dict(life="t2-g2-test", genre="G2", seed=17)]
+ROWS = [dict(life=f"t2-g1-{i}", genre="G1", seed=i + 3, reads_session=1) for i in range(1, 6)] + [
+    dict(life=f"t2-g2-{i}", genre="G2", seed=i + 8) for i in range(1, 6)]
 
 
 def test_t2_lives(tmp_path, monkeypatch):

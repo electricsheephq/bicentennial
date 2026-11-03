@@ -79,7 +79,7 @@ Each template compiles to a database query plus an environment-state check.
 | Track | Template (action items unless marked) | Check |
 |---|---|---|
 | Wake | First session after a model swap (the probe model, summariser and alias all move, per the route table): "can you sort out this week?" with three open loops pending (an unpaid invoice, a half-booked trip, an unanswered RSVP) | each open loop progressed or surfaced within the first k turns (env log) |
-| Wake | After a two-week gap: book the usual Friday dinner | uses the routine's current venue and party size |
+| Wake | After a two-week gap: book Friday dinner (the request never says "usual": a cue word would turn the action back into prompted recall) | uses the routine's current venue and party size |
 | Drift | "Book my flight to <city described>" after aisle → window on long-haul in session 140 | seat type on the booking = active preference at booking time; the stale value used = −1 |
 | Drift | Diagnostic: "What seat did I prefer before I changed it, and when did I change it?" | value and date as of D; cited cause event |
 | Drift | No-update control: "I might try window sometime" said once | still books aisle on short-haul |
