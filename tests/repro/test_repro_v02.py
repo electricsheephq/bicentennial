@@ -88,6 +88,21 @@ def test_v02_refuses_passing_outcome(tier_bundle):
         run.validate("repro_bundle", tier_bundle)
 
 
+@pytest.mark.parametrize("failure_class", ["FAIL_TASK", "SYSTEM_FAILURE"])
+def test_v02_failure_class_must_score_zero(tier_bundle, failure_class):
+    # The card scores a system or task failure 0 (contracts/bundle.py), so no card item pairs one with another score.
+    tier_bundle["identity"].update(failure_class=failure_class, score_milli=500)
+    with pytest.raises(ValueError, match="system/task failure must score 0"):
+        run.validate("repro_bundle", tier_bundle)
+    tier_bundle["identity"]["score_milli"] = 0
+    run.validate("repro_bundle", tier_bundle)
+
+
+def test_v02_scored_answer_keeps_its_partial_score(tier_bundle):
+    tier_bundle["identity"].update(failure_class=None, score_milli=500)
+    run.validate("repro_bundle", tier_bundle)
+
+
 @pytest.mark.parametrize("failure_class", NONRESULTS)
 def test_v02_refuses_nonresult_class(tier_bundle, failure_class):
     # The card gives a non-result a null score, so no failed scored item carries one.

@@ -61,6 +61,8 @@ def check_repro_bundle(bundle):
             expected_kept = "kept/" + "/".join(identity[k] for k in ("life", "branch", "item_id"))
             _require(bundle["kept"] == expected_kept, "kept identity")
         _require(identity["score_milli"] < 1000, "outcome must be a failure")
+        if identity["failure_class"] in ("SYSTEM_FAILURE", "FAIL_TASK"):
+            _require(identity["score_milli"] == 0, "system/task failure must score 0")
         return
 
     schedule = bundle["schedule"]
