@@ -318,6 +318,9 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
 
 def check_install(ctx, sandbox):
     """Refuse a wrong install pin before any arm, while holding the run's lease."""
+    if ctx.entry["name"] in ENGINES:
+        # T0's memory-layer host cannot install a context engine as an arm does; the arm's install checks the pin.
+        return
     try:
         measured = install_pins.measure_once(ctx.entry, sandbox, hermes=ctx.hermes,
             plugin_source=ctx.plugin_source,

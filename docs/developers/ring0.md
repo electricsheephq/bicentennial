@@ -142,7 +142,7 @@ Unmeasured pins are declarations, never runnable. Admission refuses them. The pi
 
 The artifact digest is sha256 of `git archive --format=tar HEAD` from the clean pinned checkout. For plug-ins use `systems/hermes_plugin.py`'s `TREES` recipe: Holographic uses `HEAD`; Mem0 OSS adds `integrations/hermes-plugin-mem0` after `HEAD`.
 
-The non-zero fresh-install pin is compared at install, before the first worker session; T1 and T2-lite also check it in preflight before any arm starts. Install-created modes equal the umask-022 result, so the hash no longer depends on the process umask. A mismatch refuses with exit 3, `pin_mismatch`; stderr (after the code) and `refusal.json`'s `detail` show the computed value. Re-measure with `bicentennial pins` as shown below.
+The non-zero fresh-install pin is compared at install, before the first worker session; T1 and T2-lite also check it in preflight before any arm starts, except for a context-engine system: T0's memory-layer host cannot install the engine as an arm does, so only the arm's install checks its pin. Install-created modes equal the umask-022 result, so the hash no longer depends on the process umask. A mismatch refuses with exit 3, `pin_mismatch`; stderr (after the code) and `refusal.json`'s `detail` show the computed value. Re-measure with `bicentennial pins` as shown below.
 
 The fresh-install hash is a canonical tree listing of relative path, mode, size and content hash, excluding only declared volatile paths. E4 masks the director port in root `config.yaml` and `mem0.json` for the reported pin ([RING0 §13](../../specs/ring0/RING0.md#13-v01-errata)).
 

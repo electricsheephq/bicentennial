@@ -1024,6 +1024,21 @@ def test_engine_relabel_and_model_env(policy, monkeypatch, tmp_path):
         assert seen[-1]["plugin_source"] == (None if arm == "no_memory" else ctx.plugin_source)
 
 
+@pytest.mark.parametrize("provider", [False, True])
+def test_engine_install_pin_is_left_to_its_arm(policy, monkeypatch, tmp_path, provider):
+    from bicentennial.systems import hermes_plugin as hp
+
+    # The memory-layer host refuses an engine ("no T0 mapping") or installs it without the engine, so the preflight
+    # must not measure it, even when the declared pin is wrong: the arm's own install checks the pin.
+    name = "fixture-engine"
+    monkeypatch.setitem(hp.ENGINES, name, "fixture_engine")
+    if provider:
+        monkeypatch.setitem(hp.PROVIDERS, name, "fixture_engine")
+    monkeypatch.setattr(t1.install_pins, "measure_once", lambda *a, **kw: pytest.fail("measured an engine install"))
+    ctx = replace(policy.ctx, entry=dict(policy.ctx.entry, name=name, fresh_install_hash="f" * 64))
+    assert t1.check_install(ctx, tmp_path) is None
+
+
 def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp_path):
     full, short = prepare(installed), prepare(installed, turn_wait_s=1.0)
     assert full.turn_wait_s == 3.0 and short.turn_wait_s == 1.0
