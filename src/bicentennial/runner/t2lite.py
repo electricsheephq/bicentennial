@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+from bicentennial.audit.readback import output
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import Voids
@@ -147,7 +148,39 @@ def _check_stop(live):
         raise t1.T1Refused("spend_stop")
 
 
+def _floor_measured(pack, branch, run, probes, scores):
+    """Check each scored item's terminal live reply before this attempt's blobs are removed."""
+    if run.stopped or run.audit.get("status") != "OK":
+        return False
+    store = BlobStore(run._root / "run/ledger/blobs", Guard([]))
+    sessions = {p["item_id"]: p["probe_session"] for p in probes}
+    turns, measured = {}, []
+    # The compiler preserves item order within each probe session, including its separate act sessions.
+    for item in pack.items[branch]:
+        iid = item["item_id"]
+        session = sessions[iid]
+        turns[session] = turns.get(session, 0) + 1
+        scored = scores[iid]
+        if (pack.genre == "G2" and item["stage"] == "act"
+                and not isinstance(scored, Infra) and scored["failure_class"] is None):
+            continue
+        final = next((r for r in reversed(run.records) if r.get("role") == "probe_main"
+            and r.get("cursor") == dict(session=session, turn=turns[session])), {})
+        answered = False
+        if (not run.classes.get(iid, (None, None))[0] and not isinstance(scored, Infra)
+                and final.get("served_by") == "live" and final.get("status") == 200):
+            try:
+                calls, texts = output(json.loads(store.get(final["resp"])), "chat")
+                # A blank reply is no answer: caching it would keep a provider glitch for every later run.
+                answered = not calls and any(t.strip() if isinstance(t, str) else t for t in texts)
+            except (OSError, ValueError, KeyError, TypeError, IndexError):
+                pass
+        measured.append(answered)
+    return all(measured)
+
+
 def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
+    measured = False
     for attempt in range(3):
         try:
             run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
@@ -213,6 +246,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
                 if cls or isinstance(scores[iid], Infra) or not_scored_live:
                     next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
             _write(out, "t2lite_probes.json", probes)
+            if arm == "no_memory" and (attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())):
+                measured = _floor_measured(pack, branch, run, probes, scores)
         finally:
             run.cleanup()
         if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
@@ -225,7 +260,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None):
         row = scores[probe["item_id"]]
         if row["failure_class"] is None:
             row["selected_option"] = probe["shadow"]["selected_option"]
-    return scores, probes
+    return scores, probes, measured
 
 
 def _joined(pack, branch, scores, probes):
@@ -462,27 +497,31 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                 floor_stops = floor["stops"] if cached else {}
                 if not cached:
                     floor = {"outcomes": {}, "stops": floor_stops}
+                    measured = True
                     for pack in ctx.packs:
                         for branch in ("B0", "B1"):
                             _check_stop(live)
-                            scores, _ = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
+                            scores, _, unit_measured = _unit(ctx, pack, branch, "no_memory", scratch / "floor" / pack.life / branch,
                                 live, runs, out / "no_memory" / pack.life / branch)
+                            measured &= unit_measured
                             floor["outcomes"].update(scores)
                             stopped = runs[-1].stopped
                             floor_stops[pack.life + branch] = list(stopped) if stopped else None
                     ids = stack.served_identities()
                     floor["served_identity"] = canon(ids).decode() if ids else "unobserved"
-                    if (floor_path and ids and "unidentified" not in ids.values()
+                    if (floor_path and measured and ids and "unidentified" not in ids.values()
                             and stack.state().get("identity_drift") is None
                             and not any(r["failure_class"] == "BLOCKED" for r in floor["outcomes"].values())):
                         pending_cache = (floor_path, floor)
+                    elif floor_path and not measured:
+                        print("floor: not cached (an item was not measured from a live answer)", file=sys.stderr)
                 print(floor_message, file=sys.stderr)
                 repetitions = []
                 for rep in range(repeat):
                     scores, joined = {}, {}
                     for pack, branch in selection:
                         _check_stop(live)
-                        values, probes = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
+                        values, probes, _ = _unit(ctx, pack, branch, "system", scratch / str(rep) / pack.life / branch,
                             live, runs, out / "repetitions" / str(rep) / pack.life / branch, floor_stops)
                         rows = _joined(pack, branch, values, probes)
                         if keep is not None:
