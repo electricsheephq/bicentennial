@@ -54,7 +54,7 @@ T1_SPEC = TierSpec("T1", ("G1", "G2"), 2, _t1_roots)
 T2_SPEC = TierSpec("T2", ("G1",) * 5 + ("G2",) * 5, 8,
                    lambda marker, admission: admission.max_roots, "longest", 4)
 
-# T2's guide documents these refusals.
+# Only T2 raises these (T1 and T2-lite always admit a root); T2's guide, written with its runner, documents them.
 T2_ONLY_REFUSALS = frozenset({"roots_below_min"})
 
 
@@ -213,7 +213,8 @@ class _ArmContext:
         return getattr(self.context, name)
 
     def _entry_lock(self, lock):
-        # These are the two entry-dependent fields of t1._lock.
+        # make_units keeps every arm on the run's system, so its route table is the run's, and these are the
+        # two fields of t1._lock that an arm's entry can change.
         return lock | dict(system_artifacts=[deepcopy(self.entry["artifact"])],
             tool_lists_hash=sha256_canon({k: self.entry.get(k)
                 for k in ("read_tools", "recall", "write_tools")}))
@@ -280,6 +281,13 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
                 tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot,
                 egress=getattr(error, "egress", None) or {}))
+            if isinstance(error, LatchStop):
+                # Another unit's latch stopped this one early. The reduction drops latch stops, so keep the refusal
+                # this unit's own checks below would make, judging the partial run as a stop's relabel does.
+                if _breached(runs[-1]):
+                    raise t1.T1Refused("isolation") from error
+                if live.canary:
+                    raise t1.T1Refused("canary") from error
             raise
         runs.append(run)
         try:
@@ -437,6 +445,9 @@ def make_units(ctx, arms, scratch, out):
         raise ValueError("duplicate or reserved system arm")
     if not arms:
         raise ValueError("missing system arm")
+    # An arm of another system would bypass the run's admission and keep the run's route table in its lock.
+    if any(a.entry.get("name") != ctx.entry["name"] for a in arms):
+        raise ValueError("an arm runs another system than the run's")
     floor = replace(arms[0], key="no_memory", role="no_memory")
     return tuple(Unit(a, p, b, Path(scratch) / a.key / p.life / b, Path(out) / a.key / p.life / b)
                  for a in (floor, *arms) for p in ctx.packs for b in ("B0", "B1"))

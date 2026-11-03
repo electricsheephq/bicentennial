@@ -4,6 +4,7 @@ import runpy
 from dataclasses import replace
 from pathlib import Path
 from threading import Barrier, Event, current_thread
+from types import SimpleNamespace
 
 import pytest
 from test_t1 import environment, installed, prepare  # noqa: F401
@@ -193,3 +194,36 @@ def test_two_arm_locks_and_pins_use_each_entry(installed, tmp_path, monkeypatch)
     monkeypatch.setitem(arms[0].entry, "read_tools", ["changed"])
     with pytest.raises(LockMismatch):
         own.gate.start_session(own.current_lock(), "system", ctx.packs[0].life, "B0", 2, 0)
+
+
+@pytest.mark.parametrize("canary,egress,code", [
+    (True, {}, "canary"),
+    (False, {"non_loopback": ["192.0.2.1:443"]}, "isolation"),
+    (True, {"non_loopback": ["192.0.2.1:443"]}, "isolation"),
+    (False, {}, None),
+])
+def test_latched_unit_keeps_its_own_refusal(tmp_path, monkeypatch, canary, egress, code):
+    # A unit stopped only by another unit's latch keeps the refusal its own checks would make; the reduction
+    # drops latch stops, so a canary or a breach must not travel as one.
+    live = units._Guard(Stack())
+    live.canary = canary
+    stop = LatchStop("stopped")
+    stop.egress = egress
+
+    def stopped(**kw):
+        raise stop
+
+    monkeypatch.setattr(units, "run_life", stopped)
+    ctx = SimpleNamespace(entry={"name": "hermes-native"}, run_id="run", gate=None, current_lock=None,
+                          harness_pin=None, hermes=None, plugin_source=None, worker_argv=None,
+                          turn_wait_s=3.0, model_cache=None)
+    p = SimpleNamespace(life="life", life_dir=tmp_path, items={"B0": []}, records_b={"B0": []}, keys={},
+                        visible=None, meta={"honeypot_token": None})
+    runs = []
+    with pytest.raises(LatchStop if code is None else t1.T1Refused, match=f"^{code or 'stopped'}$") as raised:
+        units._unit_attempts(ctx, p, "B0", "no_memory", tmp_path / "scratch", live, runs, tmp_path / "out")
+    assert len(runs) == 1 and runs[0].egress == egress
+    if code is not None:
+        assert raised.value.__cause__ is stop
+        # Another unit's refusal no longer outranks it by timing alone.
+        assert units.refusal_code(units.reduce_refusals([t1.T1Refused("pin_mismatch"), raised.value])) == code

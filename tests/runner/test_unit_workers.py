@@ -156,6 +156,9 @@ def test_two_arms_one_shared_floor_and_identity_paths(tmp_path):
         assert collected.results[u.identity].runs[0].arm == u.arm.key
     with pytest.raises(ValueError, match="duplicate"):
         units.make_units(ctx, [arms[0], arms[0]], tmp_path, tmp_path)
+    # Every arm runs the run's system, whose admission and route table the run's lock holds.
+    with pytest.raises(ValueError, match="another system"):
+        units.make_units(ctx, [arms[0], arm("c", plugin=True)], tmp_path, tmp_path)
 
 
 @pytest.mark.parametrize("code", ["isolation", "gate_refused", "credential_stop", "spend_stop", "crash"])
