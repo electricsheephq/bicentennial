@@ -635,6 +635,20 @@ def test_existing_pack_trees_are_unchanged(t0_pack_build, tmp_path):
     assert host_free_tree_sha256(copied) == LEGACY_PACK_HASHES[rel]
 
 
+def test_every_pack_carries_the_recorded_code_pins(t0_pack_build):
+    # The pack goldens project these values out, so each pack's own copies are checked here.
+    root, result = t0_pack_build
+    expected = dict(scorer_sha256=CODE_PINS["scorer"], controls_sha256=CODE_PINS["controls"],
+                    reader_sha256=CODE_PINS["reader"])
+    for rel in result["index"]["packs"]:
+        pack = root / rel
+        pins = json.loads((pack / "manifest.json").read_bytes())["pins"]
+        key = json.loads((pack / "sealed/controls.json").read_bytes())["key"]
+        assert {name: pins[name] for name in CODE_PIN_FIELDS} == expected, rel
+        assert {name: key[name] for name in CODE_PIN_FIELDS} == expected, rel
+        assert json.loads((pack / "sealed/scoring.json").read_bytes())["code_sha256"] == CODE_PINS["scoring"], rel
+
+
 def changed_fields(before, after, prefix=""):
     """List every changed JSON leaf using paths relative to the file."""
     if isinstance(before, dict) and isinstance(after, dict):
