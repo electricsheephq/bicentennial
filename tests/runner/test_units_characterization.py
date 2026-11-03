@@ -143,3 +143,21 @@ def test_output_bytes(scenario, tmp_path, monkeypatch, case):  # noqa: F811
     if options.get("cache"):
         actual.update({"cache/" + k: v for k, v in _digests(options["cache"]).items()})
     assert actual == EXPECTED.get(case), repr((case, actual))
+
+
+def test_floor_then_system_stop_bytes(scenario, tmp_path, monkeypatch):  # noqa: F811
+    driver = sys.modules[runner._unit.__module__]
+    drive = driver.run_life
+
+    def stop_system(**kw):
+        scenario.mode = "live_stop" if kw["arm"] == "system" else None
+        return drive(**kw)
+
+    monkeypatch.setattr(driver, "run_life", stop_system)
+    monkeypatch.setitem(EXPECTED, "floor_then_stop", {
+        "output/custody.json": "862063402d605db8ca03662a5134564b123daf6c3e75076646080c33136126a8",
+        "output/receipt.json": "fcee7abba9d18b09b8befc6337149ef0db3a8da986d717d242d20bb22e4c3246",
+        "output/refusal.json": "7e520d30c948360890420b9c35949c6b52d3bcc612bd0a3d8da20743892a7558",
+    })
+    test_output_bytes(scenario, tmp_path, monkeypatch, "floor_then_stop")
+    assert scenario.seen == [("no_memory", 0)] * 4 + [("system", 0)]
