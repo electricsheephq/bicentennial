@@ -48,10 +48,10 @@ def check_live_stop(state):
     reason = state.get("stop_reason")
     if reason in CREDENTIAL_STOPS or state.get("login_stop"):
         raise LiveCredentialStop(reason if reason in CREDENTIAL_STOPS else state["login_stop"])
+    if state.get("latch_stopped") and not reason:
+        raise LatchStop("stopped")
     # Spend retains its own refusal in the tier runner.
     if not state.get("spend_stopped") and (state.get("stopped") or reason):
-        if state.get("latch_stopped") and not reason:
-            raise LatchStop("stopped")
         raise LiveStop(reason or "stopped")
 
 

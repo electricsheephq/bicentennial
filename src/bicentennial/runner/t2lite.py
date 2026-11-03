@@ -247,9 +247,13 @@ def _collect_unit(runs, units, *args, **kwargs):
     """Use the scheduler at one slot while preserving the serial publication boundaries."""
     ctx, pack, branch, arm, scratch, live, out, *rest = args
     floor_stops = rest[0] if rest else kwargs.get("floor_stops")
-    config = Arm.from_context(ctx, arm)
+    config = Arm(arm, ctx.entry, role="no_memory" if arm == "no_memory" else "system")
     unit = Unit(config, pack, branch, scratch, out)
-    collected = schedule(ctx, [unit], live, roots=1, floor_stops=floor_stops, execute=_unit)
+    def execute(*a, config, **kw):
+        # Resolve configuration inside the unit entry point, after serial preflight.
+        return _unit(*a, **kw)
+
+    collected = schedule(ctx, [unit], live, roots=1, floor_stops=floor_stops, execute=execute)
     results = collected.merge(runs, units)
     return results[unit.identity]
 

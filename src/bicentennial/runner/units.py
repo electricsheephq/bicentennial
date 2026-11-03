@@ -2,15 +2,16 @@
 
 import json
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from copy import deepcopy
 from dataclasses import dataclass, replace
+from functools import cached_property
 from pathlib import Path
 from threading import Event, Lock
-from types import SimpleNamespace
 from typing import Callable
 
 from bicentennial.audit.readback import output
-from bicentennial.canon import canon
+from bicentennial.canon import canon, sha256_canon
 from bicentennial.director.compiler.check import Voids
 from bicentennial.director.responder import Reply
 from bicentennial.director.upstream import login as custody
@@ -23,6 +24,7 @@ from bicentennial.report.t2lite_flips import BaselineRefused
 from bicentennial.runner import t0
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
+from bicentennial.runner.lock import SessionGate
 from bicentennial.runner.probe_live import (
     LatchStop,
     LiveCredentialStop,
@@ -51,6 +53,9 @@ def _t1_roots(marker, admission):
 T1_SPEC = TierSpec("T1", ("G1", "G2"), 2, _t1_roots)
 T2_SPEC = TierSpec("T2", ("G1",) * 5 + ("G2",) * 5, 8,
                    lambda marker, admission: admission.max_roots, "longest", 4)
+
+# T2's guide documents these refusals.
+T2_ONLY_REFUSALS = frozenset({"roots_below_min"})
 
 
 @dataclass(frozen=True)
@@ -184,12 +189,58 @@ def _floor_measured(pack, branch, run, probes, scores):
     return all(measured)
 
 
+class _ArmGate:
+    """Pass the run-local arm key through the life runner's role-based interface."""
+
+    def __init__(self, context, key):
+        self.context, self.key = context, key
+
+    def start_session(self, current_lock, role, life, branch, session, attempt):
+        return self.context.session_gate.start_session(
+            current_lock, self.key, life, branch, session, attempt)
+
+
+class _ArmContext:
+    """An arm's entry pins over the run's detached baseline and fresh pin checks."""
+
+    def __init__(self, context, config):
+        self.context, self.entry = context, config.entry
+        self.plugin_source, self.model_cache = config.plugin_source, config.model_cache
+        self.worker_argv = config.worker_argv
+        self.gate = _ArmGate(self, config.key)
+
+    def __getattr__(self, name):
+        return getattr(self.context, name)
+
+    def _entry_lock(self, lock):
+        # These are the two entry-dependent fields of t1._lock.
+        return lock | dict(system_artifacts=[deepcopy(self.entry["artifact"])],
+            tool_lists_hash=sha256_canon({k: self.entry.get(k)
+                for k in ("read_tools", "recall", "write_tools")}))
+
+    @cached_property
+    def lock(self):
+        return (self.context.lock if self.entry == self.context.entry
+                else self._entry_lock(self.context.lock))
+
+    @cached_property
+    def pins(self):
+        return (self.context.pins if self.entry == self.context.entry else
+                self.context.pins | dict(system_hash=sha256_canon(self.lock["system_artifacts"])))
+
+    def current_lock(self):
+        lock = self.context.current_lock()
+        return lock if self.entry == self.context.entry else self._entry_lock(lock)
+
+    @cached_property
+    def session_gate(self):
+        return (self.context.gate if self.entry == self.context.entry else SessionGate(self.lock))
+
+
 def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=0, config=None):
-    key = arm
-    if config is not None:
-        arm = config.role
-        ctx = SimpleNamespace(**(vars(ctx) | dict(entry=config.entry, plugin_source=config.plugin_source,
-            model_cache=config.model_cache, worker_argv=config.worker_argv)))
+    config = config or Arm.from_context(ctx, arm)
+    key, arm = config.key, config.role
+    ctx = _ArmContext(ctx, config)
     start, runs = time.time_ns() // 1_000_000, []
 
     def timing():
@@ -440,33 +491,53 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
                 live.stopped.set()
             return error
 
-    with ThreadPoolExecutor(max_workers=roots) as pool:
-        while pending or active:
-            while pending and available and not live.stopped.is_set():
-                candidates = [i for i in pending if ready(i)]
-                if not candidates:
+    class InlineExecutor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def submit(self, function, *args):
+            future = Future()
+            future.set_result(function(*args))
+            return future
+
+    executor = InlineExecutor() if roots == 1 else ThreadPoolExecutor(max_workers=roots)
+    with executor as pool:
+        try:
+            while pending or active:
+                while pending and available and not live.stopped.is_set():
+                    candidates = [i for i in pending if ready(i)]
+                    if not candidates:
+                        break
+                    i = min(candidates, key=lambda i: (-predicted_seconds(unit_list[i]), i)
+                            if spec.order == "longest" else (i,))
+                    pending.remove(i)
+                    slot = available.pop(0)
+                    active[pool.submit(run, i, slot)] = (i, slot)
+                if not active:
+                    if pending and not live.stopped.is_set():
+                        raise ValueError("missing final floor")
                     break
-                i = min(candidates, key=lambda i: (-predicted_seconds(unit_list[i]), i)
-                        if spec.order == "longest" else (i,))
-                pending.remove(i)
-                slot = available.pop(0)
-                active[pool.submit(run, i, slot)] = (i, slot)
-            if not active:
-                if pending and not live.stopped.is_set():
-                    raise ValueError("missing final floor")
-                break
-            done, _ = wait(active, return_when=FIRST_COMPLETED)
-            for future in done:
-                i, slot = active.pop(future)
-                available.append(slot)
-                value = future.result()
-                if value is not None:
-                    completed[i] = value
-                if isinstance(value, UnitResult) and unit_list[i].arm.role == "no_memory":
-                    key = unit_list[i].pack.life + unit_list[i].branch
-                    floor_stops[key] = value.stop
-                    final.add(key)
-            available.sort()
+                done, _ = wait(active, return_when=FIRST_COMPLETED)
+                for future in done:
+                    i, slot = active.pop(future)
+                    available.append(slot)
+                    value = future.result()
+                    if value is not None:
+                        completed[i] = value
+                    if isinstance(value, UnitResult) and unit_list[i].arm.role == "no_memory":
+                        key = unit_list[i].pack.life + unit_list[i].branch
+                        floor_stops[key] = value.stop
+                        final.add(key)
+                available.sort()
+        except BaseException:
+            with live.launch:
+                live.stopped.set()
+            for future in active:
+                future.cancel()
+            raise
     results, runs, timings, errors = {}, [], [], []
     for i in sorted(completed):
         value = completed[i]
