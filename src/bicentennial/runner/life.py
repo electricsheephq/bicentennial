@@ -130,6 +130,7 @@ class LifeRun:
     background_records: tuple = ()  # quote-attributed volatile copies, never used by a card
     background_threads: tuple = ()
     _root: Path | None = field(default=None, repr=False)
+    pre_probe: dict | None = None  # with keep_pre_probe, a record per item whose probe was reached
 
     def cleanup(self):
         """Release this attempt after its evidence has been scored."""
@@ -302,16 +303,29 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
-             live=None, live_model=None, turn_wait_s=3.0) -> LifeRun:
+             live=None, live_model=None, turn_wait_s=3.0, probe_mode="ring0", keep_pre_probe=False,
+             pre_probe_attribution=False) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
+    if pre_probe_attribution and not keep_pre_probe:
+        raise ValueError("pre_probe_attribution requires keep_pre_probe")
+    if keep_pre_probe and arm == "wiped":
+        # The wiped arm's wake hook wipes the probe's store after the copy is taken, so the copy
+        # would hold text the probe never had.
+        raise ValueError("keep_pre_probe is not supported on the wiped arm")
+    if keep_pre_probe:
+        from bicentennial.runner.kept import plain_item_id
+
+        # Each item's copy is a directory named by its id, so the id must not leave that directory.
+        if not all(plain_item_id(i["item_id"]) for i in items):
+            raise ValueError("keep_pre_probe needs item ids that are one plain path component")
     life_dir, scratch = Path(life_dir), Path(scratch)
     life = json.loads((life_dir / "life.json").read_bytes())
     schedule = schedule if schedule is not None else build_schedule(life["seed"], life["life"], named(life["scale"]))
     root = scratch / branch
     root.mkdir(parents=True)
-    evidence = LifeRun(arm, life["life"], branch, attempt, _root=root)
+    evidence = LifeRun(arm, life["life"], branch, attempt, _root=root, pre_probe={} if keep_pre_probe else None)
     sessions, transforms, adapter = [], [], None
     workspace_ms = {}
     stopped, hooks, verified = None, (), {}
@@ -321,7 +335,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         if seed != life["seed"]:
             raise ValueError("world seed mismatch")
         compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=STEP_S,
-                                  answer_contract=answer_contract if live is not None else None)
+                                  answer_contract=answer_contract if live is not None else None, probe_mode=probe_mode)
         script = compiled.script
         if arm == "no_memory":
             script = dict(script, sessions=[s for s in script["sessions"] if s["kind"] == "probe"])
@@ -440,6 +454,19 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 clone.parent.mkdir(parents=True, exist_ok=True)
                                 clone_tree(canonical, clone)
                                 clones.append(clone)
+                            if keep_pre_probe:
+                                from bicentennial.runner.kept import record_pre_probe
+
+                                for slot, iid in enumerate(probe.item_ids):
+                                    evidence.pre_probe[iid] = record_pre_probe(
+                                        root / "pre-probe" / iid, surfaces=surfaces, adapter=adapter,
+                                        probe=probe, slot=slot, session=session, clock=clock, table=table,
+                                        faults=faults, environment=seeds.get(index, {}), attempt_id=attempt_id,
+                                        lock_hash=lock_hash, attempt=attempt, probe_mode=probe_mode,
+                                        live_probe=(dict(model=leg.model, wire=live.wire,
+                                            effort=getattr(live.upstreams.get(leg.model), "effort", None))
+                                            if leg is not None else None),
+                                        contract_hash=compiled.answer_contract_sha256)
                             for iid in probe.item_ids:
                                 holds = precondition_holds(by_id[iid],
                                     repo_tree_hash=workspace_hash(clones[-1]) if genre == "G1" else EMPTY_TREE_HASH,
@@ -451,7 +478,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     raise HarnessFailed("void_mismatch")
                                 if not holds:
                                     evidence.classes[iid] = ("INFRA_FAILURE", "void")
-                                evidence.retained_roots[iid] = tuple(clones[:-1])
+                                evidence.retained_roots[iid] = (
+                                    evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(swap_in(clone, canonical))
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
