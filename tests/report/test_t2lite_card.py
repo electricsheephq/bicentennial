@@ -497,7 +497,7 @@ CODE_PINS = {
     "controls": "4bc303193bdf7fad2d87b16707195e3c98375e969ce8de5aa03e580260650b6a",
     "reader": "90ed83e9bed4b80088108199d2434e03d078a2995ca6eca9023858125eb6835f",
     "scoring": "925f3fc812fd80974eea1780b359b58bbcd5f35c338b1f2daf710e6adfe49880",
-    "scorer": "dd712f6a60153af4e5aaa951f9861f1f330f9bdcd479a8fcbabea6423b2fcb46",
+    "scorer": "414486f1178c332a78de6cfcbde39ce1326c6abb02f91f8e16e9f4834ad930e0",
 }
 
 
