@@ -80,13 +80,9 @@ def _options(db, schedule, cut, template, instance, item_id):
 
 
 def planted_tokens(item):
-    """Use the planted decoy role of the frozen incidental v1 options."""
-    from .checks.fixtures import G2_MUTANT_ROLES
-
-    ref = item["decision_table_ref"]
-    if ref != "keep-incidental-v1" or "decoy" not in G2_MUTANT_ROLES[ref]["planted"]:
+    """The planted decoy tokens of a frozen incidental v1 item: every non-gold token-bearing option is a decoy."""
+    if item["decision_table_ref"] != "keep-incidental-v1":
         return ()
-    # Every non-gold token-bearing option in this version has the decoy role.
     return tuple(token for option in item["options"][1:] for token in option["tokens"])
 
 
