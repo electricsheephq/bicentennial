@@ -4,6 +4,17 @@ import heapq
 import math
 
 
+def units_json_inputs(data):
+    """Return arm-time inputs from units.json's monotonic millisecond offsets.
+
+    Wall endpoints remain receipt cross-references and do not time an arm.
+    """
+    rows = [dict({k: v for k, v in row.items() if k != "slots"},
+                 start_ms=row["t_start_ms"], end_ms=row["t_end_ms"])
+            for row in data["units"]]
+    return data["slots"], rows, 0, data["t_end_ms"]
+
+
 def calculate_arm_times(slots, timings, start_ms, end_ms):
     """Return millisecond budgets and their inputs; the floor counts in no arm, only beside them.
 

@@ -131,7 +131,7 @@ def _holds(rows):
     return dict(waits=waits, held_ms=held_ms, reasons=sorted(reasons))
 
 
-def _receipt(runs, start, status, turn_wait_s=3.0, units=(), *, end_ms=None):
+def _receipt(runs, start, status, turn_wait_s=1.0, units=(), *, end_ms=None):
     rows = [r for run in runs for r in run.records]
     tokens, runtime, failed = {}, {}, {}
     for run in runs:
@@ -262,7 +262,7 @@ def _collect_unit(runs, units, *args, **kwargs):
 
 def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
                plugin_source=None, model_cache=None, cache=None, sandbox_slot=0,
-               baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None, turn_wait_s=3.0):
+               baseline=None, aa_of=None, aa_prime=None, only=None, repeat=1, entry=None, worker_argv=None, turn_wait_s=1.0):
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
     units = []
@@ -313,7 +313,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             # The benchmark commit stands for the director, reader and scorer code the floor ran.
             key_parts = [ctx.pack_hash, MODEL, EFFORT, answer_contract.contract_hash(), ctx.pins["harness_hash"],
                          ctx.pins["benchmark_commit"]]
-            if turn_wait_s != 3.0:
+            if turn_wait_s != 1.0:
                 key_parts.append(f"turn_wait_s={turn_wait_s}")
             key = sha256_canon(key_parts)
             floor_path = Path(cache) / (key + ".t2lite-floor.json") if cache else None
