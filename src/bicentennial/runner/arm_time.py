@@ -8,7 +8,7 @@ def calculate_arm_times(slots, timings, start_ms, end_ms):
     """Return millisecond budgets and their inputs; the floor counts in no arm, only beside them.
 
     The no-memory floor is a cached control (PREREG §6, RING0 §14.8 erratum), so an arm
-    replays only its own units, whether the floor ran in this run or came from the cache.
+    replays only its own units; a fresh floor can still change the order they started in.
     Input timings are in card order. Start order is zero-based across the whole run;
     equal starts retain card order. Replay queues work immediately on the earliest
     free slot, without reproducing gaps caused by the other arms. Intervals within

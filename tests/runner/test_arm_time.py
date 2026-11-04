@@ -65,7 +65,7 @@ def test_fresh_floor_on_two_slots_counts_only_beside_the_arm():
     assert result["floor_replay_ms"] == 8
 
 
-def test_arm_time_does_not_depend_on_the_floor_cache():
+def test_same_start_order_gives_the_same_time_with_or_without_the_floor():
     fresh = calculate_arm_times(2, [row("f1", 0, 8, "no_memory"), row("f2", 0, 6, "no_memory", 1),
                                     row("s1", 8, 11), row("s2", 8, 13, slot=1)], 0, 15)
     cached = calculate_arm_times(2, [row("s1", 0, 3), row("s2", 0, 5, slot=1)], 0, 7)
