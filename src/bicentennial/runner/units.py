@@ -495,6 +495,8 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
     roots = ctx.roots if roots is None else roots
     if roots < 1:
         raise ValueError("invalid roots")
+    if keep is not None and execute is not None:  # a custom executor never calls keep, so a miss's copy would be lost
+        raise ValueError("keep needs the default executor")
     floor_stops = dict(floor_stops or {})
     final = set(floor_stops)
     pending, active, completed = list(range(len(unit_list))), {}, {}

@@ -76,14 +76,11 @@ def test_per_item_callers_forced_eviction(tmp_path, monkeypatch, caller, verify)
 
 def test_direct_clone_and_install_hash_never_access_listings(tmp_path, monkeypatch):
     class NoCache(dict):
-        def __setitem__(self, *args):
-            pytest.fail("unexpected listing cache write")
+        def _fail(self, *args, **kwargs):
+            pytest.fail("unexpected listing cache access")
 
-        def get(self, *args):
-            pytest.fail("unexpected listing cache read")
-
-        def __getitem__(self, *args):
-            pytest.fail("unexpected listing cache read")
+        __setitem__ = __getitem__ = __delitem__ = __contains__ = __iter__ = __len__ = _fail
+        get = pop = popitem = setdefault = update = clear = keys = items = values = copy = _fail
 
     monkeypatch.setattr(surfaces, "_LISTINGS", NoCache())
     source = tmp_path / "source"
