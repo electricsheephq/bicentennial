@@ -46,7 +46,7 @@ Within one run, the two twin no-memory floors also differ in 7 masked items (Her
 - **"Byte-equal"** cards include the masked ledger digest, which changes if the masked content of any request or reply changes, if a scripted request is filed under another turn, or if another recorded field changes.
 - **The store check** compares digests and counts only, never content. Its masking covers Hermes session ids, clock times, random UUIDs, the sandbox root and the director port.
 - **The calibration** excuses an item only if it also differs between two runs at the same wait. An effect of the shorter wait confined to the values of those 18 items would not show here; row counts, files, tables, columns and every other masked digest would.
-- **The limits:** one commit, three reference systems, two idle Linux hosts. A system whose background work runs longer, or a loaded machine, could need a longer wait; each receipt counts background requests that arrive after the wait, so such a run says so. The check does not cover T2, which keeps 3.0 s, or other systems.
+- **The limits:** one commit, three reference systems, two idle Linux hosts. A system whose background work runs longer, or a loaded machine, could need a longer wait; each receipt counts background requests that arrive after the wait, so such a run says so. The check does not cover T2, which keeps 3.0 s, or other systems. In both arms, T1's compile check waited 3.0 s, because at that commit it took the host's own default, so the check's own 1.0 s wait, the default after this change, was not measured. It compares tool results written during each turn, after each check session's full 3.0 s end wait, and a mismatch refuses the run.
 
 ## Files
 
