@@ -144,14 +144,16 @@ def test_unreadable_table(monkeypatch, tmp_path):
 
 def test_measurement_sums_all_phases_and_formats_line():
     plugin = shards._ShardDurations(1, 7)
-    for path, durations in [("tests/z.py", [0.11, 1.21, 0.32]), ("tests/a.py", [0.2, 0.3, 0.4])]:
+    # tests/m.py rounds to 0.1 only when the phases are summed before rounding.
+    for path, durations in [("tests/z.py", [0.11, 1.21, 0.32]), ("tests/a.py", [0.2, 0.3, 0.4]),
+                            ("tests/m.py", [0.04, 0.04, 0.04])]:
         for when, duration in zip(["setup", "call", "teardown"], durations, strict=True):
             plugin.pytest_runtest_logreport(SimpleNamespace(nodeid=f"{path}::test_x", when=when, duration=duration))
     plugin.pytest_runtest_logreport(SimpleNamespace(nodeid="tests/a.py::test_y", when="setup", duration=0.2))
     lines = []
     reporter = SimpleNamespace(write_line=lines.append)
     plugin.pytest_terminal_summary(reporter)
-    assert lines == ['shard-durations v1 1 7 {"tests/a.py":1.1,"tests/z.py":1.6}']
+    assert lines == ['shard-durations v1 1 7 {"tests/a.py":1.1,"tests/m.py":0.1,"tests/z.py":1.6}']
 
 
 def run_tiny_pytest(root, total=None, index=None, collect=True):
