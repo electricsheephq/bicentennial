@@ -35,6 +35,7 @@ class Run:
     receipt: dict
     system_receipt: dict
     arm_time_ms: int
+    slots: int
     rows: list
     floor_rows: list
 
@@ -81,6 +82,9 @@ def load_run(directory):
         arm_time = units["arm_time"]["arms"]["system"]["arm_time_ms"]
         if type(arm_time) is not int or arm_time < 0:
             raise ValueError("arm time")
+        slots = units["slots"]
+        if type(slots) is not int or slots < 1:
+            raise ValueError("slots")
     except (KeyError, TypeError, ValueError) as error:
         raise DeveloperReportRefused("run_invalid:units") from error
     floor, _ = _read(directory / "no_memory.json", "run_invalid:floor")
@@ -110,7 +114,7 @@ def load_run(directory):
         _rows(floor_rows)
     except (ValueError, KeyError, TypeError) as error:
         raise DeveloperReportRefused("run_invalid:floor") from error
-    return Run(card, raw, receipt, system, arm_time, rows, floor_rows)
+    return Run(card, raw, receipt, system, arm_time, slots, rows, floor_rows)
 
 
 def _field(card, field):
@@ -120,7 +124,7 @@ def _field(card, field):
 
 
 def _baseline(current, previous, prefix=""):
-    for field in BASELINE_FIELDS:
+    for field in BASELINE_FIELDS + ("pins.route_table_hash", "pins.write_turn_package_hash"):
         if _field(current.card, field) != _field(previous.card, field):
             raise DeveloperReportRefused(prefix + "baseline_mismatch:" + field)
 
@@ -143,10 +147,13 @@ def report_runs(current, previous, aa_prime=None):
         aa=None if prime is None else (previous.rows, prime.rows),
         receipts=(current.system_receipt, previous.system_receipt), seed=seed,
         floors=(current.floor_rows, previous.floor_rows), metrics_scope=T2_SCOPE,
-        arm_times=(current.arm_time_ms, previous.arm_time_ms))
+        arm_times=(current.arm_time_ms, previous.arm_time_ms),
+        slots=(current.slots, previous.slots))
     result["pairing"] = dict(tier="T2", current_system_hash=current.card["pins"]["system_hash"],
         previous_system_hash=previous.card["pins"]["system_hash"],
         aa_prime_system_hash=None if prime is None else prime.card["pins"]["system_hash"],
+        current_slots=current.slots, previous_slots=previous.slots,
+        aa_prime_slots=None if prime is None else prime.slots,
         turn_wait_s=current.receipt["turn_wait_s"], seed=seed)
     validate("developer_report", result)
     return result
@@ -180,7 +187,8 @@ def summary(report):
                      f"{_number(sensitivity['value'])}; {sensitivity['exact_test_limit']}")
     metrics = report["operating_metrics"]
     lines.append("Operating metric deltas (current minus previous): " + metrics["scope"])
-    for key in ("wall_ms", "requests", "store_growth_bytes", "tokens_by_role", "latency_summary"):
+    for key in ("wall_ms", "wall_ms_reason", "requests", "store_growth_bytes",
+                "tokens_by_role", "latency_summary"):
         lines.append(f"  {key}: {json.dumps(metrics[key], ensure_ascii=False, sort_keys=True)}")
     lines.append("Failure taxonomy: run | cell | stage | failure | exclusion | count | excluded count")
     for side, rows in report["failure_taxonomy"].items():
@@ -188,12 +196,15 @@ def summary(report):
             lines.append(" | ".join(str(x) for x in (side, row["cell_id"], row["stage"],
                 row["failure"], row["exclusion_reason"], row["count"], row["excluded_count"])))
     pairing = report["pairing"]
-    for key in ("current_system_hash", "previous_system_hash", "aa_prime_system_hash"):
+    for key in ("current_system_hash", "previous_system_hash", "aa_prime_system_hash",
+                "current_slots", "previous_slots", "aa_prime_slots"):
         lines.append(f"{key}: {pairing[key]}")
-    lines.append("Per life: life | scored items | paired difference | current floor lift | previous floor lift")
+    lines.append("Per life: life | scored items | paired difference | current floor lift | "
+                 "current lift items | previous floor lift | previous lift items")
     for row in report["pooled"]["per_life"]:
-        lines.append(" | ".join([row["life"], str(row["scored_items"])] +
-                     [_number(row[k]) for k in ("contribution", "current_lift", "previous_lift")]))
+        lines.append(" | ".join([row["life"], str(row["scored_items"]), _number(row["contribution"]),
+            _number(row["current_lift"]), str(row["current_lift_items"]),
+            _number(row["previous_lift"]), str(row["previous_lift_items"])]))
     return "\n".join(lines)
 
 

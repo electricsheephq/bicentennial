@@ -39,7 +39,8 @@ def receipt(*, n=1, wall=100, wait="3.0"):
         raw_body_digest="0" * 64, turn_wait_s=wait)
 
 
-def write_run(directory, *, card=None, floor_score=0, cached=False, n=1, wall=100, arm=50):
+def write_run(directory, *, card=None, floor_score=0, cached=False, n=1, wall=100, arm=50,
+              slots=8):
     card = CARD() if card is None else card
     if cached:
         for unit in card["floor"]["units"].values():
@@ -49,7 +50,8 @@ def write_run(directory, *, card=None, floor_score=0, cached=False, n=1, wall=10
     put(directory, "receipt.json", receipt(n=30, wall=wall + 800))
     put(directory, "card.json", card)
     put(directory, "receipts/system.json", receipt(n=n, wall=wall))
-    put(directory, "units.json", {"arm_time": {"arms": {"system": {"arm_time_ms": arm}}}})
+    put(directory, "units.json", {"slots": slots,
+        "arm_time": {"arms": {"system": {"arm_time_ms": arm}}}})
     floor = {}
     for item in card["items"]:
         unit = floor.setdefault(f"{item['life']}/{item['branch']}",
@@ -83,6 +85,7 @@ def test_per_life_reversal_zero_and_regression():
     assert [r["life"] for r in table] == [r["life"] for r in a]
     assert [number(r["contribution"]) for r in table] == [1, Fraction(-1, 4), 0]
     assert all(r["scored_items"] == 1 for r in table)
+    assert all(r["current_lift_items"] == r["previous_lift_items"] == 0 for r in table)
     for entry in [report["pooled"], *report["cells"]]:
         assert entry["diff"]["sign_changes"] == 1
     regression = developer.developer_report(b, a, seed="constructed")
@@ -118,9 +121,36 @@ def test_lift_exclusion_in_either_arm_and_null(side):
     table = {r["life"]: r for r in result["pooled"]["per_life"]}
     if side == "floor":
         assert table[a[0]["life"]]["current_lift"] is None
+        assert table[a[0]["life"]]["current_lift_items"] == 0
     else:
         assert a[0]["life"] not in table
     assert number(table[a[1]["life"]]["current_lift"]) == 1
+    assert table[a[1]["life"]]["current_lift_items"] == 1
+
+
+@pytest.mark.parametrize("excluded_side", ["current", "previous"])
+def test_lift_item_counts(tmp_path, excluded_side):
+    blocked = CARD()
+    blocked["items"][0].update(failure_class="BLOCKED", score_milli=None,
+        worst_case_milli=None, envelope=None, infra_reruns=2, repro=None)
+    blocked["counts"].update(t2_card._row_counts(blocked))
+    current = write_run(tmp_path / "current", card=blocked if excluded_side == "current" else None)
+    previous = write_run(tmp_path / "previous", card=blocked if excluded_side == "previous" else None)
+    report = developer_runs.report_runs(current, previous)
+    row = report["pooled"]["per_life"][0]
+    assert row["life"] == "life-alpha"
+    assert row["scored_items"] == 1
+    current_excluded = excluded_side == "current"
+    assert row["current_lift_items"] == (1 if current_excluded else 2)
+    assert row["previous_lift_items"] == (2 if current_excluded else 1)
+    assert number(row["current_lift"]) == (1 if current_excluded else 0)
+    assert number(row["previous_lift"]) == (0 if current_excluded else 1)
+    assert number(row["contribution"]) == 0
+    assert number(row["current_lift"]) - number(row["previous_lift"]) != number(row["contribution"])
+    text = developer_runs.summary(report)
+    assert "current floor lift | current lift items | previous floor lift | previous lift items" in text
+    assert ("life-alpha | 1 | 0/1 | 1/1 | 1 | 0/1 | 2" if current_excluded else
+            "life-alpha | 1 | 0/1 | 0/1 | 2 | 1/1 | 1") in text
 
 
 def assert_refusal(pair, out, code, capsys, prime=None):
@@ -147,6 +177,10 @@ def assert_refusal(pair, out, code, capsys, prime=None):
     ("units.json", "invalid", "run_invalid:units"),
     ("units.json", "negative", "run_invalid:units"),
     ("units.json", "bool", "run_invalid:units"),
+    ("units.json", "slots_missing", "run_invalid:units"),
+    ("units.json", "slots_zero", "run_invalid:units"),
+    ("units.json", "slots_bool", "run_invalid:units"),
+    ("units.json", "slots_string", "run_invalid:units"),
     ("no_memory.json", "missing", "run_invalid:floor"),
     ("no_memory.json", "unit", "run_invalid:floor"),
     ("no_memory.json", "item", "run_invalid:floor"),
@@ -176,6 +210,10 @@ def test_artifact_refusals_loader_and_command(pair, tmp_path, capsys, artifact, 
                 next(iter(outcomes.values()))["item_id"] = "different"
         elif change in ("negative", "bool"):
             value["arm_time"]["arms"]["system"]["arm_time_ms"] = -1 if change == "negative" else True
+        elif change == "slots_missing":
+            value.pop("slots")
+        elif change.startswith("slots_"):
+            value["slots"] = {"slots_zero": 0, "slots_bool": True, "slots_string": "8"}[change]
         else:
             value = {"tier": "T2"} if artifact == "card.json" else {}
         put(pair[0], artifact, value)
@@ -201,6 +239,26 @@ def test_baseline_fields_from_imported_tuple(pair, tmp_path, capsys, field, prim
     code = "run_invalid:card" if field == "profile" else (
         "aa_prime:" if prime_side else "") + "baseline_mismatch:" + field
     assert_refusal(pair, tmp_path / "out", code, capsys, prime)
+
+
+@pytest.mark.parametrize("field", ["route_table_hash", "write_turn_package_hash"])
+@pytest.mark.parametrize("prime_side", [False, True])
+def test_t2_comparability_pins(pair, tmp_path, capsys, field, prime_side):
+    prime = write_run(tmp_path / "prime") if prime_side else None
+    directory = prime if prime_side else pair[0]
+    card = json.loads((directory / "card.json").read_bytes())
+    card["pins"][field] = "e" * 64
+    put(directory, "card.json", card)
+    code = ("aa_prime:" if prime_side else "") + "baseline_mismatch:pins." + field
+    assert_refusal(pair, tmp_path / "out", code, capsys, prime)
+
+
+def test_t2lite_baseline_fields_unchanged():
+    assert BASELINE_FIELDS == (
+        "system", "pack_hash", "seed_hash", "model", "effort", "pins.harness_hash",
+        "answer_contract_sha256", "pins.benchmark_commit", "pins.generator_commit",
+        "pins.director_commit", "pins.scorer_commit", "profile",
+    )
 
 
 def test_aa_prime_system_hash_refusal(pair, tmp_path, capsys):
@@ -299,6 +357,54 @@ def test_operating_metrics_system_receipt_and_arm_time(tmp_path):
     assert metrics["latency_summary"]["n"] == 3
 
 
+def test_slots_reported_and_equal_slots_keep_wall_delta(tmp_path):
+    current = write_run(tmp_path / "current", arm=120)
+    previous = write_run(tmp_path / "previous", arm=80)
+    report = developer_runs.report_runs(current, previous)
+    assert report["pairing"]["current_slots"] == report["pairing"]["previous_slots"] == 8
+    assert report["pairing"]["aa_prime_slots"] is None
+    assert report["operating_metrics"]["wall_ms"] == 40
+    assert report["operating_metrics"]["wall_ms_reason"] is None
+    text = developer_runs.summary(report)
+    assert "current_slots: 8" in text and "previous_slots: 8" in text
+    assert "wall_ms: 40" in text and "wall_ms_reason: null" in text
+
+
+def test_different_slots_null_wall_delta(tmp_path):
+    current = write_run(tmp_path / "current", arm=120, n=5)
+    previous = write_run(tmp_path / "previous", arm=80, n=2)
+    equal = developer_runs.report_runs(current, previous)
+    write_run(current, arm=120, n=5, slots=4)
+    different = developer_runs.report_runs(current, previous)
+    assert different["pairing"]["current_slots"] == 4
+    assert different["pairing"]["previous_slots"] == 8
+    assert different["operating_metrics"]["wall_ms"] is None
+    assert different["operating_metrics"]["wall_ms_reason"] == "slots_differ"
+    text = developer_runs.summary(different)
+    assert "current_slots: 4" in text and "previous_slots: 8" in text
+    assert "wall_ms: null" in text and 'wall_ms_reason: "slots_differ"' in text
+    for report in (equal, different):
+        del report["pairing"]["current_slots"]
+        del report["operating_metrics"]["wall_ms"]
+        del report["operating_metrics"]["wall_ms_reason"]
+    assert different == equal
+
+
+def test_aa_prime_slots_reported_only(tmp_path):
+    current = write_run(tmp_path / "current", arm=120)
+    previous = write_run(tmp_path / "previous", arm=80)
+    prime = write_run(tmp_path / "prime")
+    equal = developer_runs.report_runs(current, previous, prime)
+    write_run(prime, slots=4)
+    different = developer_runs.report_runs(current, previous, prime)
+    assert different["pairing"]["aa_prime_slots"] == 4
+    assert "aa_prime_slots: 4" in developer_runs.summary(different)
+    assert different["operating_metrics"]["wall_ms"] == 40
+    assert different["operating_metrics"]["wall_ms_reason"] is None
+    equal["pairing"]["aa_prime_slots"] = 4
+    assert different == equal
+
+
 def test_aa_is_previous_and_prime(pair, tmp_path):
     prime_card = CARD()
     prime_card["items"][0].update(score_milli=1000, worst_case_milli=1000, repro=None)
@@ -334,8 +440,9 @@ def test_guide_flags_codes_label_and_erratum(capsys):
     assert len(codes) == len(set(codes))
     assert set(codes) == set(developer_runs.REFUSAL_CODES)
     assert developer._LABEL in text
-    for field in BASELINE_FIELDS:
+    for field in BASELINE_FIELDS + ("pins.route_table_hash", "pins.write_turn_package_hash"):
         assert field in text
+    assert "slots_differ" in text
     spec = (ROOT / "specs/ring0/RING0.md").read_text().split("### 14.10", 1)[1].split("## 15", 1)[0]
     assert "**Erratum, 2026-11-04 (#392): the per-life table and T2's operating metrics.**" in spec
 

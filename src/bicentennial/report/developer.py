@@ -199,11 +199,16 @@ def _taxonomy(rows):
             for (cell, stage, failure, reason), count in sorted(counts.items())]
 
 
-def _metrics(receipts, *, scope=_SCOPE, arm_times=None):
+def _metrics(receipts, *, scope=_SCOPE, arm_times=None, slots=None):
     if receipts is None:
         return None
     if not isinstance(receipts, (tuple, list)) or len(receipts) != 2:
         raise DeveloperReportRefused("invalid_rows")
+    for pair, low in ((arm_times, 0), (slots, 1)):
+        # bool is an int subclass, so type(), not isinstance(): True must not pass as a count of 1.
+        if pair is not None and not (isinstance(pair, (tuple, list)) and len(pair) == 2
+                                     and all(type(v) is int and v >= low for v in pair)):
+            raise DeveloperReportRefused("invalid_rows")
     a, b = receipts
     try:
         for receipt in receipts:
@@ -213,9 +218,12 @@ def _metrics(receipts, *, scope=_SCOPE, arm_times=None):
     def difference(x, y):
         return None if x is None or y is None else x - y
     roles = [{r["role"]: r for r in receipt["tokens_by_role"]} for receipt in receipts]
+    slots_differ = slots is not None and slots[0] != slots[1]
     return dict(scope=scope,
-                wall_ms=(arm_times[0] - arm_times[1] if arm_times is not None else
+                wall_ms=None if slots_differ else (
+                         arm_times[0] - arm_times[1] if arm_times is not None else
                          (a["wall_end_ms"]-a["wall_start_ms"])-(b["wall_end_ms"]-b["wall_start_ms"])),
+                wall_ms_reason="slots_differ" if slots_differ else None,
                 requests=a["latency_summary"]["n"]-b["latency_summary"]["n"],
                 store_growth_bytes=a["store_growth_bytes"]-b["store_growth_bytes"],
                 tokens_by_role=[dict(role=role, **{k: roles[0].get(role, {}).get(k, 0)
@@ -228,25 +236,32 @@ def _metrics(receipts, *, scope=_SCOPE, arm_times=None):
 def _life_table(pairs, floors):
     values, scored = _sample(pairs)
     lifts = []
+    lift_counts = []
     for side, floor in enumerate(floors if floors is not None else (None, None)):
         if floor is None:
             lifts.append({})
+            lift_counts.append({})
         else:
-            lift, _ = _sample(_pair([pair[side] for pair in pairs], floor, "items_mismatch"))
+            lift, lift_scored = _sample(_pair([pair[side] for pair in pairs], floor, "items_mismatch"))
             lifts.append(lift)
+            lift_counts.append({life: sum(a["life"] == life for a, _, _ in lift_scored)
+                                for life in lift})
     return [dict(life=life, scored_items=sum(a["life"] == life for a, _, _ in scored),
                  contribution=_number(value), current_lift=_number(lifts[0].get(life)),
-                 previous_lift=_number(lifts[1].get(life))) for life, value in values.items()]
+                 current_lift_items=lift_counts[0].get(life, 0),
+                 previous_lift=_number(lifts[1].get(life)),
+                 previous_lift_items=lift_counts[1].get(life, 0)) for life, value in values.items()]
 
 
 def developer_report(current, previous, *, aa=None, receipts=None, seed, floors=None,
-                     metrics_scope=_SCOPE, arm_times=None):
+                     metrics_scope=_SCOPE, arm_times=None, slots=None):
     """Return validated JSON statistics from paired rows, without reading run directories.
 
     Extra row fields are ignored. Duplicate identities and conflicting cell/stage
     metadata are invalid rows. Fractions use score units (score_milli / 1000).
     Taxonomy exclusions are local to each run; statistical exclusions use both.
     Receipt totals use caller-labelled scope; optional arm times replace whole-run wall time.
+    Optional current/previous slot counts suppress wall deltas when they differ.
     Optional floor rows provide within-run lifts using the same paired exclusion rule.
     """
     if type(seed) is not str:
@@ -267,7 +282,7 @@ def developer_report(current, previous, *, aa=None, receipts=None, seed, floors=
         pooled=dict(diff=_stats(pairs, seed=seed, name="pooled"),
                     aa=_band(noise, seed=seed, name="aa:pooled"),
                     per_life=_life_table(pairs, floors)),
-        operating_metrics=_metrics(receipts, scope=metrics_scope, arm_times=arm_times),
+        operating_metrics=_metrics(receipts, scope=metrics_scope, arm_times=arm_times, slots=slots),
         failure_taxonomy=dict(current=_taxonomy([a for a, _ in pairs]),
                               previous=_taxonomy([b for _, b in pairs])))
     validate("developer_report", result)
