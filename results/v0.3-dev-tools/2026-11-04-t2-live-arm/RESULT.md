@@ -3,13 +3,13 @@
 Claim class: one live T2 run of Hermes native on the public T2 pack, on a shared developer Mac, with the runner in macOS's background band; a timing and smoke measurement, not a comparison of systems; not predictive of the full tier; never certifies.
 
 - Code commit: `ac81423de4bceda65952cd44a3934e67105becd6`, which is `main` at #472 (`f7238b2`) plus the fix for #476. T2 pack hash: `15141b194ab8abf389af2bfdbb4fd81e4d511fca14c54508d613fbe156628c04`.
-- **The run:** 2026-11-04, 12:45:00Z to 14:35:14Z, exit 0, run status COMPLETE. Hermes native at the registry's pinned Hermes (v0.22.2); the live model `gpt-6.1-sol` at effort `medium`; 8 parallel slots; a send bound of 1,000. The no-memory floor ran live beside the system arm (every floor unit was a cache miss).
+- **The run:** 2026-11-04, 12:45:00Z to 14:35:14Z, exit 0, run status COMPLETE. Hermes native at the registry's pinned Hermes (v0.22.2, `systems/registry/hermes-native.toml`); the live model `gpt-6.1-sol` at effort `medium`; 8 parallel slots; a send bound of 1,000. The no-memory floor ran live beside the system arm (every floor unit was a cache miss).
 - Full run tree (card, outcomes, floor rows, kept pre-probe copies, `units.json`, receipts, custody, disclosures and spend): the private evidence store, tag `bicentennial/t2-live-arm-20261104`. Receipts are not published here: they hold machine-local fields.
 - The first attempt, at 11:04Z on `ca74302` (`main` before #472, which changes only CI files), stopped at 11:34Z in the live act stage (#476) and wrote no card. Nothing from it is used here.
 
 ## The arm's time
 
-Printed by `t2live_numbers.py`, which reads `card.json`, `units.json`, `spend.json` and `receipt.json` and recomputes each arm's time from `units.json` with the runner's own `calculate_arm_times` (RING0 §14.8 and its 2026-11-04 errata). A unit is one branch of one life, with every attempt it took; times are on the run's monotonic clock from its start. `predicted` is the runner's own `predicted_seconds` (43 s per replay session, 49 s per probe session), which orders the replay.
+Printed by `t2live_numbers.py` (beside this file), which reads `card.json`, `units.json`, `spend.json` and `receipt.json` and recomputes each arm's time from `units.json` with the runner's own `calculate_arm_times` (RING0 §14.8 and its 2026-11-04 errata). A unit is one branch of one life, with every attempt it took; times are on the run's monotonic clock from its start. `predicted` is the runner's own `predicted_seconds` (43 s per replay session, 49 s per probe session), which orders the replay.
 
 ```
 tier T2 system hermes-native pack_hash 15141b194ab8
@@ -17,8 +17,8 @@ slots 8 admitted 8
 wall 110.2 min monotonic 110.2 min
 arm system: arm_time 96.2 min (5771559 ms; recomputed 5771559 ms, equal); replay 95.9 min; outside units 0.3 min; 20 units; over the 1 h target (1.60 h)
 floor_replay 26.8 min
-units no_memory: 20; span min 6.1 min, median 9.1 min, max 15.2 min; attempts 20; pre_probe 0.0 min; keep 0.0 min
-units system: 20; span min 29.1 min, median 31.1 min, max 65.5 min; attempts 22; pre_probe 2.4 min; keep 2.0 min
+units no_memory: 20; span min 6.1 min, median 8.9 min, max 15.2 min; attempts 20; pre_probe 0.0 min; keep 0.0 min
+units system: 20; span min 29.1 min, median 31.0 min, max 65.5 min; attempts 22; pre_probe 2.4 min; keep 2.0 min
   no_memory t2-g1-1 B0: span 13.7 min; predicted 245 s; attempts 1; slot 0; pre_probe 0.0 min; keep 0.0 min; start 65.7 min end 79.5 min
   no_memory t2-g1-1 B1: span 8.4 min; predicted 196 s; attempts 1; slot 2; pre_probe 0.0 min; keep 0.0 min; start 94.2 min end 102.6 min
   no_memory t2-g1-2 B0: span 15.2 min; predicted 245 s; attempts 1; slot 3; pre_probe 0.0 min; keep 0.0 min; start 65.9 min end 81.0 min
@@ -75,7 +75,7 @@ run_status COMPLETE turn_wait_s 3.0 spend_micro_usd 0 store_growth_bytes 3950488
 
 ## The card
 
-Printed by `t2live_card_summary.py` from `card.json`: pins (first 12 characters), counts, items per genre, mean score per track and genre, failure classes, stages, the items not scored live, and every (track, genre, stage, score, failure class) count. It prints no answers.
+Printed by `t2live_card_summary.py` (beside this file) from `card.json`: pins (first 12 characters), counts, items per genre, mean score per track and genre, failure classes, stages, the items not scored live, and every (track, genre, stage, score, failure class) count. It prints no answers.
 
 ```
 tier T2 system hermes-native model gpt-6.1-sol effort medium aa_prime False
