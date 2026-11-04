@@ -12,10 +12,11 @@ from bicentennial.sandbox import surfaces
 from bicentennial.systems import controls, hermes_plugin
 
 
-@pytest.mark.parametrize("caller,verify", [(adapter, False), (plugin_host, False), (hermes_plugin, False),
-                                          (controls, False), (plugin_host, True), (hermes_plugin, True),
-                                          (controls, True)])
-def test_per_item_callers_forced_eviction(tmp_path, monkeypatch, caller, verify):
+@pytest.mark.parametrize("caller,mode", [(adapter, "hash"), (plugin_host, "hash"), (hermes_plugin, "hash"),
+                                        (controls, "hash"), (plugin_host, "verify"), (hermes_plugin, "verify"),
+                                        (controls, "verify"), (plugin_host, "changed"), (hermes_plugin, "changed"),
+                                        (controls, "changed")])
+def test_per_item_callers_forced_eviction(tmp_path, monkeypatch, caller, mode):
     paused, resume, contention = Event(), Event(), Event()
     guard = Lock()
     iterations = 0
@@ -56,11 +57,23 @@ def test_per_item_callers_forced_eviction(tmp_path, monkeypatch, caller, verify)
         tree.mkdir()
         (tree / "value").write_text(str(i))
     expected = [surfaces.install_hash(tree, [], 1234) for tree in trees]
+    listings = {str(i): {} for i in range(128)}
+    if mode == "changed":
+        # The cached baselines sit last, so the forced eviction removes a filler entry, never a baseline.
+        listings = {str(i): {} for i in range(126)}
+        listings.update({digest: {row["path"]: row for row in surfaces.tree_listing(tree, [])}
+                         for digest, tree in zip(expected, trees, strict=True)})
+        for i, tree in enumerate(trees):
+            (tree / "value").write_text(f"changed {i}")
     monkeypatch.setattr(surface_cache, "LOCK", ObservedLock())
-    monkeypatch.setattr(surfaces, "_LISTINGS", Listings({str(i): {} for i in range(128)}))
+    monkeypatch.setattr(surfaces, "_LISTINGS", Listings(listings))
 
     def access(n):
-        if verify:
+        if mode == "changed":
+            with pytest.raises(surfaces.NotEmpty) as raised:
+                caller.verify_empty(trees[n], [], expected[n])
+            assert raised.value.paths == ("value",) and raised.value.paths_known
+        elif mode == "verify":
             caller.verify_empty(trees[n], [], expected[n])
         else:
             assert caller.surface_hash(trees[n], []) == expected[n]
@@ -76,14 +89,11 @@ def test_per_item_callers_forced_eviction(tmp_path, monkeypatch, caller, verify)
 
 def test_direct_clone_and_install_hash_never_access_listings(tmp_path, monkeypatch):
     class NoCache(dict):
-        def __setitem__(self, *args):
-            pytest.fail("unexpected listing cache write")
+        def _fail(self, *args, **kwargs):
+            pytest.fail("unexpected listing cache access")
 
-        def get(self, *args):
-            pytest.fail("unexpected listing cache read")
-
-        def __getitem__(self, *args):
-            pytest.fail("unexpected listing cache read")
+        __setitem__ = __getitem__ = __delitem__ = __contains__ = __iter__ = __len__ = _fail
+        get = pop = popitem = setdefault = update = clear = keys = items = values = copy = _fail
 
     monkeypatch.setattr(surfaces, "_LISTINGS", NoCache())
     source = tmp_path / "source"
