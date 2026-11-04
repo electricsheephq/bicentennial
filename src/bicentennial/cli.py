@@ -173,17 +173,17 @@ def main(argv=None) -> int:
         print("hashseed", file=sys.stderr)
         return 3
     reexec_niced(["-m", "bicentennial.cli", *argv])
-    if selected != "build":
-        path = args.pop("entry")
-        if path is not None:
-            from bicentennial.systems.registry import SystemRefused, load_entry
+    # Only commands that select a system have --entry; build has neither.
+    path = args.pop("entry", None)
+    if path is not None:
+        from bicentennial.systems.registry import SystemRefused, load_entry
 
-            try:
-                entry = load_entry(path)
-            except SystemRefused as error:
-                print(*error.reasons, file=sys.stderr)
-                return 3
-            args.update(system=entry["name"], entry=entry)
+        try:
+            entry = load_entry(path)
+        except SystemRefused as error:
+            print(*error.reasons, file=sys.stderr)
+            return 3
+        args.update(system=entry["name"], entry=entry)
     if selected == "t0":
         return run_t0(**args)
     if selected == "t1":
