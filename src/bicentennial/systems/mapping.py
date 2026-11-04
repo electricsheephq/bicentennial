@@ -1,18 +1,29 @@
 """Preflight coverage of declared tools by the reviewed scripted mappings."""
 
-from bicentennial.director.scripted import WRITE_ARGS
-from bicentennial.harness.hermes.plugin_host import FORGET
+from bicentennial.systems.recipe import recipe
 
 UNSCRIPTED = {"holographic": ("fact_feedback",), "mem0-oss": ("mem0_update",)}
 
 
 def resolve_mapping(name):
     """Adapt the built-in tables to the mapping accepted by check_mapping."""
-    write, forget = WRITE_ARGS.get(name), FORGET.get(name)
-    return dict(write=None if write is None else dict(tool=write[0], fixed=write[1]),
-                forget=None if forget is None else dict(search_tool=forget[0],
-                    delete_tool=forget[6], delete_fixed=forget[7]),
-                unscripted=UNSCRIPTED.get(name, ()))
+    resolved = recipe({"name": name})
+    write, forget = resolved.write, resolved.forget
+    return dict(write=None if write is None else dict(tool=write.tool, fixed=write.fixed),
+                forget=None if forget is None else dict(search_tool=forget.search_tool,
+                    delete_tool=forget.delete_tool, delete_fixed=forget.delete_fixed),
+                unscripted=resolved.unscripted)
+
+
+def first_write_tool_matches(entry, write):
+    """Whether the first declared write tool can use the scripted write mapping."""
+    writes = entry.get("write_tools", [])
+    return not writes or write is not None and write["tool"] == writes[0]["tool"]
+
+
+def embedding_dimension_valid(dimension):
+    """Whether the scripted embeddings responder can construct a vector."""
+    return type(dimension) is int and dimension >= 2
 
 
 def check_mapping(entry, mapping, *, require_forget=True):
@@ -26,7 +37,7 @@ def check_mapping(entry, mapping, *, require_forget=True):
     if writes:
         write, forget = mapping.get("write"), mapping.get("forget")
         first = writes[0]["tool"]
-        if write is None or write["tool"] != first:
+        if not first_write_tool_matches(entry, write):
             return f"write_mapping_missing:{first}"
         tools = {row["tool"]: row for row in writes}
         named = [write["tool"]]
@@ -54,6 +65,6 @@ def check_mapping(entry, mapping, *, require_forget=True):
             return "forget_mapping_missing"
     if any(route["role"] == "embeddings" for route in entry["own_model_routes"]):
         dimension = entry.get("embedding_dim")
-        if type(dimension) is not int or dimension < 2:
+        if not embedding_dimension_valid(dimension):
             return "embedding_dim_invalid"
     return None
