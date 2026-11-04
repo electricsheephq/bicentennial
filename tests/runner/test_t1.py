@@ -1039,8 +1039,8 @@ def test_engine_relabel_and_model_env(policy, monkeypatch, tmp_path):
 def test_engine_install_pin_is_left_to_its_arm(policy, monkeypatch, tmp_path, provider):
     from bicentennial.systems import hermes_plugin as hp
 
-    # The memory-layer host refuses an engine ("no T0 mapping") or installs it without the engine, so the preflight
-    # must not measure it, even when the declared pin is wrong: the arm's own install checks the pin.
+    # The memory-layer host refuses a built-in engine ("no T0 mapping") or installs it without the engine, so the
+    # preflight must not measure it, even when the declared pin is wrong: the arm's own install checks the pin.
     name = "fixture-engine"
     monkeypatch.setitem(hp.ENGINES, name, "fixture_engine")
     if provider:
@@ -1048,6 +1048,14 @@ def test_engine_install_pin_is_left_to_its_arm(policy, monkeypatch, tmp_path, pr
     monkeypatch.setattr(t1.install_pins, "measure_once", lambda *a, **kw: pytest.fail("measured an engine install"))
     ctx = replace(policy.ctx, entry=dict(policy.ctx.entry, name=name, fresh_install_hash="f" * 64))
     assert t1.check_install(ctx, tmp_path) is None
+
+
+def test_builtin_install_pin_is_checked_in_preflight(policy, monkeypatch, tmp_path):
+    # A built-in system without an engine keeps the preflight check; #477 item 5 narrowed only the engine exception.
+    monkeypatch.setattr(t1.install_pins, "measure_once", lambda *a, **kw: {"fresh_install_hash": "e" * 64})
+    with pytest.raises(t1.T1Refused, match="^pin_mismatch$") as error:
+        t1.check_install(policy.ctx, tmp_path)
+    assert error.value.detail == ("fresh install differs from the pin: computed " + "e" * 64,)
 
 
 def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp_path):

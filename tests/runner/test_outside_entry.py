@@ -612,3 +612,46 @@ def test_engine_pins_use_installer(outside, source, offline, tmp_path, t1_instal
     ctx = t1.prepare(system=outside["name"], entry=outside, packs=t1_installed.root,
         pack_hash=t1_installed.digest, hermes=tmp_path, plugin_source=source, worker_argv=[])
     assert recipe(ctx.entry).engine == "outside-engine"
+
+
+@pytest.fixture
+def engine(outside, source, offline, tmp_path):
+    raw = outside["recipe"]
+    del raw["provider"]
+    raw.update(engine="outside-engine", plugin_directory="engine-directory")
+    del raw["write"], raw["forget"]
+    outside["artifact"]["sha256"] = outside["fresh_install_hash"] = registry.ZERO_HASH
+    result = pins.measure(outside, hermes=tmp_path, plugin_source=source)
+    outside["artifact"]["sha256"] = result["artifact.sha256"]
+    outside["fresh_install_hash"] = result["fresh_install_hash"]
+    return outside
+
+
+def test_outside_engine_pin_checked_in_preflight(engine, source, tmp_path, t1_installed):
+    # #477 item 5: the shared install check measures an outside engine with the installer its arm uses.
+    ctx = t1.prepare(system=engine["name"], entry=engine, packs=t1_installed.root,
+        pack_hash=t1_installed.digest, hermes=tmp_path, plugin_source=source, worker_argv=[])
+    with fixedroot.lease(0, t1.T1Refused) as scratch:
+        assert t1.check_install(ctx, scratch) is None
+    wrong = NS(**(vars(ctx) | {"entry": dict(ctx.entry, fresh_install_hash="f" * 64)}))
+    with fixedroot.lease(0, t1.T1Refused) as scratch, pytest.raises(t1.T1Refused, match="^pin_mismatch$") as error:
+        t1.check_install(wrong, scratch)
+    assert error.value.detail == (f"fresh install differs from the pin: computed {engine['fresh_install_hash']}",)
+
+
+@pytest.mark.parametrize("module", [t2lite, t2], ids=["t2lite", "t2"])
+def test_wrong_engine_pin_refused_before_any_live_send(module, engine, source, tmp_path, t1_installed, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "auth.json").write_text("{}")
+    monkeypatch.setattr(module, "LIVE_ENV", ())
+    monkeypatch.setattr(module, "build_live_stack", lambda *a, **kw: pytest.fail("built the live stack"))
+    real = t1.prepare
+    monkeypatch.setattr(t1, "prepare", lambda **kw: real(system=kw["system"], entry=kw["entry"],
+        packs=t1_installed.root, pack_hash=t1_installed.digest, hermes=tmp_path, plugin_source=source, worker_argv=[]))
+    engine["fresh_install_hash"] = "f" * 64
+    out = tmp_path / "out"
+    run = module.run_t2lite if module is t2lite else module.run_t2
+    assert run(system=engine["name"], entry=engine, packs_dir=tmp_path / "packs", pack_hash="1" * 64,
+               out=out, login_home=home, max_sends=0) == 3
+    assert json.loads((out / "refusal.json").read_bytes())["code"] == "pin_mismatch"
