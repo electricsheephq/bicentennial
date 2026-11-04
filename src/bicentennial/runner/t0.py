@@ -89,8 +89,6 @@ from bicentennial.score.invariants import (
     run_invariants,
 )
 from bicentennial.systems.hermes_plugin import (
-    ENGINES,
-    PROVIDERS,
     cache_digest,
     is_plugin,
     prepare_cache,
@@ -99,6 +97,7 @@ from bicentennial.systems.hermes_plugin import (
     worker_properties,
 )
 from bicentennial.systems.mapping import check_mapping, resolve_mapping
+from bicentennial.systems.recipe import recipe
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.targeted import MicroSpec, micro_schedule
@@ -109,9 +108,16 @@ REFERENCE_SYSTEMS = {"reference_store": ReferenceStore, "bm25": BM25,
                      **{name: getattr(mutants, name) for name in (
                          "wipe_on_restart", "truncate_after_compaction", "orphan_tool_result",
                          "forget_ignored", "stale_wins", "forget_cached_output", "reset_cached_output")}}
-ROUTE_TABLE = {"routes": [dict(system=name, segment="seg0", probe_model="probe-model",
-                              summariser="summary-model", alias="bicentennial-main", vision=None,
-                              served_by="scripted") for name in ("hermes-native", *sorted(PROVIDERS))]}
+ROUTE_TABLE = {"routes": [
+    {"system": "hermes-native", "segment": "seg0", "probe_model": "probe-model",
+     "summariser": "summary-model", "alias": "bicentennial-main", "vision": None, "served_by": "scripted"},
+    {"system": "holographic", "segment": "seg0", "probe_model": "probe-model",
+     "summariser": "summary-model", "alias": "bicentennial-main", "vision": None, "served_by": "scripted"},
+    {"system": "mem0-oss", "segment": "seg0", "probe_model": "probe-model",
+     "summariser": "summary-model", "alias": "bicentennial-main", "vision": None, "served_by": "scripted"},
+    {"system": "omega", "segment": "seg0", "probe_model": "probe-model",
+     "summariser": "summary-model", "alias": "bicentennial-main", "vision": None, "served_by": "scripted"},
+]}
 REFUSALS = (PinnedArtifactChanged, LockMismatch, ControlsTampered, GateRefused,
             PinMismatch, SystemRefused)
 SYSTEM_CAUSES = frozenset(("ingest_failed", "query_failed", "tool_failed", "drain_failed",
@@ -394,7 +400,7 @@ class _Factory:
     def __call__(self):
         try:
             if not self.real:
-                return _Capture(REFERENCE_SYSTEMS[self.entry["name"]](), self.refusals,
+                return _Capture(recipe(self.entry).required("reference_adapter")(), self.refusals,
                                 self.infra, self.system)
             n = len(self.hosts)
             root = self.unit / f"h{n}"
@@ -624,7 +630,7 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
         raise T0Refused("unknown_system")
     registry = REGISTRY / f"{system}.toml"
     real = registry.is_file()
-    if real == (system in REFERENCE_SYSTEMS):
+    if real == (recipe({"name": system}).reference_adapter is not None):
         raise T0Refused("unknown_system")
     if real:
         entry = load(registry) if entry is None else entry
@@ -633,7 +639,7 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
         admit_system(entry)
         if entry["harness"] != "hermes":
             raise T0Refused("harness_not_hermes")
-        if system in ENGINES and system not in PROVIDERS:  # no T0 host, so no mapping to check
+        if recipe(entry).engine is not None and recipe(entry).provider is None:  # no T0 host, so no mapping to check
             raise T0Refused("no_t0_surface:context_engine")
         reason = check_mapping(entry, resolve_mapping(system))
         if reason is not None:
@@ -641,8 +647,7 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
     else:
         entry = dict(name=system, surfaces=[])
     validate_maps()
-    from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
-    if real and entry["settle"]["kind"] == "hook" and system not in SETTLE_THREADS:
+    if real and entry["settle"]["kind"] == "hook" and recipe(entry).settle_threads is None:
         raise T0Refused("settle_unmapped")
     marker = read_marker()
     admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=workers)
@@ -802,14 +807,14 @@ def _report_pack(pack, entry, lock, outcomes, verdicts, adapter, controls, audit
         dict(sandbox_root=str(out), director_port="0"), items=items, bundles=bundles,
         controls=card_controls(controls) | {"wiped_store": "not run at T0"}, voids=None, **kwargs)
     card = finalize(provisional, gate)
-    extra = [("t0.entrypoint", "reference adapter" if entry["name"] in REFERENCE_SYSTEMS else ENTRYPOINT),
+    extra = [("t0.entrypoint", "reference adapter" if recipe(entry).reference_adapter is not None else ENTRYPOINT),
         ("t0.event_mapping", "every event becomes one user-side turn with an empty assistant side"),
         ("t0.crash", "API-mode crash equals restart"), ("honeypot.hits", hit_count),
         ("invariants.forget_inconclusive", sum(len(v["inconclusive"]) for v in all_verdicts
                                               if v["invariant"] == "INV-FORGET")),
         ("t0.pair", "API-mode INV-PAIR certifies call and result survival; linkage requires Hermes mode"),
         *stub_disclosures(entry, "t0")]
-    if entry["name"] in ENGINES:
+    if recipe(entry).engine is not None:
         extra.append(("t0.engine", "context engine not loaded at T0 (memory-layer host)"))
     if audit.get("model_cache_sha256") is not None:
         extra.append(("t0.model_cache", "sha256:" + audit["model_cache_sha256"]))

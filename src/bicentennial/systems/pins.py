@@ -15,7 +15,8 @@ from bicentennial.harness.hermes.adapter import PinMismatch
 from bicentennial.harness.hermes.plugin_host import HermesMemoryHost
 from bicentennial.runtime.clock import SimClock
 from bicentennial.sandbox import fixedroot
-from bicentennial.systems.hermes_plugin import TREES, is_plugin
+from bicentennial.systems import recipe as recipes
+from bicentennial.systems.hermes_plugin import is_plugin
 from bicentennial.systems.registry import (
     REGISTRY,
     ZERO_HASH,
@@ -70,6 +71,12 @@ def measure_once(entry, sandbox, *, hermes=None, plugin_source=None, worker_argv
                     samples=1, verify_declared=True, worker_argv=worker_argv)
 
 
+def _routes(name):
+    from bicentennial.runner.t1 import _routes as t1_routes
+
+    return {"routes": [row for row in t1_routes(name)["routes"] if row["segment"] == "seg0"]}
+
+
 def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
              samples=2, verify_declared=False, worker_argv=None):
     plugin = is_plugin(entry["name"])
@@ -84,14 +91,13 @@ def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
         tempfile.tempdir = str(temporary)
         cleanup.callback(setattr, tempfile, "tempdir", previous)
         if plugin:
-            recipe = tuple(recipe or TREES[entry["name"]])
-            if recipe[1:] != TREES[entry["name"]][1:]:
+            tree = recipes.recipe(entry).required("archive_tree")
+            recipe = tuple(recipe or tree)
+            if recipe[1:] != tree[1:]:
                 raise PinsRefused("pin_mismatch")
             if not verify_declared:
                 measured["artifact"]["sha256"] = archive_hash(plugin_source, recipe)
-        routes = RouteTable.load({"routes": [dict(system=entry["name"], segment="seg0",
-            probe_model="probe-model", alias="bicentennial-main", summariser="summary-model",
-            vision=None, served_by="scripted")]})
+        routes = RouteTable.load(_routes(entry["name"]))
         hosts = []
         for index in range(samples):
             root = sandbox / f"pins-{index}"
