@@ -26,6 +26,10 @@ EXPECTED = {'t0_cards': '077b91cf656e072c98c52d11a0dbdb38bfec9f6a3f501177671450c
  'calls:holographic': '79de831208c43625a810ad77e26d723957c658660e230e2ee19cbef51ddc366b',
  'calls:mem0-oss': '70449588609bf70f1d9840f321892ea5ff7a65a49082fea3db13de35651b1ee1',
  'calls:omega': '40cb7e62d582bfb57d4afa1781bb2c1f248e7977200379c674cd7424b1d6f468',
+ 'config:hermes-native': 'a412531bd88e93cd0bd4f0de77869de2c819dd9c5374528c69cd850367254f29',
+ 'config:holographic': '7aae579fcf7632513872a00bfd4f8a164cc61eb5b4681c9e913b0190dc47776b',
+ 'config:mem0-oss': 'b77fa8258a51f47a1666a865d07175ccdcb1d2da3e01b7da7aea45960378918b',
+ 'config:omega': '440c3ac7e1bfc7752883cbc4a34c348bb0786162be3a8211afcfe499d3799523',
  'effects': {'hermes-native': {'config': '07c67908f77ab8ba698125be5a2b344d52b0d909d9419adfb8a9c2303da79e6a',
                                'settle': '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
                                't0': 'cb5b7ec077d7e38bce9d37a3d469a1f60fe264000850a962717f866261960f85',
@@ -175,6 +179,7 @@ def test_host_calls(name, tmp_path, monkeypatch):
     monkeypatch.setattr(host, "admit", lambda *a, **k: NS(admitted=True))
     monkeypatch.setattr(host, "assert_niced", lambda pid: None)
     obj._start()
+    config = (obj.paths["hermes_home"] / "config.yaml").read_bytes()
     if name == "hermes-native":
         assert calls[0]["provider"] == ""
     obj.ingest(dict(event_id="e1", t_sim=1, kind="message", actor="user", text="quartz"))
@@ -192,6 +197,7 @@ def test_host_calls(name, tmp_path, monkeypatch):
     obj._call = call
     obj.forget(dict(event_ids=["e1"]))
     golden("calls:" + name, calls)
+    golden("config:" + name, config)
 
 
 def test_t0_card(t0_installed, tmp_path, stub_hosts):
