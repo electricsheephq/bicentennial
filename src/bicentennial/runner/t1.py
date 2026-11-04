@@ -458,7 +458,7 @@ def run_arms(ctx, *, scratch) -> T1Run:
             checked = check_compile(pack.life_dir, entry=load(REGISTRY / "hermes-native.toml"),
                 route_table=_routes("hermes-native"), harness_pin=ctx.harness_pin,
                 checkout=ctx.hermes, scratch=scratch / "check" / pack.life, step_s=STEP_S,
-                worker_argv=_worker(ctx, pack.life, "B0", "check_compile"))
+                worker_argv=_worker(ctx, pack.life, "B0", "check_compile"), turn_wait_s=ctx.turn_wait_s)
             if not checked["ok"]:
                 for branch, result in sorted(checked["branches"].items()):
                     kinds = {}

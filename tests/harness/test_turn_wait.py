@@ -69,10 +69,11 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
 
 def test_every_default_wait_is_one_second():
     # The default is written at each entry point, so one test checks they agree (#388).
+    from bicentennial.director.compiler.check import check_compile
     from bicentennial.report import t2lite_flips
     from bicentennial.runner import compare, life, t1, t2lite
     entries = (adapter.HermesAdapter, life.run_life, compare.run_t1, t1.prepare, t2lite.run_t2lite,
-               t2lite._receipt, t2lite_flips.rerun_command, t2lite_flips.flip_report)
+               t2lite._receipt, t2lite_flips.rerun_command, t2lite_flips.flip_report, check_compile)
     assert [inspect.signature(f).parameters["turn_wait_s"].default for f in entries] == [1.0] * len(entries)
     assert t1.T1Context.__dataclass_fields__["turn_wait_s"].default == 1.0
 
