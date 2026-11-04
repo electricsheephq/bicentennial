@@ -307,3 +307,9 @@ def test_reference_t0_cards(t0_installed, tmp_path):
     assert zero.run(t0_installed, out) == 0
     golden("reference_t0_cards", {p: sha256(v).hexdigest() for p, v in zero.stable_files(out).items()
                                   if p.endswith("card.json")})
+
+
+def test_zz_build_key(t0_installed, installed):
+    import sqlite3
+    print("recipe_build=" + json.dumps({"t0": t0_installed[2], "t1": installed.digest, "sqlite": sqlite3.sqlite_version}))
+    raise AssertionError("build key printed above")
