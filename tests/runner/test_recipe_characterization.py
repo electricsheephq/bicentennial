@@ -82,7 +82,7 @@ BUILDS = {
                                'tree': '46b7c6ab3fa7cb8273a10a78fef5ca560ea12eb1a3446bb54c91b739f48b95fa',
                                'worker_env': '0083b11b24784aafb435f032414bd5c00cf0417f7d556d5adef388d9c98fa53e'}},
          'reference_t0_cards': 'fdab5d48a66be30aa90feda3990c9b4e01092c1a00434ca40896f7f3b697b192',
-         'replayed_plugin': '8aeaaf307e193ecce930afa964dd22ce20ce1573a8c620acfe96e8863fc82d29',
+         'replayed_plugin': '8bf200baf74cf9178d3a95a48ce777ca4f057fb5a1e1f817407614747b8887dd',
          't0_cards': '077b91cf656e072c98c52d11a0dbdb38bfec9f6a3f501177671450c81180c995',
          't1_cards_root_free': 'fa38fdbdc20355ef09ff455a2b636dc9bb10f733cd38813fb672b9593bd4e488'}),
     # SQLite with secure_delete on by default (Ubuntu's SQLite 3.45.1, which CI's Python links)
@@ -125,7 +125,7 @@ BUILDS = {
                                'tree': '46b7c6ab3fa7cb8273a10a78fef5ca560ea12eb1a3446bb54c91b739f48b95fa',
                                'worker_env': '0083b11b24784aafb435f032414bd5c00cf0417f7d556d5adef388d9c98fa53e'}},
          'reference_t0_cards': '47edcfe2c2c26c9603334823659e797a473446915784893dc6d9d85345ee8ddd',
-         'replayed_plugin': '3078215a01bbfe194b3de79018674ebd4cd05e8d903cc559930870e069445585',
+         'replayed_plugin': '21e11c89d0226af6dedd5ec0b47a0f827b8368a245eba624df727447c4fab430',
          't0_cards': '21bdd810ac24723e630046a77e5123abfe4fbf646ebfe2e62f58b312916af777',
          't1_cards_root_free': '1f5f94ec550a5f69a9d4660f0ef0915020a5a27dba2a0ebd19d6f6d55be2076e'}),
 }
