@@ -150,6 +150,11 @@ def test_frozen_t0_routes():
     assert ast.literal_eval(assignment.value) == t0.ROUTE_TABLE
 
 
+def test_t0_routes_cover_every_provider():
+    # The base derived these rows from PROVIDERS; a provider added without a T0 route row fails here, not mid-run.
+    assert [row["system"] for row in t0.ROUTE_TABLE["routes"]] == ["hermes-native", *sorted(hp.PROVIDERS)]
+
+
 @pytest.mark.parametrize("entry", ENTRIES, ids=lambda e: e["name"])
 def test_route_derivations(entry, monkeypatch):
     name = entry["name"]
