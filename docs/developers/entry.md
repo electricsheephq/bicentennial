@@ -25,7 +25,7 @@ Supply these system fields:
 | `write_tools` | Tool/action rows; must be `[]` for an outside entry in this PR. |
 | `read_tools` | Declared read-tool names. |
 | `recall` | Tool and `argument_template`, with only `{prompt}` substitution; omit when unused. |
-| `surfaces` | Rows with `root`, relative path, and `volatile_paths`; the state to preserve and scan. An outside entry has one HERMES_HOME row at `.`, the whole Hermes home, as every built-in has, and any SANDBOX_HOME rows. |
+| `surfaces` | Rows with `root`, relative path, and `volatile_paths`; the state to preserve and scan. An outside entry has one HERMES_HOME row at `.`, the whole Hermes home, as every Hermes built-in has, and any SANDBOX_HOME rows. |
 | `fresh_install_hash` | Measured install digest. |
 | `own_model_routes` | Rows with a role and its served alias. |
 | `structured_formats` | Required empty table for an outside entry. |
@@ -119,7 +119,7 @@ Other install and runner refusals are listed in the [Ring 0](ring0.md),
 
 | Code | Cause |
 |---|---|
-| `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
+| `entry_unreadable` | Entry file cannot be read or parsed as TOML, or its path cannot be resolved. |
 | `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
 | `entry_name_invalid` | An outside entry's name uses a character other than ASCII letters, digits, `.`, `_` and `-`, or does not start with a letter or digit; published rerun commands carry the name. |

@@ -248,6 +248,22 @@ def test_cli_entry_in_a_sandbox_slot(command, outside, tmp_path, monkeypatch, ca
     assert path.exists() and not (tmp_path / "out").exists()
 
 
+@pytest.mark.parametrize("command", ["t0", "pins"])
+@pytest.mark.parametrize("error", [PermissionError, OSError(63, "File name too long")])
+def test_cli_entry_path_that_cannot_be_resolved(command, error, outside, tmp_path, monkeypatch, capsys):
+    target = pins if command == "pins" else cli
+    monkeypatch.setattr(target, "run_" + command, lambda **kw: pytest.fail("runner started"))
+    path = write_entry(tmp_path / "entry.toml", outside)
+
+    def overlaps(p):
+        raise error
+
+    monkeypatch.setattr(fixedroot, "overlaps", overlaps)
+    monkeypatch.setattr(registry, "load_entry", lambda p: pytest.fail("entry read"))
+    assert cli.main(arguments(command, tmp_path) + ["--entry", str(path)]) == 3
+    assert capsys.readouterr().err.strip() == "entry_unreadable"
+
+
 @pytest.mark.parametrize("field", ["provider", "engine", "plugin_directory"])
 def test_engine_and_directory_rules(outside, tmp_path, field):
     if field == "engine":

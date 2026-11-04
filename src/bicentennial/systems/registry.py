@@ -276,13 +276,15 @@ def unmeasured(entry) -> list[str]:
 def hermes_shadow_reasons(entry, hermes):
     """Hermes loads a provider or engine it bundles before an installed one of the same name, so an outside entry
     named after one would run Hermes's copy, not its archive (plugins/memory and plugins/context_engine lookups)."""
+    reasons = []
     if not isinstance(entry, dict) or not isinstance(entry.get("recipe"), dict) or hermes is None:
-        return []
+        return reasons
     raw, plugins = entry["recipe"], Path(hermes) / "plugins"
     provider, engine = raw.get("provider"), raw.get("engine")
-    shadowed = (isinstance(provider, str) and (plugins / "memory" / provider / "__init__.py").is_file()
-                or isinstance(engine, str) and (plugins / "context_engine" / engine).is_dir())
-    return ["entry_shadows_hermes_plugin"] if shadowed else []
+    if (isinstance(provider, str) and (plugins / "memory" / provider / "__init__.py").exists()
+            or isinstance(engine, str) and (plugins / "context_engine" / engine).is_dir()):
+        reasons.append("entry_shadows_hermes_plugin")
+    return reasons
 
 
 def admit_system(entry, operator=_ENV_OPERATOR, hermes=None) -> None:
