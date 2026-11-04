@@ -7,6 +7,10 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 - **Pins and results:** no code pin moves, and no card, score or hashed output changes. Receipts, JUnit properties and T2-lite disclosures record `1.0` at the default; T0's receipts keep `3.0`. A T2-lite baseline must match the current run's benchmark commit, so a T2-lite run made before this change is rerun at the current commit rather than compared directly, and `--turn-wait 3` reproduces its old waits; T1's baseline gate checks the pack and seed, not the wait.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
+## Ring 0 erratum, 2026-11-04: the developer report's per-life table and T2 operating metrics (#392, §14.10)
+- **RING0 §14.10:** the verdict-free report adds each life's paired difference, each version's lift over its own no-memory floor, and counts of lives opposing the pooled and per-cell signs. T2 operating deltas use the system arm's receipt, with wall time from its §14.8 arm time, independent of floor-cache state. The file-based command refuses incomparable or unfinished runs and derives its reproducible seed from the input card bytes. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Kit, 2026-11-04: the T2 command (#391)
 - **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots. See the replay-order erratum below for the replay rule. Each unit reports `pre_probe_ms` and `keep_ms`, including the keep-lock wait.
 - **Floor and publication:** per-life/branch no-memory entries exclude system and slot count from their keys and require a matching live served identity. Credential scanning precedes cache publication. The T2 guide documents outputs, refusals and the unmeasured live budget; T1 and T2-lite retain their bytes. No code pin moves.

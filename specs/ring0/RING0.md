@@ -455,6 +455,8 @@ The declaration; every run after it, with its cards; v1's A and A′ cards and b
 - **Labels:** verdict-free: "a developer signal; not predictive of the full tier; confirm on Ring 1 before claiming".
 - Purpose: show the developer the noise between identical runs and the smallest change the pack can detect, so a flip list is never read as an effect.
 
+- **Erratum, 2026-11-04 (#392): the per-life table and T2's operating metrics.** The report also prints each contributing life's paired difference, its lift over that run's no-memory floor for each version, and the count of non-zero life contributions against the pooled sign (and the corresponding count per cell), verdict-free. For T2, operating metrics come from the system arm's receipt, with wall time from its §14.8 arm time, whether the floor was fresh or cached.
+
 ## 15. T2 composition
 
 **Lives:** 10 public base lives, 5 G1 and 5 G2, each with 10 sessions of about 5 assistant turns. Each B0 has its twin B1, replayed in full from session 1 as at T1 (§6).
