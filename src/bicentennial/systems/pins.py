@@ -102,8 +102,8 @@ def _engine_host(entry, root, sandbox, routes, hermes, plugin_source, worker_arg
         owned.callback(shutdown, server)
         adapter = SimpleNamespace(paths=paths, director=director, end_threads=())
         cell = PluginCell(entry, adapter)
-        digest = cell.install(plugin_source, alias=routes.to_obj()["routes"][0]["alias"])
-        return SimpleNamespace(fresh_install_hash=digest, close=owned.pop_all().close)
+        cell.install(plugin_source, alias=routes.to_obj()["routes"][0]["alias"])
+        return SimpleNamespace(fresh_install_hash=cell.fresh_install_hash, close=owned.pop_all().close)
 
 
 def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
