@@ -215,7 +215,7 @@ class HermesAdapter:
                  before_spawn=None, write_prompt=None, harness_pin=None, plugin_config: dict | None = None,
                  memory: bool = True, before_shutdown=None, toolsets=None, env_server=None, window=None,
                  context_engine=None, plugins_enabled=(), extra_env=None, scripted: bool = True,
-                 admission_deadline: float | None = None, turn_wait_s=3.0):
+                 admission_deadline: float | None = None, turn_wait_s=1.0):
         self.turn_wait_s = turn_wait_seconds(turn_wait_s)
         self.before_shutdown = before_shutdown
         reasons = ([] if entry.get("harness") == "hermes" else ["harness_not_hermes"]) + check(entry)

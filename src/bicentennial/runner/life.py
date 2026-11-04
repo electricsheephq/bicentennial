@@ -308,7 +308,7 @@ def _routes(name):
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
-             live=None, live_model=None, turn_wait_s=3.0, probe_mode="ring0", keep_pre_probe=False,
+             live=None, live_model=None, turn_wait_s=1.0, probe_mode="ring0", keep_pre_probe=False,
              pre_probe_attribution=False) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):

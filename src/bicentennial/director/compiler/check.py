@@ -99,7 +99,7 @@ def _compare(adapter, calls):
 
 
 def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s=60, worker_argv=None,
-                  answer_contract=None, probe_mode="ring0"):
+                  answer_contract=None, probe_mode="ring0", turn_wait_s=1.0):
     """Hold scratch exclusively for the call: its job roots have fixed names (#282)."""
     import fcntl
     import os
@@ -119,7 +119,7 @@ def check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratc
         with holding(fd):  # workers inherit the lock, so a killed caller's live workers keep scratch busy
             return _check_compile(life_dir, entry=entry, route_table=route_table, harness_pin=harness_pin,
                                   checkout=checkout, scratch=scratch, step_s=step_s, worker_argv=worker_argv,
-                                  answer_contract=answer_contract, probe_mode=probe_mode)
+                                  answer_contract=answer_contract, probe_mode=probe_mode, turn_wait_s=turn_wait_s)
     finally:
         os.close(fd)
 
@@ -144,7 +144,7 @@ def _check_contract(compiled, items, answer_contract):
 
 
 def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scratch, step_s, worker_argv,
-                   answer_contract=None, probe_mode="ring0"):
+                   answer_contract=None, probe_mode="ring0", turn_wait_s=1.0):
     """Execute each check session in a fresh home and compare its durable tool-result receipts."""
     import sqlite3
     from pathlib import Path
@@ -236,7 +236,7 @@ def _check_compile(life_dir, *, entry, route_table, harness_pin, checkout, scrat
                     adapter = HermesAdapter(entry, script=script, route_table=table, schedule=FaultLite.load([], script),
                         responder=ScriptedResponder(entry), clock=clock, root=root, scratch=scratch, life=meta["life"],
                         branch=branch, run="check-compile", checkout=checkout, harness_pin=harness_pin,
-                        worker_argv=worker_argv, toolsets=HERMES_TOOLSETS, env_server=env)
+                        worker_argv=worker_argv, toolsets=HERMES_TOOLSETS, env_server=env, turn_wait_s=turn_wait_s)
                     adapter.run_session(session["index"], sim_t_s=instant, lock_hash=sha256_canon(meta),
                                         attempt_id=f"check-{branch}-{session['index']}")
                     mismatches = _compare(adapter, calls)
