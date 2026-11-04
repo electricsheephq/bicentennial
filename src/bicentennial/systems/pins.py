@@ -28,6 +28,7 @@ from bicentennial.systems.registry import (
     ZERO_HASH,
     SystemRefused,
     check,
+    hermes_shadow_reasons,
     load,
     outside_reasons,
 )
@@ -52,7 +53,7 @@ def archive_hash(source, recipe):
 
 
 def _validate(entry, hermes, plugin_source, worker_argv):
-    reasons = outside_reasons(entry)
+    reasons = outside_reasons(entry) + hermes_shadow_reasons(entry, hermes)
     if reasons:
         raise SystemRefused(reasons)
     reasons = check(entry)

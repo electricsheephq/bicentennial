@@ -247,7 +247,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if entry["name"] != system:
         raise T1Refused("unknown_system")
     entry = json.loads(canon(entry))
-    admit_system(entry)
+    admit_system(entry, hermes=hermes)
     if entry["harness"] != "hermes":
         raise T1Refused("harness_not_hermes")
     engine_only = recipe(entry).engine is not None and recipe(entry).provider is None

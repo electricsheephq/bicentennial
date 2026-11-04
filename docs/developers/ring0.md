@@ -254,6 +254,8 @@ Exit-3 codes and causes, including registry reasons above:
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
 | `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
 | `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
+| `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
+| `entry_shadows_hermes_plugin` | An outside provider or engine has the name of one that the pinned Hermes bundles, which Hermes would load instead of the entry's archive. |
 | `recipe_in_builtin` | A built-in registry file contains an outside recipe table. |
 | `source_checkout_required` | Missing source files or a different git top level. |
 | `hashseed` | Seed is not 0. |
@@ -295,7 +297,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
 | `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
-| `sandbox_overlap` | `--out`, `--packs`, `--cache`, `--model-cache`, `--hermes`, `--plugin-source` or T1's `--baseline` resolves to a slot's base or below it, where a lease would delete it; refused before anything is created; exit 3. |
+| `sandbox_overlap` | `--out`, `--packs`, `--cache`, `--model-cache`, `--hermes`, `--plugin-source`, `--entry` or T1's `--baseline` resolves to a slot's base or below it, where a lease would delete it; refused before anything is created; exit 3. |
 | `check_compile` | Script compilation check failed. The runner writes a per-branch summary to stderr. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `lock_mismatch` | Current run lock differs from expected lock. |

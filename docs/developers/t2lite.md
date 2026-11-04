@@ -124,6 +124,8 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
 | `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
 | `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
+| `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
+| `entry_shadows_hermes_plugin` | An outside provider or engine has the name of one that the pinned Hermes bundles, which Hermes would load instead of the entry's archive. |
 | `recipe_in_builtin` | A built-in registry file contains an outside recipe table. |
 | `<field>` | Baseline comparability field differs. |
 | `SpendRefused` | Receipt has positive spend. |

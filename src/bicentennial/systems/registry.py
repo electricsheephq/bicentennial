@@ -153,6 +153,13 @@ def outside_reasons(entry, operator=_ENV_OPERATOR):
     for field in ("provider", "engine", "plugin_directory"):
         if field in raw and (not _PLUGIN.fullmatch(raw[field]) or field == "engine" and raw[field] == "compressor"):
             reasons.append(_recipe_error(field))
+    # The life runners hash, clone and wipe the whole Hermes home and know only these two roots (runner/life.py),
+    # so an outside entry declares the home as every built-in does, and its other surfaces under SANDBOX_HOME.
+    declared = entry.get("surfaces")
+    surfaces = [s for s in declared if isinstance(s, dict)] if isinstance(declared, list) else []
+    if ([s.get("relative") for s in surfaces if s.get("root") == "HERMES_HOME"] != ["."]
+            or any(s.get("root") not in ("HERMES_HOME", "SANDBOX_HOME") for s in surfaces)):
+        reasons.append("entry_surfaces_unsupported")
     tree = raw["archive_tree"]
     if tree["ref"] != "HEAD" and not re.fullmatch(r"[0-9a-f]{40}", tree["ref"]):
         reasons.append(_recipe_error("archive_tree.ref"))
@@ -266,11 +273,23 @@ def unmeasured(entry) -> list[str]:
     ) if value == ZERO_HASH]
 
 
-def admit_system(entry, operator=_ENV_OPERATOR) -> None:
+def hermes_shadow_reasons(entry, hermes):
+    """Hermes loads a provider or engine it bundles before an installed one of the same name, so an outside entry
+    named after one would run Hermes's copy, not its archive (plugins/memory and plugins/context_engine lookups)."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("recipe"), dict) or hermes is None:
+        return []
+    raw, plugins = entry["recipe"], Path(hermes) / "plugins"
+    provider, engine = raw.get("provider"), raw.get("engine")
+    shadowed = (isinstance(provider, str) and (plugins / "memory" / provider / "__init__.py").is_file()
+                or isinstance(engine, str) and (plugins / "context_engine" / engine).is_dir())
+    return ["entry_shadows_hermes_plugin"] if shadowed else []
+
+
+def admit_system(entry, operator=_ENV_OPERATOR, hermes=None) -> None:
     """Refuse before running; an omitted operator is read from the current environment."""
     if operator is _ENV_OPERATOR:
         operator = os.environ.get("BICENTENNIAL_OPERATOR")
-    reasons = outside_reasons(entry, operator) if isinstance(entry, dict) else []
+    reasons = outside_reasons(entry, operator) + hermes_shadow_reasons(entry, hermes) if isinstance(entry, dict) else []
     if reasons:
         raise SystemRefused(reasons)
     reasons = check(entry)

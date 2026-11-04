@@ -174,6 +174,80 @@ def test_runner_outside_refusals(outside, tmp_path, path, value, code):
     assert caught.value.reasons == (code if isinstance(code, tuple) else (code,))
 
 
+HOME = dict(root="HERMES_HOME", relative=".", volatile_paths=[])
+
+
+@pytest.mark.parametrize("surfaces", [
+    [dict(root="SANDBOX_HOME", relative=".outside", volatile_paths=[])],
+    [],
+    [dict(HOME, relative="store")],
+    [HOME, dict(HOME, relative="plugins/outside-provider/state")],
+    [HOME, dict(root="SERVER_DATA", relative="db", volatile_paths=[])],
+], ids=["sandbox-only", "none", "narrower", "in-plugin-directory", "server-data"])
+def test_outside_surfaces_cover_the_whole_hermes_home(outside, tmp_path, surfaces):
+    # The life runners hash, clone and wipe the whole home and run only these two roots, as every built-in declares.
+    outside["surfaces"] = surfaces
+    with pytest.raises(registry.SystemRefused) as caught:
+        prepare(outside, tmp_path)
+    assert caught.value.reasons == ("entry_surfaces_unsupported",)
+    with pytest.raises(registry.SystemRefused) as caught:
+        pins._validate(outside, tmp_path, tmp_path, None)
+    assert caught.value.reasons == ("entry_surfaces_unsupported",)
+
+
+def test_outside_sandbox_surfaces_beside_the_home(outside):
+    outside["surfaces"].append(dict(root="SANDBOX_HOME", relative=".outside", volatile_paths=[]))
+    assert registry.outside_reasons(outside, None) == []
+    del outside["surfaces"]
+    assert registry.outside_reasons(outside, None) == ["entry_surfaces_unsupported"]
+
+
+@pytest.mark.parametrize("field,path,shadowed", [
+    ("provider", "memory/outside-provider/__init__.py", True),
+    ("provider", "memory/outside-provider/notes.txt", False),
+    ("provider", "context_engine/outside-provider/engine.py", False),
+    ("engine", "context_engine/outside-engine/engine.py", True),
+    ("engine", "memory/outside-engine/__init__.py", False),
+])
+def test_hermes_bundled_names(outside, tmp_path, field, path, shadowed):
+    # Hermes looks in its own plugins first: a provider directory with __init__.py, or any engine directory.
+    (tmp_path / "plugins" / path).parent.mkdir(parents=True)
+    (tmp_path / "plugins" / path).write_text("")
+    if field == "engine":
+        outside["recipe"]["engine"] = outside["recipe"].pop("provider").replace("provider", "engine")
+    assert registry.hermes_shadow_reasons(outside, tmp_path) == (["entry_shadows_hermes_plugin"] if shadowed else [])
+    assert registry.hermes_shadow_reasons(outside, None) == []
+    assert registry.hermes_shadow_reasons(registry.load(registry.REGISTRY / "hermes-native.toml"), tmp_path) == []
+
+
+def test_hermes_bundled_provider_refused_before_install(outside, tmp_path, monkeypatch):
+    (tmp_path / "plugins/memory/outside-provider").mkdir(parents=True)
+    (tmp_path / "plugins/memory/outside-provider/__init__.py").write_text("")
+    with pytest.raises(registry.SystemRefused) as caught:
+        prepare(outside, tmp_path)
+    assert caught.value.reasons == ("entry_shadows_hermes_plugin",)
+    with pytest.raises(registry.SystemRefused) as caught:
+        pins._validate(outside, tmp_path, tmp_path, None)
+    assert caught.value.reasons == ("entry_shadows_hermes_plugin",)
+    with pytest.raises(registry.SystemRefused) as caught:
+        t0._preflight(system=outside["name"], packs=[], selected=[], pack_hash="1" * 64, hermes=tmp_path,
+                      plugin_source=tmp_path, entry=outside)
+    assert caught.value.reasons == ("entry_shadows_hermes_plugin",)
+
+
+@pytest.mark.parametrize("command", ["t0", "t1", "t2lite", "t2", "pins"])
+def test_cli_entry_in_a_sandbox_slot(command, outside, tmp_path, monkeypatch, capsys):
+    # A lease sweeps its slot, so the entry file is refused before it is read, as the runners refuse their inputs.
+    target = pins if command == "pins" else cli
+    monkeypatch.setattr(target, "run_" + command, lambda **kw: pytest.fail("runner started"))
+    path = write_entry(tmp_path / "entry.toml", outside)
+    monkeypatch.setattr(fixedroot, "overlaps", lambda p: Path(p) == path)
+    monkeypatch.setattr(registry, "load_entry", lambda p: pytest.fail("entry read"))
+    assert cli.main(arguments(command, tmp_path) + ["--entry", str(path)]) == 3
+    assert capsys.readouterr().err.strip() == "sandbox_overlap"
+    assert path.exists() and not (tmp_path / "out").exists()
+
+
 @pytest.mark.parametrize("field", ["provider", "engine", "plugin_directory"])
 def test_engine_and_directory_rules(outside, tmp_path, field):
     if field == "engine":
@@ -496,7 +570,8 @@ def test_entry_guide_codes():
         "entry_scripted_writes_unsupported", "t0_mapping_missing", "benchmark_operator_forbidden",
         "licence_not_osi", "artifact_unpinned", "route_unroutable", "compaction_alias_mismatch",
         "state_path_undeclared", "recall_placeholder", "schema_invalid",
-        "unmeasured:artifact.sha256", "unmeasured:fresh_install_hash"}
+        "unmeasured:artifact.sha256", "unmeasured:fresh_install_hash", "entry_surfaces_unsupported",
+        "entry_shadows_hermes_plugin", "sandbox_overlap"}
 
 
 @pytest.mark.parametrize("subdirectory", [False, True])

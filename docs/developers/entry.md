@@ -25,7 +25,7 @@ Supply these system fields:
 | `write_tools` | Tool/action rows; must be `[]` for an outside entry in this PR. |
 | `read_tools` | Declared read-tool names. |
 | `recall` | Tool and `argument_template`, with only `{prompt}` substitution; omit when unused. |
-| `surfaces` | Rows with `root`, relative path, and `volatile_paths`; the state to preserve and scan. |
+| `surfaces` | Rows with `root`, relative path, and `volatile_paths`; the state to preserve and scan. An outside entry has one HERMES_HOME row at `.`, the whole Hermes home, as every built-in has, and any SANDBOX_HOME rows. |
 | `fresh_install_hash` | Measured install digest. |
 | `own_model_routes` | Rows with a role and its served alias. |
 | `structured_formats` | Required empty table for an outside entry. |
@@ -43,8 +43,8 @@ for the shared tool, surface, model-route and install contracts.
 
 | Field | Value |
 |---|---|
-| `provider` | Memory-provider plug-in ID. Supply exactly one of `provider` and `engine`. |
-| `engine` | Context-engine ID. `compressor` is forbidden. Engine-only entries have no T0 surface. |
+| `provider` | Memory-provider plug-in ID. Supply exactly one of `provider` and `engine`. It must not name a provider that the pinned Hermes bundles, which Hermes loads first. |
+| `engine` | Context-engine ID. `compressor` is forbidden, as is an engine that the pinned Hermes bundles. Engine-only entries have no T0 surface. |
 | `plugin_directory` | Optional install directory ID; defaults to provider, otherwise engine. |
 | `archive_tree` | Closed table with `ref` and optional `subdirectory`. |
 | `archive_tree.ref` | `HEAD` or a full 40-character lowercase hexadecimal commit. |
@@ -128,7 +128,10 @@ Other install and runner refusals are listed in the [Ring 0](ring0.md),
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
 | `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
 | `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
+| `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
+| `entry_shadows_hermes_plugin` | An outside provider or engine has the name of one that the pinned Hermes bundles, which Hermes would load instead of the entry's archive. |
 | `recipe_in_builtin` | A built-in registry file contains an outside recipe table. |
+| `sandbox_overlap` | The entry file resolves to a sandbox slot's base or below it, where a run's lease would delete it; refused before the file is read; exit 3. |
 | `licence_not_osi` | Licence is outside the provisional OSI allow-list. |
 | `artifact_unpinned` | Artifact version is not a release tag or its digest is not 64 lowercase hex characters. |
 | `route_unroutable` | An own-model alias is outside the served alias vocabulary. |

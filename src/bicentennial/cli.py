@@ -176,8 +176,13 @@ def main(argv=None) -> int:
     # Only commands that select a system have --entry; build has neither.
     path = args.pop("entry", None)
     if path is not None:
+        from bicentennial.sandbox import fixedroot
         from bicentennial.systems.registry import SystemRefused, load_entry
 
+        # A lease sweeps its slot, so a file in one would be deleted, as the runners' other inputs would.
+        if fixedroot.overlaps(path):
+            print("sandbox_overlap", file=sys.stderr)
+            return 3
         try:
             entry = load_entry(path)
         except SystemRefused as error:

@@ -648,7 +648,7 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
                 raise T0Refused("recipe_in_builtin")
         if entry["name"] != system:
             raise T0Refused("unknown_system")
-        admit_system(entry)
+        admit_system(entry, hermes=hermes)
         if entry["harness"] != "hermes":
             raise T0Refused("harness_not_hermes")
         if recipe(entry).engine is not None and recipe(entry).provider is None:  # no T0 host, so no mapping to check
