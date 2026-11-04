@@ -182,7 +182,7 @@ class CorpusFactory:
                 scratch=self.unit / "hosts", life=self.case.case_id, branch="corpus", run=ctx.run_id,
                 lock_hash=lock_hash(ctx.lock), checkout=ctx.hermes, harness_pin=ctx.harness_pin,
                 plugin_source=None if engine_only else ctx.plugin_source, sim_epoch_s=0,
-                extra_env=resolve_worker_env(ctx.entry["name"], getattr(ctx, "model_cache", None)))
+                extra_env=resolve_worker_env(ctx.entry, getattr(ctx, "model_cache", None)))
             kw.update(self.overrides or {})
             host = HermesMemoryHost(entry, **kw)
             owned = (_Host if self.arm == "system" else _WipedHost)(host, self.held)
@@ -343,7 +343,7 @@ def _invariants(run, arm):
 def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wiped_blocked=(), delivery=(),
            sandbox_slot=0):
     a, name = run.arms[arm], run.ctx.entry["name"]
-    extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(name) else ()),
+    extra = [*run.ctx.worker_properties, *DISCLOSURES, *(PLUGIN_DISCLOSURES if is_plugin(run.ctx.entry) else ()),
         *stub_disclosures(run.ctx.entry, "t1"), *delivery,
         ("t1.sandbox_slot", str(sandbox_slot)),
         ("t1.turn_wait_s", str(run.ctx.turn_wait_s)),

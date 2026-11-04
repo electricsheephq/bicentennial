@@ -82,7 +82,8 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 
 | T0 flag | Meaning |
 |---|---|
-| `--system` | Required reference or registry name. |
+| `--system` | Reference or registry name; give exactly one of `--system` and `--entry`. |
+| `--entry` | Outside registry entry file; see the [entry guide](entry.md). |
 | `--pack` | Required, repeatable pack id or relative path; `all` selects the index. |
 | `--packs` | Required installed tier root. |
 | `--pack-hash` | Required hash printed by install. |
@@ -91,7 +92,7 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 | `--workers N` | Integer ≥ 1, default 1; results do not depend on it. |
 | `--hermes` | Pinned Hermes checkout for registry systems. |
 | `--plugin-source` | Pinned source for a plug-in system. |
-| `--model-cache` | Staged model directory. Give it exactly when the system's worker environment uses one (only `omega`); a missing or unneeded one refuses the run with `missing_input`. |
+| `--model-cache` | Staged model directory. Give it exactly when the system's worker environment uses one (only `omega` among built-ins, or an outside recipe whose worker environment uses `{model_cache}`); a missing or unneeded one refuses the run with `missing_input`. |
 | `--cache` | Optional control cache; default `<out>/cache`. |
 
 The Hermes-replay fallback ships in v0.4 (the [ROADMAP](../../ROADMAP.md)'s v0.4 row; [RING0 §13 E5](../../specs/ring0/RING0.md#13-v01-errata) predates the 2026-11-01 re-plan). Reference names are `reference_store`, `bm25`, and seven mutants: `wipe_on_restart`, `truncate_after_compaction`, `orphan_tool_result`, `forget_ignored`, `stale_wins`, `forget_cached_output`, `reset_cached_output`. Each mutant is a reference store with one deliberate defect. A registry name selects a declared system. T0's budget is ≤ 60 s per pack, $0, no upstream credential ([RING0 §7](../../specs/ring0/RING0.md#7-t0-surfaces)).
@@ -140,7 +141,7 @@ Admission reasons are:
 | `telemetry_switch_missing:<package>:<switch>=<value>` | Dependency lock pins a known default-telemetry package without its exact worker switch, which the reason names: `onnxruntime` requires `ORT_DISABLE_TELEMETRY=1` ([#266](https://github.com/electricsheephq/bicentennial/issues/266#issuecomment-6496219375)). |
 | `telemetry_lock_unreadable` | Dependency lock cannot be read to check known telemetry switches, including `onnxruntime`'s `ORT_DISABLE_TELEMETRY=1` ([#266](https://github.com/electricsheephq/bicentennial/issues/266#issuecomment-6496219375)). |
 | `schema_invalid` | Schema validation fails without a more specific policy reason. |
-| `benchmark_operator_forbidden` | Benchmark operator requests an entry forbidding its runs. |
+| `benchmark_operator_forbidden` | Benchmark operator requests an excluded identity ([entry guide](entry.md#operator-firewall)) or an entry forbidding its runs. |
 | `unmeasured:artifact.sha256` | Artifact hash is the all-zero placeholder. |
 | `unmeasured:fresh_install_hash` | Fresh-install hash is the all-zero placeholder; measure it with `bicentennial pins` below. |
 
@@ -222,7 +223,7 @@ bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$P
 |---|---|
 | `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 1.0; invalid values refuse with exit 3 before execution. Session end, turns followed by kill or restart, and compaction turns (a scheduled compaction, or a compaction request recorded during the turn or its quiet time) keep 3.0 s, counted from the first sample of the current stretch with nothing in flight. Outside the lock, lock hash, attempt id and card. The default is the published setting: 1.0 since the one-commit A/B passed (#388), 3.0 before; results at another value are your own. |
 
-T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
+T1 requires one of `--system` and `--entry` ([entry guide](entry.md)), and `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` among built-ins needs it, or an outside recipe whose worker environment uses `{model_cache}`); cache defaults to `<out>/cache`.
 
 The gated arms are system and wiped-store positive control. The wiped gate must FAIL: if it passes, the system card is INVALID, exit 1. Wiped `uninformative` is not a pass. The cached no-memory floor appears as `controls.no_memory_floor` and the `no_memory` JUnit suite ([RING0 §§5–6](../../specs/ring0/RING0.md#5-verified-empty-and-the-wiped-store-control)).
 
@@ -246,6 +247,18 @@ Exit-3 codes and causes, including registry reasons above:
 
 | Code | Cause |
 |---|---|
+| `entry_unreadable` | Entry file cannot be read or parsed as TOML, or its path cannot be resolved. |
+| `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
+| `entry_recipe_missing` | An outside entry file has no recipe table. |
+| `entry_name_invalid` | An outside entry's name uses a character other than ASCII letters, digits, `.`, `_` and `-`, or does not start with a letter or digit; published rerun commands carry the name. |
+| `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
+| `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
+| `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
+| `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
+| `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
+| `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
+| `entry_shadows_hermes_plugin` | An outside provider or engine has the name of one that the pinned Hermes bundles, which Hermes would load instead of the entry's archive. |
+| `recipe_in_builtin` | A built-in registry file contains an outside recipe table. |
 | `source_checkout_required` | Missing source files or a different git top level. |
 | `hashseed` | Seed is not 0. |
 | `usage` | Invalid or missing CLI argument; stderr includes usage. |
@@ -286,7 +299,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `sandbox_slot` | Slot is an integer outside 0 to 9; exit 3. A value that is not an integer is a usage error (`usage`, exit 3). |
 | `sandbox_busy` | The selected slot is locked; detail names the holder pid; exit 3. |
 | `sandbox_root_untrusted` | The parent traverses a symlink, or the base is symlinked, foreign-owned or not mode 0700; exit 3. |
-| `sandbox_overlap` | `--out`, `--packs`, `--cache`, `--model-cache`, `--hermes`, `--plugin-source` or T1's `--baseline` resolves to a slot's base or below it, where a lease would delete it; refused before anything is created; exit 3. |
+| `sandbox_overlap` | `--out`, `--packs`, `--cache`, `--model-cache`, `--hermes`, `--plugin-source`, `--entry` or T1's `--baseline` resolves to a slot's base or below it, where a lease would delete it; refused before anything is created; exit 3. |
 | `check_compile` | Script compilation check failed. The runner writes a per-branch summary to stderr. |
 | `pinned_artifact_changed` | Pinned pack, code or artifact changed. |
 | `lock_mismatch` | Current run lock differs from expected lock. |

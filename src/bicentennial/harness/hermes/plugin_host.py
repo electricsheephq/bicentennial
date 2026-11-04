@@ -207,7 +207,7 @@ class HermesMemoryHost(Adapter):
         resolved = recipe(self.entry)
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self.director.route["alias"],
                                                            plugin=resolved.provider,
-            plugins_enabled=(plugin_dir(self.name),) if resolved.enabled else ()))
+            plugins_enabled=(plugin_dir(self.entry),) if resolved.enabled else ()))
 
     def _start(self):
         if self._worker is not None:

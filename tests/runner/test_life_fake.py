@@ -27,6 +27,7 @@ from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items.reader_keys import life_keys
 from bicentennial.items.templates import g1, g2
 from bicentennial.ledger import BlobStore, Guard, apply_masks
+from bicentennial.packs.build import _templates, g1_cases
 from bicentennial.probe.probe_responder import _earlier_body
 from bicentennial.probe.scripted_reader import failing_stage
 from bicentennial.runner import life as runner
@@ -35,6 +36,7 @@ from bicentennial.runner.lock import LockMismatch, SessionGate, build_lock
 from bicentennial.sandbox.envserver.state import trace
 from bicentennial.sandbox.envserver.tools_g2 import ACTION_TOOLS
 from bicentennial.sandbox.surfaces import surface_hash
+from bicentennial.score.check_selftest import g2_cases
 from bicentennial.score.exposure import context_text
 from bicentennial.score.invariants import run_invariants
 from bicentennial.systems.hermes_plugin import MARKER, PluginCell
@@ -60,6 +62,10 @@ def lives(tmp_path_factory):
             worlds = {b: (stack.enter_context(closing(open_world(t.out_dir / f"world.{b}.db"))), cut)
                       for b, cut in zip(("B0", "B1"), t.twin.cuts, strict=True)}
             keys = {r["item_id"]: r for r in life_keys(t.twin.compiled, t.schedule, worlds)}
+            # The sealed cases, computed as the tier build computes them (packs/build.py _prepare).
+            packed = [r for r in t.twin.compiled.records if r["bundle_id"] is not None or r["branch"] == "B0"]
+            cases = {c.item["item_id"]: c for c in (g1_cases if t.genre == "G1" else g2_cases)(
+                t.twin.compiled, worlds, t.schedule, _templates(t, packed), life=t.life)}
             for branch in ("B0", "B1"):
                 items = json.loads((t.out_dir / f"items.{branch}.json").read_bytes())
                 ids = {i["item_id"] for i in items}
@@ -69,7 +75,7 @@ def lives(tmp_path_factory):
                 timeline.write_text(json.dumps({turn["user"]: [s["index"], turn["n"], s["kind"]]
                     for s in compiled.script["sessions"] for turn in s["turns"]}))
                 result[t.life, branch] = dict(t=t, branch=branch, items=items, records=records,
-                    keys={iid: keys[iid] for iid in sorted(ids)}, compiled=compiled, timeline=timeline)
+                    keys={iid: keys[iid] for iid in sorted(ids)}, compiled=compiled, timeline=timeline, cases=cases)
     yield result
     for t in generated:
         t.twin.b1.close()
@@ -111,7 +117,7 @@ def harness(monkeypatch):
 def drive(case, tmp_path, *, arm="system", extra=(), **kwargs):
     pins = build_lock(**json.loads((ROOT / "tests/fixtures/run/contracts.json").read_bytes())["contracts"]["lock"])
     arguments = dict(arm=arm, entry=ENTRY, life_dir=case["t"].out_dir, branch=case["branch"],
-        items=case["items"], records=case["records"], keys=case["keys"], scratch=tmp_path,
+        items=case["items"], records=case["records"], keys=case["keys"], cases=case.get("cases"), scratch=tmp_path,
         run="x02-fake", attempt=0, gate=SessionGate(pins), current_lock=lambda: pins, voids=Voids(),
         harness_pin=dict(ENTRY["artifact"]),
         worker_argv=[sys.executable, str(FAKE), "--timeline", str(case["timeline"]), *extra])

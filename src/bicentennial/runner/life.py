@@ -309,12 +309,15 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
              live=None, live_model=None, turn_wait_s=1.0, probe_mode="ring0", keep_pre_probe=False,
-             pre_probe_attribution=False) -> LifeRun:
+             pre_probe_attribution=False, cases=None) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
     if pre_probe_attribution and not keep_pre_probe:
         raise ValueError("pre_probe_attribution requires keep_pre_probe")
+    if live is not None and cases is None:
+        # The live leg scores act items as the scorer does, from the pack's sealed cases.
+        raise ValueError("live probes need the pack's cases")
     if keep_pre_probe and arm == "wiped":
         # The wiped arm's wake hook wipes the probe's store after the copy is taken, so the copy
         # would hold text the probe never had.
@@ -364,7 +367,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         seeds = ({p.index: envseed(db, p.index).seed for p in schedule.sessions} | {
             p.index: probe_envseed(db, p.index, p.checkpoint).seed for p in compiled.probes}) if genre == "G2" else {}
         wiring = EnvWiring(root / "envwire", seeds, clock.path) if genre == "G2" else None
-        plugin = arm != "no_memory" and is_plugin(entry["name"])
+        plugin = arm != "no_memory" and is_plugin(entry)
         hook = (PluginWake() if plugin else WipeOnWake(entry, {"HERMES_HOME": root / "run" / "hermes-home"},
                 root / "control")) if arm == "wiped" else None
         hooks = (hook,) if hook is not None else ()
@@ -377,7 +380,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
                 plugin=recipe(entry).provider, context_engine=recipe(entry).engine,
-                plugins_enabled=(plugin_dir(entry["name"]),) if recipe(entry).enabled else (),
+                plugins_enabled=(plugin_dir(entry),) if recipe(entry).enabled else (),
                 extra_env=extra_env, before_spawn=hook, **common))
             paths = adapter.paths
             roots = {"HERMES_HOME": paths["hermes_home"], "SANDBOX_HOME": paths["home"]}
@@ -578,11 +581,11 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     halted.egress = egress
         if adapter is None:
             if leg is not None:
-                leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, schedule, records)
+                leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, cases)
             return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
         if leg is not None:
-            leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, schedule, records)
+            leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, cases)
             transforms.extend(sorted(leg.transforms))
         ids, requests = _pair_inputs(root / "run" / "ledger", rows, kill, genre)
         timings = {"pin_check_ms": adapter.pin_check_ms, "sessions": [{

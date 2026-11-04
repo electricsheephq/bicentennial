@@ -21,11 +21,14 @@ from bicentennial.director.responder import Call, Reply
 from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.director.upstream.bridge import to_responses
 from bicentennial.director.upstream.router import ProbeLiveRouter
+from bicentennial.genres.g2_assistant.envseed import probe_envseed
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.adapter import HarnessFailed
 from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
 from bicentennial.ledger import BlobStore, Guard, apply_masks
+from bicentennial.packs import build
 from bicentennial.packs.build import _templates, g1_cases
+from bicentennial.packs.scoring import case_from_obj
 from bicentennial.probe.probe_responder import ProbeResponder
 from bicentennial.probe.scripted_reader import UNKNOWN
 from bicentennial.render.stream import content
@@ -39,10 +42,15 @@ from bicentennial.runner.probe_live import (
     ProbeLiveLeg,
     strip_contract,
 )
+from bicentennial.runner.units import T2_SPEC
 from bicentennial.sandbox.surfaces import surface_hash
 from bicentennial.score.check_selftest import g2_cases
 from bicentennial.systems.hermes_plugin import PluginCell
+from bicentennial.systems.registry import REGISTRY, load
 from bicentennial.world.db import open_world
+from bicentennial.world.scale import named
+from bicentennial.world.schedule import build_schedule
+from bicentennial.world.targeted import load_tier
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = runpy.run_path(str(Path(__file__).with_name("test_life_fake.py")))
@@ -729,3 +737,58 @@ def test_live_failure_before_a_batch_ends_keeps_later_sessions_aligned(lives, tm
     assert all(iid not in result.classes for p in case["compiled"].probes[1:] for iid in p.item_ids)
     assert {r["cursor"]["session"] for r in result.records if r.get("role") == "probe_main" and r.get(
         "status") == 200} == {p.index for p in case["compiled"].probes[1:]}
+
+
+@pytest.fixture(scope="module")
+def t2_packs(tmp_path_factory):
+    """One G1 and one G2 life of the public T2 tier, packed as the tier build packs them."""
+    spec = load_tier(ROOT / "tiers/life_specs/t2.toml")
+    spec["lives"] = [spec["lives"][0], spec["lives"][5]]
+    out = tmp_path_factory.mktemp("t2-packs")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(build, "load_tier", lambda path: spec)
+        built = build.build_tier("T2", out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
+    return [out / "T2" / rel for rel in built["index"]["packs"]]
+
+
+def test_live_act_stage_scores_t2_items_with_the_packs_case(t2_packs, monkeypatch):
+    # T2 repoints wake-loop and keep-incidental (world/targeted.py repoint_templates). The 11-04 live T2 run stopped
+    # when the act stage rebuilt keep-incidental from the catalogue, which misses the packed instance. Each act item
+    # is now scored with its sealed case, as the scorer does, with only the env seed of its probe session.
+    seen = {}
+    def score(item, *, case, **kwargs):
+        seen[item["item_id"]] = case
+        return {"stage_attribution": "used"}
+    monkeypatch.setattr(probe_live, "score_item", score)
+    templates = set()
+    for pack in t2_packs:
+        life_dir = pack / "sealed/life"
+        cases = {c["item"]["item_id"]: case_from_obj(c)
+                 for c in json.loads((pack / "sealed/scoring.json").read_bytes())["cases"]}
+        life = json.loads((life_dir / "life.json").read_bytes())
+        schedule = build_schedule(life["seed"], life["life"], named(life["scale"]))
+        for branch in ("B0", "B1"):
+            items = json.loads((life_dir / f"items.{branch}.json").read_bytes())
+            by_id = {i["item_id"]: i for i in items}
+            leg = ProbeLiveLeg(FakeLive(), None, SimpleNamespace(readers={iid: (None, None) for iid in by_id}),
+                               answer_contract)
+            evidence = SimpleNamespace(act={iid: {} for iid in by_id}, classes={}, stored_roots={},
+                                       retained_roots={}, attempt=0)
+            with closing(open_world(life_dir / f"world.{branch}.db", readonly=True)) as db:
+                compiled = compile_script(life_dir, branch, schedule, db, items=items, step_s=STEP_S,
+                                          answer_contract=answer_contract, probe_mode=T2_SPEC.probe_mode)
+                for probe in compiled.probes:
+                    for iid in (i for i in probe.item_ids if by_id[i]["stage"] == "act"):
+                        case = cases[iid]
+                        assert leg._act_stage(by_id[iid], object(), evidence, probe, case, db) == "used"
+                        seed = None if case.seed is None else probe_envseed(db, probe.index, probe.checkpoint).seed
+                        assert seen.pop(iid) == replace(case, seed=seed)
+                        templates.add(case.record["template_id"])
+    assert {"keep-incidental", "wake-loop"} <= templates and not seen
+
+
+def test_live_run_needs_the_packs_cases(lives, tmp_path):
+    # The live leg scores act items from the pack's sealed cases, so a live run without them is refused before it starts.
+    with pytest.raises(ValueError, match="^live probes need the pack's cases$"):
+        drive(lives["t1-g1", "B0"], tmp_path, live=FakeLive(), cases=None)
+    assert not any(tmp_path.iterdir())

@@ -222,7 +222,9 @@ class _ArmContext:
     def _entry_lock(self, lock):
         # make_units keeps every arm on the run's system, so its route table is the run's, and these are the
         # two fields of t1._lock that an arm's entry can change.
-        return lock | dict(system_artifacts=[deepcopy(self.entry["artifact"])],
+        from bicentennial.systems.recipe import system_artifacts
+
+        return lock | dict(system_artifacts=system_artifacts(self.entry),
             tool_lists_hash=sha256_canon({k: self.entry.get(k)
                 for k in ("read_tools", "recall", "write_tools")}))
 
@@ -278,7 +280,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
     for attempt in range(3):
         try:
             run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
-                items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys,
+                items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys, cases=pack.cases,
                 scratch=scratch / str(attempt), run=ctx.run_id, attempt=attempt, gate=ctx.gate,
                 current_lock=ctx.current_lock, voids=Voids(), harness_pin=ctx.harness_pin,
                 hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
@@ -287,7 +289,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 probe_mode=spec.probe_mode,
                 keep_pre_probe=spec.keep_pre_probe and arm != "no_memory",
                 pre_probe_attribution=spec.pre_probe_attribution and arm != "no_memory",
-                extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
+                extra_env=resolve_worker_env(ctx.entry, ctx.model_cache) if arm != "no_memory" else None)
         except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
@@ -316,7 +318,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             probes = _read(run._root, "t2lite_probes.json")
             # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
             floor_stop = (floor_stops or {}).get(pack.life + branch)
-            relabel = (arm == "system" and is_plugin(ctx.entry["name"]) and run.stopped
+            relabel = (arm == "system" and is_plugin(ctx.entry) and run.stopped
                 and run.stopped[1] in t1.RELABEL and floor_stop and list(floor_stop)[1:] == list(run.stopped)[1:])
             for item in pack.items[branch]:
                 iid = item["item_id"]
@@ -521,7 +523,7 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
 
     def ready(i):
         u = unit_list[i]
-        return (u.arm.role == "no_memory" or not is_plugin(u.arm.entry["name"])
+        return (u.arm.role == "no_memory" or not is_plugin(u.arm.entry)
                 or u.pack.life + u.branch in final)
 
     def run(i, slot):

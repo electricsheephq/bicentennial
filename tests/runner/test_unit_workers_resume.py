@@ -217,7 +217,7 @@ def test_latched_unit_keeps_its_own_refusal(tmp_path, monkeypatch, canary, egres
     ctx = SimpleNamespace(entry={"name": "hermes-native"}, run_id="run", gate=None, current_lock=None,
                           harness_pin=None, hermes=None, plugin_source=None, worker_argv=None,
                           turn_wait_s=3.0, model_cache=None)
-    p = SimpleNamespace(life="life", life_dir=tmp_path, items={"B0": []}, records_b={"B0": []}, keys={},
+    p = SimpleNamespace(life="life", life_dir=tmp_path, items={"B0": []}, records_b={"B0": []}, keys={}, cases={},
                         visible=None, meta={"honeypot_token": None})
     runs = []
     with pytest.raises(LatchStop if code is None else t1.T1Refused, match=f"^{code or 'stopped'}$") as raised:

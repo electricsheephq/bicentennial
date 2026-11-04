@@ -7,7 +7,7 @@ UNSCRIPTED = {"holographic": ("fact_feedback",), "mem0-oss": ("mem0_update",)}
 
 def resolve_mapping(name):
     """Adapt the built-in tables to the mapping accepted by check_mapping."""
-    resolved = recipe({"name": name})
+    resolved = recipe({"name": name} if isinstance(name, str) else name)
     write, forget = resolved.write, resolved.forget
     return dict(write=None if write is None else dict(tool=write.tool, fixed=write.fixed),
                 forget=None if forget is None else dict(search_tool=forget.search_tool,
