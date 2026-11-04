@@ -47,12 +47,11 @@ def main(run):
     print("not_scored_live", len(card["not_scored_live"]), "by genre and stage", dict(sorted(where.items())))
     print("controls_broken", json.dumps(card["controls_broken"], sort_keys=True))
     floor = card["floor"]
-    print("floor units", len(floor.get("units", [])), "floor identity equals system's",
+    print("floor units", len(floor.get("units", {})), "floor identity equals system's",
           floor.get("served_identity") == card.get("served_identity"))
     unit_kinds = Counter()
-    for unit in floor.get("units", []):
-        if isinstance(unit, dict):
-            unit_kinds[str(unit.get("source") or unit.get("cached") or unit.get("kind"))] += 1
+    for unit in floor.get("units", {}).values():
+        unit_kinds["cached" if unit.get("cached") else "ran live"] += 1
     if unit_kinds:
         print("floor unit sources", dict(sorted(unit_kinds.items())))
     scores = Counter((i["track"], i["genre"], i["stage"], i.get("score_milli"), str(i.get("failure_class"))) for i in items)

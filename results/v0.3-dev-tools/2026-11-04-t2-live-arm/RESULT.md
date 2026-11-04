@@ -99,6 +99,7 @@ infra_reruns total 10
 not_scored_live 30 by genre and stage {'G2 act': 30}
 controls_broken []
 floor units 20 floor identity equals system's True
+floor unit sources {'ran live': 20}
 items by track, genre, stage, score_milli and failure class:
    Drift G1 act -1000 None 3
    Drift G1 act 0 FAIL_TASK 10
@@ -120,7 +121,7 @@ spend {"estimated": 0, "max_single_call": 0, "next_id": 896, "refused_calls": 0,
 
 ## Disclosures and the run's log
 
-From `disclosures.json`: no honeypot hits; 895 live sends; no hold, no identity drift, no login or spend stop; the live leg closed normally; no transforms; turn wait 3.0 s; every floor unit a cache miss. The run's error log holds 17 `ConnectionResetError: [Errno 54] Connection reset by peer` tracebacks, printed by the director's local HTTP server when a client closed its connection during a request. Two units (`t2-g1-1` B0 and `t2-g2-1` B0) took a second attempt; the card counts 10 items with an infrastructure rerun, and no item stayed INFRA.
+From `disclosures.json`: no honeypot hits; 895 live sends; no hold, no identity drift, no login or spend stop; the live leg closed normally; no transforms; turn wait 3.0 s; every floor unit a cache miss. The run's error log holds 17 `ConnectionResetError: [Errno 54] Connection reset by peer` tracebacks, printed by the director's local HTTP server, each raised while it was reading a request line, so a reset may have come between two requests. Two units (`t2-g1-1` B0 and `t2-g2-1` B0) took a second attempt; the card counts 10 items with an infrastructure rerun, and no item stayed INFRA.
 
 ## Files
 
