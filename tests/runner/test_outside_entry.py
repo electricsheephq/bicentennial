@@ -137,8 +137,10 @@ def change(entry, path, value):
 
 @pytest.mark.parametrize("path,value,code", [
     ("name", "HERMES_NATIVE", "entry_shadows_builtin"),
-    ("name", "ｈｅｒｍｅｓ-native", "entry_shadows_builtin"),
+    ("name", "ｈｅｒｍｅｓ-native", ("entry_name_invalid", "entry_shadows_builtin")),
     ("name", "reference_store", "entry_shadows_builtin"),
+    ("name", "outside memory", "entry_name_invalid"),
+    ("name", "-outside", "entry_name_invalid"),
     ("recipe/provider", None, "entry_recipe_invalid:provider"),
     ("recipe/engine", "other", "entry_recipe_invalid:provider"),
     ("recipe/provider", "../provider", "entry_recipe_invalid:provider"),
@@ -167,7 +169,7 @@ def test_runner_outside_refusals(outside, tmp_path, path, value, code):
     change(outside, path, value)
     with pytest.raises(registry.SystemRefused) as caught:
         prepare(outside, tmp_path)
-    assert caught.value.reasons == (code,)
+    assert caught.value.reasons == (code if isinstance(code, tuple) else (code,))
 
 
 @pytest.mark.parametrize("field", ["provider", "engine", "plugin_directory"])
@@ -227,7 +229,7 @@ def test_operator_registry_identities(outside, tmp_path, monkeypatch, identity):
     elif identity == "artifact":
         outside["artifact"]["name"] = "EXCLUDED.ARTIFACT"
     else:
-        outside["name"] = "ＥＸＣＬＵＤＥＤ-memory"
+        outside["name"] = "EXCLUDED_Memory"
     registry.admit_system(outside, operator="owner")
     monkeypatch.setenv("BICENTENNIAL_OPERATOR", "benchmark")
     with pytest.raises(registry.SystemRefused, match="benchmark_operator_forbidden"):
@@ -486,7 +488,8 @@ def test_entry_guide_codes():
     guide = Path(__file__).resolve().parents[2] / "docs/developers/entry.md"
     rows = re.findall(r"^\| `([^`]+)` \|", guide.read_text().split("| Code | Cause |", 1)[1], re.M)
     assert len(rows) == len(set(rows))
-    assert set(rows) == {"entry_unreadable", "entry_invalid", "entry_recipe_missing", "recipe_in_builtin",
+    assert set(rows) == {"entry_unreadable", "entry_invalid", "entry_recipe_missing", "entry_name_invalid",
+        "recipe_in_builtin",
         "entry_recipe_invalid:<field>", "entry_shadows_builtin", "entry_recipe_unsupported:structured_formats",
         "entry_scripted_writes_unsupported", "t0_mapping_missing", "benchmark_operator_forbidden",
         "licence_not_osi", "artifact_unpinned", "route_unroutable", "compaction_alias_mismatch",

@@ -6,7 +6,7 @@
 
 ## What you need
 
-Use a source git checkout, Python 3.14, a virtual environment with the package installed, and `PYTHONHASHSEED=0`. Install `nice` and, on macOS, `taskpolicy`; the CLI re-executes at niceness 19 and background QoS. Build and install a T1 pack with the [Ring 0 guide](ring0.md#7-run-t1-as-a-merge-gate), keeping the printed pack hash. Use the registered system's pinned Hermes checkout and dependencies, including its `mcp` extra. Plug-ins also need `--plugin-source`; only `omega` needs `--model-cache`. The system's registration and artifact measurements must pass T1 preparation.
+Use a source git checkout, Python 3.14, a virtual environment with the package installed, and `PYTHONHASHSEED=0`. Install `nice` and, on macOS, `taskpolicy`; the CLI re-executes at niceness 19 and background QoS. Build and install a T1 pack with the [Ring 0 guide](ring0.md#7-run-t1-as-a-merge-gate), keeping the printed pack hash. Use the registered system's pinned Hermes checkout and dependencies, including its `mcp` extra. Plug-ins also need `--plugin-source`; only `omega` among built-ins needs `--model-cache`, or an outside recipe whose worker environment uses `{model_cache}`. The system's registration and artifact measurements must pass T1 preparation.
 
 Set these privately; this page supplies no values:
 
@@ -118,6 +118,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
 | `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
+| `entry_name_invalid` | An outside entry's name uses a character other than letters, digits, `.`, `_` and `-`, or starts with `-`; published rerun commands carry the name. |
 | `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
 | `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
