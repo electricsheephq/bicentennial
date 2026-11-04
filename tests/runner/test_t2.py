@@ -526,15 +526,21 @@ def test_pre_probe_ms_sums_attempts(t2_scenario, monkeypatch):
 
     def life(**kw):
         run = drive(**kw)
-        retry = kw["arm"] == "system" and kw["life_dir"].name == s.ctx.packs[0].life and kw["branch"] == "B0"
-        return replace(run, pre_probe_ns=1_600_000, classes={i["item_id"]: ("INFRA_FAILURE", "synthetic")
+        retry = kw["arm"] == "system" and kw["life_dir"].name == s.ctx.packs[1].life and kw["branch"] == "B0"
+        if retry:
+            assert len(run.pre_probe) == 2
+        pre = {iid: replace(record, copy_ns=1_600_000 if kw["attempt"] == 0 else 2_100_000)
+               for iid, record in (run.pre_probe or {}).items()} if run.pre_probe is not None else None
+        return replace(run, pre_probe=pre, classes={i["item_id"]: ("INFRA_FAILURE", "synthetic")
                        for i in kw["items"]} if retry and kw["attempt"] == 0 else run.classes)
 
     monkeypatch.setattr(units, "run_life", life)
     assert s.invoke() == 0
-    row0, = [r for r in read(s.out, "units.json")["units"]
-             if (r["arm"], r["life"], r["branch"]) == ("system", s.ctx.packs[0].life, "B0")]
-    assert row0["attempts"] == 2 and row0["pre_probe_ms"] == 3
+    rows = read(s.out, "units.json")["units"]
+    row0, = [r for r in rows
+             if (r["arm"], r["life"], r["branch"]) == ("system", s.ctx.packs[1].life, "B0")]
+    assert row0["attempts"] == 2 and row0["pre_probe_ms"] == 7
+    assert all(r["pre_probe_ms"] == 0 for r in rows if r["arm"] == "no_memory")
 
 
 @pytest.mark.parametrize("identity", ["unobserved", "unidentified", "different"])

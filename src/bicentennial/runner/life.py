@@ -2,7 +2,6 @@
 
 import json
 import shutil
-import time
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -132,7 +131,6 @@ class LifeRun:
     background_threads: tuple = ()
     _root: Path | None = field(default=None, repr=False)
     pre_probe: dict | None = None  # with keep_pre_probe, a record per item whose probe was reached
-    pre_probe_ns: int = 0
 
     def cleanup(self):
         """Release this attempt after its evidence has been scored."""
@@ -332,7 +330,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
     workspace_ms = {}
     stopped, hooks, verified = None, (), {}
     initial_bytes = None
-    pre_probe_ns = 0
     with closing(open_world(life_dir / f"world.{branch}.db", readonly=True)) as db:
         seed, genre = db.execute("SELECT seed, genre FROM meta").fetchone()
         if seed != life["seed"]:
@@ -461,7 +458,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 from bicentennial.runner.kept import record_pre_probe
 
                                 for slot, iid in enumerate(probe.item_ids):
-                                    copy_start = time.monotonic_ns()
                                     evidence.pre_probe[iid] = record_pre_probe(
                                         root / "pre-probe" / iid, surfaces=surfaces, adapter=adapter,
                                         probe=probe, slot=slot, session=session, clock=clock, table=table,
@@ -471,7 +467,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                             effort=getattr(live.upstreams.get(leg.model), "effort", None))
                                             if leg is not None else None),
                                         contract_hash=compiled.answer_contract_sha256)
-                                    pre_probe_ns += time.monotonic_ns() - copy_start
                             for iid in probe.item_ids:
                                 holds = precondition_holds(by_id[iid],
                                     repo_tree_hash=workspace_hash(clones[-1]) if genre == "G1" else EMPTY_TREE_HASH,
@@ -580,7 +575,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         if adapter is None:
             if leg is not None:
                 leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, schedule, records)
-            return replace(evidence, stopped=stopped, pre_probe_ns=pre_probe_ns)
+            return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
         if leg is not None:
             leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, schedule, records)
@@ -595,7 +590,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         } for s in sessions]}
         return replace(evidence, results=dict(sorted(results.results().items())), transforms=tuple(sorted(transforms)),
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
-            post_restart_requests=requests, pre_probe_ns=pre_probe_ns,
+            post_restart_requests=requests,
             audit=_audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=leg is not None),
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,

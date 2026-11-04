@@ -240,7 +240,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 result = results[identity0]
                 index, predicted = order[identity0]
                 unit_rows.append(dict(row, slots=effective, predicted_s=predicted, card_index=index,
-                    pre_probe_ms=sum(r.pre_probe_ns for r in result.runs) // 1_000_000,
+                    pre_probe_ms=sum(p.copy_ns for r in result.runs for p in (r.pre_probe or {}).values()) // 1_000_000,
                     keep_ms=result.keep_ms))
             _write(out, "units.json", dict(slots=effective, admitted_slots=ctx.roots,
                 start_ms=receipt["wall_start_ms"], end_ms=end,
