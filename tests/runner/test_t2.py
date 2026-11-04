@@ -306,7 +306,7 @@ def test_cli_exact_flags(monkeypatch, capsys):
         cli.main(["t2", "--help"])
     assert caught.value.code == 0
     flags = set(re.findall(r"--[a-z-]+", capsys.readouterr().out))
-    assert flags == {"--help", "--system", "--pack-hash", "--out", "--login-home", "--packs", "--max-sends",
+    assert flags == {"--help", "--system", "--entry", "--pack-hash", "--out", "--login-home", "--packs", "--max-sends",
                      "--hermes", "--plugin-source", "--model-cache", "--cache", "--sandbox-slot", "--turn-wait"}
     seen = []
     monkeypatch.setattr(cli, "run_t2", lambda **kw: seen.append(kw) or 0)

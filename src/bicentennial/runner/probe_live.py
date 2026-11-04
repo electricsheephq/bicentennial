@@ -3,17 +3,13 @@
 import json
 from copy import deepcopy
 from dataclasses import replace
-from types import SimpleNamespace
 
 from bicentennial.audit.readback import output
 from bicentennial.canon import canon
 from bicentennial.director.upstream.login import CREDENTIAL_STOPS
 from bicentennial.director.upstream.router import ProbeLiveRouter as ProbeLiveRouter
 from bicentennial.genres.g2_assistant.envseed import probe_envseed
-from bicentennial.items.templates import g2
-from bicentennial.items.templates.g1.common import repo_checks, repo_state
 from bicentennial.ledger import BlobStore, Guard
-from bicentennial.packs.catalogue import TEMPLATES_BY_GENRE
 from bicentennial.probe.probe_responder import _earlier_body
 from bicentennial.probe.scripted_reader import failing_stage, read
 from bicentennial.render.stream import content
@@ -141,21 +137,14 @@ class ProbeLiveLeg:
                     [o["envelope"] for o in shown["options"]]))
         return body
 
-    def _act_stage(self, item, result, evidence, probe, record, db, schedule):
+    def _act_stage(self, item, result, evidence, probe, case, db):
         if result is None or item["item_id"] not in evidence.act or item["item_id"] in evidence.classes:
             return None
-        genre = db.execute("SELECT genre FROM meta").fetchone()[0]
-        template = replace(TEMPLATES_BY_GENRE[genre][record["template_id"]], checkpoint=probe.checkpoint)
-        table = next(t for t in template.decision_tables if t["table_id"] == item["decision_table_ref"])
-        window = tuple(db.execute("SELECT window_open_t, window_close_t FROM commitment WHERE fact_id=?",
-                                 (record["decisive_fact_id"],)).fetchone()) if table["timed"] else None
-        g1 = genre == "G1"
-        case = SimpleNamespace(item=item, table=table, window=window,
-            t_sim=window[0] if window else schedule.sessions[probe.checkpoint - 1].t_end,
-            seed=None if g1 else probe_envseed(db, probe.index, probe.checkpoint).seed,
-            state0=repo_state(db, schedule, probe.checkpoint) if g1 else None,
-            checks=repo_checks(template, db, schedule)[record["instance_key"]] if g1 else None,
-            roles={} if g1 else g2.option_roles(template, db, schedule)[record["instance_key"]])
+        # The pack's sealed case, which the scorer reads too. Its template is the pack's own: T2 repoints some
+        # (world/targeted.py repoint_templates), so one rebuilt from the catalogue misses the instance. Only the
+        # env seed is this probe session's.
+        if case.seed is not None:
+            case = replace(case, seed=probe_envseed(db, probe.index, probe.checkpoint).seed)
         iid = item["item_id"]
         scored = score_item(item, cls=None, label=None, result=result, envelope=MISSING, act=evidence.act[iid],
             case=case, scoring_evidence=None, keys=self.scripted.readers[iid][1],
@@ -163,11 +152,10 @@ class ProbeLiveLeg:
             attempt=evidence.attempt)
         return scored.get("stage_attribution") if isinstance(scored, dict) else None
 
-    def write_records(self, root, compiled, items, evidence, rows, life_dir, branch, db, schedule, item_records):
+    def write_records(self, root, compiled, items, evidence, rows, life_dir, branch, db, cases):
         stream = [json.loads(line) for line in (life_dir / f"stream.{branch}.jsonl").read_bytes().splitlines()]
         blobs = BlobStore(root / "run/ledger/blobs", Guard([]))
         by_id, records = {i["item_id"]: i for i in items}, []
-        metadata = {r["item_id"]: r for r in item_records}
         # The stack's identity_drift holds only the first drift; each off-baseline reply is marked in its row.
         changed = {(r.get("cursor") or {}).get("session") for r in rows if r.get("role") == "probe_main" and any(
             isinstance(d, dict) and d.get("identity_changed") is True
@@ -194,7 +182,7 @@ class ProbeLiveLeg:
                     failed=score_qa(item, env, evidence_texts=texts).score_milli != 1000,
                     stored_roots=evidence.stored_roots.get(iid), retained_roots=evidence.retained_roots.get(iid))
                     if qa and result and iid not in evidence.classes else
-                    self._act_stage(item, result, evidence, probe, metadata[iid], db, schedule) if not qa else None)
+                    self._act_stage(item, result, evidence, probe, cases[iid], db) if not qa else None)
                 initial = next((value for key, value in self.initial.items() if key[1:] == (probe.index, n)), None)
                 records.append(dict(item_id=iid, probe_session=probe.index, checkpoint=probe.checkpoint, stage=item["stage"],
                     shadow=dict(selected_option=result.selected_option if result else None,

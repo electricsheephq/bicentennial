@@ -6,7 +6,7 @@
 
 ## What you need
 
-Use a source git checkout, Python 3.14, a virtual environment with the package installed, and `PYTHONHASHSEED=0`. Install `nice` and, on macOS, `taskpolicy`; the CLI re-executes at niceness 19 and background QoS. Build and install a T1 pack with the [Ring 0 guide](ring0.md#7-run-t1-as-a-merge-gate), keeping the printed pack hash. Use the registered system's pinned Hermes checkout and dependencies, including its `mcp` extra. Plug-ins also need `--plugin-source`; only `omega` needs `--model-cache`. The system's registration and artifact measurements must pass T1 preparation.
+Use a source git checkout, Python 3.14, a virtual environment with the package installed, and `PYTHONHASHSEED=0`. Install `nice` and, on macOS, `taskpolicy`; the CLI re-executes at niceness 19 and background QoS. Build and install a T1 pack with the [Ring 0 guide](ring0.md#7-run-t1-as-a-merge-gate), keeping the printed pack hash. Use the registered system's pinned Hermes checkout and dependencies, including its `mcp` extra. Plug-ins also need `--plugin-source`; only `omega` among built-ins needs `--model-cache`, or an outside recipe whose worker environment uses `{model_cache}`. The system's registration and artifact measurements must pass T1 preparation.
 
 Set these privately; this page supplies no values:
 
@@ -115,6 +115,18 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 
 | Code | Cause |
 |---|---|
+| `entry_unreadable` | Entry file cannot be read or parsed as TOML, or its path cannot be resolved. |
+| `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
+| `entry_recipe_missing` | An outside entry file has no recipe table. |
+| `entry_name_invalid` | An outside entry's name uses a character other than ASCII letters, digits, `.`, `_` and `-`, or does not start with a letter or digit; published rerun commands carry the name. |
+| `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
+| `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
+| `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
+| `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
+| `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
+| `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
+| `entry_shadows_hermes_plugin` | An outside provider or engine has the name of one that the pinned Hermes bundles, which Hermes would load instead of the entry's archive. |
+| `recipe_in_builtin` | A built-in registry file contains an outside recipe table. |
 | `<field>` | Baseline comparability field differs. |
 | `SpendRefused` | Receipt has positive spend. |
 | `aa_of:<field>` | A-of comparability field differs. |
@@ -168,7 +180,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `only` | No matching checkpoint items. |
-| `operator_identity` | Operator-marked login cannot run lcm-x. |
+| `operator_identity` | Operator-marked login cannot run lcm-x or another operator-excluded identity ([entry guide](entry.md#operator-firewall)). |
 | `out_exists` | Output already exists, including a symlink. |
 | `output_overlap` | Output overlaps login, packs or cache. |
 | `pin_mismatch` | Checkout or measured fresh install does not match its pin; for the install pin, stderr and `refusal.json` show the computed value. |
