@@ -269,7 +269,7 @@ def test_preflight_settle_mapped(monkeypatch, tier):
     runner = t0 if tier == "t0" else t1
     entry = load(REGISTRY / "omega.toml")
     assert entry["settle"] == dict(kind="hook", bound_s=5)
-    monkeypatch.setattr(runner, "admit_system", lambda *a: None)
+    monkeypatch.setattr(runner, "admit_system", lambda *a, **kw: None)
     monkeypatch.setattr(runner, "prepare_cache", lambda *a: (None, None))
     monkeypatch.setattr(runner, "worker_properties", lambda *a: ())
     def reached():

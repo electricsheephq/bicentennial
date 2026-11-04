@@ -367,7 +367,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         seeds = ({p.index: envseed(db, p.index).seed for p in schedule.sessions} | {
             p.index: probe_envseed(db, p.index, p.checkpoint).seed for p in compiled.probes}) if genre == "G2" else {}
         wiring = EnvWiring(root / "envwire", seeds, clock.path) if genre == "G2" else None
-        plugin = arm != "no_memory" and is_plugin(entry["name"])
+        plugin = arm != "no_memory" and is_plugin(entry)
         hook = (PluginWake() if plugin else WipeOnWake(entry, {"HERMES_HOME": root / "run" / "hermes-home"},
                 root / "control")) if arm == "wiped" else None
         hooks = (hook,) if hook is not None else ()
@@ -380,7 +380,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
                 plugin=recipe(entry).provider, context_engine=recipe(entry).engine,
-                plugins_enabled=(plugin_dir(entry["name"]),) if recipe(entry).enabled else (),
+                plugins_enabled=(plugin_dir(entry),) if recipe(entry).enabled else (),
                 extra_env=extra_env, before_spawn=hook, **common))
             paths = adapter.paths
             roots = {"HERMES_HOME": paths["hermes_home"], "SANDBOX_HOME": paths["home"]}
