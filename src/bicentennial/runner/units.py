@@ -280,7 +280,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
     for attempt in range(3):
         try:
             run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
-                items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys,
+                items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys, cases=pack.cases,
                 scratch=scratch / str(attempt), run=ctx.run_id, attempt=attempt, gate=ctx.gate,
                 current_lock=ctx.current_lock, voids=Voids(), harness_pin=ctx.harness_pin,
                 hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
