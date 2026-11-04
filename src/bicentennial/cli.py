@@ -58,12 +58,25 @@ def _sends(value):
     return result
 
 
+def _secure_delete_default():
+    # The library's compiled-in default; only 0 builds the published pack bytes (#327).
+    import sqlite3
+
+    db = sqlite3.connect(":memory:")
+    try:
+        return db.execute("PRAGMA secure_delete").fetchone()[0]
+    finally:
+        db.close()
+
+
 def run_build(*, tier, out):
     try:
         from bicentennial.packs.build import build_tier
         from bicentennial.systems.registry import REGISTRY, load
+        secure_delete = _secure_delete_default()
         result = build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
         print(f"sqlite_version {result['sqlite_version']}", file=sys.stderr)
+        print(f"sqlite_secure_delete_default {secure_delete}", file=sys.stderr)
     except FileExistsError:
         print("out_exists", file=sys.stderr)
         return 3

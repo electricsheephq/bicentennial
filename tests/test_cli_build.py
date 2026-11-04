@@ -1,5 +1,6 @@
 """Build dispatch, pack identity and refusals through the source CLI."""
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -30,9 +31,10 @@ def test_build_dispatch(ready, monkeypatch, capsys, tier):
         return dict(sqlite_version="test-version")
 
     monkeypatch.setattr(build, "build_tier", built)
+    monkeypatch.setattr(cli, "_secure_delete_default", lambda: 1)
     assert cli.main(argv) == 0
     assert ready[-1] == "built"
-    assert capsys.readouterr() == ("", "sqlite_version test-version\n")
+    assert capsys.readouterr() == ("", "sqlite_version test-version\nsqlite_secure_delete_default 1\n")
 
 
 def test_build_hash_matches_one_liner_with_existing_parent(ready, tmp_path, monkeypatch, capsys):
@@ -53,7 +55,22 @@ def test_build_hash_matches_one_liner_with_existing_parent(ready, tmp_path, monk
         registry.load(registry.REGISTRY / "hermes-native.toml")["artifact"]])
     assert install.tree_sha256(parent / "T0") == expected["pack_hash"]
     assert len(expected["index"]["packs"]) == 1
-    assert capsys.readouterr() == ("", f"sqlite_version {expected['sqlite_version']}\n")
+    assert capsys.readouterr() == ("", f"sqlite_version {expected['sqlite_version']}\n"
+                                       f"sqlite_secure_delete_default {_library_secure_delete()}\n")
+
+
+def _library_secure_delete():
+    db = sqlite3.connect(":memory:")
+    try:
+        return db.execute("PRAGMA secure_delete").fetchone()[0]
+    finally:
+        db.close()
+
+
+def test_secure_delete_default_is_the_librarys():
+    # #327: the published packs need the library default 0; 1 (on) and 2 (FAST) zero freed space.
+    assert cli._secure_delete_default() == _library_secure_delete()
+    assert cli._secure_delete_default() in (0, 1, 2)
 
 
 @pytest.mark.parametrize("name", ["T0", "T0.staging", "T0.work"])

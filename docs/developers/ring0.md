@@ -48,9 +48,11 @@ The optional `BICENTENNIAL_BUSY_CMD` shell command returns a JSON object with op
 
 ## 4. Build and install a pack
 
-The build command below pins the registered Hermes-native artifact, so these packs can also serve registry systems. The output is a parent directory, which may already exist; the tier directory and its `.staging` and `.work` siblings must not exist, or the command exits 3 with `out_exists`. Success prints `sqlite_version VERSION` on stderr; unexpected build failures exit 70 with `tool_failure` first on stderr (section 8).
+The build command below pins the registered Hermes-native artifact, so these packs can also serve registry systems. The output is a parent directory, which may already exist; the tier directory and its `.staging` and `.work` siblings must not exist, or the command exits 3 with `out_exists`. Success prints `sqlite_version VERSION` and `sqlite_secure_delete_default N` on stderr; unexpected build failures exit 70 with `tool_failure` first on stderr (section 8).
 
 From the next kit, the builder zeroes SQLite header offsets 92–99 on sealed copies before hashing, so writer version metadata no longer makes pack hashes depend on the build host's SQLite (#327). Generator output, logical world content and `world_hash` stay unchanged. The version disclosure stays outside the tier directory and its hash. Future SQLite page-layout changes are not covered by this normalization.
+
+One SQLite setting still changes pack bytes: `secure_delete`, which zeroes the space a write frees inside a database page. The published packs are built with the library default 0, which the SQLite behind Homebrew's and uv's Pythons uses. Ubuntu's and Debian's system SQLite default it to 1, so a Python that links it, such as `actions/setup-python` on Ubuntu, builds packs with other hashes; every pack-hash check then refuses them. `sqlite_secure_delete_default` prints the library's default: build with a Python that prints 0. Until the builder sets the value itself in the next pack-moving batch, this is the only way to match the published hashes (#327).
 
 ```sh
 bicentennial build --tier T0 --out build/ring0
