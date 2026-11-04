@@ -62,12 +62,11 @@ from bicentennial.systems.controls import (
     floor_mismatches,
 )
 from bicentennial.systems.hermes_plugin import (
-    ENGINES,
-    PROVIDERS,
     cache_digest,
     is_plugin,
     resolve_worker_env,
 )
+from bicentennial.systems.recipe import recipe
 from bicentennial.systems.registry import REGISTRY, load
 from bicentennial.world.scale import ANCHOR_T
 from bicentennial.world.tokens import ESTIMATOR
@@ -175,7 +174,7 @@ class CorpusFactory:
             ctx = self.ctx
             root = self.unit / "hosts" / f"h{len(self.hosts)}"
             root.mkdir(parents=True)
-            engine_only = ctx.entry["name"] in ENGINES and ctx.entry["name"] not in PROVIDERS
+            engine_only = recipe(ctx.entry).engine is not None and recipe(ctx.entry).provider is None
             entry = load(REGISTRY / "hermes-native.toml") if engine_only else ctx.entry
             table = t1._routes(entry["name"]) if engine_only else ctx.table
             kw = dict(route_table=RouteTable.load(table), responder=ScriptedResponder(entry),
@@ -355,11 +354,11 @@ def _junit(run, arm, card, gate, final, cases, results, fm, hits, witnesses, wip
         ("controls.floor_mismatches", canon(list(fm)).decode()),
         ("controls.wiped_store", json.loads(card)["controls"]["wiped_store"]),
         ("gate", canon(gate.to_obj()).decode()), ("gate.final", final)]
-    if name in ENGINES:
+    if recipe(run.ctx.entry).engine is not None:
         extra.extend((("t1.engine", "context engine selected by context.engine; not loaded in corpus hosts"),
             ("t1.engine_window", "context_length 65536; the context engine decides when to compress; "
              "compression.threshold_tokens applies to the built-in compressor only")))
-        if name not in PROVIDERS:
+        if recipe(run.ctx.entry).provider is None:
             extra.append(("t1.corpus_engine", "corpus runs Hermes built-in memory, the system's memory layer as shipped"))
     if getattr(run.ctx, "model_cache_sha256", None) is not None:
         extra.append(("t1.model_cache", "sha256:" + run.ctx.model_cache_sha256))

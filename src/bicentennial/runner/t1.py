@@ -14,7 +14,7 @@ from bicentennial.director.compiler.check import Voids, check_compile
 from bicentennial.director.routes import RouteTable, route_table_hash
 from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import PinMismatch, turn_wait_seconds
-from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS, GateRefused
+from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items import c7
 from bicentennial.items.protocol import CANARY
 from bicentennial.keyed import mint_id
@@ -33,9 +33,6 @@ from bicentennial.score.classes import outcome
 from bicentennial.score.invariants import INVARIANTS, ItemEvidence, run_invariants
 from bicentennial.systems import pins as install_pins
 from bicentennial.systems.hermes_plugin import (
-    DEPENDENCIES,
-    ENGINES,
-    PROVIDERS,
     is_plugin,
     prepare_cache,
     resolve_worker_env,
@@ -44,6 +41,7 @@ from bicentennial.systems.hermes_plugin import (
     worker_properties,
 )
 from bicentennial.systems.mapping import check_mapping, resolve_mapping
+from bicentennial.systems.recipe import recipe
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
@@ -250,7 +248,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     admit_system(entry)
     if entry["harness"] != "hermes":
         raise T1Refused("harness_not_hermes")
-    engine_only = system in ENGINES and system not in PROVIDERS
+    engine_only = recipe(entry).engine is not None and recipe(entry).provider is None
     reason = check_mapping(entry, resolve_mapping(system), require_forget=not engine_only)
     if reason is not None:
         raise T1Refused(reason)
@@ -267,7 +265,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
             raise T1Refused("roots_below_min")
     validate_maps()
     model_cache, model_cache_sha256 = prepare_cache(system, model_cache, T1Refused)
-    if entry["settle"]["kind"] == "hook" and system not in SETTLE_THREADS:
+    if entry["settle"]["kind"] == "hook" and recipe(entry).settle_threads is None:
         raise T1Refused("settle_unmapped")
     if hermes is not None and worker_argv is None:
         python = Path(hermes).resolve() / ".venv" / "bin" / "python"
@@ -281,7 +279,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         if checked.returncode != 0:
             raise T1Refused("harness_extra_missing:mcp")
     properties = ()
-    if system in DEPENDENCIES:
+    if recipe(entry).dependency_lock is not None:
         properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     if early_admission is None:
         marker = read_marker()
@@ -292,7 +290,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         raise T1Refused(admission.reason)
     if admission.max_roots < spec.min_roots:
         raise T1Refused("roots_below_min")
-    if system not in DEPENDENCIES:
+    if recipe(entry).dependency_lock is None:
         properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
     index = verify(packs, pack_hash=pack_hash)
     if index["tier"] != spec.pack_tier:
@@ -332,7 +330,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
 
 def check_install(ctx, sandbox):
     """Refuse a wrong install pin before any arm, while holding the run's lease."""
-    if ctx.entry["name"] in ENGINES:
+    if recipe(ctx.entry).engine is not None:
         # T0's memory-layer host cannot install a context engine as an arm does; the arm's install checks the pin.
         return
     try:

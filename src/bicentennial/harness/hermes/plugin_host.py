@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from hashlib import sha256
 from pathlib import Path
+from typing import NamedTuple
 
 from bicentennial.api.contract import (
     Adapter,
@@ -24,7 +25,9 @@ from bicentennial.api.contract import (
 from bicentennial.canon import canon
 from bicentennial.contracts.surfaces import tree_listing
 from bicentennial.director.core import Director
-from bicentennial.director.scripted import WRITE_ARGS
+from bicentennial.director.scripted import (
+    WRITE_ARGS,  # noqa: F401 -- retained as a table re-export
+)
 from bicentennial.director.serve import serve, shutdown
 from bicentennial.harness.egress import Egress
 from bicentennial.harness.hermes.adapter import HarnessFailed, _Worker, verify_pin
@@ -49,15 +52,15 @@ from bicentennial.sandbox.surfaces import (
 )
 from bicentennial.surface_cache import surface_hash, verify_empty
 from bicentennial.systems.hermes_plugin import (
-    ENABLED,
     MARKER,
     MEM0_THREADS,
     OMEGA_THREADS,
-    PROVIDERS,
+    PROVIDERS,  # noqa: F401 -- retained as a table re-export
     PluginCell,
     plugin_dir,
     verify_install_pin,
 )
+from bicentennial.systems.recipe import recipe
 from bicentennial.systems.registry import SystemRefused, check
 from bicentennial.systems.settle import settle
 from bicentennial.world.tokens import estimate_tokens
@@ -66,12 +69,26 @@ ENTRYPOINT = "in-process memory host: MemoryManager or memory tool + SessionDB (
 WORKER = Path(__file__).resolve().with_name("plugin_host_worker.py")
 CHECKPOINT_FORMAT, SESSION_PREFIX = "bicentennial-t0-host-1", "bicentennial-t0-s"
 SETTLE_THREADS = {"mem0-oss": MEM0_THREADS, "omega": OMEGA_THREADS}
+
+
+class ForgetMapping(NamedTuple):
+    search_tool: str | None
+    search_fixed: dict
+    query_key: str
+    listing_key: str
+    text_key: str
+    id_key: str
+    delete_tool: str
+    delete_fixed: dict
+    delete_key: str
+
+
 FORGET = {
-    "hermes-native": (None, {}, "", "", "", "", "memory", {"action": "remove", "target": "memory"}, "old_text"),
-    "holographic": ("fact_store", {"action": "search"}, "query", "results", "content", "fact_id",
+    "hermes-native": ForgetMapping(None, {}, "", "", "", "", "memory", {"action": "remove", "target": "memory"}, "old_text"),
+    "holographic": ForgetMapping("fact_store", {"action": "search"}, "query", "results", "content", "fact_id",
                     "fact_store", {"action": "remove"}, "fact_id"),
-    "mem0-oss": ("mem0_search", {}, "query", "results", "memory", "id", "mem0_delete", {}, "memory_id"),
-    "omega": ("omega_query", {}, "query", "results", "content", "id", "omega_delete", {}, "memory_id"),
+    "mem0-oss": ForgetMapping("mem0_search", {}, "query", "results", "memory", "id", "mem0_delete", {}, "memory_id"),
+    "omega": ForgetMapping("omega_query", {}, "query", "results", "content", "id", "omega_delete", {}, "memory_id"),
 }
 
 
@@ -120,7 +137,8 @@ class HermesMemoryHost(Adapter):
         self.extra_env = extra_env
         self.active_context_engine = None
         self.name = entry["name"]
-        if self.name not in WRITE_ARGS or self.name not in FORGET:
+        resolved = recipe(entry)
+        if resolved.write is None or resolved.forget is None:
             raise ValueError("no T0 mapping")
         self.checkout = Path(checkout).resolve() if checkout is not None else None
         self.commit, self.harness_pin = None, harness_pin or {}
@@ -152,7 +170,7 @@ class HermesMemoryHost(Adapter):
                 if (surface["root"] == "SANDBOX_HOME" and directory.exists()
                         and any(p.name != MARKER for p in directory.iterdir())):
                     raise SystemRefused(["surface_not_empty"])
-            if self.name in PROVIDERS:
+            if recipe(self.entry).provider is not None:
                 if plugin_source is None:
                     raise ValueError("plugin_source required")
                 PluginCell(entry, self).install(plugin_source, alias=self.director.route["alias"], context=False)
@@ -186,9 +204,10 @@ class HermesMemoryHost(Adapter):
             raise
 
     def _config(self):
+        resolved = recipe(self.entry)
         write_config(self.paths["hermes_home"], hermes_config(self.server.port, self.director.route["alias"],
-                                                           plugin=PROVIDERS.get(self.name),
-            plugins_enabled=(plugin_dir(self.name),) if self.name in ENABLED else ()))
+                                                           plugin=resolved.provider,
+            plugins_enabled=(plugin_dir(self.name),) if resolved.enabled else ()))
 
     def _start(self):
         if self._worker is not None:
@@ -204,16 +223,18 @@ class HermesMemoryHost(Adapter):
                                self.egress)
         self.pids.append(self._worker.proc.pid)
         assert_niced(self.pids[-1])
+        resolved = recipe(self.entry)
         out = self._worker.call(op="open", session_id=SESSION_PREFIX + str(self.session),
-                                provider=PROVIDERS.get(self.name, "")) or {}
+                                provider=resolved.provider if resolved.provider is not None else "") or {}
         self.latency_ms += out.get("t_ms", 0)
         self.active_memory_providers = out.get("active_memory_providers", [])
-        if self.name in PROVIDERS and PROVIDERS[self.name] not in self.active_memory_providers:
+        if resolved.provider is not None and resolved.provider not in self.active_memory_providers:
             raise HarnessFailed("plugin_inactive")
         if not out.get("ok"):
             raise HarnessFailed("open_failed")
         self.schemas = out["schemas"]
-        tool, _, key = WRITE_ARGS[self.name]
+        write = resolved.required("write")
+        tool, key = write.tool, write.content_key
         schema = next((s for s in self.schemas if s["name"] == tool), {})
         self.write_max_length = schema.get("parameters", {}).get("properties", {}).get(key, {}).get("maxLength")
 
@@ -258,7 +279,8 @@ class HermesMemoryHost(Adapter):
         if e["text"]:
             self.clock.set_session(self.sim_epoch_s + e["t_sim"])
             self._start()
-            tool, fixed, key = WRITE_ARGS[self.name]
+            write = recipe(self.entry).required("write")
+            tool, fixed, key = write.tool, write.fixed, write.content_key
             schema = next((s for s in self.schemas if s["name"] == tool), {})
             limit = schema.get("parameters", {}).get("properties", {}).get(key, {}).get("maxLength")
             self.write_max_length = limit
@@ -441,30 +463,33 @@ class HermesMemoryHost(Adapter):
                 return True
             return False
 
-        search, args, query, listing, text_key, id_key, delete, fixed, key = FORGET[self.name]
+        forget = recipe(self.entry).required("forget")
         for text in dict.fromkeys(written[event["event_id"]] for event in targets):
             if not text:
                 continue
-            if not search and any(value == text and i not in selected for i, value in written.items()):
+            if not forget.search_tool and any(value == text and i not in selected for i, value in written.items()):
                 record(("text", self._store_generation, sha256(text.encode()).hexdigest()), "same_text", text)
                 continue
             # A backend's result page can hide matching rows until deletes free room, so search again
             # while the last pass deleted a row. Rows already decided are skipped, so this ends.
             while True:
                 values = [text]
-                if search:
-                    raw = self._call("tool", name=search, arguments={**args, query: text})["result"]
+                if forget.search_tool:
+                    raw = self._call("tool", name=forget.search_tool,
+                                     arguments={**forget.search_fixed, forget.query_key: text})["result"]
                     try:
                         result = json.loads(raw)
-                        values = [] if result.get("error") else [r[id_key] for r in result.get(listing, []) if isinstance(r.get(text_key), str)
-                                  and r[text_key] and owns(r[text_key], r[id_key])]
+                        values = [] if result.get("error") else [
+                            r[forget.id_key] for r in result.get(forget.listing_key, [])
+                            if isinstance(r.get(forget.text_key), str) and r[forget.text_key]
+                            and owns(r[forget.text_key], r[forget.id_key])]
                     except (ValueError, TypeError, KeyError, AttributeError):
                         values = []
                 for value in values:
-                    self._call("tool", name=delete, arguments={**fixed, key: value})
+                    self._call("tool", name=forget.delete_tool, arguments={**forget.delete_fixed, forget.delete_key: value})
                     if value in owned:
                         self._forget_deleted.add(owned[value])
-                if not search or not values:
+                if not forget.search_tool or not values:
                     break
         for event in targets:
             del self.events[event["event_id"]]
@@ -472,7 +497,8 @@ class HermesMemoryHost(Adapter):
 
     def _drain(self):
         reply = self._call("drain", timeout_ms=200)
-        return reply["drained"] is True and not set(reply["threads"]) & set(SETTLE_THREADS.get(self.name, ()))
+        entry = self.entry if "name" in self.entry else dict(self.entry, name=self.name)
+        return reply["drained"] is True and not set(reply["threads"]) & set(recipe(entry).settle_threads or ())
 
     def settle(self, bound_s):
         integer(bound_s)

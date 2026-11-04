@@ -33,6 +33,11 @@ def run_t2lite(**kwargs):
     return run(**kwargs)
 
 
+def run_t2(**kwargs):
+    from bicentennial.runner.t2 import run_t2 as run
+    return run(**kwargs)
+
+
 def _only(value):
     parts = value.split(":")
     if (len(parts) != 3 or not parts[0] or parts[1] not in ("B0", "B1")
@@ -136,6 +141,15 @@ def main(argv=None) -> int:
     command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=1.0, metavar="SECONDS")
     command.add_argument("--only", type=_only)
     command.add_argument("--repeat", type=_workers, default=1)
+    command = commands.add_parser("t2")
+    for name in ("system", "pack-hash", "out", "login-home"):
+        command.add_argument("--" + name, required=True)
+    command.add_argument("--packs", dest="packs_dir", required=True)
+    command.add_argument("--max-sends", type=_sends, required=True)
+    for name in ("hermes", "plugin-source", "model-cache", "cache"):
+        command.add_argument("--" + name)
+    command.add_argument("--sandbox-slot", type=int, default=0)
+    command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=3.0, metavar="SECONDS")
     command = commands.add_parser("build")
     command.add_argument("--tier", choices=("T0", "T1", "T2"), required=True)
     command.add_argument("--out", required=True)
@@ -156,6 +170,8 @@ def main(argv=None) -> int:
         return run_t1(**args)
     if selected == "t2lite":
         return run_t2lite(**args)
+    if selected == "t2":
+        return run_t2(**args)
     if selected == "pins":
         from bicentennial.systems.pins import run_pins
         return run_pins(**args)

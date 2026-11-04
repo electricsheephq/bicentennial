@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from bicentennial.contracts.run import validate
 from bicentennial.director.roles import SUMMARISER_ALIAS
+from bicentennial.systems.recipe import recipe
 
 # Provisional OSI allow-list for C-9 selection (pending), not a final roster decision.
 PROVISIONAL_OSI_LICENCES = frozenset({
@@ -57,9 +58,7 @@ def check(entry) -> list[str]:
     if not isinstance(entry, dict):
         return ["schema_invalid"]
     from bicentennial.systems.hermes_plugin import (
-        DEPENDENCIES,
         TELEMETRY_SWITCHES,
-        WORKER_ENV,
         normalise,
     )
 
@@ -98,7 +97,8 @@ def check(entry) -> list[str]:
     if isinstance(recall, dict) and _placeholder(recall.get("argument_template")):
         reasons.append("recall_placeholder")
     name = entry.get("name")
-    lock = DEPENDENCIES.get(name) if isinstance(name, str) else None
+    resolved = recipe(entry) if isinstance(name, str) else None
+    lock = resolved.dependency_lock if resolved is not None else None
     if lock is not None:
         try:
             text = (REGISTRY.parents[1] / lock).read_text()
@@ -114,7 +114,7 @@ def check(entry) -> list[str]:
                 if pin:
                     pins.add(normalise(pin[1]))
             for package, (switch, value) in sorted(TELEMETRY_SWITCHES.items()):
-                if package in pins and WORKER_ENV.get(name, {}).get(switch) != value:
+                if package in pins and resolved.worker_environment.get(switch) != value:
                     reasons.append("telemetry_switch_missing:" + package + ":" + switch + "=" + value)
     try:
         validate("system", entry)

@@ -68,14 +68,12 @@ from bicentennial.systems.controls import (
     no_memory_cell,
 )
 from bicentennial.systems.hermes_plugin import (
-    ENABLED,
-    ENGINES,
     MARKER,
-    PROVIDERS,
     PluginCell,
     is_plugin,
     plugin_dir,
 )
+from bicentennial.systems.recipe import recipe
 from bicentennial.systems.registry import REGISTRY, SystemRefused, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import TURN_S, named
@@ -85,6 +83,7 @@ from bicentennial.world.targeted import expected_state
 ARMS = ("system", "wiped", "no_memory")
 STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
+
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "engine_inactive", "end_failed", "exit_timeout",
@@ -300,6 +299,12 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
         return {"status": "INFRA_FAILURE", "failures": ["audit_exception"]}
 
 
+def _routes(name):
+    from bicentennial.runner.t1 import _routes as t1_routes
+
+    return t1_routes(name)
+
+
 def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run, attempt,
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
@@ -343,8 +348,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         kill = next(((f["session"], f["turn"]) for f in faults.to_obj() if f["kind"] == "kill"), None)
         entry_r = load(REGISTRY / "hermes-native.toml") if arm == "no_memory" else entry
         reader = load(REGISTRY / "no-memory.toml") if arm == "no_memory" else entry
-        table = RouteTable.load({"routes": [dict(system=entry_r["name"], segment=s, probe_model="probe-model",
-            summariser="summary-model", alias=a, vision=None, served_by="scripted") for s, a in SEGMENTS]})
+        table = RouteTable.load(_routes(entry_r["name"]))
         probes = {p.index: p for p in compiled.probes}
         by_id = {i["item_id"]: i for i in items}
         responder = ProbeResponder(ScriptedResponder(entry_r), reader,
@@ -372,8 +376,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         halted = None
         try:
             adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
-                plugin=PROVIDERS.get(entry["name"]), context_engine=ENGINES.get(entry["name"]),
-                plugins_enabled=(plugin_dir(entry["name"]),) if entry["name"] in ENABLED else (),
+                plugin=recipe(entry).provider, context_engine=recipe(entry).engine,
+                plugins_enabled=(plugin_dir(entry["name"]),) if recipe(entry).enabled else (),
                 extra_env=extra_env, before_spawn=hook, **common))
             paths = adapter.paths
             roots = {"HERMES_HOME": paths["hermes_home"], "SANDBOX_HOME": paths["home"]}

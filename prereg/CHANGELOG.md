@@ -2,6 +2,24 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Kit, 2026-11-04: the T2 command (#391)
+- **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots. See the replay-order erratum below for the replay rule. Each unit reports `pre_probe_ms` and `keep_ms`, including the keep-lock wait.
+- **Floor and publication:** per-life/branch no-memory entries exclude system and slot count from their keys and require a matching live served identity. Credential scanning precedes cache publication. The T2 guide documents outputs, refusals and the unmeasured live budget; T1 and T2-lite retain their bytes. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-04: the replay order (#391, §14.8)
+- **RING0 §14.8:** the replay order fixes the dependence on floor-cache state announced by the preceding spec erratum. Each arm's units, and the floor's own replay, use admission order: largest predicted time first (43 s per replay session and 49 s per probe session), ties in card order. A fresh floor cannot change that order; shared slots, the live service and the machine can still change measured unit times.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-04: when a run ends (#391, §14.8)
+- **RING0 §14.8:** one run end is stamped after the credential scan of the outputs, including kept copies, and used by `units.json` and all three receipts. Only writing and scanning those four files, publishing floor-cache entries and the final receipt and card renames follow. Recomputed arm time includes the full output scan.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-04: an arm's time leaves out the floor (#391, §14.8)
+- **RING0 §14.8:** a dated erratum states what an arm's time counts. The no-memory floor is a control, and PREREG §6 sets T2's budget for "the candidate arm against cached controls", so the floor's units count in no arm's time, whether they ran in the run or came from the cache; the floor's own replayed time is reported beside the arms. A fresh floor can still change the order in which an arm's units started, and so its replay; the T2 command fixes a replay order that the floor cannot change before any arm's time is published (#391). A unit's time includes the harness work inside it (probe clones, the copy before each probe, scoring, and keeping failed items' copies, with any wait to keep), and "setup and scoring" means the run's time when no unit is running: before its first unit, after its last, and in any gap between units. `runner/arm_time.py` now replays only an arm's own units. Nothing publishes an arm's time yet: the T2 command will write it to `units.json`.
+- **Pins and results:** no code pin moves, and no card, score or published result changes.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-03: the T2 placement window (#391, §13 E34, §15)
 - **RING0 §13 E34, §15:** T2's life spec states `evidence_by = 8`, the last checkpoint minus the life spec's 2-session minimum distance, and a `replacements` list (empty: a failing design seed is replaced by the next unused integer from 14, and the freeze stops if a second design seed fails or if one row fails 8 replacement seeds in a row). For T2 only, the generator writes dedicated facts inside sessions 1–8 (G1 `decision-t2-0`, `decision-t2-1`; G2 `trip-t2`, `gate-t2`). `recall-value`, `wake-loop`, `recall-count` and `keep-incidental` point at them in the generator and the pack builder alike, and the original facts stay as unasked noise. A question that cannot be placed at any checkpoint raises `PlacementError("checkpoint")`, naming its template. No code pin moves, and T0 and T1 packs do not change.
 No PREREG version change; PREREG-v0.5 remains frozen.

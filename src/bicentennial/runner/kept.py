@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,11 +27,13 @@ class PreProbe:
     roots: tuple
     probe_point: int
     fields: dict
+    copy_ns: int = 0
 
 
 def record_pre_probe(directory, *, surfaces, adapter, probe, slot, session, clock, table, faults,
                      environment, attempt_id, lock_hash, attempt, probe_mode, live_probe, contract_hash):
     """Copy the untouched surfaces and workspace, retaining every hashed context record."""
+    start = time.monotonic_ns()
     directory = Path(directory)
     directory.mkdir(parents=True)
     paths = adapter.paths
@@ -80,7 +83,7 @@ def record_pre_probe(directory, *, surfaces, adapter, probe, slot, session, cloc
                   sim_t_s=clock.sim_t_s, probe_session_index=probe.index, probe_slot=slot,
                   route_table_sha256=sha256_canon(table.to_obj()), probe_config_sha256=sha256_canon(config),
                   replay_context=references)
-    return PreProbe(directory, tuple(roots), probe.checkpoint, fields)
+    return PreProbe(directory, tuple(roots), probe.checkpoint, fields, copy_ns=time.monotonic_ns() - start)
 
 
 def plain_item_id(item_id):
@@ -89,6 +92,10 @@ def plain_item_id(item_id):
 
 class KeptRefused(ValueError):
     """A failed item's snapshot cannot be published safely or within the byte budget."""
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
 
 
 def _bytes(root):
@@ -180,6 +187,7 @@ def keep_failed(run, scores, out, *, pack_hash, pins, canary, excluded=(), crede
             pending.append((record.directory, target))
         rows.append(row)
     # Include existing copies and metadata, not only this unit's snapshots.
+    rows.sort(key=lambda row: (row["life"], row["branch"], row["item_id"]))
     index_bytes = canon(rows)
     if any(n in index_bytes for n in needles):
         for source, _ in pending:
