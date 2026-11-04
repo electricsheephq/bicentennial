@@ -5,8 +5,10 @@ import math
 
 
 def calculate_arm_times(slots, timings, start_ms, end_ms):
-    """Return millisecond budgets and their inputs, with floor work charged to every arm.
+    """Return millisecond budgets and their inputs; the floor counts in no arm, only beside them.
 
+    The no-memory floor is a cached control (PREREG §6, RING0 §14.8 erratum), so an arm
+    replays only its own units; a fresh floor can still change the order they started in.
     Input timings are in card order. Start order is zero-based across the whole run;
     equal starts retain card order. Replay queues work immediately on the earliest
     free slot, without reproducing gaps caused by the other arms. Intervals within
@@ -47,7 +49,7 @@ def calculate_arm_times(slots, timings, start_ms, end_ms):
 
     arms = {}
     for arm in sorted({row["arm"] for row in timings} - {"no_memory"}):
-        units = [row for row in ordered if row["arm"] in (arm, "no_memory")]
+        units = [row for row in ordered if row["arm"] == arm]
         length = replay(units)
         arms[arm] = dict(arm_time_ms=length + outside, replay_ms=length,
                          slots=slots, units=units, outside_ms=outside, elapsed_ms=elapsed)

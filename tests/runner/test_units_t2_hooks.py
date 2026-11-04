@@ -242,6 +242,19 @@ def test_no_keep_still_scores_and_cleans(core, monkeypatch):
     assert not result.errors and seen == [False]
 
 
+def test_keep_with_a_custom_executor_refuses(core):
+    ctx, queue = core
+    calls = []
+
+    def execute(*args, **kwargs):
+        calls.append(args)
+
+    with pytest.raises(ValueError, match="keep needs the default executor"):
+        units.schedule(ctx, queue(), units._Guard(Stack()), roots=1, spec=units.T2_SPEC,
+                       execute=execute, keep=lambda *args: None)
+    assert calls == []
+
+
 @pytest.mark.parametrize("code", ["pre_probe_missing", "kept_exists", "credential_scan", "kept_cap"])
 def test_kept_refusal_exact_code_and_merged_runs(core, code):
     def keep(*args):
