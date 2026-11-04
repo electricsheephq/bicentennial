@@ -576,7 +576,9 @@ def test_plugin_lists_equal_the_registry():
 def test_rerun_command_keeps_a_non_default_turn_wait():
     source_card, record = card("hermes-native"), item()
     default = flips.rerun_command(source_card, record)
-    assert flips.rerun_command(source_card, record, turn_wait_s=3.0) == default
+    assert flips.rerun_command(source_card, record, turn_wait_s=1.0) == default
+    full = flips.rerun_command(source_card, record, turn_wait_s=3.0)
+    assert full == default.replace(" --repeat 3 --out", " --repeat 3 --turn-wait 3.0 --out")
     short = flips.rerun_command(source_card, record, turn_wait_s=0.5)
     assert short == default.replace(" --repeat 3 --out", " --repeat 3 --turn-wait 0.5 --out")
     for bad in (True, "0.5", 0.4, 3.5, 1):

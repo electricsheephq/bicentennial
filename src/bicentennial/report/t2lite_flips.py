@@ -191,7 +191,7 @@ def _token(value):
     return value
 
 
-def rerun_command(card, item, *, turn_wait_s=3.0):
+def rerun_command(card, item, *, turn_wait_s=1.0):
     """Format a publishable command; paths are always literal placeholders.
 
     A non-default turn wait is part of the command, so the rerun replays the checkpoint at the run's own wait.
@@ -206,7 +206,7 @@ def rerun_command(card, item, *, turn_wait_s=3.0):
         raise ValueError("invalid probe_point")
     if type(turn_wait_s) is not float or not 0.5 <= turn_wait_s <= 3.0:
         raise ValueError("invalid turn_wait_s")
-    wait = "" if turn_wait_s == 3.0 else f" --turn-wait {turn_wait_s}"
+    wait = "" if turn_wait_s == 1.0 else f" --turn-wait {turn_wait_s}"
     plugin = " --plugin-source <plugin checkout>" if system in PLUGIN_SYSTEMS else ""
     if system in MODEL_CACHE_SYSTEMS:
         plugin += " --model-cache <model cache>"
@@ -227,7 +227,7 @@ def _vouch(card, outcomes, side):
 
 
 def flip_report(current_card, baseline_card, baseline_outcomes, current_outcomes, *,
-                aa_prime=None, aa_prime_card=None, turn_wait_s=3.0):
+                aa_prime=None, aa_prime_card=None, turn_wait_s=1.0):
     """Return a fresh JSON object, ready for canon; no files are written.
 
     A′ outcomes come with their card, which records aa_prime: true and is checked
