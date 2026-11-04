@@ -294,7 +294,8 @@ def test_item7_receipt_deltas_and_multiarm_scope():
                       1000, 20, timings)
     previous = receipt([5, 15], {"probe_main": (40, 10), "aux": (5, 2)}, 700, 30)
     metrics = report([], [], receipts=(current, previous))["operating_metrics"]
-    assert metrics == dict(scope="covers every arm the run executed", wall_ms=300, requests=1,
+    assert metrics == dict(scope="covers every arm the run executed", wall_ms=300,
+        wall_ms_reason=None, requests=1,
         store_growth_bytes=-10, tokens_by_role=[dict(role="aux", input=-5, output=-2),
             dict(role="probe_main", input=60, output=10), dict(role="write_turn", input=10, output=3)],
         latency_summary=dict(n=1, p50=15, p90=15, p95=15, max=15))
