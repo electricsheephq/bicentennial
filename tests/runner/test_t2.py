@@ -14,7 +14,7 @@ from test_t2lite import Stack, live_settings, row, scenario  # noqa: F401
 from bicentennial import cli
 from bicentennial.contracts.run import validate
 from bicentennial.runner import t2, units
-from bicentennial.runner.arm_time import calculate_arm_times
+from bicentennial.runner.arm_time import calculate_arm_times, units_json_inputs
 from bicentennial.runner.hermes_score import Infra, identity0
 from bicentennial.runner.kept import KeptRefused
 from bicentennial.runner.probe_live import LiveStop
@@ -134,8 +134,7 @@ def test_complete_card_kept_and_receipts(t2_scenario):
     timing = read(out, "units.json")
     assert len(timing["units"]) == len(read(out, "receipt.json")["units"]) == 8
     assert all(r["slots"] == 4 for r in timing["units"])
-    rows = [{k: v for k, v in r.items() if k != "slots"} for r in timing["units"]]
-    assert timing["arm_time"] == calculate_arm_times(4, rows, timing["start_ms"], timing["end_ms"])
+    assert timing["arm_time"] == calculate_arm_times(*units_json_inputs(timing))
 
 
 @pytest.mark.parametrize("repeat", range(3))
@@ -171,8 +170,7 @@ def test_slots_and_finish_order_preserve_outputs(t2_scenario, monkeypatch, repea
     first = timing[0]
     assert first["slots"] == 1 and first["admitted_slots"] == s.ctx.roots
     assert all(r["slots"] == 1 for r in first["units"])
-    rows = [{k: v for k, v in r.items() if k != "slots"} for r in first["units"]]
-    assert first["arm_time"] == calculate_arm_times(1, rows, first["start_ms"], first["end_ms"])
+    assert first["arm_time"] == calculate_arm_times(*units_json_inputs(first))
     assert first["arm_time"]["arms"]["system"]["slots"] == 1
     def stable(t):
         return [{k: v for k, v in r.items() if k not in ("slots", "slot", "start_ms", "end_ms", "pre_probe_ms", "keep_ms")} for r in t["units"]]

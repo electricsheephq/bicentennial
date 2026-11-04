@@ -438,6 +438,8 @@ The system runs inside the pinned Hermes harness, with its plug-in installed fro
 
 - **Erratum, 2026-11-04 (#391): when a run ends.** The run's measured elapsed time ends after its outputs' credential scan, when its receipts are written. Only writing and scanning the receipts (including `units.json`) and publishing the floor cache follow, with the final receipt and card renames. Every receipt and `units.json` carry this same run end.
 
+- **Erratum, 2026-11-04 (#460): the clock that times an arm.** Unit intervals and the run's elapsed time are measured on the monotonic clock from the run's start, so a wall-clock step changes no arm time. Receipts keep their wall-clock stamps.
+
 ### 14.9 What the bar publishes
 
 The declaration; every run after it, with its cards; v1's A and A′ cards and band; the selected group, its bundle and the repro receipts; each candidate's entry, archive, review, live-class check and local report; each nomination; each Ring 1 draw receipt, and after each run the seeds, the cards, the lite-audit receipt and the report; a results folder with RESULT.md and READING.md. Only `naive-rag-dev` and the controls run in the surfacing and fix steps; at Ring 1 the reference roster runs beside them, as at every Ring 1 run. **Claim class:** a demonstration of the developer loop on the benchmark's own baseline. It is not a board result and never certifies.
