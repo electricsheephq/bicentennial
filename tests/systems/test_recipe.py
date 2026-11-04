@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-from bicentennial.systems.recipe import recipe
 
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.director import scripted
@@ -15,6 +14,7 @@ from bicentennial.harness.hermes import plugin_host
 from bicentennial.runner import life, t0, t1
 from bicentennial.systems import hermes_plugin as hp
 from bicentennial.systems import mapping, pins
+from bicentennial.systems.recipe import recipe
 from bicentennial.systems.registry import REGISTRY, load
 
 ENTRIES = tuple(load(path) for path in sorted(REGISTRY.glob("*.toml")))
