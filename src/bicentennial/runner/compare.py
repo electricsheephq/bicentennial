@@ -455,7 +455,7 @@ def _execute(ctx, *, out, packs_dir, pack_hash, baseline, cache, corpus_host, st
 
 def run_t1(*, system, packs_dir, pack_hash, out, baseline=None, hermes=None,
            plugin_source=None, model_cache=None, cache=None, entry=None, worker_argv=None, corpus_host=None,
-           sandbox_slot=0, turn_wait_s=3.0) -> int:
+           sandbox_slot=0, turn_wait_s=1.0) -> int:
     """Run the two-life comparison, returning the Ring 0 exit code."""
     created, published, publication = False, False, None
     try:
