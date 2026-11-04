@@ -150,6 +150,10 @@ def main(argv=None) -> int:
         command.add_argument("--" + name)
     command.add_argument("--sandbox-slot", type=int, default=0)
     command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=3.0, metavar="SECONDS")
+    command = commands.add_parser("report")
+    for name in ("current", "previous", "out"):
+        command.add_argument("--" + name, required=True)
+    command.add_argument("--aa-prime")
     command = commands.add_parser("build")
     command.add_argument("--tier", choices=("T0", "T1", "T2"), required=True)
     command.add_argument("--out", required=True)
@@ -172,6 +176,9 @@ def main(argv=None) -> int:
         return run_t2lite(**args)
     if selected == "t2":
         return run_t2(**args)
+    if selected == "report":
+        from bicentennial.report.developer_runs import run_report
+        return run_report(**args)
     if selected == "pins":
         from bicentennial.systems.pins import run_pins
         return run_pins(**args)
