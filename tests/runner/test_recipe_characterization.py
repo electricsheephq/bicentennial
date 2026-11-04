@@ -21,7 +21,6 @@ from bicentennial.systems import hermes_plugin as hp
 from bicentennial.systems.registry import REGISTRY, SystemRefused, load
 
 EXPECTED = {'t0_cards': '077b91cf656e072c98c52d11a0dbdb38bfec9f6a3f501177671450c81180c995',
- 't1_cards': '9b42c493ae86e932952bb2a826d28b532121abc7cf72a1ac8d0e8a1b82d65881',
  'calls:hermes-native': '62a006e01509dd2eb04e956f2dae50a416b06d0f111ef2a5fba9e2b6dd51a5a4',
  'calls:holographic': '79de831208c43625a810ad77e26d723957c658660e230e2ee19cbef51ddc366b',
  'calls:mem0-oss': '70449588609bf70f1d9840f321892ea5ff7a65a49082fea3db13de35651b1ee1',
@@ -69,6 +68,7 @@ EXPECTED = {'t0_cards': '077b91cf656e072c98c52d11a0dbdb38bfec9f6a3f501177671450c
  'install:holographic': 'f158f668cc29bd89119d3348898a2b15b9dd924507a85e3f65b73c16f5d4f43b',
  'install:mem0-oss': 'eee7616d2d56caed7ea5c01fb764731f6b956c4d23d54da66ed50ad2319f5bb5',
  'install:omega': '2e2d2e74b4166a39bb0a8f47aa67d7363e7c6dddab0ef33e184694d51026ff72',
+ 't1_cards_root_free': 'fa38fdbdc20355ef09ff455a2b636dc9bb10f733cd38813fb672b9593bd4e488',
  'reference_t0_cards': 'fdab5d48a66be30aa90feda3990c9b4e01092c1a00434ca40896f7f3b697b192',
  'replayed_plugin': '8aeaaf307e193ecce930afa964dd22ce20ce1573a8c620acfe96e8863fc82d29'}
 
@@ -211,9 +211,25 @@ def test_t0_card(t0_installed, tmp_path, stub_hosts):
                         if p.endswith("card.json")})
 
 
+def root_free(raw):
+    """A T1 card without the two values that depend on the length of its sandbox root's path.
+
+    RING0 §4 claims byte-identical cards per machine, where the fixed root never moves. Here the
+    root lives under the session's temporary directory, so each citation's context offset and the
+    masked ledger digest move with that path's length between sessions.
+    """
+    card = json.loads(raw)
+    card["masked_ledger_digest"] = "-"
+    for item in card["items"]:
+        citation = (item.get("envelope") or {}).get("citation")
+        if citation:
+            citation["context_offset"] = 0
+    return card
+
+
 def test_t1_card(completed):
-    golden("t1_cards", {arm: (completed.root / "one" / arm / "card.json").read_bytes().hex()
-                        for arm in comparison.compare.GATED})
+    golden("t1_cards_root_free", {arm: root_free((completed.root / "one" / arm / "card.json").read_bytes())
+                                  for arm in comparison.compare.GATED})
 
 
 def test_t0_route_hash():
