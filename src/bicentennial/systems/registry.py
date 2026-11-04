@@ -144,8 +144,9 @@ def outside_reasons(entry, operator=_ENV_OPERATOR):
     from bicentennial.systems.hermes_plugin import _PLUGIN, resolve_worker_env
 
     raw = entry["recipe"]
-    # The same characters a published rerun command accepts (report/t2lite_flips.py _token).
-    if not re.fullmatch(r"[A-Za-z0-9._][A-Za-z0-9._-]*", entry["name"]):
+    # Characters a published rerun command accepts (report/t2lite_flips.py _token), starting with a letter or
+    # digit so that a name is never a path such as `.` or `..`.
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", entry["name"]):
         reasons.append("entry_name_invalid")
     if _selection_name(entry["name"]) in {_selection_name(n) for n in _builtin_names()}:
         reasons.append("entry_shadows_builtin")

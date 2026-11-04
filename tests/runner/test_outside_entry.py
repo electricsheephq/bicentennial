@@ -141,6 +141,8 @@ def change(entry, path, value):
     ("name", "reference_store", "entry_shadows_builtin"),
     ("name", "outside memory", "entry_name_invalid"),
     ("name", "-outside", "entry_name_invalid"),
+    ("name", ".", "entry_name_invalid"),
+    ("name", "..", "entry_name_invalid"),
     ("recipe/provider", None, "entry_recipe_invalid:provider"),
     ("recipe/engine", "other", "entry_recipe_invalid:provider"),
     ("recipe/provider", "../provider", "entry_recipe_invalid:provider"),

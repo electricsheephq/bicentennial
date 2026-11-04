@@ -18,7 +18,7 @@ Supply these system fields:
 
 | Field | Value |
 |---|---|
-| `name` | System name: letters, digits, `.`, `_` and `-`, not starting with `-`; must not shadow any built-in registry or code-table name. |
+| `name` | System name: ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit; must not shadow any built-in registry or code-table name. |
 | `licence` | Provisional OSI licence identifier. |
 | `harness` | `hermes` for these runners. |
 | `artifact` | `name`, release-tag `version`, and archive `sha256`. |
@@ -122,7 +122,7 @@ Other install and runner refusals are listed in the [Ring 0](ring0.md),
 | `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
 | `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
-| `entry_name_invalid` | An outside entry's name uses a character other than letters, digits, `.`, `_` and `-`, or starts with `-`; published rerun commands carry the name. |
+| `entry_name_invalid` | An outside entry's name uses a character other than ASCII letters, digits, `.`, `_` and `-`, or does not start with a letter or digit; published rerun commands carry the name. |
 | `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
 | `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
