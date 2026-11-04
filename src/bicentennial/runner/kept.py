@@ -90,6 +90,10 @@ def plain_item_id(item_id):
 class KeptRefused(ValueError):
     """A failed item's snapshot cannot be published safely or within the byte budget."""
 
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
 
 def _bytes(root):
     return sum(p.lstat().st_size for p in root.rglob("*") if p.is_file() and not p.is_symlink())
@@ -180,6 +184,7 @@ def keep_failed(run, scores, out, *, pack_hash, pins, canary, excluded=(), crede
             pending.append((record.directory, target))
         rows.append(row)
     # Include existing copies and metadata, not only this unit's snapshots.
+    rows.sort(key=lambda row: (row["life"], row["branch"], row["item_id"]))
     index_bytes = canon(rows)
     if any(n in index_bytes for n in needles):
         for source, _ in pending:
