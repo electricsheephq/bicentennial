@@ -20,7 +20,9 @@ from bicentennial.runtime.clock import SimClock
 from bicentennial.systems import hermes_plugin as hp
 from bicentennial.systems.registry import REGISTRY, SystemRefused, load
 
-EXPECTED = {'calls:hermes-native': '62a006e01509dd2eb04e956f2dae50a416b06d0f111ef2a5fba9e2b6dd51a5a4',
+EXPECTED = {'t0_cards': '077b91cf656e072c98c52d11a0dbdb38bfec9f6a3f501177671450c81180c995',
+ 't1_cards': '9b42c493ae86e932952bb2a826d28b532121abc7cf72a1ac8d0e8a1b82d65881',
+ 'calls:hermes-native': '62a006e01509dd2eb04e956f2dae50a416b06d0f111ef2a5fba9e2b6dd51a5a4',
  'calls:holographic': '79de831208c43625a810ad77e26d723957c658660e230e2ee19cbef51ddc366b',
  'calls:mem0-oss': '70449588609bf70f1d9840f321892ea5ff7a65a49082fea3db13de35651b1ee1',
  'calls:omega': '40cb7e62d582bfb57d4afa1781bb2c1f248e7977200379c674cd7424b1d6f468',
@@ -192,7 +194,6 @@ def test_host_calls(name, tmp_path, monkeypatch):
     golden("calls:" + name, calls)
 
 
-@pytest.mark.skip(reason="Socket-only baseline is unavailable in the restricted runner")
 def test_t0_card(t0_installed, tmp_path, stub_hosts):
     options, created, denied = stub_hosts
     out = tmp_path / "out"
@@ -204,7 +205,6 @@ def test_t0_card(t0_installed, tmp_path, stub_hosts):
                         if p.endswith("card.json")})
 
 
-@pytest.mark.skip(reason="Socket-only baseline is unavailable in the restricted runner")
 def test_t1_card(completed):
     golden("t1_cards", {arm: (completed.root / "one" / arm / "card.json").read_bytes().hex()
                         for arm in comparison.compare.GATED})
