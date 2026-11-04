@@ -179,8 +179,8 @@ def main(argv=None) -> int:
         from bicentennial.sandbox import fixedroot
         from bicentennial.systems.registry import SystemRefused, load_entry
 
-        # A lease sweeps its slot, so a file in one would be deleted, as the runners' other inputs would. A path that
-        # cannot be resolved cannot be read either.
+        # A lease sweeps its slot, so a file in one would be deleted, as the runners' other inputs would. A path the
+        # check cannot resolve is refused as unreadable.
         try:
             overlap = fixedroot.overlaps(path)
         except OSError:

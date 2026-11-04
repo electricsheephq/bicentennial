@@ -245,7 +245,7 @@ Exit-3 codes and causes, including registry reasons above:
 
 | Code | Cause |
 |---|---|
-| `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
+| `entry_unreadable` | Entry file cannot be read or parsed as TOML, or its path cannot be resolved. |
 | `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
 | `entry_name_invalid` | An outside entry's name uses a character other than ASCII letters, digits, `.`, `_` and `-`, or does not start with a letter or digit; published rerun commands carry the name. |
