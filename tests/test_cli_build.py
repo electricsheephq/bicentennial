@@ -73,6 +73,23 @@ def test_secure_delete_default_is_the_librarys():
     assert cli._secure_delete_default() in (0, 1, 2)
 
 
+def test_secure_delete_default_asks_a_new_connection(monkeypatch):
+    # A fake library pins what the helper asks and returns on every host, whatever its own default.
+    calls = []
+
+    class Connection:
+        def execute(self, sql):
+            calls.append(sql)
+            return SimpleNamespace(fetchone=lambda: (2,))
+
+        def close(self):
+            calls.append("close")
+
+    monkeypatch.setattr(sqlite3, "connect", lambda path: calls.append(path) or Connection())
+    assert cli._secure_delete_default() == 2
+    assert calls == [":memory:", "PRAGMA secure_delete", "close"]
+
+
 @pytest.mark.parametrize("name", ["T0", "T0.staging", "T0.work"])
 def test_build_existing_tier_unchanged(ready, tmp_path, capsys, name):
     target = tmp_path / name
