@@ -59,7 +59,8 @@ def _sends(value):
 
 
 def _secure_delete_default():
-    # The library's compiled-in default; only 0 builds the published pack bytes (#327).
+    # The value a new connection gets: the library's compiled-in default unless something
+    # wraps sqlite3. Only 0 builds the published pack bytes (#327).
     import sqlite3
 
     db = sqlite3.connect(":memory:")
