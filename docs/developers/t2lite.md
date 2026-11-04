@@ -32,7 +32,7 @@ bicentennial t2lite --system hermes-native --packs runs/ring0-t1-packs --pack-ha
 
 | T2-lite flag | Meaning |
 |---|---|
-| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 1.0; invalid values refuse with exit 3 before execution. Session end, turns followed by kill or restart, and compaction turns (a scheduled compaction, or a compaction request recorded during the turn or its quiet time) keep 3.0 s, counted from the first sample of the current stretch with nothing in flight. Outside the lock, lock hash, attempt id and card. The default is the published setting: 1.0 since the one-commit A/B passed (#388), 3.0 before; results at another value are your own. The developer report compares two runs only at one wait, so a comparison with a run made before #388 needs `--turn-wait 3`. |
+| `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 1.0; invalid values refuse with exit 3 before execution. Session end, turns followed by kill or restart, and compaction turns (a scheduled compaction, or a compaction request recorded during the turn or its quiet time) keep 3.0 s, counted from the first sample of the current stretch with nothing in flight. Outside the lock, lock hash, attempt id and card. The default is the published setting: 1.0 since the one-commit A/B passed (#388), 3.0 before; results at another value are your own. A baseline must match the current run's benchmark commit, so a run made before #388 is rerun at the current commit rather than compared directly; `--turn-wait 3` reproduces its old waits. |
 
 The setting is recorded in `disclosures.json` as `turn_wait_s`, a decimal string in seconds.
 
