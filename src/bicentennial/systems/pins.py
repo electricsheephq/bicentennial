@@ -50,7 +50,7 @@ def _validate(entry, hermes, plugin_source, worker_argv):
         raise SystemRefused(reasons)
     if entry["harness"] != "hermes":
         raise PinsRefused("harness_not_hermes")
-    plugin = is_plugin(entry["name"])
+    plugin = is_plugin(entry)
     if (hermes is None and worker_argv is None) or plugin != (plugin_source is not None):
         raise PinsRefused("missing_input")
     if any(fixedroot.overlaps(path) for path in (hermes, plugin_source) if path is not None):
@@ -79,7 +79,7 @@ def _routes(name):
 
 def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
              samples=2, verify_declared=False, worker_argv=None):
-    plugin = is_plugin(entry["name"])
+    plugin = is_plugin(entry)
     measured = deepcopy(entry)
     if not verify_declared:
         measured["fresh_install_hash"] = ZERO_HASH
@@ -127,7 +127,7 @@ def run_pins(*, system, hermes=None, plugin_source=None, sandbox_slot=0):
         if entry["name"] != system:
             raise PinsRefused("unknown_system")
         recipe = None
-        if is_plugin(system):
+        if is_plugin(entry):
             # Registry comments supply the catalog commit and optional archive subdirectory.
             match = re.search(r"git archive --format=tar ([0-9a-f]{40})([^|\n]*) \|", path.read_text())
             if match is None:

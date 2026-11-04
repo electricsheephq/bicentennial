@@ -281,7 +281,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 probe_mode=spec.probe_mode,
                 keep_pre_probe=spec.keep_pre_probe and arm != "no_memory",
                 pre_probe_attribution=spec.pre_probe_attribution and arm != "no_memory",
-                extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
+                extra_env=resolve_worker_env(ctx.entry, ctx.model_cache) if arm != "no_memory" else None)
         except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
@@ -310,7 +310,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             probes = _read(run._root, "t2lite_probes.json")
             # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
             floor_stop = (floor_stops or {}).get(pack.life + branch)
-            relabel = (arm == "system" and is_plugin(ctx.entry["name"]) and run.stopped
+            relabel = (arm == "system" and is_plugin(ctx.entry) and run.stopped
                 and run.stopped[1] in t1.RELABEL and floor_stop and list(floor_stop)[1:] == list(run.stopped)[1:])
             for item in pack.items[branch]:
                 iid = item["item_id"]
@@ -515,7 +515,7 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
 
     def ready(i):
         u = unit_list[i]
-        return (u.arm.role == "no_memory" or not is_plugin(u.arm.entry["name"])
+        return (u.arm.role == "no_memory" or not is_plugin(u.arm.entry)
                 or u.pack.life + u.branch in final)
 
     def run(i, slot):

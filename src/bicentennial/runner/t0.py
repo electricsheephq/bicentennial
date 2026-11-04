@@ -641,7 +641,7 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
             raise T0Refused("harness_not_hermes")
         if recipe(entry).engine is not None and recipe(entry).provider is None:  # no T0 host, so no mapping to check
             raise T0Refused("no_t0_surface:context_engine")
-        reason = check_mapping(entry, resolve_mapping(system))
+        reason = check_mapping(entry, resolve_mapping(entry))
         if reason is not None:
             raise T0Refused(reason)
     else:
@@ -666,18 +666,18 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
     all_packs = {rel: _Pack(Path(packs), rel) for rel in paths}
     by_row = {p.meta["row"]["id"]: p for p in all_packs.values()}
     options = {}
-    model_cache, model_cache_sha256 = prepare_cache(system, model_cache, T0Refused)
+    model_cache, model_cache_sha256 = prepare_cache(entry, model_cache, T0Refused)
     if real:
         harness_pin = load(REGISTRY / "hermes-native.toml")["artifact"]
         options = dict(checkout=hermes, plugin_source=plugin_source, harness_pin=harness_pin)
         options.update(host_overrides or {})
-        if options["checkout"] is None or is_plugin(system) and plugin_source is None:
+        if options["checkout"] is None or is_plugin(entry) and plugin_source is None:
             raise T0Refused("missing_input")
-        options.update(extra_env=resolve_worker_env(system, model_cache),
+        options.update(extra_env=resolve_worker_env(entry, model_cache),
                        model_cache=model_cache, model_cache_sha256=model_cache_sha256)
         if index["harness_artifacts"] != [harness_pin]:
             raise T0Refused("harness_artifact_mismatch")
-        options["run_properties"] = worker_properties(system, options["checkout"], REPO, "t0", T0Refused,
+        options["run_properties"] = worker_properties(entry, options["checkout"], REPO, "t0", T0Refused,
                                                        options.get("worker_argv"))
     for rel in wanted:
         pack = all_packs[rel]

@@ -223,12 +223,12 @@ OMEGA_THREADS = ("auto-relate", "omega-deferred-init")
 
 
 def is_plugin(name):
-    resolved = recipes.recipe({"name": name})
+    resolved = recipes.recipe({"name": name} if isinstance(name, str) else name)
     return resolved.provider is not None or resolved.engine is not None
 
 
 def plugin_dir(name):
-    return recipes.recipe({"name": name}).plugin_directory
+    return recipes.recipe({"name": name} if isinstance(name, str) else name).plugin_directory
 
 
 def validate_maps():
@@ -242,7 +242,7 @@ def validate_maps():
 
 
 def resolve_worker_env(name, model_cache=None):
-    extra = recipes.recipe({"name": name}).worker_environment
+    extra = recipes.recipe({"name": name} if isinstance(name, str) else name).worker_environment
     reserved = set(worker_env(dict.fromkeys(("hermes_home", "home", "tmp"), Path(".")), 1, ".", None))
     for key, value in extra.items():
         if (not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in reserved | set(_PASSED) | set(_PROXIES)
@@ -361,7 +361,7 @@ def worker_properties(system, checkout, repo, tier, refused, worker_argv=None):
     if worker_argv is not None:
         return ()
     data, requirements = None, []
-    resolved = recipes.recipe({"name": system})
+    resolved = recipes.recipe({"name": system} if isinstance(system, str) else system)
     if resolved.dependency_lock is not None:
         try:
             validate_dependencies(repo)
@@ -414,7 +414,7 @@ def verify_install_pin(entry, computed):
 class PluginCell:
     def __init__(self, entry, adapter):
         validate_maps()
-        if not is_plugin(entry["name"]) or entry["harness"] != "hermes":
+        if not is_plugin(entry) or entry["harness"] != "hermes":
             raise ValueError("unsupported Hermes plug-in")
         self.entry, self.adapter, self.surfaces = entry, adapter, []
         paths, user = adapter.paths, Path.home().resolve()
@@ -451,7 +451,7 @@ class PluginCell:
             if status.returncode or status.stdout.strip():
                 raise PinMismatch("plug-in checkout has tracked changes")
             home = self.adapter.paths["hermes_home"]
-            target = home / "plugins" / plugin_dir(self.entry["name"])
+            target = home / "plugins" / plugin_dir(self.entry)
             if target.exists():
                 raise ValueError("plug-in directory exists")
             install_directory(target.parent)
@@ -470,7 +470,7 @@ class PluginCell:
         name = self.entry["name"]
         write_config(home, hermes_config(port, alias, plugin=resolved.provider,
             context_engine=resolved.engine if context else None,
-            plugins_enabled=(plugin_dir(name),) if resolved.enabled else ()))
+            plugins_enabled=(plugin_dir(self.entry),) if resolved.enabled else ()))
         if self.entry["name"] == "mem0-oss":
             base = f"http://127.0.0.1:{port}/mem0/v1"
             llm = {"model": "bicentennial-extraction", "api_key": PLACEHOLDER_KEY, "openai_base_url": base,
