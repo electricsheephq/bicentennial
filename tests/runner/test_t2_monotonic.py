@@ -36,6 +36,7 @@ class Clock:
 @pytest.fixture
 def clocked_t2(t2_scenario, monkeypatch):  # noqa: F811
     drive, keep, scan = units.run_life, t2.keep_failed, t2._scan
+    build = t2.build_live_stack
     state = SimpleNamespace(clock=None, scan_ends=[])
 
     def life(**kw):
@@ -55,15 +56,26 @@ def clocked_t2(t2_scenario, monkeypatch):  # noqa: F811
         state.clock.advance(91_500_000)
         state.scan_ends.append(state.clock.elapsed_ns // 1_000_000)
 
-    def invoke(name, step_ns=0):
+    def stack(*args, **kw):
+        result = build(*args, **kw)
+        state.clock.advance(state.setup_ns)
+        return result
+
+    def run(name, step_ns=0, setup_ns=0):
         state.clock = Clock(step_ns)
+        state.setup_ns = setup_ns
         state.scan_ends.clear()
         monkeypatch.setattr(units, "time", state.clock)
         monkeypatch.setattr(t2, "time", state.clock)
         out = t2_scenario.out.parent / name
         cache = out.with_name(name + "-cache")
-        assert t2_scenario.invoke(name, slots=1, cache=cache) == 0
+        code = t2_scenario.invoke(name, slots=1, cache=cache)
         assert state.clock.stepped
+        return code, out, cache
+
+    def invoke(name, step_ns=0, setup_ns=0):
+        code, out, cache = run(name, step_ns, setup_ns)
+        assert code == 0
         card = read(out, "card.json")
         assert card["counts"]["kept_copies"] == 2
         assert (out / "receipt.json").is_file()
@@ -86,15 +98,18 @@ def clocked_t2(t2_scenario, monkeypatch):  # noqa: F811
     monkeypatch.setattr(units, "run_life", life)
     monkeypatch.setattr(t2, "keep_failed", kept)
     monkeypatch.setattr(t2, "_scan", scanned)
+    monkeypatch.setattr(t2, "build_live_stack", stack)
+    state.run = run
     state.invoke = invoke
     return state
 
 
-@pytest.mark.parametrize("step_ns", [-3_600_000_000_000, -250_000_000, 3_600_000_000_000],
-                         ids=["backwards-hour", "backwards-small", "forwards-hour"])
+@pytest.mark.parametrize("step_ns", [-5_000_000_000, -250_000_000, 3_600_000_000_000],
+                         ids=["backwards-larger-than-unit", "backwards-small", "forwards-hour"])
 def test_wall_steps_do_not_change_arm_time(clocked_t2, step_ns):
-    normal = clocked_t2.invoke("normal")
-    stepped = clocked_t2.invoke("stepped", step_ns)
+    setup_ns = 10_000_000_000
+    normal = clocked_t2.invoke("normal", setup_ns=setup_ns)
+    stepped = clocked_t2.invoke("stepped", step_ns, setup_ns=setup_ns)
     assert stepped["arm_time"] == normal["arm_time"]
     assert stepped["end_ms"] - normal["end_ms"] == step_ns // 1_000_000
     changed, = [r for r in stepped["units"] if r["arm"] == "system" and
@@ -102,6 +117,20 @@ def test_wall_steps_do_not_change_arm_time(clocked_t2, step_ns):
     wall_duration = changed["end_ms"] - changed["start_ms"]
     mono_duration = changed["t_end_ms"] - changed["t_start_ms"]
     assert wall_duration - mono_duration == step_ns // 1_000_000
+    if step_ns == -5_000_000_000:
+        assert mono_duration < -step_ns // 1_000_000 < changed["t_start_ms"]
+        assert wall_duration < 0
+        assert stepped["end_ms"] >= stepped["start_ms"]
+
+
+def test_backward_step_reversing_run_fails_receipt_check(clocked_t2, capsys):
+    code, out, cache = clocked_t2.run("reversed", -3_600_000_000_000)
+    assert clocked_t2.clock.elapsed_ns < 3_600_000_000_000
+    assert code == 70
+    assert "ValueError: wall time reversed" in capsys.readouterr().err
+    assert read(out, "refusal.json") == {"code": "tool_failure"}
+    assert all(not (out / name).exists() for name in ("card.json", "receipt.json", "units.json"))
+    assert not list(cache.glob("*.t2-floor.json"))
 
 
 def test_units_json_recomputes_from_monotonic_offsets(clocked_t2):
@@ -191,3 +220,6 @@ def test_monotonic_erratum_and_guide_name_recompute_helper():
     section = section.split("\n## ", 1)[0]
     assert "monotonic" in section and "wall-clock stamps" in section
     assert section.rstrip().endswith("No PREREG version change; PREREG-v0.5 remains frozen.")
+    boundary = ("A backward wall-clock step larger than the run's elapsed time still fails "
+                "the receipt's existing check, and the run publishes nothing.")
+    assert all(boundary in document for document in (erratum, guide, section))

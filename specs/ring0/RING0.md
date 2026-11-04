@@ -438,7 +438,7 @@ The system runs inside the pinned Hermes harness, with its plug-in installed fro
 
 - **Erratum, 2026-11-04 (#391): when a run ends.** The run's measured elapsed time ends after its outputs' credential scan, when its receipts are written. Only writing and scanning the receipts (including `units.json`) and publishing the floor cache follow, with the final receipt and card renames. Every receipt and `units.json` carry this same run end.
 
-- **Erratum, 2026-11-04 (#460): the clock that times an arm.** Unit intervals and the run's elapsed time are measured on the monotonic clock from the run's start, so a wall-clock step changes no arm time. Receipts keep their wall-clock stamps.
+- **Erratum, 2026-11-04 (#460): the clock that times an arm.** Unit intervals and the run's elapsed time are measured on the monotonic clock from the run's start, so a wall-clock step changes no arm time. Receipts keep their wall-clock stamps. A backward wall-clock step larger than the run's elapsed time still fails the receipt's existing check, and the run publishes nothing.
 
 ### 14.9 What the bar publishes
 

@@ -173,7 +173,7 @@ def test_slots_and_finish_order_preserve_outputs(t2_scenario, monkeypatch, repea
     assert first["arm_time"] == calculate_arm_times(*units_json_inputs(first))
     assert first["arm_time"]["arms"]["system"]["slots"] == 1
     def stable(t):
-        return [{k: v for k, v in r.items() if k not in ("slots", "slot", "start_ms", "end_ms", "pre_probe_ms", "keep_ms")} for r in t["units"]]
+        return [{k: v for k, v in r.items() if k not in ("slots", "slot", "start_ms", "end_ms", "t_start_ms", "t_end_ms", "pre_probe_ms", "keep_ms")} for r in t["units"]]
     assert all(type(r[k]) is int and r[k] >= 0 for t in timing for r in t["units"]
                for k in ("pre_probe_ms", "keep_ms"))
     assert stable(timing[0]) == stable(timing[1]) == stable(timing[2])

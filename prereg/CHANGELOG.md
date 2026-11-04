@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 erratum, 2026-11-04: the clock that times an arm (#460, §14.8)
-- **RING0 §14.8:** unit intervals and the run's elapsed time use monotonic offsets from the run's start, so a wall-clock step changes no arm time. `units.json` publishes the offsets and `units_json_inputs` supplies the recomputation inputs; receipts keep their wall-clock stamps. No code pin moves.
+- **RING0 §14.8:** unit intervals and the run's elapsed time use monotonic offsets from the run's start, so a wall-clock step changes no arm time. `units.json` publishes the offsets and `units_json_inputs` supplies the recomputation inputs; receipts keep their wall-clock stamps. A backward wall-clock step larger than the run's elapsed time still fails the receipt's existing check, and the run publishes nothing. No code pin moves.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Kit, 2026-11-04: the T2 command (#391)
