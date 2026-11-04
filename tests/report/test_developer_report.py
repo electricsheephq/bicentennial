@@ -305,7 +305,15 @@ def test_item7_receipt_deltas_and_multiarm_scope():
     assert report([], [])["operating_metrics"] is None
 
 
-def test_items5_6_cell_sensitivity_does_not_borrow_pooled_discordance():
+@pytest.mark.parametrize("bad", [dict(slots=(True, 1)), dict(slots=(8,)), dict(slots=(0, 4)), dict(slots=("4", 4)),
+                                 dict(slots=(4, 4, 4)), dict(slots=4), dict(arm_times=(5,)), dict(arm_times=(-1, 3)),
+                                 dict(arm_times=(False, 0)), dict(arm_times=(1.5, 2))])
+def test_direct_callers_get_refusals_for_bad_slots_and_arm_times(bad):
+    pair = (receipt([10], {}, 100, 0), receipt([10], {}, 90, 0))
+    with pytest.raises(developer.DeveloperReportRefused, match="^invalid_rows$"):
+        report([], [], receipts=pair, **bad)
+    assert report([], [], receipts=pair, slots=(4, 4), arm_times=(0, 0))["operating_metrics"]["wall_ms"] == 0
+
     a, b = runs([100, 200, 300, 400, 100, 200, 300, 400, 500, 600])
     for i, (left, right) in enumerate(zip(a, b, strict=True)):
         for r in (left, right):

@@ -204,6 +204,11 @@ def _metrics(receipts, *, scope=_SCOPE, arm_times=None, slots=None):
         return None
     if not isinstance(receipts, (tuple, list)) or len(receipts) != 2:
         raise DeveloperReportRefused("invalid_rows")
+    for pair, low in ((arm_times, 0), (slots, 1)):
+        # bool is an int subclass, so type(), not isinstance(): True must not pass as a count of 1.
+        if pair is not None and not (isinstance(pair, (tuple, list)) and len(pair) == 2
+                                     and all(type(v) is int and v >= low for v in pair)):
+            raise DeveloperReportRefused("invalid_rows")
     a, b = receipts
     try:
         for receipt in receipts:
