@@ -785,3 +785,10 @@ def test_live_act_stage_scores_t2_items_with_the_packs_case(t2_packs, monkeypatc
                         assert seen.pop(iid) == replace(case, seed=seed)
                         templates.add(case.record["template_id"])
     assert {"keep-incidental", "wake-loop"} <= templates and not seen
+
+
+def test_live_run_needs_the_packs_cases(lives, tmp_path):
+    # The live leg scores act items from the pack's sealed cases, so a live run without them is refused before it starts.
+    with pytest.raises(ValueError, match="^live probes need the pack's cases$"):
+        drive(lives["t1-g1", "B0"], tmp_path, live=FakeLive(), cases=None)
+    assert not any(tmp_path.iterdir())
