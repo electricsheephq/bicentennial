@@ -88,12 +88,18 @@ Use `--entry ENTRY` in place of `--system NAME` with each runner's usual pack an
 output arguments. T0 constructs a seg0 route table for this entry and records its
 hash in the run lock. The frozen built-in route table stays unchanged.
 
+A T2-lite comparison's `flips.json` prints each rerun command with `--system NAME`;
+for an outside entry, replace it with `--entry ENTRY` and add `--plugin-source` (and
+`--model-cache` if the recipe uses one) until #471 prints them.
+
 ## Operator firewall
 
 The benchmark operator runs only entries it wrote itself, including its baseline.
 The firewall prevents accidentally running LCM-X under a different entry filename:
 it checks the entry name, artifact name, provider, engine and directory after Unicode
-normalization, case folding and punctuation removal. It also recognizes registry
+normalization, case folding and punctuation removal, and refuses any of them that
+contains `lcm`, so an unrelated name such as `excel-cmd` is refused too; rename such an
+entry. It also recognizes registry
 identities marked operator-forbidden and their measured, nonzero artifact digests.
 T2-lite and T2 apply the same identity check to an operator-marked home. A deliberately
 disguised copy is outside this scope. The entry's own permission flag cannot override
@@ -102,7 +108,10 @@ an excluded identity under `BICENTENNIAL_OPERATOR=benchmark`.
 ## Loader and admission refusals
 
 Refusals exit with code 3. Loader refusals occur before a runner starts. Admission
-refusals use each runner's existing output-folder behavior. `<field>` is replaced
+refusals use each runner's existing output-folder behavior: T2-lite and T2 leave
+`refusal.json` in the new output folder, as their other preflight refusals do, so use a
+new output folder after fixing the entry. Every refusal comes before any install,
+session or live request. `<field>` is replaced
 with the offending recipe field, including `archive_tree.ref` or
 `archive_tree.subdirectory`; `provider` also names the provider/engine exclusivity rule.
 Other install and runner refusals are listed in the [Ring 0](ring0.md),
@@ -111,9 +120,9 @@ Other install and runner refusals are listed in the [Ring 0](ring0.md),
 | Code | Cause |
 |---|---|
 | `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
-| `entry_invalid` | Entry file fails the system schema or contract. |
+| `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
-| `entry_recipe_invalid:<field>` | Recipe field has an invalid shape or value; the code names the field. |
+| `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
 | `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
 | `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |

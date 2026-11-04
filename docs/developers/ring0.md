@@ -80,7 +80,8 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 
 | T0 flag | Meaning |
 |---|---|
-| `--system` | Required reference or registry name. |
+| `--system` | Reference or registry name; give exactly one of `--system` and `--entry`. |
+| `--entry` | Outside registry entry file; see the [entry guide](entry.md). |
 | `--pack` | Required, repeatable pack id or relative path; `all` selects the index. |
 | `--packs` | Required installed tier root. |
 | `--pack-hash` | Required hash printed by install. |
@@ -138,7 +139,7 @@ Admission reasons are:
 | `telemetry_switch_missing:<package>:<switch>=<value>` | Dependency lock pins a known default-telemetry package without its exact worker switch, which the reason names: `onnxruntime` requires `ORT_DISABLE_TELEMETRY=1` ([#266](https://github.com/electricsheephq/bicentennial/issues/266#issuecomment-6496219375)). |
 | `telemetry_lock_unreadable` | Dependency lock cannot be read to check known telemetry switches, including `onnxruntime`'s `ORT_DISABLE_TELEMETRY=1` ([#266](https://github.com/electricsheephq/bicentennial/issues/266#issuecomment-6496219375)). |
 | `schema_invalid` | Schema validation fails without a more specific policy reason. |
-| `benchmark_operator_forbidden` | Benchmark operator requests an entry forbidding its runs. |
+| `benchmark_operator_forbidden` | Benchmark operator requests an excluded identity ([entry guide](entry.md#operator-firewall)) or an entry forbidding its runs. |
 | `unmeasured:artifact.sha256` | Artifact hash is the all-zero placeholder. |
 | `unmeasured:fresh_install_hash` | Fresh-install hash is the all-zero placeholder; measure it with `bicentennial pins` below. |
 
@@ -220,7 +221,7 @@ bicentennial t1 --system holographic --packs runs/ring0-t1-packs --pack-hash "$P
 |---|---|
 | `--turn-wait SECONDS` | Quiet time after an ordinary scripted turn, fixed for the run: 0.5 to 3.0 inclusive, default 3.0; invalid values refuse with exit 3 before execution. Session end, turns followed by kill or restart, and compaction turns (a scheduled compaction, or a compaction request recorded during the turn or its quiet time) keep 3.0 s, counted from the first sample of the current stretch with nothing in flight. Outside the lock, lock hash, attempt id and card. The default is the published setting until the one-commit A/B passes; results at another value are your own. |
 
-T1 requires `--system`, `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
+T1 requires one of `--system` and `--entry` ([entry guide](entry.md)), and `--packs`, `--pack-hash`, `--out`; optional flags are `--baseline`, `--hermes`, `--plugin-source`, `--model-cache`, `--cache`. Plug-ins require `--plugin-source`; `--model-cache` follows the T0 rule above (only `omega` needs it); cache defaults to `<out>/cache`.
 
 The gated arms are system and wiped-store positive control. The wiped gate must FAIL: if it passes, the system card is INVALID, exit 1. Wiped `uninformative` is not a pass. The cached no-memory floor appears as `controls.no_memory_floor` and the `no_memory` JUnit suite ([RING0 §§5–6](../../specs/ring0/RING0.md#5-verified-empty-and-the-wiped-store-control)).
 
@@ -245,9 +246,9 @@ Exit-3 codes and causes, including registry reasons above:
 | Code | Cause |
 |---|---|
 | `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
-| `entry_invalid` | Entry file fails the system schema or contract. |
+| `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
-| `entry_recipe_invalid:<field>` | Recipe field has an invalid shape or value; the code names the field. |
+| `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
 | `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
 | `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |

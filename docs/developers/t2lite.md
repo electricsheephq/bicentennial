@@ -116,9 +116,9 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | Code | Cause |
 |---|---|
 | `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
-| `entry_invalid` | Entry file fails the system schema or contract. |
+| `entry_invalid` | Entry file fails the system schema (including the recipe table's field types, required fields and unknown fields) or the contract. |
 | `entry_recipe_missing` | An outside entry file has no recipe table. |
-| `entry_recipe_invalid:<field>` | Recipe field has an invalid shape or value; the code names the field. |
+| `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
 | `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
 | `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
@@ -177,7 +177,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `only` | No matching checkpoint items. |
-| `operator_identity` | Operator-marked login cannot run lcm-x. |
+| `operator_identity` | Operator-marked login cannot run lcm-x or another operator-excluded identity ([entry guide](entry.md#operator-firewall)). |
 | `out_exists` | Output already exists, including a symlink. |
 | `output_overlap` | Output overlaps login, packs or cache. |
 | `pin_mismatch` | Checkout or measured fresh install does not match its pin; for the install pin, stderr and `refusal.json` show the computed value. |
