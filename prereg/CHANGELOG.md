@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-04: outside registry entries (#390)
+- **Developer loop, RING0 §14.2:** all tiers and pin measurement accept an outside entry through `--entry`. Its recipe supplies the plug-in configuration without code-table rows, and its complete admitted declaration contributes to the system hash. Built-in declarations, routes and recorded values retain their rules.
+- **Admission:** outside names cannot shadow built-ins; recipe values use the existing plug-in and worker rules plus bounded archive arguments. Operator exclusions follow normalized entry, artifact and recipe identities and measured forbidden artifact digests. Outside write tools and scripted structured formats are refused pending responder recipe routing. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Kit, 2026-11-04: the T2 command (#391)
 - **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots. See the replay-order erratum below for the replay rule. Each unit reports `pre_probe_ms` and `keep_ms`, including the keep-lock wait.
 - **Floor and publication:** per-life/branch no-memory entries exclude system and slot count from their keys and require a matching live served identity. Credential scanning precedes cache publication. The T2 guide documents outputs, refusals and the unmeasured live budget; T1 and T2-lite retain their bytes. No code pin moves.

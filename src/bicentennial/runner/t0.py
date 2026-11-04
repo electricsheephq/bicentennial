@@ -97,7 +97,7 @@ from bicentennial.systems.hermes_plugin import (
     worker_properties,
 )
 from bicentennial.systems.mapping import check_mapping, resolve_mapping
-from bicentennial.systems.recipe import recipe
+from bicentennial.systems.recipe import recipe, system_artifacts
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.targeted import MicroSpec, micro_schedule
@@ -303,10 +303,18 @@ def drive_branch(pack, branch, factory, *, bound_s, snapshot):
     return results, outcomes, roots, kept_texts
 
 
+def _route_table(entry):
+    if "recipe" in entry:
+        from bicentennial.systems.pins import _routes
+
+        return _routes(entry["name"])
+    return ROUTE_TABLE
+
+
 def _lock(index, pack, entry, pack_hash, real):
     commit = _commit()
     module = ("mutants" if entry["name"] not in ("reference_store", "bm25") else entry["name"])
-    artifacts = [entry["artifact"]] if real else [dict(name=entry["name"], version="r16a",
+    artifacts = system_artifacts(entry) if real else [dict(name=entry["name"], version="r16a",
         sha256=code_sha256(("api/contract.py", f"api/adapters/{module}.py",
                            *(("api/adapters/reference_store.py",) if module != "reference_store" else ()))))]
     return build_lock(benchmark_commit=commit, director_commit=commit, analysis_commit=commit,
@@ -316,7 +324,7 @@ def _lock(index, pack, entry, pack_hash, real):
         environment_hash=pack.manifest["pins"]["environment_boundary_hash"],
         fault_lite_schedule_hash=sha256_canon(pack.meta["generator"]["fault_lite"]),
         tool_lists_hash=sha256_canon({k: entry.get(k) for k in ("write_tools", "read_tools", "recall")}),
-        route_table_hash=route_table_hash(RouteTable.load(ROUTE_TABLE)),
+        route_table_hash=route_table_hash(RouteTable.load(_route_table(entry))),
         write_turn_package_hash=code_sha256(("director/scripted.py",)), account_pool=[])
 
 
@@ -405,7 +413,7 @@ class _Factory:
             n = len(self.hosts)
             root = self.unit / f"h{n}"
             root.mkdir()
-            options = dict(route_table=RouteTable.load(ROUTE_TABLE), responder=ScriptedResponder(self.entry),
+            options = dict(route_table=RouteTable.load(_route_table(self.entry)), responder=ScriptedResponder(self.entry),
                 clock=SimClock(root / "clock.json", self.pack.schedule.sessions[0].t_start, STEP_S),
                 root=root, scratch=self.unit, life=self.pack.meta["life"], branch=self.branch,
                 run=mint_id(canon(["t0", lock_hash(self.lock), self.entry["name"],
@@ -629,11 +637,15 @@ def _preflight(*, system, packs, selected, pack_hash, workers=1, mode="api", her
     if Path(system).name != system or "\\" in system:
         raise T0Refused("unknown_system")
     registry = REGISTRY / f"{system}.toml"
-    real = registry.is_file()
-    if real == (recipe({"name": system}).reference_adapter is not None):
+    outside = entry is not None and "recipe" in entry
+    real = registry.is_file() or outside
+    if not outside and real == (recipe({"name": system}).reference_adapter is not None):
         raise T0Refused("unknown_system")
     if real:
-        entry = load(registry) if entry is None else entry
+        if entry is None:
+            entry = load(registry)
+            if "recipe" in entry:
+                raise T0Refused("recipe_in_builtin")
         if entry["name"] != system:
             raise T0Refused("unknown_system")
         admit_system(entry)

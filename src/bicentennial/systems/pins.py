@@ -7,22 +7,29 @@ import tempfile
 from contextlib import ExitStack
 from copy import deepcopy
 from hashlib import sha256
+from types import SimpleNamespace
 
+from bicentennial.director.core import Director
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder
+from bicentennial.director.serve import serve, shutdown
 from bicentennial.gitenv import git_env
-from bicentennial.harness.hermes.adapter import PinMismatch
+from bicentennial.harness.hermes.adapter import PinMismatch, verify_pin
+from bicentennial.harness.hermes.config import layout
 from bicentennial.harness.hermes.plugin_host import HermesMemoryHost
+from bicentennial.items.protocol import CANARY
+from bicentennial.ledger import Guard
 from bicentennial.runtime.clock import SimClock
 from bicentennial.sandbox import fixedroot
 from bicentennial.systems import recipe as recipes
-from bicentennial.systems.hermes_plugin import is_plugin
+from bicentennial.systems.hermes_plugin import PluginCell, is_plugin
 from bicentennial.systems.registry import (
     REGISTRY,
     ZERO_HASH,
     SystemRefused,
     check,
     load,
+    outside_reasons,
 )
 
 
@@ -45,6 +52,9 @@ def archive_hash(source, recipe):
 
 
 def _validate(entry, hermes, plugin_source, worker_argv):
+    reasons = outside_reasons(entry)
+    if reasons:
+        raise SystemRefused(reasons)
     reasons = check(entry)
     if reasons:
         raise SystemRefused(reasons)
@@ -77,6 +87,25 @@ def _routes(name):
     return {"routes": [row for row in t1_routes(name)["routes"] if row["segment"] == "seg0"]}
 
 
+def _engine_host(entry, root, sandbox, routes, hermes, plugin_source, worker_argv):
+    """Measure an outside engine through the same installer its run uses."""
+    if worker_argv is None:
+        verify_pin(hermes, load(REGISTRY / "hermes-native.toml")["artifact"])
+    paths = layout(root, sandbox)
+    script = dict(canary=CANARY, life_id="pins", genre="t0", harness="hermes", sessions=[])
+    with ExitStack() as owned:
+        director = Director(script, routes, entry["name"], "pins", "B0", "pins", (),
+            ScriptedResponder(entry), SimClock(root / "clock.json", 0, 60), Guard([]),
+            dict(sandbox_root=str(paths["root"]), director_port="0"))
+        owned.callback(director.close)
+        server = serve(director, 0)
+        owned.callback(shutdown, server)
+        adapter = SimpleNamespace(paths=paths, director=director, end_threads=())
+        cell = PluginCell(entry, adapter)
+        digest = cell.install(plugin_source, alias=routes.to_obj()["routes"][0]["alias"])
+        return SimpleNamespace(fresh_install_hash=digest, close=owned.pop_all().close)
+
+
 def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
              samples=2, verify_declared=False, worker_argv=None):
     plugin = is_plugin(entry)
@@ -102,11 +131,14 @@ def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
         for index in range(samples):
             root = sandbox / f"pins-{index}"
             root.mkdir()
-            host = HermesMemoryHost(measured, route_table=routes, responder=ScriptedResponder(measured),
-                clock=SimClock(root / "clock.json", 0, 60), root=root, scratch=sandbox,
-                life="pins", branch="B0", run="pins", lock_hash="0" * 64, sim_epoch_s=0,
-                checkout=hermes, harness_pin=load(REGISTRY / "hermes-native.toml")["artifact"],
-                plugin_source=plugin_source, worker_argv=worker_argv)
+            if "recipe" in entry and recipes.recipe(entry).engine is not None:
+                host = _engine_host(measured, root, sandbox, routes, hermes, plugin_source, worker_argv)
+            else:
+                host = HermesMemoryHost(measured, route_table=routes, responder=ScriptedResponder(measured),
+                    clock=SimClock(root / "clock.json", 0, 60), root=root, scratch=sandbox,
+                    life="pins", branch="B0", run="pins", lock_hash="0" * 64, sim_epoch_s=0,
+                    checkout=hermes, harness_pin=load(REGISTRY / "hermes-native.toml")["artifact"],
+                    plugin_source=plugin_source, worker_argv=worker_argv)
             cleanup.callback(host.close)
             # Both servers remain bound until both measurements finish: port 0 cannot be reused.
             hosts.append(host)
@@ -116,25 +148,30 @@ def _measure(entry, sandbox, *, hermes=None, plugin_source=None, recipe=None,
         return {"fresh_install_hash": first, "artifact.sha256": measured["artifact"]["sha256"]}
 
 
-def run_pins(*, system, hermes=None, plugin_source=None, sandbox_slot=0):
+def run_pins(*, system, entry=None, hermes=None, plugin_source=None, sandbox_slot=0):
     try:
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", system):
-            raise PinsRefused("unknown_system")
-        path = REGISTRY / f"{system}.toml"
-        if not path.is_file():
-            raise PinsRefused("unknown_system")
-        entry = load(path)
+        tree = None
+        if entry is None:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", system):
+                raise PinsRefused("unknown_system")
+            path = REGISTRY / f"{system}.toml"
+            if not path.is_file():
+                raise PinsRefused("unknown_system")
+            entry = load(path)
+            if "recipe" in entry:
+                raise PinsRefused("recipe_in_builtin")
+            if entry["name"] != system:
+                raise PinsRefused("unknown_system")
+            if is_plugin(entry):
+                # Registry comments supply the catalog commit and optional archive subdirectory.
+                match = re.search(r"git archive --format=tar ([0-9a-f]{40})([^|\n]*) \|", path.read_text())
+                if match is None:
+                    raise PinsRefused("pin_mismatch")
+                tree = (match[1], *match[2].split())
         if entry["name"] != system:
             raise PinsRefused("unknown_system")
-        recipe = None
-        if is_plugin(entry):
-            # Registry comments supply the catalog commit and optional archive subdirectory.
-            match = re.search(r"git archive --format=tar ([0-9a-f]{40})([^|\n]*) \|", path.read_text())
-            if match is None:
-                raise PinsRefused("pin_mismatch")
-            recipe = (match[1], *match[2].split())
         pins = measure(entry, hermes=hermes, plugin_source=plugin_source,
-                       recipe=recipe, sandbox_slot=sandbox_slot)
+                       recipe=tree, sandbox_slot=sandbox_slot)
     except PinsRefused as error:
         print(error.code, *error.detail, file=sys.stderr)
         return 3

@@ -49,6 +49,7 @@ from bicentennial.runner.units import (
 )
 from bicentennial.sandbox import fixedroot
 from bicentennial.systems.hermes_plugin import cache_digest
+from bicentennial.systems.registry import operator_forbidden
 
 CODE_PINS = ("controls_sha256", "reader_sha256", "scoring_sha256", "scorer_sha256")
 CARD_PINS = (*PIN_FIELDS, "system_hash", "route_table_hash", "write_turn_package_hash")
@@ -135,7 +136,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
             raise t1.T1Refused("output_overlap")
         out.mkdir(parents=True)
         created = True
-        if system == "lcm-x" and (home / ".bicentennial-operator").exists():
+        if operator_forbidden(entry if entry is not None else {"name": system}) and (home / ".bicentennial-operator").exists():
             raise t1.T1Refused("operator_identity")
         account = os.open(home / ".t2lite.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:

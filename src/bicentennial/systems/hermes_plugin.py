@@ -467,7 +467,6 @@ class PluginCell:
                     stdin=archive, check=True, env={}, umask=0o022, pass_fds=fixedroot.held())
                 (Path(unpacked) / (recipe[1] if len(recipe) > 1 else ".")).rename(target)
         port = int(self.adapter.director.run_values["director_port"])
-        name = self.entry["name"]
         write_config(home, hermes_config(port, alias, plugin=resolved.provider,
             context_engine=resolved.engine if context else None,
             plugins_enabled=(plugin_dir(self.entry),) if resolved.enabled else ()))

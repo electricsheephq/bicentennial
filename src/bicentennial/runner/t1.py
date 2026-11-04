@@ -41,7 +41,7 @@ from bicentennial.systems.hermes_plugin import (
     worker_properties,
 )
 from bicentennial.systems.mapping import check_mapping, resolve_mapping
-from bicentennial.systems.recipe import recipe
+from bicentennial.systems.recipe import recipe, system_artifacts
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
@@ -223,7 +223,7 @@ def _lock(index, packs, entry, table, pack_hash):
         analysis_commit=commit, generator_version=index["generator_version"],
         seeds=index["seeds_manifest"]["seeds"],
         rendered_history_set_hash=index["rendered_history_set_hash"],
-        harness_artifacts=index["harness_artifacts"], system_artifacts=[entry["artifact"]],
+        harness_artifacts=index["harness_artifacts"], system_artifacts=system_artifacts(entry),
         environment_hash=boundary["environment_boundary_hash"],
         route_table_hash=route_table_hash(RouteTable.load(table)),
         write_turn_package_hash=code_sha256(("director/scripted.py",)),
@@ -240,6 +240,8 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if entry is None:
         try:
             entry = load(REGISTRY / f"{system}.toml")
+            if "recipe" in entry:
+                raise T1Refused("recipe_in_builtin")
         except FileNotFoundError:
             raise T1Refused("unknown_system") from None
     if entry["name"] != system:

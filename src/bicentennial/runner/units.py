@@ -220,7 +220,9 @@ class _ArmContext:
     def _entry_lock(self, lock):
         # make_units keeps every arm on the run's system, so its route table is the run's, and these are the
         # two fields of t1._lock that an arm's entry can change.
-        return lock | dict(system_artifacts=[deepcopy(self.entry["artifact"])],
+        from bicentennial.systems.recipe import system_artifacts
+
+        return lock | dict(system_artifacts=system_artifacts(self.entry),
             tool_lists_hash=sha256_canon({k: self.entry.get(k)
                 for k in ("read_tools", "recall", "write_tools")}))
 

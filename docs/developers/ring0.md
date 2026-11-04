@@ -244,6 +244,15 @@ Exit-3 codes and causes, including registry reasons above:
 
 | Code | Cause |
 |---|---|
+| `entry_unreadable` | Entry file cannot be read or parsed as TOML. |
+| `entry_invalid` | Entry file fails the system schema or contract. |
+| `entry_recipe_missing` | An outside entry file has no recipe table. |
+| `entry_recipe_invalid:<field>` | Recipe field has an invalid shape or value; the code names the field. |
+| `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
+| `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
+| `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
+| `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
+| `recipe_in_builtin` | A built-in registry file contains an outside recipe table. |
 | `source_checkout_required` | Missing source files or a different git top level. |
 | `hashseed` | Seed is not 0. |
 | `usage` | Invalid or missing CLI argument; stderr includes usage. |
