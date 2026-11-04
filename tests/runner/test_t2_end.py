@@ -32,9 +32,7 @@ def test_one_run_end_after_full_scan(t2_scenario, monkeypatch):  # noqa: F811
     assert timing["end_ms"] >= returned_ms[0]
     for name in ("receipt.json", "receipts/system.json", "receipts/no_memory.json"):
         assert read(t2_scenario.out, name)["wall_end_ms"] == timing["end_ms"]
-    rows = [{k: v for k, v in row.items() if k != "slots"} for row in timing["units"]]
-    assert timing["arm_time"] == t2.calculate_arm_times(
-        timing["slots"], rows, timing["start_ms"], timing["end_ms"])
+    assert timing["arm_time"] == t2.calculate_arm_times(*t2.units_json_inputs(timing))
 
 
 def test_every_published_file_is_scanned(t2_scenario, monkeypatch, tmp_path):  # noqa: F811

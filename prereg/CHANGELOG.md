@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-04: the clock that times an arm (#460, §14.8)
+- **RING0 §14.8:** unit intervals and the run's elapsed time use monotonic offsets from the run's start, so a wall-clock step changes no arm time. `units.json` publishes the offsets and `units_json_inputs` supplies the recomputation inputs; receipts keep their wall-clock stamps, and time the machine spends suspended counts toward no arm time. A backward wall-clock step larger than the run's elapsed time still fails the receipt's existing check, and the run publishes nothing. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 change, 2026-11-04: the default turn wait is 1.0 s (#388, §13 E35)
 - **RING0 §13 E35 (E30):** T1 and T2-lite default to 1.0 s of quiet time after an ordinary scripted turn, where it was 3.0 s. 0.5 to 3.0 stays the accepted range, and session ends, kill or restart turns and compaction turns keep 3.0 s. The one-commit A/B found byte-equal cards and no late background work on all three reference systems; a store check of every Hermes session, with run-specific values masked, found equal stores apart from 18 items that also differ at the same wait; and each T1 run took 18-23% less time.
 - **Pins and results:** no code pin moves, and no card, score or hashed output changes. Receipts, JUnit properties and T2-lite disclosures record `1.0` at the default; T0's receipts keep `3.0`. A T2-lite baseline must match the current run's benchmark commit, so a T2-lite run made before this change is rerun at the current commit rather than compared directly, and `--turn-wait 3` reproduces its old waits; T1's baseline gate checks the pack and seed, not the wait.
