@@ -48,3 +48,18 @@ def test_platform_probe(tmp_path):
     root = tmp_path / "b1" / "T1"
     _dump("t1_db", {rel: _db(root / rel) for rel in runs[0]["index"]["packs"]})
     raise AssertionError("probe output is printed above")
+
+
+def test_zz_secure_delete_off(tmp_path, monkeypatch):
+    connect = sqlite3.connect
+
+    def off(*args, **kwargs):
+        db = connect(*args, **kwargs)
+        db.execute("PRAGMA secure_delete=OFF")
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", off)
+    artifact = load(REGISTRY / "hermes-native.toml")["artifact"]
+    result = build.build_tier("T1", tmp_path / "off", harness_artifacts=[artifact])
+    print("secure_delete_off_t1=" + result["pack_hash"])
+    raise AssertionError("printed above")

@@ -311,5 +311,9 @@ def test_reference_t0_cards(t0_installed, tmp_path):
 
 def test_zz_build_key(t0_installed, installed):
     import sqlite3
-    print("recipe_build=" + json.dumps({"t0": t0_installed[2], "t1": installed.digest, "sqlite": sqlite3.sqlite_version}))
+    db = sqlite3.connect(":memory:")
+    options = [row[0] for row in db.execute("PRAGMA compile_options")]
+    print("recipe_build=" + json.dumps({"t0": t0_installed[2], "t1": installed.digest, "sqlite": sqlite3.sqlite_version,
+                                        "secure_delete": db.execute("PRAGMA secure_delete").fetchone()[0],
+                                        "secure_delete_option": [o for o in options if "SECURE_DELETE" in o]}))
     raise AssertionError("build key printed above")
