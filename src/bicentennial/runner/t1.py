@@ -41,7 +41,7 @@ from bicentennial.systems.hermes_plugin import (
     worker_properties,
 )
 from bicentennial.systems.mapping import check_mapping, resolve_mapping
-from bicentennial.systems.recipe import recipe
+from bicentennial.systems.recipe import recipe, system_artifacts
 from bicentennial.systems.registry import REGISTRY, SystemRefused, admit_system, load
 from bicentennial.world.db import open_world
 from bicentennial.world.scale import named
@@ -223,7 +223,7 @@ def _lock(index, packs, entry, table, pack_hash):
         analysis_commit=commit, generator_version=index["generator_version"],
         seeds=index["seeds_manifest"]["seeds"],
         rendered_history_set_hash=index["rendered_history_set_hash"],
-        harness_artifacts=index["harness_artifacts"], system_artifacts=[entry["artifact"]],
+        harness_artifacts=index["harness_artifacts"], system_artifacts=system_artifacts(entry),
         environment_hash=boundary["environment_boundary_hash"],
         route_table_hash=route_table_hash(RouteTable.load(table)),
         write_turn_package_hash=code_sha256(("director/scripted.py",)),
@@ -240,20 +240,22 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if entry is None:
         try:
             entry = load(REGISTRY / f"{system}.toml")
+            if "recipe" in entry:
+                raise T1Refused("recipe_in_builtin")
         except FileNotFoundError:
             raise T1Refused("unknown_system") from None
     if entry["name"] != system:
         raise T1Refused("unknown_system")
     entry = json.loads(canon(entry))
-    admit_system(entry)
+    admit_system(entry, hermes=hermes)
     if entry["harness"] != "hermes":
         raise T1Refused("harness_not_hermes")
     engine_only = recipe(entry).engine is not None and recipe(entry).provider is None
-    reason = check_mapping(entry, resolve_mapping(system), require_forget=not engine_only)
+    reason = check_mapping(entry, resolve_mapping(entry), require_forget=not engine_only)
     if reason is not None:
         raise T1Refused(reason)
     harness_pin = dict(sorted(load(REGISTRY / "hermes-native.toml")["artifact"].items()))
-    if (hermes is None and worker_argv is None) or (is_plugin(system) and plugin_source is None):
+    if (hermes is None and worker_argv is None) or (is_plugin(entry) and plugin_source is None):
         raise T1Refused("missing_input")
     early_admission = None
     if spec.min_roots > 1:
@@ -264,7 +266,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         if early_admission.max_roots < spec.min_roots:
             raise T1Refused("roots_below_min")
     validate_maps()
-    model_cache, model_cache_sha256 = prepare_cache(system, model_cache, T1Refused)
+    model_cache, model_cache_sha256 = prepare_cache(entry, model_cache, T1Refused)
     if entry["settle"]["kind"] == "hook" and recipe(entry).settle_threads is None:
         raise T1Refused("settle_unmapped")
     if hermes is not None and worker_argv is None:
@@ -280,7 +282,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
             raise T1Refused("harness_extra_missing:mcp")
     properties = ()
     if recipe(entry).dependency_lock is not None:
-        properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
+        properties = worker_properties(entry, hermes, REPO, "t1", T1Refused, worker_argv)
     if early_admission is None:
         marker = read_marker()
         admission = admit(marker, heavy=entry.get("machine_class") == "heavy", roots=spec.roots)
@@ -291,7 +293,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if admission.max_roots < spec.min_roots:
         raise T1Refused("roots_below_min")
     if recipe(entry).dependency_lock is None:
-        properties = worker_properties(system, hermes, REPO, "t1", T1Refused, worker_argv)
+        properties = worker_properties(entry, hermes, REPO, "t1", T1Refused, worker_argv)
     index = verify(packs, pack_hash=pack_hash)
     if index["tier"] != spec.pack_tier:
         raise T1Refused("tier")
@@ -358,11 +360,11 @@ def _unit(ctx, pack, arm, b, scratch, voids, floor):
             hermes=ctx.hermes, plugin_source=None if arm == "no_memory" else ctx.plugin_source,
             worker_argv=_worker(ctx, pack.life, b, arm), visible=pack.visible,
             honeypot_token=pack.meta["honeypot_token"], turn_wait_s=ctx.turn_wait_s,
-            extra_env=resolve_worker_env(ctx.entry["name"], ctx.model_cache) if arm != "no_memory" else None)
+            extra_env=resolve_worker_env(ctx.entry, ctx.model_cache) if arm != "no_memory" else None)
         runs.append(run)
         scores, labels = {}, {}
         try:
-            relabel = (is_plugin(ctx.entry["name"]) and arm in GATED_ARMS and run.stopped
+            relabel = (is_plugin(ctx.entry) and arm in GATED_ARMS and run.stopped
                 and run.stopped[1] in RELABEL and floor.stopped
                 and floor.stopped[1:] == run.stopped[1:])
             for item in sorted(pack.items[b], key=lambda i: i["item_id"]):

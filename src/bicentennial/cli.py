@@ -104,6 +104,12 @@ def _source_checkout(root) -> bool:
         return True
 
 
+def _selection(command):
+    group = command.add_mutually_exclusive_group(required=True)
+    group.add_argument("--system")
+    group.add_argument("--entry", type=Path)
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not _source_checkout(REPO):
@@ -112,7 +118,7 @@ def main(argv=None) -> int:
     parser = _Parser(prog="bicentennial")
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("t0")
-    command.add_argument("--system", required=True)
+    _selection(command)
     command.add_argument("--pack", dest="packs", action="append", required=True)
     command.add_argument("--packs", dest="packs_dir", required=True)
     command.add_argument("--pack-hash", required=True)
@@ -123,7 +129,8 @@ def main(argv=None) -> int:
     for name in ("hermes", "plugin-source", "model-cache", "cache"):
         command.add_argument("--" + name)
     command = commands.add_parser("t1")
-    for name in ("system", "pack-hash", "out"):
+    _selection(command)
+    for name in ("pack-hash", "out"):
         command.add_argument("--" + name, required=True)
     command.add_argument("--packs", dest="packs_dir", required=True)
     for name in ("baseline", "hermes", "plugin-source", "model-cache", "cache"):
@@ -131,7 +138,8 @@ def main(argv=None) -> int:
     command.add_argument("--sandbox-slot", type=int, default=0)
     command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=1.0, metavar="SECONDS")
     command = commands.add_parser("t2lite")
-    for name in ("system", "pack-hash", "out", "login-home"):
+    _selection(command)
+    for name in ("pack-hash", "out", "login-home"):
         command.add_argument("--" + name, required=True)
     command.add_argument("--packs", dest="packs_dir", required=True)
     command.add_argument("--max-sends", type=_sends, required=True)
@@ -142,7 +150,8 @@ def main(argv=None) -> int:
     command.add_argument("--only", type=_only)
     command.add_argument("--repeat", type=_workers, default=1)
     command = commands.add_parser("t2")
-    for name in ("system", "pack-hash", "out", "login-home"):
+    _selection(command)
+    for name in ("pack-hash", "out", "login-home"):
         command.add_argument("--" + name, required=True)
     command.add_argument("--packs", dest="packs_dir", required=True)
     command.add_argument("--max-sends", type=_sends, required=True)
@@ -158,7 +167,7 @@ def main(argv=None) -> int:
     command.add_argument("--tier", choices=("T0", "T1", "T2"), required=True)
     command.add_argument("--out", required=True)
     command = commands.add_parser("pins")
-    command.add_argument("--system", required=True)
+    _selection(command)
     command.add_argument("--hermes")
     command.add_argument("--plugin-source")
     command.add_argument("--sandbox-slot", type=int, default=0)
@@ -168,6 +177,28 @@ def main(argv=None) -> int:
         print("hashseed", file=sys.stderr)
         return 3
     reexec_niced(["-m", "bicentennial.cli", *argv])
+    # Only commands that select a system have --entry; build has neither.
+    path = args.pop("entry", None)
+    if path is not None:
+        from bicentennial.sandbox import fixedroot
+        from bicentennial.systems.registry import SystemRefused, load_entry
+
+        # A lease sweeps its slot, so a file in one would be deleted, as the runners' other inputs would. A path the
+        # check cannot resolve is refused as unreadable.
+        try:
+            overlap = fixedroot.overlaps(path)
+        except OSError:
+            print("entry_unreadable", file=sys.stderr)
+            return 3
+        if overlap:
+            print("sandbox_overlap", file=sys.stderr)
+            return 3
+        try:
+            entry = load_entry(path)
+        except SystemRefused as error:
+            print(*error.reasons, file=sys.stderr)
+            return 3
+        args.update(system=entry["name"], entry=entry)
     if selected == "t0":
         return run_t0(**args)
     if selected == "t1":

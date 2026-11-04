@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-04: outside registry entries (#390)
+- **Developer loop, RING0 §14.2:** all tiers and pin measurement accept an outside entry through `--entry`. Its recipe supplies the plug-in configuration without code-table rows, and its complete admitted declaration contributes to the system hash. Built-in declarations, routes and recorded values retain their rules.
+- **Admission:** outside names cannot shadow built-ins; recipe values use the existing plug-in and worker rules plus bounded archive arguments. Operator exclusions follow normalized entry, artifact and recipe identities and measured forbidden artifact digests. Outside write tools and scripted structured formats are refused pending responder recipe routing. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-04: the clock that times an arm (#460, §14.8)
 - **RING0 §14.8:** unit intervals and the run's elapsed time use monotonic offsets from the run's start, so a wall-clock step changes no arm time. `units.json` publishes the offsets and `units_json_inputs` supplies the recomputation inputs; receipts keep their wall-clock stamps, and time the machine spends suspended counts toward no arm time. A backward wall-clock step larger than the run's elapsed time still fails the receipt's existing check, and the run publishes nothing. No code pin moves.
 No PREREG version change; PREREG-v0.5 remains frozen.
