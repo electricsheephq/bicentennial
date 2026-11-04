@@ -423,7 +423,7 @@ def test_complete_cache_and_actual_work_receipt(scenario, tmp_path, capsys):
     receipt = runner._read(s.out, "receipt.json")
     assert {t["arm"] for t in receipt["timings"]} == {"system", "no_memory"}
     assert receipt["tokens"] == {"input": 16, "output": 8}
-    assert receipt["turn_wait_s"] == "3.0"
+    assert receipt["turn_wait_s"] == "1.0"
     assert len(receipt["units"]) == 8
     assert {(u["life"], u["branch"], u["arm"]) for u in receipt["units"]} == {
         (p.life, b, a) for p in s.ctx.packs for b in ("B0", "B1") for a in ("system", "no_memory")}

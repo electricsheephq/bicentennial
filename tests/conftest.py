@@ -1,8 +1,14 @@
-"""Small, local Git checkouts for environment-isolation regressions, and CI's test shards."""
+"""Local Git checkouts and whole-file CI shards, balanced by measured durations.
 
-import hashlib
+Place longest files first on the least-loaded shard; emit per-file timings for refreshes.
+"""
+
+import json
+import math
 import os
 import subprocess
+from pathlib import Path
+from statistics import median
 from types import SimpleNamespace
 
 import pytest
@@ -62,9 +68,49 @@ def git_checkouts(tmp_path, monkeypatch):
                            })
 
 
-def shard_of(path, total):
-    """The CI shard that runs every test in one test file."""
-    return int(hashlib.sha256(path.encode()).hexdigest(), 16) % total
+def place(files, weights, total):
+    """Return deterministic whole-file assignments, longest first, with low-index ties."""
+    fallback = median(weights.values()) if weights else 1.0
+    loads = [0.0] * total
+    placement = {}
+    for path in sorted(files, key=lambda path: (-weights.get(path, fallback), path)):
+        index = min(range(total), key=lambda index: (loads[index], index))
+        placement[path] = index
+        loads[index] += weights.get(path, fallback)
+    return placement
+
+
+def _load_weights():
+    path = Path(__file__).with_name("shard_weights.json")
+    try:
+        weights = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(weights, dict) or any(
+            not isinstance(name, str) or not name or type(seconds) not in (int, float)
+            or not math.isfinite(seconds) or seconds < 0
+            for name, seconds in weights.items()
+        ):
+            raise ValueError("expected an object of file paths to finite nonnegative seconds")
+        return weights
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, OverflowError) as exc:
+        raise pytest.UsageError(f"cannot load {path}: {exc}") from exc
+
+
+class _ShardDurations:
+    def __init__(self, index, total):
+        self.index = index
+        self.total = total
+        self.seconds = {}
+
+    def pytest_runtest_logreport(self, report):
+        path = report.nodeid.split("::", 1)[0]
+        self.seconds[path] = self.seconds.get(path, 0.0) + report.duration
+
+    def pytest_terminal_summary(self, terminalreporter):
+        payload = json.dumps({path: round(seconds, 1) for path, seconds in self.seconds.items()},
+                             sort_keys=True, separators=(",", ":"))
+        terminalreporter.write_line(f"shard-durations v1 {self.index} {self.total} {payload}")
 
 
 def _shard_setting(name):
@@ -84,9 +130,12 @@ def pytest_collection_modifyitems(config, items):
     index = _shard_setting("BICENTENNIAL_TEST_SHARD")
     if not 0 <= index < total:
         raise pytest.UsageError("BICENTENNIAL_TEST_SHARD is out of range")
+    files = sorted({item.nodeid.split("::", 1)[0] for item in items})
+    placement = place(files, _load_weights(), total)
+    config.pluginmanager.register(_ShardDurations(index, total))
     keep, drop = [], []
     for item in items:
-        (keep if shard_of(item.nodeid.split("::", 1)[0], total) == index else drop).append(item)
+        (keep if placement[item.nodeid.split("::", 1)[0]] == index else drop).append(item)
     if drop:
         config.hook.pytest_deselected(items=drop)
         items[:] = keep

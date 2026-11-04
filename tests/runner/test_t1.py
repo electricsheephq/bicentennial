@@ -330,6 +330,17 @@ def test_compile_refusal_summary(installed, tmp_path, monkeypatch, capsys):
         f"check_compile {report['life']} B1 calls=0 mismatches=0 kinds=-\n")
 
 
+@pytest.mark.parametrize("wait", [1.0, 3.0])
+def test_compile_check_waits_like_the_run(installed, tmp_path, monkeypatch, wait):
+    # --turn-wait 3 must restore the compile check's wait too, not only the arms' turns (#388).
+    seen = []
+    monkeypatch.setattr(t1, "check_compile", lambda *a, **kw: seen.append(kw["turn_wait_s"]) or dict(ok=False, branches={
+        "B0": dict(calls=1, mismatches=[{"kind": "result"}])}))
+    with pytest.raises(t1.T1Refused, match="check_compile"):
+        t1.run_arms(prepare(installed, turn_wait_s=wait), scratch=tmp_path / "scratch")
+    assert seen == [wait]
+
+
 def test_firewall():
     source = Path(t1.__file__).read_text()
     allowed = {"json", "subprocess", "hashlib", "dataclasses", "pathlib", "concurrent", "sys"}
@@ -1040,7 +1051,7 @@ def test_engine_install_pin_is_left_to_its_arm(policy, monkeypatch, tmp_path, pr
 
 
 def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp_path):
-    full, short = prepare(installed), prepare(installed, turn_wait_s=1.0)
+    full, short = prepare(installed, turn_wait_s=3.0), prepare(installed)
     assert full.turn_wait_s == 3.0 and short.turn_wait_s == 1.0
     assert full.lock == short.lock and full.pins == short.pins and full.run_id == short.run_id
     assert full.current_lock() == short.current_lock() == full.lock

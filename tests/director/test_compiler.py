@@ -1073,3 +1073,19 @@ def test_check_compile_records_harness_failure_and_continues(worlds, tmp_path, m
     assert not report["ok"] and starts == ["B0", "B0", "B1", "B1"]
     assert all(sum(m["kind"] == "harness_failed:turn_timeout" for m in branch["mismatches"]) == 2
                for branch in report["branches"].values())
+
+
+@pytest.mark.parametrize("wait", [None, 3.0])
+def test_check_compile_gives_the_adapter_the_wait(worlds, tmp_path, monkeypatch, wait):
+    from bicentennial.harness.hermes import adapter
+
+    waits = []
+
+    def failed(*args, **kwargs):
+        waits.append(kwargs["turn_wait_s"])
+        raise HarnessFailed("turn_timeout")
+
+    monkeypatch.setattr(adapter, "HermesAdapter", failed)
+    check_life(life_directory(worlds["G2"], tmp_path / "life"), tmp_path / "runs",
+               **({} if wait is None else dict(turn_wait_s=wait)))
+    assert waits == [1.0 if wait is None else wait] * 4

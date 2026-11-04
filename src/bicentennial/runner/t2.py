@@ -16,7 +16,7 @@ from bicentennial.items.protocol import CANARY
 from bicentennial.packs.install import verify
 from bicentennial.report.t2_card import _row_counts, build_t2_card
 from bicentennial.runner import t1
-from bicentennial.runner.arm_time import calculate_arm_times
+from bicentennial.runner.arm_time import calculate_arm_times, units_json_inputs
 from bicentennial.runner.kept import KeptRefused, keep_failed
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
@@ -113,6 +113,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
         raise ValueError("slots must be a positive integer")
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
+    mono_start = time.monotonic_ns()
     units = []
     needles, pending_cache, live, custody_rows = set(), [], None, []
     try:
@@ -247,18 +248,20 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 result = results[identity0]
                 index, predicted = order[identity0]
                 unit_rows.append(dict(row, slots=effective, predicted_s=predicted, card_index=index,
+                    t_start_ms=(result.mono_ns[0] - mono_start) // 1_000_000,
+                    t_end_ms=(result.mono_ns[1] - mono_start) // 1_000_000,
                     pre_probe_ms=sum(p.copy_ns for r in result.runs for p in (r.pre_probe or {}).values()) // 1_000_000,
                     keep_ms=result.keep_ms))
             _write(out, ".card.json", card)
             _scan(out, needles)
             end = int(time.time() * 1000)
+            mono_end = time.monotonic_ns()
             receipt = _receipt(runs, start, "COMPLETE", turn_wait_s, units, end_ms=end)
-            _write(out, "units.json", dict(slots=effective, admitted_slots=ctx.roots,
+            timing = dict(slots=effective, admitted_slots=ctx.roots,
                 start_ms=receipt["wall_start_ms"], end_ms=end,
-                units=unit_rows,
-                arm_time=calculate_arm_times(effective,
-                    [{k: v for k, v in row.items() if k != "slots"} for row in unit_rows],
-                    receipt["wall_start_ms"], end)))
+                t_end_ms=(mono_end - mono_start) // 1_000_000, units=unit_rows)
+            timing["arm_time"] = calculate_arm_times(*units_json_inputs(timing))
+            _write(out, "units.json", timing)
             for arm in ("system", "no_memory"):
                 _write(out / "receipts", arm + ".json", _receipt([r for r in runs if r.arm == arm],
                     start, "COMPLETE", turn_wait_s, [r for r in units if r["arm"] == arm], end_ms=end))

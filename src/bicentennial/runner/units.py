@@ -72,13 +72,15 @@ class UnitResult:
     stop: tuple | None
     timing: dict | None = None
     keep_ms: int = 0
+    mono_ns: tuple[int, int] | None = None
 
 
 class UnitRefusal(Exception):
     """Deliver every attempt to the caller before it handles the original refusal."""
 
-    def __init__(self, error, runs, timing):
+    def __init__(self, error, runs, timing, mono_ns=None):
         self.error, self.runs, self.timing = error, runs, timing
+        self.mono_ns = mono_ns
         super().__init__(str(error))
 
 
@@ -251,10 +253,12 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
     key, arm = config.key, config.role
     ctx = _ArmContext(ctx, config)
     start, runs = time.time_ns() // 1_000_000, []
+    mono_start = time.monotonic_ns()
 
     def timing():
-        return dict(life=pack.life, branch=branch, arm=key, slot=slot,
+        row = dict(life=pack.life, branch=branch, arm=key, slot=slot,
             start_ms=start, end_ms=time.time_ns() // 1_000_000, attempts=len(runs))
+        return row, (mono_start, time.monotonic_ns())
 
     try:
         options = dict(spec=spec, keep=keep, unit=unit) if spec is not T1_SPEC or keep is not None else {}
@@ -262,8 +266,10 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
     except Exception as error:
         with live.launch:
             live.stopped.set()
-        raise UnitRefusal(error, tuple(replace(r, arm=key) for r in runs), timing()) from error
-    return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=timing())
+        row, mono_ns = timing()
+        raise UnitRefusal(error, tuple(replace(r, arm=key) for r in runs), row, mono_ns) from error
+    row, mono_ns = timing()
+    return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=row, mono_ns=mono_ns)
 
 
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,

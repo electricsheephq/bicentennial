@@ -67,10 +67,19 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
     return drains, canon(stable)
 
 
-def test_default_drain_calls_equal_baseline(tmp_path):
-    default = inspect.signature(adapter.HermesAdapter).parameters["turn_wait_s"].default
-    assert default == 3.0
-    drains, stable = fake_session(tmp_path / "current", default)
+def test_every_default_wait_is_one_second():
+    # The default is written at each entry point, so one test checks they agree (#388).
+    from bicentennial.director.compiler.check import check_compile
+    from bicentennial.report import t2lite_flips
+    from bicentennial.runner import compare, life, t1, t2lite
+    entries = (adapter.HermesAdapter, life.run_life, compare.run_t1, t1.prepare, t2lite.run_t2lite,
+               t2lite._receipt, t2lite_flips.rerun_command, t2lite_flips.flip_report, check_compile)
+    assert [inspect.signature(f).parameters["turn_wait_s"].default for f in entries] == [1.0] * len(entries)
+    assert t1.T1Context.__dataclass_fields__["turn_wait_s"].default == 1.0
+
+
+def test_full_wait_drain_calls_equal_baseline(tmp_path):
+    drains, stable = fake_session(tmp_path / "current", 3.0)
     # Five turns and session end all retain the no-argument call shape.
     assert drains == [(), (), (), (), (), ()]
     assert stable == canon(dict(session=1, kind="replay", acp_session_id="session", entrypoint="test-double",
