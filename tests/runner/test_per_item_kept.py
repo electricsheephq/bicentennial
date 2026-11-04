@@ -386,3 +386,32 @@ def test_cap_counts_previously_kept_units(observed, tmp_path, monkeypatch):
     assert not (tmp_path / "out/kept" / run.life / "B1" / iid).exists()
     run.cleanup()
     second.cleanup()
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+def test_record_pre_probe_measures_copy_time(observed, tmp_path, monkeypatch, stopped):
+    import time
+
+    original, calls, delay = kept.clone_tree, [], .01
+
+    def copy(*args, **kw):
+        time.sleep(delay)
+        calls.append(True)
+        return original(*args, **kw)
+
+    monkeypatch.setattr(kept, "clone_tree", copy)
+    if stopped:
+        session = adapter.HermesAdapter.run_session
+
+        def crash(self, index, **kw):
+            if next(s for s in self.script["sessions"] if s["index"] == index)["kind"] == "probe":
+                raise HarnessFailed("turn_failed")
+            return session(self, index, **kw)
+
+        monkeypatch.setattr(adapter.HermesAdapter, "run_session", crash)
+    run = drive(observed[0], tmp_path, probe_mode="per_item", keep_pre_probe=True, live=HELPERS["FakeLive"]())
+    assert calls and (run.stopped is not None) == stopped
+    assert run.pre_probe
+    assert all(record.copy_ns >= delay * 1_000_000_000 for record in run.pre_probe.values())
+    assert all("copy_ns" not in record.fields for record in run.pre_probe.values())
+    run.cleanup()

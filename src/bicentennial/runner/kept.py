@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,11 +27,13 @@ class PreProbe:
     roots: tuple
     probe_point: int
     fields: dict
+    copy_ns: int = 0
 
 
 def record_pre_probe(directory, *, surfaces, adapter, probe, slot, session, clock, table, faults,
                      environment, attempt_id, lock_hash, attempt, probe_mode, live_probe, contract_hash):
     """Copy the untouched surfaces and workspace, retaining every hashed context record."""
+    start = time.monotonic_ns()
     directory = Path(directory)
     directory.mkdir(parents=True)
     paths = adapter.paths
@@ -80,7 +83,7 @@ def record_pre_probe(directory, *, surfaces, adapter, probe, slot, session, cloc
                   sim_t_s=clock.sim_t_s, probe_session_index=probe.index, probe_slot=slot,
                   route_table_sha256=sha256_canon(table.to_obj()), probe_config_sha256=sha256_canon(config),
                   replay_context=references)
-    return PreProbe(directory, tuple(roots), probe.checkpoint, fields)
+    return PreProbe(directory, tuple(roots), probe.checkpoint, fields, copy_ns=time.monotonic_ns() - start)
 
 
 def plain_item_id(item_id):

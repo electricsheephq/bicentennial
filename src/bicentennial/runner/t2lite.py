@@ -130,7 +130,7 @@ def _holds(rows):
     return dict(waits=waits, held_ms=held_ms, reasons=sorted(reasons))
 
 
-def _receipt(runs, start, status, turn_wait_s=3.0, units=()):
+def _receipt(runs, start, status, turn_wait_s=3.0, units=(), *, end_ms=None):
     rows = [r for run in runs for r in run.records]
     tokens, runtime, failed = {}, {}, {}
     for run in runs:
@@ -142,7 +142,8 @@ def _receipt(runs, start, status, turn_wait_s=3.0, units=()):
     for row in rows:
         if row.get("type") == "request":
             runtime[row["role"]] = runtime.get(row["role"], 0) + row["t_ms"]
-    return build_receipt(run_status=status, wall_start_ms=start, wall_end_ms=int(time.time() * 1000),
+    return build_receipt(run_status=status, wall_start_ms=start,
+        wall_end_ms=int(time.time() * 1000) if end_ms is None else end_ms,
         latency_ms=ledger_latencies(rows), load_milli=load_milli(os.getloadavg()),
         busy_marker_readings=[], tokens_by_role=tokens,
         runtime_by_role=runtime, spend_micro_usd=0, store_growth_bytes=sum(r.store_growth_bytes for r in runs),

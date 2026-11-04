@@ -71,6 +71,7 @@ class UnitResult:
     attempts: int
     stop: tuple | None
     timing: dict | None = None
+    keep_ms: int = 0
 
 
 class UnitRefusal(Exception):
@@ -267,7 +268,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                    spec=T1_SPEC, keep=None, unit=None):
     from bicentennial.runner import t1
 
-    measured = False
+    measured, keep_ns = False, 0
     for attempt in range(3):
         try:
             run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
@@ -349,9 +350,11 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 measured = _floor_measured(pack, branch, run, probes, scores)
             if keep is not None and arm != "no_memory" and final:
                 kept_scores = {iid: (outcome(identity0(pack.cases[iid].item), None,
-                    cause="INFRA_FAILURE", infra_reruns=2) if isinstance(scored, Infra) else dict(scored))
+                    cause="INFRA_FAILURE", infra_reruns=2) if isinstance(scored, Infra) else deepcopy(scored))
                     for iid, scored in scores.items()}
+                keep_start = time.monotonic_ns()
                 keep(unit, run, kept_scores, excluded)
+                keep_ns += time.monotonic_ns() - keep_start
         finally:
             run.cleanup()
         if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
@@ -364,7 +367,8 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
         row = scores[probe["item_id"]]
         if row["failure_class"] is None:
             row["selected_option"] = probe["shadow"]["selected_option"]
-    return UnitResult(scores, probes, measured, tuple(runs), len(runs), runs[-1].stopped)
+    return UnitResult(scores, probes, measured, tuple(runs), len(runs), runs[-1].stopped,
+                      keep_ms=keep_ns // 1_000_000)
 
 
 def refusal_code(error, *, live=None, runs=(), needles=()):
