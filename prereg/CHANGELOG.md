@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Kit, 2026-11-04: the T2 command (#391)
+- **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots.
+- **Floor and publication:** per-life/branch no-memory entries exclude system and slot count from their keys and require a matching live served identity. Credential scanning precedes cache publication. The T2 guide documents outputs, refusals and the unmeasured live budget; T1 and T2-lite retain their bytes. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-03: the T2 placement window (#391, §13 E34, §15)
 - **RING0 §13 E34, §15:** T2's life spec states `evidence_by = 8`, the last checkpoint minus the life spec's 2-session minimum distance, and a `replacements` list (empty: a failing design seed is replaced by the next unused integer from 14, and the freeze stops if a second design seed fails or if one row fails 8 replacement seeds in a row). For T2 only, the generator writes dedicated facts inside sessions 1–8 (G1 `decision-t2-0`, `decision-t2-1`; G2 `trip-t2`, `gate-t2`). `recall-value`, `wake-loop`, `recall-count` and `keep-incidental` point at them in the generator and the pack builder alike, and the original facts stay as unasked noise. A question that cannot be placed at any checkpoint raises `PlacementError("checkpoint")`, naming its template. No code pin moves, and T0 and T1 packs do not change.
 No PREREG version change; PREREG-v0.5 remains frozen.
