@@ -34,6 +34,7 @@ from bicentennial.sandbox.surfaces import (
     wipe_to_fresh,
 )
 from bicentennial.surface_cache import surface_hash, verify_empty
+from bicentennial.systems import recipe as recipes
 from bicentennial.systems.settle import SettleResult, settle
 
 PROVIDERS = {"holographic": "holographic", "mem0-oss": "mem0", "omega": "omega"}
@@ -222,11 +223,12 @@ OMEGA_THREADS = ("auto-relate", "omega-deferred-init")
 
 
 def is_plugin(name):
-    return name in PROVIDERS or name in ENGINES
+    resolved = recipes.recipe({"name": name})
+    return resolved.provider is not None or resolved.engine is not None
 
 
 def plugin_dir(name):
-    return PLUGIN_DIRS.get(name, PROVIDERS.get(name, ENGINES.get(name)))
+    return recipes.recipe({"name": name}).plugin_directory
 
 
 def validate_maps():
@@ -240,7 +242,7 @@ def validate_maps():
 
 
 def resolve_worker_env(name, model_cache=None):
-    extra = WORKER_ENV.get(name, {})
+    extra = recipes.recipe({"name": name}).worker_environment
     reserved = set(worker_env(dict.fromkeys(("hermes_home", "home", "tmp"), Path(".")), 1, ".", None))
     for key, value in extra.items():
         if (not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in reserved | set(_PASSED) | set(_PROXIES)
@@ -359,10 +361,11 @@ def worker_properties(system, checkout, repo, tier, refused, worker_argv=None):
     if worker_argv is not None:
         return ()
     data, requirements = None, []
-    if system in DEPENDENCIES:
+    resolved = recipes.recipe({"name": system})
+    if resolved.dependency_lock is not None:
         try:
             validate_dependencies(repo)
-            data = (repo / DEPENDENCIES[system]).read_bytes()
+            data = (repo / resolved.dependency_lock).read_bytes()
             requirements = parse_dependencies(data)
         except (OSError, ValueError):
             raise refused("plugin_deps_lock_invalid") from None
@@ -396,7 +399,7 @@ def worker_properties(system, checkout, repo, tier, refused, worker_argv=None):
              (tier + ".worker_dists_sha256", f"sha256:{sha256(encoded).hexdigest()} n={len(dists)}")]
     if data is not None:
         props.append((tier + ".plugin_deps", f"sha256:{sha256(data).hexdigest()} n={len(applicable)}"))
-    sites = FILE_TIME_SITES.get("hermes", ()) + FILE_TIME_SITES.get(system, ())
+    sites = FILE_TIME_SITES.get("hermes", ()) + resolved.file_time_sites
     if sites:
         props.append((tier + ".file_time_sites", canon(sites).decode()))
     return tuple(props)
@@ -432,7 +435,8 @@ class PluginCell:
     def install(self, source, *, alias, context=True) -> str:
         git = ["git", "-C", str(source)]
         env = git_env()
-        recipe = TREES[self.entry["name"]]
+        resolved = recipes.recipe(self.entry)
+        recipe = resolved.required("archive_tree")
         digest = sha256()
         with tempfile.TemporaryFile() as archive:
             with subprocess.Popen([*git, "archive", "--format=tar", *recipe],
@@ -464,9 +468,9 @@ class PluginCell:
                 (Path(unpacked) / (recipe[1] if len(recipe) > 1 else ".")).rename(target)
         port = int(self.adapter.director.run_values["director_port"])
         name = self.entry["name"]
-        write_config(home, hermes_config(port, alias, plugin=PROVIDERS.get(name),
-            context_engine=ENGINES.get(name) if context else None,
-            plugins_enabled=(plugin_dir(name),) if name in ENABLED else ()))
+        write_config(home, hermes_config(port, alias, plugin=resolved.provider,
+            context_engine=resolved.engine if context else None,
+            plugins_enabled=(plugin_dir(name),) if resolved.enabled else ()))
         if self.entry["name"] == "mem0-oss":
             base = f"http://127.0.0.1:{port}/mem0/v1"
             llm = {"model": "bicentennial-extraction", "api_key": PLACEHOLDER_KEY, "openai_base_url": base,
@@ -534,15 +538,15 @@ class PluginCell:
 
     def settle(self):
         self._idle()
-        from bicentennial.harness.hermes.plugin_host import SETTLE_THREADS
+        resolved = recipes.recipe(self.entry)
         kind = self.entry["settle"]["kind"]
         threads = getattr(self.adapter, "end_threads", None)
         if (kind == "hook" and isinstance(threads, tuple)
-                and any(t in SETTLE_THREADS[self.entry["name"]] for t in threads)):
+                and any(t in resolved.required("settle_threads") for t in threads)):
             return SettleResult(kind, False, 0, "cut_at_exit", 0)
         def observed():
             threads = getattr(self.adapter, "end_threads", None)
-            return (isinstance(threads, tuple) and not any(t in SETTLE_THREADS[self.entry["name"]] for t in threads)
+            return (isinstance(threads, tuple) and not any(t in resolved.required("settle_threads") for t in threads)
                     and self.adapter.director.control()["inflight"] == 0)
         return settle(self.entry, observed if kind == "hook" else None)
 
