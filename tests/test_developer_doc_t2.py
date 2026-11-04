@@ -96,3 +96,10 @@ def test_doc_public_text():
     paths = runpy.run_path(str(REPO / "scripts/public_check.py"))["PATHS"]
     assert not paths.search(GUIDE.read_text())
     assert "ci-block" not in GUIDE.read_text()
+
+
+def test_doc_arm_time_rule():
+    text = GUIDE.read_text()
+    assert all(name in text for name in ("pre_probe_ms", "keep_ms", "floor_replay_ms"))
+    assert "admission order (largest predicted time first, ties in card order)" in text
+    assert "no-memory floor counts in no arm's time" in text

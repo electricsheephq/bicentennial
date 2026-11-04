@@ -297,3 +297,21 @@ def test_kept_and_live_precedence_in_either_order(core, monkeypatch, code, expec
     assert len(result.runs) == 2 and len(result.errors) == 2
     assert units.refusal_code(units.reduce_refusals(result.errors)) == expected
     assert units.refusal_code(units.reduce_refusals(reversed(result.errors))) == expected
+
+
+def test_keep_scores_are_deep_copies(core, monkeypatch):
+    score = units.score_item
+
+    def scoring(*args, **kw):
+        return dict(score(*args, **kw), competing_present=["original"])
+
+    def keep(unit, run, scores, excluded):
+        for row in scores.values():
+            row["competing_present"].append("changed")
+            row["score_milli"] = -1000
+
+    monkeypatch.setattr(units, "score_item", scoring)
+    queued, result = schedule(core, keep=keep)
+    assert not result.errors
+    assert all(r["competing_present"] == ["original"] and r["score_milli"] == 1000
+               for r in result.results[queued[0].identity].scores.values())

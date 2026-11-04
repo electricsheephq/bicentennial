@@ -43,6 +43,7 @@ from bicentennial.runner.units import (
     _read,
     _write,
     make_units,
+    predicted_seconds,
     refusal_code,
     schedule,
 )
@@ -177,7 +178,8 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     for name in list(floor):
                         matched = reply.served == "live" and observed == floor[name]["served_identity"]
                         provenance[name] = dict(cached=matched, reason="served identity matched" if matched else
-                            "served identity differs" if reply.served == "live" else "served identity not confirmed")
+                            "served identity differs" if reply.served == "live" and ids
+                            and "unidentified" not in ids.values() else "served identity not confirmed")
                         if not matched:
                             del floor[name]
                 floor_stops = {k: stop for entry0 in floor.values() for k, stop in entry0["stops"].items()}
@@ -231,10 +233,21 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     for key, arm in (("t2.transforms", "system"), ("no_memory.transforms", "no_memory"))}))
             receipt = _receipt(runs, start, "COMPLETE", turn_wait_s, units)
             end = receipt["wall_end_ms"]
+            order = {u.identity: (i, predicted_seconds(u)) for i, u in enumerate(queued)}
+            unit_rows = []
+            for row in units:
+                identity0 = (row["arm"], row["life"], row["branch"])
+                result = results[identity0]
+                index, predicted = order[identity0]
+                unit_rows.append(dict(row, slots=effective, predicted_s=predicted, card_index=index,
+                    pre_probe_ms=sum(r.pre_probe_ns for r in result.runs) // 1_000_000,
+                    keep_ms=result.keep_ms))
             _write(out, "units.json", dict(slots=effective, admitted_slots=ctx.roots,
                 start_ms=receipt["wall_start_ms"], end_ms=end,
-                units=[dict(row, slots=effective) for row in units],
-                arm_time=calculate_arm_times(effective, units, receipt["wall_start_ms"], end)))
+                units=unit_rows,
+                arm_time=calculate_arm_times(effective,
+                    [{k: v for k, v in row.items() if k != "slots"} for row in unit_rows],
+                    receipt["wall_start_ms"], end)))
             for arm in ("system", "no_memory"):
                 _write(out / "receipts", arm + ".json", _receipt([r for r in runs if r.arm == arm],
                     start, "COMPLETE", turn_wait_s, [r for r in units if r["arm"] == arm]))

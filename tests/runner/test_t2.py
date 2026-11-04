@@ -4,6 +4,7 @@ import fcntl
 import json
 import time
 from dataclasses import replace
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -137,11 +138,26 @@ def test_complete_card_kept_and_receipts(t2_scenario):
     assert timing["arm_time"] == calculate_arm_times(4, rows, timing["start_ms"], timing["end_ms"])
 
 
-def test_slots_and_finish_order_preserve_outputs(t2_scenario):
+@pytest.mark.parametrize("repeat", range(3))
+def test_slots_and_finish_order_preserve_outputs(t2_scenario, monkeypatch, repeat):
     s = t2_scenario
     snapshots, timing, finishes = [], [], []
+    drive = units.run_life
+
+    def ordered(**kw):
+        selected = kw["arm"] == "system" and kw["life_dir"].name == s.ctx.packs[0].life
+        second = (kw["branch"] == "B0") != s.order
+        if slots != 1 and selected and second and not finished.wait(10):
+            pytest.fail("first unit did not finish")
+        run = drive(**kw)
+        if selected and not second:
+            finished.set()
+        return run
+
+    monkeypatch.setattr(units, "run_life", ordered)
     for n, slots in enumerate((1, None, None)):
         s.order = n == 2
+        finished = Event()
         s.finished.clear()
         assert s.invoke(str(n), slots=slots) == 0
         out = s.out.parent / str(n)
@@ -159,7 +175,9 @@ def test_slots_and_finish_order_preserve_outputs(t2_scenario):
     assert first["arm_time"] == calculate_arm_times(1, rows, first["start_ms"], first["end_ms"])
     assert first["arm_time"]["arms"]["system"]["slots"] == 1
     def stable(t):
-        return [{k: v for k, v in r.items() if k not in ("slots", "slot", "start_ms", "end_ms")} for r in t["units"]]
+        return [{k: v for k, v in r.items() if k not in ("slots", "slot", "start_ms", "end_ms", "pre_probe_ms", "keep_ms")} for r in t["units"]]
+    assert all(type(r[k]) is int and r[k] >= 0 for t in timing for r in t["units"]
+               for k in ("pre_probe_ms", "keep_ms"))
     assert stable(timing[0]) == stable(timing[1]) == stable(timing[2])
 
 
@@ -195,6 +213,7 @@ def test_per_unit_cache_and_cached_plugin(t2_scenario, tmp_path, monkeypatch):
     assert all(row["unattributed"]["count"] == 0 for row in floor_receipt["background"])
     assert read(s.out, "units.json")["arm_time"]["floor_replay_ms"] == 0
     assert all(r["arm"] == "system" for r in read(s.out, "units.json")["units"])
+    assert [r["card_index"] for r in read(s.out, "units.json")["units"]] == list(range(4, 8))
 
 
 def test_floor_key_parameters(t2_scenario):
@@ -457,3 +476,75 @@ def test_card_infra_counts_final_system_outcomes(t2_scenario):
     assert card["counts"]["infra"] == 1
     blocked = [r for r in card["items"] if r["failure_class"] == "BLOCKED"]
     assert len(blocked) == 1 and blocked[0]["infra_reruns"] == 2
+
+
+def test_unit_rows_order_times_and_closed_receipts(t2_scenario, tmp_path):
+    s = t2_scenario
+    assert s.invoke() == 0
+    queue = units.make_units(s.ctx, [units.Arm.from_context(s.ctx, "system")], tmp_path / "scratch", s.out)
+    rows = read(s.out, "units.json")["units"]
+    for index, (unit, row0) in enumerate(zip(queue, rows, strict=True)):
+        assert row0["predicted_s"] == units.predicted_seconds(unit)
+        assert row0["card_index"] == index
+        assert all(type(row0[k]) is int and row0[k] >= 0 for k in ("pre_probe_ms", "keep_ms"))
+        if unit.arm.role == "no_memory":
+            assert row0["keep_ms"] == row0["pre_probe_ms"] == 0
+    for name in ("receipt.json", "receipts/system.json", "receipts/no_memory.json"):
+        assert all(set(r) == {"life", "branch", "arm", "slot", "start_ms", "end_ms", "attempts"}
+                   for r in read(s.out, name)["units"])
+
+
+def test_keep_ms_includes_keep_lock_wait(t2_scenario, monkeypatch):
+    wait = .02
+    hook = t2.keep_hook
+
+    def prepared(*args):
+        t2._write(args[1]["system"] / "kept", "index.json", [])
+        return hook(*args)
+
+    class SlowLock:
+        def __init__(self):
+            self.lock = Lock()
+
+        def __enter__(self):
+            time.sleep(wait)
+            self.lock.acquire()
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    monkeypatch.setattr(units, "Lock", SlowLock)
+    monkeypatch.setattr(t2, "keep_hook", prepared)
+    monkeypatch.setattr(t2, "keep_failed", lambda *a, **kw: None)
+    assert t2_scenario.invoke() == 0
+    assert all(r["keep_ms"] >= wait * 1000 for r in read(t2_scenario.out, "units.json")["units"]
+               if r["arm"] == "system")
+
+
+def test_pre_probe_ms_sums_attempts(t2_scenario, monkeypatch):
+    s, drive = t2_scenario, units.run_life
+
+    def life(**kw):
+        run = drive(**kw)
+        retry = kw["arm"] == "system" and kw["life_dir"].name == s.ctx.packs[0].life and kw["branch"] == "B0"
+        return replace(run, pre_probe_ns=1_600_000, classes={i["item_id"]: ("INFRA_FAILURE", "synthetic")
+                       for i in kw["items"]} if retry and kw["attempt"] == 0 else run.classes)
+
+    monkeypatch.setattr(units, "run_life", life)
+    assert s.invoke() == 0
+    row0, = [r for r in read(s.out, "units.json")["units"]
+             if (r["arm"], r["life"], r["branch"]) == ("system", s.ctx.packs[0].life, "B0")]
+    assert row0["attempts"] == 2 and row0["pre_probe_ms"] == 3
+
+
+@pytest.mark.parametrize("identity", ["unobserved", "unidentified", "different"])
+def test_floor_identity_disclosure(t2_scenario, tmp_path, identity):
+    s, cache = t2_scenario, tmp_path / "cache"
+    assert s.invoke("first", cache=cache) == 0
+    s.stack_options = ({"responses": {"identity_check": {"observe": False}}} if identity == "unobserved"
+                       else {"identity": identity})
+    s.executed.clear()
+    assert s.invoke(cache=cache) == 0
+    assert len([k for k in s.executed if k[0] == "no_memory"]) == 4
+    reason = "served identity differs" if identity == "different" else "served identity not confirmed"
+    assert all(r == dict(cached=False, reason=reason) for r in read(s.out, "disclosures.json")["floor"].values())

@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Kit, 2026-11-04: the T2 command (#391)
-- **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots.
+- **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots. Replay uses admission order (largest predicted time first, ties in card order), independent of a fresh floor, as the dated §14.8 replay-order erratum states. Each unit reports `pre_probe_ms` and `keep_ms`, including the keep-lock wait.
 - **Floor and publication:** per-life/branch no-memory entries exclude system and slot count from their keys and require a matching live served identity. Credential scanning precedes cache publication. The T2 guide documents outputs, refusals and the unmeasured live budget; T1 and T2-lite retain their bytes. No code pin moves.
 No PREREG version change; PREREG-v0.5 remains frozen.
 

@@ -8,9 +8,9 @@ def calculate_arm_times(slots, timings, start_ms, end_ms):
     """Return millisecond budgets and their inputs; the floor counts in no arm, only beside them.
 
     The no-memory floor is a cached control (PREREG §6, RING0 §14.8 erratum), so an arm
-    replays only its own units; a fresh floor can still change the order they started in.
-    Input timings are in card order. Start order is zero-based across the whole run;
-    equal starts retain card order. Replay queues work immediately on the earliest
+    replays only its own units in admission order: descending predicted time, then
+    card order. Start order is zero-based across the whole run; equal starts use
+    card order. Replay queues work immediately on the earliest
     free slot, without reproducing gaps caused by the other arms. Intervals within
     the clock tolerance retain their full replay duration; their union is clipped
     to the measured run when computing time outside units.
@@ -20,7 +20,13 @@ def calculate_arm_times(slots, timings, start_ms, end_ms):
     if not all(math.isfinite(t) for t in (start_ms, end_ms)) or end_ms < start_ms:
         raise ValueError("invalid run interval")
     timings = [dict(row) for row in timings]
+    indices = set()
     for row in timings:
+        predicted, index = row.get("predicted_s"), row.get("card_index")
+        if (type(predicted) not in (int, float) or not math.isfinite(predicted) or predicted < 0
+                or type(index) is not int or index in indices):
+            raise ValueError("invalid unit order")
+        indices.add(index)
         start, end = row["start_ms"], row["end_ms"]
         if not all(math.isfinite(t) for t in (start, end)) or end < start:
             raise ValueError("invalid unit interval")
@@ -37,8 +43,10 @@ def calculate_arm_times(slots, timings, start_ms, end_ms):
     elapsed = end_ms - start_ms
     outside = elapsed - covered
     ordered = [dict(arm=row["arm"], life=row["life"], branch=row["branch"],
+                    predicted_s=row["predicted_s"], card_index=row["card_index"],
                     start_order=order, duration_ms=row["end_ms"] - row["start_ms"])
-               for order, row in enumerate(sorted(timings, key=lambda row: row["start_ms"]))]
+               for order, row in enumerate(sorted(timings, key=lambda row: (row["start_ms"], row["card_index"])))]
+    ordered.sort(key=lambda row: (-row["predicted_s"], row["card_index"]))
 
     def replay(rows):
         available = [0] * slots
