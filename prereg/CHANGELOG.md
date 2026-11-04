@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-04: an arm's time leaves out the floor (#391, §14.8)
+- **RING0 §14.8:** a dated erratum states what an arm's time counts. The no-memory floor is a control, and PREREG §6 sets T2's budget for "the candidate arm against cached controls", so the floor's units count in no arm's time, whether they ran in the run or came from the cache; the floor's own replayed time is reported beside the arms. A unit's time includes the harness work inside it (probe clones, the copy before each probe, scoring, and keeping failed items' copies, with any wait to keep), and "setup and scoring" means the run's work before its first unit and after its last. `runner/arm_time.py` now replays only an arm's own units. Nothing publishes an arm's time yet: the T2 command will write it to `units.json`.
+- **Pins and results:** no code pin moves, and no card, score or published result changes.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-03: the T2 placement window (#391, §13 E34, §15)
 - **RING0 §13 E34, §15:** T2's life spec states `evidence_by = 8`, the last checkpoint minus the life spec's 2-session minimum distance, and a `replacements` list (empty: a failing design seed is replaced by the next unused integer from 14, and the freeze stops if a second design seed fails or if one row fails 8 replacement seeds in a row). For T2 only, the generator writes dedicated facts inside sessions 1–8 (G1 `decision-t2-0`, `decision-t2-1`; G2 `trip-t2`, `gate-t2`). `recall-value`, `wake-loop`, `recall-count` and `keep-incidental` point at them in the generator and the pack builder alike, and the original facts stay as unasked noise. A question that cannot be placed at any checkpoint raises `PlacementError("checkpoint")`, naming its template. No code pin moves, and T0 and T1 packs do not change.
 No PREREG version change; PREREG-v0.5 remains frozen.
