@@ -3,8 +3,16 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Kit, 2026-11-04: the T2 command (#391)
-- **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots. Replay uses admission order (largest predicted time first, ties in card order), independent of a fresh floor, as the dated §14.8 replay-order erratum states. Each unit reports `pre_probe_ms` and `keep_ms`, including the keep-lock wait.
+- **Developer loop:** `bicentennial t2` runs the public T2 pack through the shared unit core, publishing a per-item card, retained pre-probe copies for eligible failures, per-arm receipts and recomputable RING0 §14.8 arm time with effective slots. See the replay-order erratum below for the replay rule. Each unit reports `pre_probe_ms` and `keep_ms`, including the keep-lock wait.
 - **Floor and publication:** per-life/branch no-memory entries exclude system and slot count from their keys and require a matching live served identity. Credential scanning precedes cache publication. The T2 guide documents outputs, refusals and the unmeasured live budget; T1 and T2-lite retain their bytes. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-04: the replay order (#391, §14.8)
+- **RING0 §14.8:** the replay order fixes the dependence on floor-cache state announced by the preceding spec erratum. Each arm's units, and the floor's own replay, use admission order: largest predicted time first (43 s per replay session and 49 s per probe session), ties in card order. A fresh floor cannot change that order; shared slots, the live service and the machine can still change measured unit times.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 erratum, 2026-11-04: when a run ends (#391, §14.8)
+- **RING0 §14.8:** one run end is stamped after the credential scan of the outputs, including kept copies, and used by `units.json` and all three receipts. Only writing and scanning those four files, publishing floor-cache entries and the final receipt and card renames follow. Recomputed arm time includes the full output scan.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Ring 0 erratum, 2026-11-04: an arm's time leaves out the floor (#391, §14.8)

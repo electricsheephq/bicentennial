@@ -54,6 +54,14 @@ CODE_PINS = ("controls_sha256", "reader_sha256", "scoring_sha256", "scorer_sha25
 CARD_PINS = (*PIN_FIELDS, "system_hash", "route_table_hash", "write_turn_package_hash")
 
 
+def _scan_end_files(out, needles):
+    """Scan only the four timing files written after the run end was stamped."""
+    for name in ("units.json", "receipts/system.json", "receipts/no_memory.json", ".receipt.json"):
+        data = (out / name).read_bytes()
+        if any(n in data for n in needles):
+            raise t1.T1Refused("credential_scan")
+
+
 def floor_key(ctx, pack, branch, *, probe_mode, turn_wait_s):
     """A floor belongs to a life tree and probe policy, independent of system and slots."""
     return sha256_canon([ctx.index["packs"][pack.rel]["tree_sha256"], branch, MODEL, EFFORT,
@@ -231,8 +239,6 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 live=dict(stack.state(), holds=_holds(row for run in runs for row in run.records)), **{
                     key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
                     for key, arm in (("t2.transforms", "system"), ("no_memory.transforms", "no_memory"))}))
-            receipt = _receipt(runs, start, "COMPLETE", turn_wait_s, units)
-            end = receipt["wall_end_ms"]
             order = {u.identity: (i, predicted_seconds(u)) for i, u in enumerate(queued)}
             unit_rows = []
             for row in units:
@@ -242,6 +248,10 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 unit_rows.append(dict(row, slots=effective, predicted_s=predicted, card_index=index,
                     pre_probe_ms=sum(p.copy_ns for r in result.runs for p in (r.pre_probe or {}).values()) // 1_000_000,
                     keep_ms=result.keep_ms))
+            _write(out, ".card.json", card)
+            _scan(out, needles)
+            end = int(time.time() * 1000)
+            receipt = _receipt(runs, start, "COMPLETE", turn_wait_s, units, end_ms=end)
             _write(out, "units.json", dict(slots=effective, admitted_slots=ctx.roots,
                 start_ms=receipt["wall_start_ms"], end_ms=end,
                 units=unit_rows,
@@ -250,10 +260,9 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     receipt["wall_start_ms"], end)))
             for arm in ("system", "no_memory"):
                 _write(out / "receipts", arm + ".json", _receipt([r for r in runs if r.arm == arm],
-                    start, "COMPLETE", turn_wait_s, [r for r in units if r["arm"] == arm]))
+                    start, "COMPLETE", turn_wait_s, [r for r in units if r["arm"] == arm], end_ms=end))
             _write(out, ".receipt.json", receipt)
-            _write(out, ".card.json", card)
-            _scan(out, needles)
+            _scan_end_files(out, needles)
             for path, entry0 in pending_cache:
                 temp = path.with_name(path.name + "." + ctx.run_id)
                 _write(temp.parent, temp.name, entry0)
