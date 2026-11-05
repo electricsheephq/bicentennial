@@ -107,8 +107,10 @@ normalization, case folding and punctuation removal, and refuses any of them tha
 contains `lcm`, so an unrelated name such as `excel-cmd` is refused too; rename such an
 entry. It also recognizes registry
 identities marked operator-forbidden and their measured, nonzero artifact digests.
-T2-lite and T2 apply the same identity check to an operator-marked home. A deliberately
-disguised copy is outside this scope. The entry's own permission flag cannot override
+T2-lite and T2 apply the same identity check to an operator-marked home and also refuse
+an entry whose own `benchmark_operator_runs` is false there. An operator-marked home is
+a login home (`--login-home`) holding a `.bicentennial-operator` file, as the
+benchmark's own does. A deliberately disguised copy is outside this scope. The entry's own permission flag cannot override
 an excluded identity under `BICENTENNIAL_OPERATOR=benchmark`.
 
 ## Loader and admission refusals
