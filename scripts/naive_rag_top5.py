@@ -1,9 +1,13 @@
-"""Offline algorithm decision and rebuilt-corpus disclosure for a pinned baseline."""
+"""Offline algorithm decision and rebuilt-corpus disclosure for a pinned baseline.
+
+It imports and runs the entry's archived code in this process: run it only on the benchmark's own baseline entry.
+"""
 
 import argparse
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -48,6 +52,12 @@ def load_archive(entry, source, folder):
     tree = entry["recipe"]["archive_tree"]
     ref = tree["ref"]
     if re.fullmatch(r"[0-9a-f]{40}", ref) is None:
+        raise Refused("entry_ref_not_commit")
+    # A tree's or a tag's id has the same form, and git archive accepts a tree. A missing
+    # object is left to the archive, which refuses it as pin_mismatch.
+    kind = subprocess.run(["git", "-C", str(source), "cat-file", "-t", ref], env=git_env(),
+                          capture_output=True, text=True)
+    if kind.returncode == 0 and kind.stdout.strip() != "commit":
         raise Refused("entry_ref_not_commit")
     recipe = (ref, *((tree["subdirectory"],) if "subdirectory" in tree else ()))
     if archive_hash(source, recipe) != entry["artifact"]["sha256"]:
@@ -103,7 +113,7 @@ def score_baseline(baseline, texts, prompt):
                     baseline.tfidf.scored(provider.store.memories, prompt)]
             results = json.loads(provider.handle_tool_call("naive_rag_search", {"query": prompt}))["results"]
             top = [[ids.get(r["id"]), r["ordinal"]] for r in results]
-            return rows, top
+            return rows, top, [r.get("content") for r in results]
         finally:
             provider.shutdown()
 
@@ -120,9 +130,16 @@ def pairs(rows):
     return [[eid, ordinal] for _, eid, ordinal, _ in rows]
 
 
-def compare_rows(expected, actual, control_k, baseline_top):
+def duplicates(rows):
+    counts = Counter((eid, ordinal) for _, eid, ordinal, _ in rows)
+    return [[eid, ordinal] for (eid, ordinal), n in sorted(counts.items()) if n > 1]
+
+
+def compare_rows(expected, actual, control_k, baseline_top, baseline_contents):
     """Compare all scores and classify the tool's top list against the control's."""
     left, right = chunk_rows(expected), chunk_rows(actual)
+    # The dictionaries keep one row per chunk, so a chunk scored twice is counted first.
+    duplicated = dict(control=duplicates(expected), baseline=duplicates(actual))
     differing = []
     for eid, ordinal in sorted(left.keys() | right.keys()):
         a, b = left.get((eid, ordinal)), right.get((eid, ordinal))
@@ -134,7 +151,11 @@ def compare_rows(expected, actual, control_k, baseline_top):
     left_top, right_top = pairs(a), baseline_top
     right_ids = list(map(tuple, right_top))
     scores = [right[k][0] if k in right else None for k in right_ids]
-    if (differing or len(a) != len(right_top) or len(set(right_ids)) != len(right_ids)
+    # A returned chunk must carry the control's text for that chunk, not only its id and ordinal.
+    wrong_text = [rank + 1 for rank, (k, text) in enumerate(zip(right_ids, baseline_contents, strict=True))
+                  if k in left and left[k][1] != text]
+    if (differing or duplicated["control"] or duplicated["baseline"] or wrong_text
+            or len(a) != len(right_top) or len(set(right_ids)) != len(right_ids)
             or [r[0] for r in a] != scores):
         kind = "defect"
     elif left_top == right_top:
@@ -151,7 +172,8 @@ def compare_rows(expected, actual, control_k, baseline_top):
         right_chunk = right_top[rank] if rank < len(right_top) else None
         if left_chunk != right_chunk:
             top_differences.append(dict(rank=rank + 1, control=left_chunk, baseline=right_chunk))
-    return dict(classification=kind, differing_chunks=differing, top_differences=top_differences,
+    return dict(classification=kind, differing_chunks=differing, duplicate_chunks=duplicated,
+                top_text_mismatch_ranks=wrong_text, top_differences=top_differences,
                 control_top=left_top, baseline_top=right_top)
 
 
@@ -172,8 +194,8 @@ class ReceiptRag(control.NaiveRag):
         orders = {}
         for order in ("event_id", "stream"):
             events = sorted(visible, key=lambda e: e["event_id"]) if order == "event_id" else visible
-            actual, top = score_baseline(self.baseline, {e["event_id"]: e["text"] for e in events}, prompt)
-            orders[order] = compare_rows(expected, actual, control.TOP_K, top)
+            actual, top, contents = score_baseline(self.baseline, {e["event_id"]: e["text"] for e in events}, prompt)
+            orders[order] = compare_rows(expected, actual, control.TOP_K, top, contents)
         self.calls.setdefault(self.item_id, []).append(dict(orders=orders))
         return expected
 
@@ -252,13 +274,13 @@ def part2(inp, baseline, retrieved, corpora):
     for iid in sorted(retrieved):
         memories, origins = corpora[iid]
         prompt = keys[iid]["recall_query"]
-        actual, top = score_baseline(baseline, memories, prompt)
+        actual, top, contents = score_baseline(baseline, memories, prompt)
         adapter = control.NaiveRag()
         # Each memory is one event; lexical order of these fixed-width ids is
         # write order for the bounded T1 corpus.
         adapter.events = {mid: dict(text=text, t_sim=0) for mid, text in memories.items()}
         expected = adapter.scored(prompt, 0)
-        comparison = compare_rows(expected, actual, control.TOP_K, top)
+        comparison = compare_rows(expected, actual, control.TOP_K, top, contents)
         if comparison["classification"] != "equal":
             mismatches.append(dict(item_id=iid, comparison=comparison))
         sources = source_events(top, origins)
@@ -290,12 +312,31 @@ def receipt(entry, entry_sha256, pack_hash, packs, index, baseline):
                 **{"pass": not any(p["counts"]["defect"] for p in decisions)})
 
 
+def publish(out, data):
+    """Stage the receipt beside --out and link it into place whole; an existing --out is never replaced."""
+    descriptor, staged = tempfile.mkstemp(dir=out.parent, prefix=".receipt-")
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(data)
+        os.link(staged, out)
+    except FileExistsError as error:
+        raise Refused("out_exists") from error
+    finally:
+        os.unlink(staged)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("entry", "plugin-source", "packs", "pack-hash", "out"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args(argv)
+    out = Path(args.out)
+    if not out.parent.is_dir():
+        parser.error("--out: its parent directory does not exist")
     try:
+        # RING0 §8's rule for result files: an existing output is refused, never overwritten.
+        if out.exists() or out.is_symlink():
+            raise Refused("out_exists")
         entry = load_entry(args.entry)
         entry_sha256 = sha256(Path(args.entry).read_bytes()).hexdigest()
         with tempfile.TemporaryDirectory() as folder:
@@ -308,7 +349,7 @@ def main(argv=None):
                 raise Refused("pack_not_t1")
             with load_baseline(path) as baseline:
                 result = receipt(entry, entry_sha256, args.pack_hash, Path(args.packs), index, baseline)
-        Path(args.out).write_bytes(canon(result))
+        publish(out, canon(result))
     except SystemRefused as error:
         print(error.reasons[0], file=sys.stderr)
         return 3

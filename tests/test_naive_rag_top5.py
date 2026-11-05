@@ -224,18 +224,44 @@ def test_tool_cut_mutant_is_defect(monkeypatch, tmp_path, source, packs):
     assert all(p["corpus_check_mismatch"] for p in result["part2"]["packs"])
 
 
+@pytest.mark.parametrize("mutation,file", [
+    # The lowest-scored chunk is scored twice; both top lists stay the same.
+    (("return sorted(ranked, key=lambda r: (-r[0], int(r[1][1:]), r[2]))",
+      "ranked = ranked + [min(ranked)] if ranked else ranked\n"
+      "    return sorted(ranked, key=lambda r: (-r[0], int(r[1][1:]), r[2]))"), "tfidf.py"),
+    # The tool returns the right ids and ordinals with the wrong text.
+    (('results.append({"id": mid, "ordinal": ordinal, "content": text})',
+      'results.append({"id": mid, "ordinal": ordinal, "content": text[:-1]})'), "__init__.py"),
+], ids=["duplicate_row", "tool_text"])
+def test_equal_top_lists_can_still_be_defects(monkeypatch, tmp_path, source, packs, mutation, file):
+    status, out = synthetic_run(monkeypatch, tmp_path, source, packs, mutation, file=file)
+    result = read(out)
+    assert status == 1 and not result["pass"] and result["part1"]["counts"]["defect"] > 0
+    orders = [o for p in result["part1"]["packs"] for i in p["non_equal"]
+              for c in i["calls"] for o in c["orders"].values()]
+    assert orders and all(o["classification"] == "defect" and o["control_top"] == o["baseline_top"]
+                          and not o["differing_chunks"] for o in orders)
+    if file == "tfidf.py":
+        assert all(o["duplicate_chunks"]["baseline"] and not o["duplicate_chunks"]["control"]
+                   and not o["top_text_mismatch_ranks"] for o in orders)
+    else:
+        assert all(o["top_text_mismatch_ranks"] == [1, 2, 3, 4, 5]
+                   and o["duplicate_chunks"] == dict(control=[], baseline=[]) for o in orders)
+
+
 def test_tool_top_matches_scored(source, tmp_path, monkeypatch):
     folder = tmp_path / "archive"
     folder.mkdir()
     with receipt.load_baseline(receipt.load_archive(source[1], source[0], folder)) as baseline:
         texts = {f"m{n:06d}": text for n, text in enumerate(
             ["alpha " * 90, "alpha beta", "alpha", "alpha gamma"] * 2, 1)}
-        rows, top = receipt.score_baseline(baseline, texts, "alpha")
+        rows, top, contents = receipt.score_baseline(baseline, texts, "alpha")
         assert len(top) == baseline.tfidf.TOP_K == 5
         assert top == receipt.pairs(rows[:baseline.tfidf.TOP_K])
+        assert contents == [text for *_, text in rows[:baseline.tfidf.TOP_K]]
         assert rows == baseline.tfidf.scored(texts, "alpha")
         # A second call must use a fresh store, including for empty results.
-        assert receipt.score_baseline(baseline, {}, "alpha") == ([], [])
+        assert receipt.score_baseline(baseline, {}, "alpha") == ([], [], [])
 
         handle = baseline.NaiveRagProvider.handle_tool_call
 
@@ -246,9 +272,9 @@ def test_tool_top_matches_scored(source, tmp_path, monkeypatch):
             return json.dumps(result)
 
         monkeypatch.setattr(baseline.NaiveRagProvider, "handle_tool_call", unrecognized_id)
-        rows, top = receipt.score_baseline(baseline, {"event": "alpha"}, "alpha")
+        rows, top, contents = receipt.score_baseline(baseline, {"event": "alpha"}, "alpha")
         assert top == [[None, 0]]  # An unknown memory id cannot alias an event id.
-        assert receipt.compare_rows(rows, rows, control.TOP_K, top)["classification"] == "defect"
+        assert receipt.compare_rows(rows, rows, control.TOP_K, top, contents)["classification"] == "defect"
         assert receipt.source_events(top, {"event": ["source"]}) == set()
 
 
@@ -296,8 +322,8 @@ def test_reversed_ties_are_not_defects(monkeypatch, tmp_path, source, packs):
 
 
 @pytest.mark.parametrize("fault,code", [("sha256", "pin_mismatch"), ("identity", "identity_mismatch"),
-                                       ("ref", "entry_ref_not_commit"), ("pack", "pack_hash_mismatch"),
-                                       ("tier", "pack_not_t1")])
+                                       ("ref", "entry_ref_not_commit"), ("tree", "entry_ref_not_commit"),
+                                       ("pack", "pack_hash_mismatch"), ("tier", "pack_not_t1")])
 def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fault, code):
     entry = deepcopy(source[1])
     if fault == "sha256":
@@ -306,6 +332,11 @@ def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fa
         entry["recipe"]["provider"] = "other-provider"
     elif fault == "ref":
         entry["recipe"]["archive_tree"]["ref"] = "HEAD"
+    elif fault == "tree":
+        # A tree's id has a commit id's form, and its archive hash matches, so only the type check refuses it.
+        tree = git(source[0], "rev-parse", "HEAD^{tree}")
+        entry["recipe"]["archive_tree"]["ref"] = tree
+        entry["artifact"]["sha256"] = archive_hash(source[0], (tree, SUBDIRECTORY))
     elif fault == "tier":
         # A correctly hashed pack of another tier passes verify; only the T1 check refuses it.
         verified = receipt.verify
@@ -325,14 +356,39 @@ def test_tool_failure_writes_nothing(source, packs, tmp_path, monkeypatch, capsy
         def crash(*args):
             raise RuntimeError("planted")
         monkeypatch.setattr(receipt, "receipt", crash)
-        name = "receipt.json"
     else:
+        def unlinkable(*args):
+            raise OSError("planted")
         monkeypatch.setattr(receipt, "receipt", lambda *a: {"pass": True})
-        name = "missing/receipt.json"
-    status, out = invoke(tmp_path, source, packs, name=name)
+        monkeypatch.setattr(receipt.os, "link", unlinkable)
+    status, out = invoke(tmp_path, source, packs)
     err = capsys.readouterr().err
     assert status == 70 and not out.exists()
+    assert not list(tmp_path.glob(".receipt-*"))
     assert err.startswith("tool_failure\n") and "Traceback" in err
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_existing_out_is_never_replaced(source, packs, tmp_path, monkeypatch, capsys, when):
+    out = tmp_path / "receipt.json"
+    if when == "before":
+        out.write_bytes(b"earlier")
+        monkeypatch.setattr(receipt, "receipt", lambda *a: pytest.fail("receipt work began before refusal"))
+    else:
+        def racer(*args):
+            out.write_bytes(b"earlier")
+            return {"pass": True}
+        monkeypatch.setattr(receipt, "receipt", racer)
+    status, _ = invoke(tmp_path, source, packs)
+    assert status == 3 and capsys.readouterr().err == "out_exists\n"
+    assert out.read_bytes() == b"earlier" and not list(tmp_path.glob(".receipt-*"))
+
+
+def test_missing_out_parent_is_usage(source, packs, tmp_path, monkeypatch):
+    monkeypatch.setattr(receipt, "load_entry", lambda *a: pytest.fail("work began before the usage check"))
+    with pytest.raises(SystemExit) as caught:
+        invoke(tmp_path, source, packs, name="missing/receipt.json")
+    assert caught.value.code == 2 and not (tmp_path / "missing").exists()
 
 
 def test_compiled_write_texts_match_responder(source, packs, monkeypatch):
@@ -395,9 +451,11 @@ def test_byte_identical_without_paths(source, packs, tmp_path):
 
 def test_comparison_classes():
     expected = [(Fraction(1), f"e{n}", 0, "alpha") for n in range(7)]
-    def classify(actual, top=None):
-        return receipt.compare_rows(expected, actual, control.TOP_K,
-            receipt.pairs(actual[:5]) if top is None else top)["classification"]
+    def classify(actual, top=None, contents=None):
+        top = receipt.pairs(actual[:5]) if top is None else top
+        texts = {(eid, ordinal): text for _, eid, ordinal, text in actual}
+        return receipt.compare_rows(expected, actual, control.TOP_K, top,
+            [texts.get(tuple(t)) for t in top] if contents is None else contents)["classification"]
 
     assert classify(expected) == "equal"
     for actual, kind in (([expected[1], expected[0], *expected[2:]], "order_only"),
@@ -407,6 +465,13 @@ def test_comparison_classes():
     for invalid in (top[:-1], top + [top[-1]], [top[0]] * 5,
                     [["unscored", 0], *top[1:]]):
         assert classify(expected, invalid) == "defect"
+    # A chunk scored twice below the cut, on either side, and a returned chunk with other text.
+    assert classify(expected + [expected[-1]]) == "defect"
+    comparison = receipt.compare_rows(expected + [expected[-1]], expected, control.TOP_K, top, ["alpha"] * 5)
+    assert comparison["classification"] == "defect"
+    assert comparison["duplicate_chunks"] == dict(control=[["e6", 0]], baseline=[])
+    assert classify(expected, top, ["alpha"] * 4 + ["alpha "]) == "defect"
+    assert classify(expected, top, [None] * 5) == "defect"
     expected[0] = (Fraction(2), "e0", 0, "alpha")
     assert classify(expected, [top[1], top[0], *top[2:]]) == "defect"
     assert classify(expected, receipt.pairs(expected[1:6])) == "defect"
