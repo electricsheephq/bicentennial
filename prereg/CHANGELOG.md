@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-05: the login-home operator check reads an entry's own flag (#475)
+- **Operator firewall:** T2 and T2-lite refuse an outside entry whose own `benchmark_operator_runs` is false under an operator-marked login home, with `operator_identity`, as they already refuse a built-in whose flag is false. The login-home and policy checks share one exclusion predicate; existing refusal codes and their order stay unchanged. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-11-04: outside registry entries (#390)
 - **Developer loop, RING0 §14.2:** all tiers and pin measurement accept an outside entry through `--entry`. Its recipe supplies the plug-in configuration without code-table rows, and its complete admitted declaration contributes to the system hash. Built-in declarations, routes and recorded values retain their rules.
 - **Admission:** outside names cannot shadow built-ins; recipe values use the existing plug-in and worker rules plus bounded archive arguments. Operator exclusions follow normalized entry, artifact and recipe identities and measured forbidden artifact digests. Outside write tools and scripted structured formats are refused pending responder recipe routing. No code pin moves.

@@ -64,6 +64,8 @@ def load_entry(path):
 
 
 def _recipe_error(field):
+    # The guide tests discover refusal codes from literal reasons.append arguments
+    # (tests/test_developer_doc.py), so the code stays a literal here.
     reasons = []
     reasons.append("entry_recipe_invalid:<field>")
     return reasons[0].replace("<field>", field)
@@ -134,6 +136,11 @@ def operator_forbidden(entry):
     return False
 
 
+def operator_excluded(entry):
+    """Return whether this is an identity both operator checks refuse."""
+    return entry.get("benchmark_operator_runs") is False or operator_forbidden(entry)
+
+
 def outside_reasons(entry, operator=_ENV_OPERATOR):
     """Outside-only gates, also used for pin measurement without unmeasured checks."""
     if "recipe" not in entry:
@@ -180,7 +187,7 @@ def outside_reasons(entry, operator=_ENV_OPERATOR):
         reasons.append("t0_mapping_missing")
     if operator is _ENV_OPERATOR:
         operator = os.environ.get("BICENTENNIAL_OPERATOR")
-    if operator == "benchmark" and (entry.get("benchmark_operator_runs") is False or operator_forbidden(entry)):
+    if operator == "benchmark" and operator_excluded(entry):
         reasons.append("benchmark_operator_forbidden")
     return reasons
 
