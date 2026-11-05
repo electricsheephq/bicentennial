@@ -516,6 +516,14 @@ def test_exact_json_types_and_canonical_paths_in_argv():
     # and an equal one with a number in it is still identical.
     with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
         comparison(lambda r: r["environment_inputs"].update(worker_argv=dict.fromkeys(r["environment_inputs"]["worker_argv"], 1)))
+
+    # Beside a real move as well: only a recorded list is masked, so a dict never reads as a relocation.
+    def dict_beside_a_move(r):
+        r["director_bindings"]["probe_config"]["checkout"] = "/new-checkout"
+        r["environment_inputs"]["worker_argv"] = dict.fromkeys(["/new-checkout/worker.py"], 1)
+        r["environment_inputs"]["worker_env"]["PYTHONPATH"] = "/new-checkout:/code/bicentennial/harness/hermes/clockshim"
+    with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
+        comparison(dict_beside_a_move)
     fields, records = inputs()
     records["environment_inputs"]["worker_argv"].append(5)
     assert repro.compare_records(fields, records, fields, copy.deepcopy(records)) == "identical"
