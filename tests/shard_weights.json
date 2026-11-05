@@ -158,6 +158,7 @@
  "tests/test_gitenv.py": 0.0,
  "tests/test_keyed.py": 0.1,
  "tests/test_naive_rag_dev.py": 0.3,
+ "tests/test_naive_rag_top5.py": 177.0,
  "tests/test_pins.py": 1.5,
  "tests/test_public_check.py": 1.3,
  "tests/test_scoring_contracts.py": 0.4,
