@@ -179,7 +179,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `no T0 mapping` | A T0 host lacks a write/forget mapping. Preflight checks mappings only for systems that declare write tools, so a system with none can still fail here. |
 | `no_t0_surface:context_engine` | Engine-only system has no T0 memory-provider surface. |
 | `only` | No matching checkpoint items. |
-| `operator_identity` | Operator-marked login cannot run lcm-x or another operator-excluded identity ([entry guide](entry.md#operator-firewall)). |
+| `operator_identity` | Operator-marked login cannot run lcm-x, another operator-excluded identity, or an entry whose own `benchmark_operator_runs` is false ([entry guide](entry.md#operator-firewall)). |
 | `out_exists` | Output already exists, including a symlink. |
 | `output_overlap` | Output overlaps login, packs or cache. |
 | `pin_mismatch` | Checkout or measured fresh install does not match its pin; for the install pin, stderr and `refusal.json` show the computed value. |
