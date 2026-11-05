@@ -137,7 +137,10 @@ def operator_forbidden(entry):
 
 
 def operator_excluded(entry):
-    """Return whether this is an identity both operator checks refuse."""
+    """Return whether T2 and T2-lite's login-home check and the outside policy check refuse this entry.
+
+    Admission's `benchmark_operator_forbidden` and the adapter's and plugin host's worker checks test only the flag.
+    """
     return entry.get("benchmark_operator_runs") is False or operator_forbidden(entry)
 
 
