@@ -10,10 +10,11 @@ import sys
 import tarfile
 import tempfile
 from collections import Counter
-from contextlib import closing
+from contextlib import closing, contextmanager
 from fractions import Fraction
 from hashlib import sha256
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
 from bicentennial.canon import canon
@@ -63,14 +64,47 @@ def load_archive(entry, source, folder):
     names = re.findall(r"^name:\s*([^\n]+)$", manifest, re.MULTILINE)
     if len(names) != 1 or names[0].strip().strip("\"'") != entry["recipe"]["provider"]:
         raise Refused("identity_mismatch")
-    return root / "tfidf.py"
+    return root / "__init__.py"
 
 
-def load_tfidf(path):
-    spec = importlib.util.spec_from_file_location("receipt_tfidf", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+@contextmanager
+def load_baseline(path):
+    """Load only the extracted package, with a minimal provider base."""
+    agent, base = ModuleType("agent"), ModuleType("agent.memory_provider")
+    base.MemoryProvider = object
+    name = "receipt_baseline"
+    with patch.dict(sys.modules, {"agent": agent, "agent.memory_provider": base}):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        for child in ("store", "tfidf"):
+            child_name = f"{name}.{child}"
+            child_spec = importlib.util.spec_from_file_location(child_name, path.with_name(f"{child}.py"))
+            child_module = importlib.util.module_from_spec(child_spec)
+            sys.modules[child_name] = child_module
+            child_spec.loader.exec_module(child_module)
+            setattr(module, child, child_module)
+        spec.loader.exec_module(module)
+        yield module
+
+
+def score_baseline(baseline, texts, prompt):
+    """Score every chunk and obtain the independent top list from the search tool."""
+    with tempfile.TemporaryDirectory() as home:
+        provider = baseline.NaiveRagProvider()
+        provider.initialize("receipt", hermes_home=Path(home))
+        try:
+            ids = {}
+            for eid, text in texts.items():
+                added = json.loads(provider.handle_tool_call("naive_rag_add", {"content": text}))
+                ids[added["id"]] = eid
+            rows = [(s, ids[mid], ordinal, text) for s, mid, ordinal, text in
+                    baseline.tfidf.scored(provider.store.memories, prompt)]
+            results = json.loads(provider.handle_tool_call("naive_rag_search", {"query": prompt}))["results"]
+            top = [[ids.get(r["id"]), r["ordinal"]] for r in results]
+            return rows, top
+        finally:
+            provider.shutdown()
 
 
 def fraction(value):
@@ -85,8 +119,8 @@ def pairs(rows):
     return [[eid, ordinal] for _, eid, ordinal, _ in rows]
 
 
-def compare_rows(expected, actual, control_k, baseline_k):
-    """Compare all scored chunks before classifying the two independently cut tops."""
+def compare_rows(expected, actual, control_k, baseline_top):
+    """Compare all scores and classify the tool's top list against the control's."""
     left, right = chunk_rows(expected), chunk_rows(actual)
     differing = []
     for eid, ordinal in sorted(left.keys() | right.keys()):
@@ -95,22 +129,25 @@ def compare_rows(expected, actual, control_k, baseline_k):
             differing.append(dict(event_id=eid, ordinal=ordinal,
                 control=None if a is None else dict(score=fraction(a[0]), text=a[1]),
                 baseline=None if b is None else dict(score=fraction(b[0]), text=b[1])))
-    a, b = expected[:control_k], actual[:baseline_k]
-    if differing or len(a) != len(b) or [r[0] for r in a] != [r[0] for r in b]:
+    a = expected[:control_k]
+    left_top, right_top = pairs(a), baseline_top
+    right_ids = list(map(tuple, right_top))
+    scores = [right[k][0] if k in right else None for k in right_ids]
+    if (differing or len(a) != len(right_top) or len(set(right_ids)) != len(right_ids)
+            or [r[0] for r in a] != scores):
         kind = "defect"
-    elif pairs(a) == pairs(b):
+    elif left_top == right_top:
         kind = "equal"
-    elif set(map(tuple, pairs(a))) == set(map(tuple, pairs(b))):
+    elif set(map(tuple, left_top)) == set(right_ids):
         kind = "order_only"
     else:
         # With identical chunk scores and ranked score sequences, replacements at
         # the cut can only exchange chunks tied at the boundary.
         kind = "tie"
-    left_top, right_top = pairs(a), pairs(b)
     top_differences = []
-    for rank in range(max(len(a), len(b))):
-        left_chunk = left_top[rank] if rank < len(a) else None
-        right_chunk = right_top[rank] if rank < len(b) else None
+    for rank in range(max(len(left_top), len(right_top))):
+        left_chunk = left_top[rank] if rank < len(left_top) else None
+        right_chunk = right_top[rank] if rank < len(right_top) else None
         if left_chunk != right_chunk:
             top_differences.append(dict(rank=rank + 1, control=left_chunk, baseline=right_chunk))
     return dict(classification=kind, differing_chunks=differing, top_differences=top_differences,
@@ -134,11 +171,8 @@ class ReceiptRag(control.NaiveRag):
         orders = {}
         for order in ("event_id", "stream"):
             events = sorted(visible, key=lambda e: e["event_id"]) if order == "event_id" else visible
-            memories = {f"m{n:06d}": e["text"] for n, e in enumerate(events, 1)}
-            ids = {f"m{n:06d}": e["event_id"] for n, e in enumerate(events, 1)}
-            actual = [(s, ids[mid], ordinal, text)
-                      for s, mid, ordinal, text in self.baseline.scored(memories, prompt)]
-            orders[order] = compare_rows(expected, actual, control.TOP_K, self.baseline.TOP_K)
+            actual, top = score_baseline(self.baseline, {e["event_id"]: e["text"] for e in events}, prompt)
+            orders[order] = compare_rows(expected, actual, control.TOP_K, top)
         self.calls.setdefault(self.item_id, []).append(dict(orders=orders))
         return expected
 
@@ -204,7 +238,7 @@ def compiled_corpora(pack_dir, entry):
 
 
 def source_events(top, origins=None):
-    return {event for eid, _ in top for event in (origins[eid] if origins is not None else [eid])}
+    return {event for eid, _ in top for event in (origins.get(eid, ()) if origins is not None else [eid])}
 
 
 def jaccard(a, b):
@@ -217,16 +251,15 @@ def part2(inp, baseline, retrieved, corpora):
     for iid in sorted(retrieved):
         memories, origins = corpora[iid]
         prompt = keys[iid]["recall_query"]
-        actual = baseline.scored(memories, prompt)
+        actual, top = score_baseline(baseline, memories, prompt)
         adapter = control.NaiveRag()
         # Each memory is one event; lexical order of these fixed-width ids is
         # write order for the bounded T1 corpus.
         adapter.events = {mid: dict(text=text, t_sim=0) for mid, text in memories.items()}
         expected = adapter.scored(prompt, 0)
-        comparison = compare_rows(expected, actual, control.TOP_K, baseline.TOP_K)
+        comparison = compare_rows(expected, actual, control.TOP_K, top)
         if comparison["classification"] != "equal":
             mismatches.append(dict(item_id=iid, comparison=comparison))
-        top = pairs(actual[:baseline.TOP_K])
         sources = source_events(top, origins)
         items.append(dict(item_id=iid, control=jaccard(sources, source_events(retrieved[iid])),
                           same_corpus=jaccard(sources, source_events(pairs(expected[:control.TOP_K]), origins))))
@@ -272,7 +305,8 @@ def main(argv=None):
                     raise ValueError("tier")
             except (OSError, ValueError) as error:
                 raise Refused("pack_hash_mismatch") from error
-            result = receipt(entry, entry_sha256, args.pack_hash, Path(args.packs), index, load_tfidf(path))
+            with load_baseline(path) as baseline:
+                result = receipt(entry, entry_sha256, args.pack_hash, Path(args.packs), index, baseline)
     except SystemRefused as error:
         print(error.reasons[0], file=sys.stderr)
         return 3

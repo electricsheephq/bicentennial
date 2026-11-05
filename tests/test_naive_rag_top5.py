@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from fractions import Fraction
 from hashlib import sha256
@@ -114,7 +115,8 @@ def read(path):
 
 def test_built_archive_passes(source, packs, tmp_path):
     # A dirty checkout must never be imported in place of the archive.
-    (source[0] / SUBDIRECTORY / "tfidf.py").write_text("raise AssertionError('checkout imported')\n")
+    for file in ("__init__.py", "store.py", "tfidf.py"):
+        (source[0] / SUBDIRECTORY / file).write_text("raise AssertionError('checkout imported')\n")
     status, out = invoke(tmp_path, source, packs, cli=True)
     result = read(out)
     assert status == 0 and result["pass"]
@@ -170,7 +172,7 @@ def synthetic_input():
     return ControlInput(pack, tuple(keys), events, now, "0" * 64)
 
 
-def synthetic_run(monkeypatch, tmp_path, source, packs, mutation=None, inp=None):
+def synthetic_run(monkeypatch, tmp_path, source, packs, mutation=None, inp=None, file="tfidf.py"):
     inp = inp or synthetic_input()
     monkeypatch.setattr(receipt, "control_input", lambda p: inp)
     monkeypatch.setattr(receipt, "make_score", lambda obj: lambda item, result: score_qa(
@@ -179,17 +181,20 @@ def synthetic_run(monkeypatch, tmp_path, source, packs, mutation=None, inp=None)
         next(iter(inp.events.values()))["B0"], 1) if e["t_sim"] <= 1}
     origins = {mid: [f"e{n:02d}"] for n, mid in enumerate(memories)}
     monkeypatch.setattr(receipt, "compiled_corpora", lambda *a: {i: (memories, origins) for i in inp.now})
-    load = receipt.load_tfidf
+    load = receipt.load_baseline
 
+    @contextmanager
     def mutated(path):
         if mutation:
             before, after = mutation
-            text = path.read_text()
+            target = path.with_name(file)
+            text = target.read_text()
             assert before in text
-            path.write_text(text.replace(before, after))
-        return load(path)
+            target.write_text(text.replace(before, after))
+        with load(path) as baseline:
+            yield baseline
 
-    monkeypatch.setattr(receipt, "load_tfidf", mutated)
+    monkeypatch.setattr(receipt, "load_baseline", mutated)
     return invoke(tmp_path, source, packs)
 
 
@@ -204,6 +209,47 @@ def test_algorithm_mutants_are_defects(monkeypatch, tmp_path, source, packs, mut
     status, out = synthetic_run(monkeypatch, tmp_path, source, packs, mutation)
     assert status == 1
     assert read(out)["part1"]["counts"]["defect"] > 0 and not read(out)["pass"]
+
+
+def test_tool_cut_mutant_is_defect(monkeypatch, tmp_path, source, packs):
+    status, out = synthetic_run(monkeypatch, tmp_path, source, packs,
+        ("len(results) == TOP_K", "len(results) == TOP_K - 1"), file="__init__.py")
+    result = read(out)
+    assert status == 1 and not result["pass"]
+    assert result["part1"]["counts"]["defect"] > 0
+    orders = [o for p in result["part1"]["packs"] for i in p["non_equal"]
+              for c in i["calls"] for o in c["orders"].values()]
+    assert all(not o["differing_chunks"] and len(o["control_top"]) == 5
+               and len(o["baseline_top"]) == 4 for o in orders)
+    assert all(p["corpus_check_mismatch"] for p in result["part2"]["packs"])
+
+
+def test_tool_top_matches_scored(source, tmp_path, monkeypatch):
+    folder = tmp_path / "archive"
+    folder.mkdir()
+    with receipt.load_baseline(receipt.load_archive(source[1], source[0], folder)) as baseline:
+        texts = {f"m{n:06d}": text for n, text in enumerate(
+            ["alpha " * 90, "alpha beta", "alpha", "alpha gamma"] * 2, 1)}
+        rows, top = receipt.score_baseline(baseline, texts, "alpha")
+        assert len(top) == baseline.tfidf.TOP_K == 5
+        assert top == receipt.pairs(rows[:baseline.tfidf.TOP_K])
+        assert rows == baseline.tfidf.scored(texts, "alpha")
+        # A second call must use a fresh store, including for empty results.
+        assert receipt.score_baseline(baseline, {}, "alpha") == ([], [])
+
+        handle = baseline.NaiveRagProvider.handle_tool_call
+
+        def unrecognized_id(provider, tool, args):
+            result = json.loads(handle(provider, tool, args))
+            if tool == "naive_rag_search":
+                result["results"][0]["id"] = "event"
+            return json.dumps(result)
+
+        monkeypatch.setattr(baseline.NaiveRagProvider, "handle_tool_call", unrecognized_id)
+        rows, top = receipt.score_baseline(baseline, {"event": "alpha"}, "alpha")
+        assert top == [[None, 0]]  # An unknown memory id cannot alias an event id.
+        assert receipt.compare_rows(rows, rows, control.TOP_K, top)["classification"] == "defect"
+        assert receipt.source_events(top, {"event": ["source"]}) == set()
 
 
 def test_scores_below_top5_decide(monkeypatch, tmp_path, source, packs):
@@ -325,15 +371,23 @@ def test_byte_identical_without_paths(source, packs, tmp_path):
     assert not any(Path(s).is_absolute() for s in strings(read(first)))
 
 
-def test_comparison_classes(source, tmp_path):
-    folder = tmp_path / "archive"
-    folder.mkdir()
-    baseline = receipt.load_tfidf(receipt.load_archive(source[1], source[0], folder))
+def test_comparison_classes():
     expected = [(Fraction(1), f"e{n}", 0, "alpha") for n in range(7)]
-    assert receipt.compare_rows(expected, expected, control.TOP_K, baseline.TOP_K)["classification"] == "equal"
+    def classify(actual, top=None):
+        return receipt.compare_rows(expected, actual, control.TOP_K,
+            receipt.pairs(actual[:5]) if top is None else top)["classification"]
+
+    assert classify(expected) == "equal"
     for actual, kind in (([expected[1], expected[0], *expected[2:]], "order_only"),
                          (list(reversed(expected)), "tie"), (expected[:-1], "defect")):
-        assert receipt.compare_rows(expected, actual, control.TOP_K, baseline.TOP_K)["classification"] == kind
+        assert classify(actual) == kind
+    top = receipt.pairs(expected[:5])
+    for invalid in (top[:-1], top + [top[-1]], [top[0]] * 5,
+                    [["unscored", 0], *top[1:]]):
+        assert classify(expected, invalid) == "defect"
+    expected[0] = (Fraction(2), "e0", 0, "alpha")
+    assert classify(expected, [top[1], top[0], *top[2:]]) == "defect"
+    assert classify(expected, receipt.pairs(expected[1:6])) == "defect"
     assert receipt.jaccard(set(), set()) == "1"
     assert receipt.jaccard({"a", "b"}, {"b", "c"}) == "1/3"
 
@@ -341,7 +395,11 @@ def test_comparison_classes(source, tmp_path):
 def test_rebuilt_jaccards_and_mismatch_disclose(source, tmp_path):
     folder = tmp_path / "archive"
     folder.mkdir()
-    baseline = receipt.load_tfidf(receipt.load_archive(source[1], source[0], folder))
+    with receipt.load_baseline(receipt.load_archive(source[1], source[0], folder)) as baseline:
+        check_rebuilt_jaccards(baseline)
+
+
+def check_rebuilt_jaccards(baseline):
     inp = synthetic_input()
     iid = inp.keys[0]["item_id"]
     corpora = {iid: ({"m000001": "alpha", "m000002": "alpha"},
