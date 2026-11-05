@@ -317,6 +317,18 @@ def _score_run(ctx, pack, branch, arm, run, attempt, floor_stops=None):
     return scores, excluded, probes
 
 
+def _finalise(pack, scores, probes):
+    """Finish a unit's scores as T2 does after its last attempt: an `Infra` sentinel becomes an INFRA outcome."""
+    for iid, scored in scores.items():
+        if isinstance(scored, Infra):
+            scores[iid] = outcome(identity0(pack.cases[iid].item), None, cause="INFRA_FAILURE", infra_reruns=2)
+    # The shadow selection belongs to the shadow, not the live scorer's synthetic option.
+    for probe in probes:
+        row = scores[probe["item_id"]]
+        if row["failure_class"] is None:
+            row["selected_option"] = probe["shadow"]["selected_option"]
+
+
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
                    spec=T1_SPEC, keep=None, unit=None):
     from bicentennial.runner import t1
@@ -375,14 +387,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             run.cleanup()
         if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
             break
-    for iid, scored in scores.items():
-        if isinstance(scored, Infra):
-            scores[iid] = outcome(identity0(pack.cases[iid].item), None, cause="INFRA_FAILURE", infra_reruns=2)
-    # The shadow selection belongs to the shadow, not the live scorer's synthetic option.
-    for probe in probes:
-        row = scores[probe["item_id"]]
-        if row["failure_class"] is None:
-            row["selected_option"] = probe["shadow"]["selected_option"]
+    _finalise(pack, scores, probes)
     return UnitResult(scores, probes, measured, tuple(runs), len(runs), runs[-1].stopped,
                       keep_ms=keep_ns // 1_000_000)
 
