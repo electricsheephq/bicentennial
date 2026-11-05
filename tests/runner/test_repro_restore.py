@@ -359,31 +359,37 @@ def test_checkout_and_sandbox_relocations():
     assert comparison(change) == "relocated(canonical_paths,checkout)"
 
 
-@pytest.mark.parametrize("move,where,before,after,result", [
+# move, slots (A: argv, P: PYTHONPATH), the kept value, the new value, the result (None: refused).
+PREFIX_ROWS = [
     # A value that only contains a moved directory, or extends its last name, is not under it: it must match exactly.
-    ("checkout", "both", "/u/checkout/w.py", "/u/checkout/w.py", "relocated(checkout)"),
-    ("checkout", "both", "/u/checkout/w.py", "/u/new-checkout/w.py", None),
-    ("checkout", "both", "/checkout-old/x", "/checkout-old/x", "relocated(checkout)"),
-    ("checkout", "both", "/checkout-old/x", "/new-checkout-old/x", None),
-    ("benchmark", "both", "/u/code/lib", "/u/code/lib", "relocated(checkout)"),
-    ("benchmark", "both", "/u/code/lib", "/u/new-code/lib", None),
-    ("sandbox", "both", "/u/slot/x", "/u/slot/x", "relocated(canonical_paths)"),
-    ("sandbox", "both", "/u/slot/x", "/u/new-slot/x", None),
+    ("checkout", "AP", "/u/checkout/w.py", "/u/checkout/w.py", "relocated(checkout)"),
+    ("checkout", "AP", "/u/checkout/w.py", "/u/new-checkout/w.py", None),
+    ("checkout", "AP", "/checkout-old/x", "/checkout-old/x", "relocated(checkout)"),
+    ("checkout", "AP", "/checkout-old/x", "/new-checkout-old/x", None),
+    ("benchmark", "AP", "/u/code/lib", "/u/code/lib", "relocated(checkout)"),
+    ("benchmark", "AP", "/u/code/lib", "/u/new-code/lib", None),
+    ("sandbox", "AP", "/u/slot/x", "/u/slot/x", "relocated(canonical_paths)"),
+    ("sandbox", "AP", "/u/slot/x", "/u/new-slot/x", None),
     # A '=' inside a path belongs to it; only an option's value after its first '=' is a path of its own.
-    ("checkout", "both", "/u/name=/checkout/x", "/u/name=/checkout/x", "relocated(checkout)"),
-    ("checkout", "both", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
-    ("checkout", "argv", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
-    ("checkout", "argv", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
-    ("checkout", "argv", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
-    # A literal never reads as a placeholder.
-    ("none", "both", "/slot/x", "{SANDBOX_ROOT}/x", None),
-    ("none", "argv", "--config=/slot/x", "--config={SANDBOX_ROOT}/x", None),
-])
-def test_relocation_masks_path_prefixes_only(move, where, before, after, result):
+    ("checkout", "AP", "/u/name=/checkout/x", "/u/name=/checkout/x", "relocated(checkout)"),
+    ("checkout", "AP", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
+    ("checkout", "A", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
+    ("checkout", "A", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
+    # A literal never reads as a placeholder, with or without a relocation beside it.
+    ("none", "AP", "/slot/x", "{SANDBOX_ROOT}/x", None),
+    ("checkout", "AP", "{SANDBOX_ROOT}/x", "/slot/x", None),
+    ("none", "A", "--config=/slot/x", "--config={SANDBOX_ROOT}/x", None),
+]
+
+
+@pytest.mark.parametrize("move,slot,before,after,result",
+                         [(m, s, b, a, r) for m, slots, b, a, r in PREFIX_ROWS for s in slots])
+def test_relocation_masks_path_prefixes_only(move, slot, before, after, result):
     fields, records = inputs()
     env = records["environment_inputs"]
-    env["worker_argv"].append(before)
-    if where == "both":
+    if slot == "A":
+        env["worker_argv"].append(before)
+    else:
         env["worker_env"]["PYTHONPATH"] += ":" + before
     actual = copy.deepcopy(records)
     checkout = "/new-checkout" if move == "checkout" else "/checkout"
@@ -392,13 +398,24 @@ def test_relocation_masks_path_prefixes_only(move, where, before, after, result)
     if move == "sandbox":
         actual["director_bindings"]["run_values"]["sandbox_root"] = "/new-slot"
     env = actual["environment_inputs"]
-    env["worker_argv"] = [checkout + "/worker.py", after]
-    env["worker_env"]["PYTHONPATH"] = f"{checkout}:{code}/bicentennial/harness/hermes/clockshim" + (f":{after}" if where == "both" else "")
+    env["worker_argv"] = [checkout + "/worker.py"] + ([after] if slot == "A" else [])
+    env["worker_env"]["PYTHONPATH"] = f"{checkout}:{code}/bicentennial/harness/hermes/clockshim" + (f":{after}" if slot == "P" else "")
     if result is None:
         with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
             repro.compare_records(fields, records, fields, actual)
     else:
         assert repro.compare_records(fields, records, fields, actual) == result
+
+
+def test_reordered_benchmark_roots_never_compare_identical():
+    # One placeholder for two directories hides their order: a start that differs is never identical.
+    shim = "/bicentennial/harness/hermes/clockshim"
+    fields, records = inputs()
+    records["environment_inputs"]["worker_env"]["PYTHONPATH"] = f"/a{shim}:/b{shim}"
+    actual = copy.deepcopy(records)
+    actual["environment_inputs"]["worker_env"]["PYTHONPATH"] = f"/b{shim}:/a{shim}"
+    with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
+        repro.compare_records(fields, records, fields, actual)
 
 
 def test_checkout_nested_under_the_sandbox_root_relocates():
@@ -437,9 +454,18 @@ def test_clock_and_port_normalization():
             comparison(lambda r, key=key: r["clock_cadence"]["published"].update(**{key: 1}))
     with pytest.raises(repro.ReproRefused, match="starting_state_changed:clock_cadence"):
         comparison(lambda r: r["clock_cadence"].update(step_s=1))
-    # A literal never reads as the port's placeholder.
+    # A literal never reads as the port's placeholder, with or without a relocation beside it.
     with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
         comparison(lambda r: r["environment_inputs"]["worker_env"].update(HTTP_PROXY="http://127.0.0.1:{DIRECTOR_PORT}"))
+
+    def literal_beside_a_move(records):
+        records["director_bindings"]["probe_config"]["checkout"] = "/new-checkout"
+        env = records["environment_inputs"]
+        env["worker_argv"] = ["/new-checkout/worker.py"]
+        env["worker_env"].update(PYTHONPATH="/new-checkout:/code/bicentennial/harness/hermes/clockshim",
+                                 HTTP_PROXY="http://127.0.0.1:{DIRECTOR_PORT}")
+    with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
+        comparison(literal_beside_a_move)
 
 
 @pytest.mark.parametrize("record,path", [

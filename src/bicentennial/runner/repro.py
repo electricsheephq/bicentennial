@@ -162,6 +162,9 @@ def compare_records(expected_fields, expected, actual_fields, actual):
     """Compare checked records, masking only volatility and the explicit relocation allowlist."""
     try:
         left, right = _volatile(expected), _volatile(actual)
+        # Only the port and the wall-clock anchor may differ in an identical start: masking can explain a
+        # relocation, never an identity.
+        changed = sorted(name for name in CONTEXT_RECORDS if canon(left[name]) != canon(right[name]))
         reasons = set()
 
         def mask(a, b, key, reason):
@@ -217,7 +220,11 @@ def compare_records(expected_fields, expected, actual_fields, actual):
         for name in sorted(lf.keys() | rf.keys()):
             if name not in lf or name not in rf or canon(lf[name]) != canon(rf[name]):
                 raise ReproRefused(f"starting_state_changed:{name}")
-        return "relocated(" + ",".join(sorted(reasons)) + ")" if reasons else "identical"
+        if reasons:
+            return "relocated(" + ",".join(sorted(reasons)) + ")"
+        if changed:
+            raise ReproRefused(f"starting_state_changed:{changed[0]}")
+        return "identical"
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         if isinstance(error, ReproRefused):
             raise
