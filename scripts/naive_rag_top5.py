@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 import traceback
 from collections import Counter
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from fractions import Fraction
 from hashlib import sha256
 from pathlib import Path
@@ -42,6 +42,13 @@ CLASSES = ("equal", "order_only", "tie", "defect")
 
 class Refused(ValueError):
     pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        # The CLI's usage convention (cli.py, RING0 §8): exit 3 with `usage`, because 2 means BLOCKED.
+        self.print_usage(sys.stderr)
+        self.exit(3, f"usage: {message}\n")
 
 
 def load_json(path):
@@ -312,21 +319,31 @@ def receipt(entry, entry_sha256, pack_hash, packs, index, baseline):
                 **{"pass": not any(p["counts"]["defect"] for p in decisions)})
 
 
+def umask():
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
 def publish(out, data):
     """Stage the receipt beside --out and link it into place whole; an existing --out is never replaced."""
     descriptor, staged = tempfile.mkstemp(dir=out.parent, prefix=".receipt-")
     try:
         with os.fdopen(descriptor, "wb") as file:
+            # mkstemp makes the file 0600; the receipt gets the mode a plain write would give it.
+            os.fchmod(file.fileno(), 0o666 & ~umask())
             file.write(data)
         os.link(staged, out)
     except FileExistsError as error:
         raise Refused("out_exists") from error
     finally:
-        os.unlink(staged)
+        # The link is the publication: a staged name that cannot be removed changes neither the exit code nor --out.
+        with suppress(OSError):
+            os.unlink(staged)
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = Parser(description=__doc__)
     for name in ("entry", "plugin-source", "packs", "pack-hash", "out"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args(argv)

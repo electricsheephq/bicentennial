@@ -2,7 +2,9 @@
 
 import importlib.util
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -128,6 +130,8 @@ def test_built_archive_passes(source, packs, tmp_path):
     assert "memory_write" in result["part2"]["omissions"]
     assert all(not p["corpus_check_mismatch"] for p in result["part2"]["packs"])
     assert result["entry"]["file_sha256"] == sha256((tmp_path / "entry.toml").read_bytes()).hexdigest()
+    assert not list(tmp_path.glob(".receipt-*"))
+    assert stat.S_IMODE(out.stat().st_mode) == 0o666 & ~receipt.umask()
 
 
 def test_real_v1_archive_passes(packs, tmp_path):
@@ -237,16 +241,20 @@ def test_equal_top_lists_can_still_be_defects(monkeypatch, tmp_path, source, pac
     status, out = synthetic_run(monkeypatch, tmp_path, source, packs, mutation, file=file)
     result = read(out)
     assert status == 1 and not result["pass"] and result["part1"]["counts"]["defect"] > 0
-    orders = [o for p in result["part1"]["packs"] for i in p["non_equal"]
-              for c in i["calls"] for o in c["orders"].values()]
-    assert orders and all(o["classification"] == "defect" and o["control_top"] == o["baseline_top"]
-                          and not o["differing_chunks"] for o in orders)
-    if file == "tfidf.py":
-        assert all(o["duplicate_chunks"]["baseline"] and not o["duplicate_chunks"]["control"]
-                   and not o["top_text_mismatch_ranks"] for o in orders)
-    else:
-        assert all(o["top_text_mismatch_ranks"] == [1, 2, 3, 4, 5]
-                   and o["duplicate_chunks"] == dict(control=[], baseline=[]) for o in orders)
+    calls = [c for p in result["part1"]["packs"] for i in p["non_equal"] for c in i["calls"]]
+    assert calls
+    for call in calls:
+        # In event-id order both top lists and every score agree, so only the new checks can make it a defect.
+        first = call["orders"]["event_id"]
+        assert first["control_top"] == first["baseline_top"] and not first["differing_chunks"]
+        for o in call["orders"].values():
+            assert o["classification"] == "defect"
+            if file == "tfidf.py":
+                assert o["duplicate_chunks"]["baseline"] and not o["duplicate_chunks"]["control"]
+                assert not o["top_text_mismatch_ranks"]
+            else:
+                assert o["top_text_mismatch_ranks"] == [1, 2, 3, 4, 5]
+                assert o["duplicate_chunks"] == dict(control=[], baseline=[])
 
 
 def test_tool_top_matches_scored(source, tmp_path, monkeypatch):
@@ -349,18 +357,43 @@ def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fa
     assert capsys.readouterr().err == code + "\n"
 
 
-@pytest.mark.parametrize("fault", ["crash", "unwritable"])
+@pytest.mark.parametrize("fault", ["crash", "link", "write"])
 def test_tool_failure_writes_nothing(source, packs, tmp_path, monkeypatch, capsys, fault):
     # Exit 1 means a written receipt with a defect, so a crash must exit 70 instead.
     if fault == "crash":
         def crash(*args):
             raise RuntimeError("planted")
         monkeypatch.setattr(receipt, "receipt", crash)
-    else:
+    elif fault == "link":
         def unlinkable(*args):
             raise OSError("planted")
         monkeypatch.setattr(receipt, "receipt", lambda *a: {"pass": True})
         monkeypatch.setattr(receipt.os, "link", unlinkable)
+    else:
+        opened = os.fdopen
+
+        class Partial:
+            """A staged write that fails after its first bytes reach the file."""
+
+            def __init__(self, file):
+                self.file = file
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.file.close()
+
+            def fileno(self):
+                return self.file.fileno()
+
+            def write(self, data):
+                self.file.write(data[:4])
+                self.file.flush()
+                raise OSError("planted partial write")
+
+        monkeypatch.setattr(receipt, "receipt", lambda *a: {"pass": True})
+        monkeypatch.setattr(receipt.os, "fdopen", lambda descriptor, mode: Partial(opened(descriptor, mode)))
     status, out = invoke(tmp_path, source, packs)
     err = capsys.readouterr().err
     assert status == 70 and not out.exists()
@@ -373,7 +406,7 @@ def test_existing_out_is_never_replaced(source, packs, tmp_path, monkeypatch, ca
     out = tmp_path / "receipt.json"
     if when == "before":
         out.write_bytes(b"earlier")
-        monkeypatch.setattr(receipt, "receipt", lambda *a: pytest.fail("receipt work began before refusal"))
+        monkeypatch.setattr(receipt, "load_entry", lambda *a: pytest.fail("work began before the refusal"))
     else:
         def racer(*args):
             out.write_bytes(b"earlier")
@@ -384,11 +417,37 @@ def test_existing_out_is_never_replaced(source, packs, tmp_path, monkeypatch, ca
     assert out.read_bytes() == b"earlier" and not list(tmp_path.glob(".receipt-*"))
 
 
-def test_missing_out_parent_is_usage(source, packs, tmp_path, monkeypatch):
+@pytest.mark.parametrize("when", ["linked", "race"])
+def test_staged_cleanup_failure_keeps_the_verdict(source, packs, tmp_path, monkeypatch, capsys, when):
+    # The link is the publication: a staged name that cannot be removed changes neither the exit code nor --out.
+    out = tmp_path / "receipt.json"
+    removed = os.unlink
+
+    def unlink(path, *args, **kwargs):
+        if Path(path).name.startswith(".receipt-"):
+            raise PermissionError("planted")
+        return removed(path, *args, **kwargs)
+
+    def made(*args):
+        if when == "race":
+            out.write_bytes(b"earlier")
+        return {"pass": True}
+
+    monkeypatch.setattr(receipt.os, "unlink", unlink)
+    monkeypatch.setattr(receipt, "receipt", made)
+    status, _ = invoke(tmp_path, source, packs)
+    if when == "linked":
+        assert status == 0 and read(out) == {"pass": True}
+    else:
+        assert status == 3 and capsys.readouterr().err == "out_exists\n" and out.read_bytes() == b"earlier"
+
+
+def test_missing_out_parent_is_usage(source, packs, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(receipt, "load_entry", lambda *a: pytest.fail("work began before the usage check"))
     with pytest.raises(SystemExit) as caught:
         invoke(tmp_path, source, packs, name="missing/receipt.json")
-    assert caught.value.code == 2 and not (tmp_path / "missing").exists()
+    assert caught.value.code == 3 and not (tmp_path / "missing").exists()
+    assert "usage: --out: its parent directory does not exist" in capsys.readouterr().err
 
 
 def test_compiled_write_texts_match_responder(source, packs, monkeypatch):
@@ -507,7 +566,8 @@ def test_control_top_k_is_independent(monkeypatch, tmp_path, source, packs):
     assert status == 1 and not read(out)["pass"]
 
 
-def test_usage_exits_two(source):
+def test_usage_exits_three(source, capsys):
+    # As the CLI does (RING0 §8): exit 2 means BLOCKED, so a usage error exits 3.
     with pytest.raises(SystemExit) as caught:
         receipt.main([])
-    assert caught.value.code == 2
+    assert caught.value.code == 3 and "usage: " in capsys.readouterr().err
