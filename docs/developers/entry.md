@@ -98,6 +98,139 @@ A T2-lite comparison's `flips.json` prints each rerun command with `--system NAM
 for an outside entry, replace it with `--entry ENTRY` and add `--plugin-source` (and
 `--model-cache` if the recipe uses one) until #471 prints them.
 
+## Worked example: the benchmark's own baseline
+
+`naive-rag-dev` v1 is the benchmark team's Hermes memory-provider plug-in, implementing
+the pinned naive-RAG control's hashed TF-IDF, top-5 retrieval algorithm in its own code.
+The team acts as an outside developer: the entry is kept outside the checkout and its
+`recipe` table makes it an outside entry, off every roster and board. See
+[RING0 §14.2 and its 2026-11-05 (#390) erratum](../../specs/ring0/RING0.md#142-the-baseline-naive-rag-dev)
+for the baseline, version and receipt rules.
+
+Save this v1 entry as `ENTRY`. Its archive digest is measured; its all-zero
+`fresh_install_hash` is a placeholder to replace before running a tier.
+
+<!-- entry-example: naive-rag-dev-v1 -->
+```toml
+name = "naive-rag-dev"
+licence = "Apache-2.0"
+harness = "hermes"
+artifact = {name = "naive-rag-dev", version = "1.0.0", sha256 = "8f991c14d1aee11e846fe7f2c8b9e296f2555d561e729b5a8574cba81fef622e"}
+fresh_install_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+write_tools = [{tool = "naive_rag_add", actions = []}, {tool = "naive_rag_delete", actions = []}]
+read_tools = ["naive_rag_search"]
+recall = {tool = "naive_rag_search", argument_template = {query = "{prompt}"}}
+surfaces = [{root = "HERMES_HOME", relative = ".", volatile_paths = [".mcp-discovery.lock", "logs"]}]
+own_model_routes = []
+structured_formats = {}
+settle = {kind = "none", bound_s = 0}
+machine_class = "light"
+benchmark_operator_runs = true
+
+[recipe]
+provider = "naive-rag-dev"
+archive_tree = {ref = "aa30438e9c3402f6a4e761174694e33b1de1f3aa", subdirectory = "baselines/naive-rag-hermes"}
+enabled = false
+worker_environment = {}
+file_time_sites = []
+unscripted = []
+write = {tool = "naive_rag_add", fixed = {}, content_key = "content"}
+forget = {search_tool = "naive_rag_search", search_fixed = {whole = true}, query_key = "query", listing_key = "results", text_key = "content", id_key = "id", delete_tool = "naive_rag_delete", delete_fixed = {}, delete_key = "memory_id"}
+```
+
+The archive embeds the commit id, so its digest names that commit as well as its tree.
+The full 40-character ref is public on `main`; `HEAD` would move. This follows erratum
+(b), which requires a public commit for each version.
+
+Start with the hash seed below; every `bicentennial` command and the pack install
+module refuse with `hashseed` without it. `HERMES` is the pinned clean Hermes checkout.
+`PLUGIN` is a clean, full-history clone of this benchmark repository containing the
+entry's commit. In a depth-1 clone that lacks it, pins and the receipt refuse
+`pin_mismatch`. Measure the fresh install:
+
+```sh
+export PYTHONHASHSEED=0
+bicentennial pins --entry ENTRY --hermes HERMES --plugin-source PLUGIN
+```
+
+Copy the printed `fresh_install_hash` into `ENTRY` and confirm the printed
+`artifact.sha256` agrees with the entry. Build and install each tier's packs. The
+install command takes source and destination as two positionals; each destination
+must not exist. It prints the pack hash on stdout:
+
+```sh
+bicentennial build --tier T0 --out BUILD_T0
+PACK_HASH_T0="$(python -m bicentennial.packs.install install BUILD_T0/T0 PACKS_T0)"
+bicentennial build --tier T1 --out BUILD_T1
+PACK_HASH_T1="$(python -m bicentennial.packs.install install BUILD_T1/T1 PACKS_T1)"
+```
+
+Choose `PACK_ID` from the installed T0 `index.json`. Run that one pack first: within
+minutes it shows whether Hermes loads the plug-in. Then run all T0 packs and T1.
+Every run needs its own new output directory (`out_exists` otherwise); the placeholders below name distinct outputs.
+
+```sh
+bicentennial t0 --entry ENTRY --pack PACK_ID --packs PACKS_T0 --pack-hash "$PACK_HASH_T0" --hermes HERMES --plugin-source PLUGIN --out OUT_T0_ONE
+bicentennial t0 --entry ENTRY --pack all --packs PACKS_T0 --pack-hash "$PACK_HASH_T0" --hermes HERMES --plugin-source PLUGIN --out OUT_T0_ALL
+bicentennial t1 --entry ENTRY --packs PACKS_T1 --pack-hash "$PACK_HASH_T1" --hermes HERMES --plugin-source PLUGIN --out OUT_T1
+```
+
+For v1, green means all of the following:
+
+- The all-pack T0 command exits 0. No file records that exit status; its written
+  equivalent is `gate_verdict = "PASS"` in every `OUT_T0_ALL/pack/<...>/card.json`
+  and no `OUT_T0_ALL/refusal.json`. T0 cards can only be `PASS`, `FAIL`, `INVALID`
+  or `BLOCKED`.
+- T1 exits 0. Its written equivalent for this first run, without a baseline, is
+  `OUT_T1/system/card.json` field `gate_verdict` equal to `CONFORMANCE_PASS`, matching
+  the `gate.final` property in `OUT_T1/system/junit.xml`. A run with a baseline uses
+  `PASS`. The junit `gate` property holds the gate before overrides; its exit code
+  is not the command's exit status.
+- `OUT_T1/wiped/card.json` field `gate_verdict` is `FAIL`. `PASS` or
+  `CONFORMANCE_PASS` makes the system card `INVALID`; `BLOCKED` makes the control
+  uninformative; `INVALID` means a honeypot was read.
+- `OUT_T1/system/card.json` field `controls.wiped_store` is `FAIL`, rather than
+  `PASS` or `uninformative`. The wiped arm's own copy of that field is always
+  `FAIL` and provides no evidence about the system's control.
+
+Finally, run the receipt on the same installed T1 packs used above. `RECEIPT` must
+be a new file with an existing parent directory. The script imports and runs the
+entry's archived code in its own process; use it only for the benchmark's own
+baseline entry.
+
+```sh
+python scripts/naive_rag_top5.py --entry ENTRY --plugin-source PLUGIN --packs PACKS_T1 --pack-hash "$PACK_HASH_T1" --out RECEIPT
+```
+
+Receipt outcomes:
+
+- Exit 0: receipt written, no defect.
+- Exit 1: receipt written, a defect.
+- Exit 3: refusal or usage error, no receipt. Reasons include `entry_ref_not_commit`,
+  `pin_mismatch`, `identity_mismatch`, `pack_hash_mismatch`, `pack_not_t1` (packs are
+  not T1), `out_exists` (an existing output is never replaced), and entry loader
+  refusals from the [table below](#loader-and-admission-refusals). Usage errors
+  print `usage: MESSAGE`.
+- Exit 70: unexpected crash, `tool_failure`, no receipt.
+
+The offline path below checks admission and the printed archive pin, scripted writes
+through an outside recipe with a fake worker, and retrieval equivalence through v1's
+real archived code. It does not prove that Hermes loads the plug-in (T0), real-stack
+conformance (T1), or anything live (T2). The T0, T1 and receipt runs above precede the
+bar's declaration, as erratum (d) requires. The fresh-clone CI job runs this exact
+block, requiring every selected test to run without skips:
+
+<!-- ci-block: entry-offline -->
+```sh
+set -e
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .[dev]
+export PYTHONHASHSEED=0
+python -m pytest -q tests/test_developer_doc_entry.py::test_ci_block_matches_doc tests/test_developer_doc_entry.py::test_entry_example_admitted tests/test_developer_doc_entry.py::test_entry_archive_pin tests/test_naive_rag_top5.py tests/runner/test_entry_write_life.py::test_outside_scripted_write_life --junitxml=build/entry-offline.xml
+python -c 'import xml.etree.ElementTree as E; root = E.parse("build/entry-offline.xml").getroot(); assert len(root.findall(".//testcase")) == 37 and not root.findall(".//skipped"), "offline acceptance must pass without skips"'
+```
+
 ## Operator firewall
 
 The benchmark operator runs only entries it wrote itself, including its baseline.
