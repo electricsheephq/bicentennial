@@ -70,3 +70,24 @@ def test_policy_refuses_own_flag(outside):
     assert registry.outside_reasons(outside, operator="owner") == []
     outside["benchmark_operator_runs"] = True
     assert registry.outside_reasons(outside, operator="benchmark") == []
+
+
+@pytest.mark.parametrize("module", [t2lite, t2], ids=["t2lite", "t2"])
+@pytest.mark.parametrize("system,code", [("lcm-x", "operator_identity"), ("no-memory", "synthetic_stop")],
+                         ids=["excluded-builtin", "permitted-builtin"])
+def test_marker_checks_builtin_by_name(module, system, code, tmp_path, monkeypatch):
+    # A built-in run passes no entry, so the check sees only its name and registry file.
+    monkeypatch.delenv("BICENTENNIAL_OPERATOR", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "auth.json").write_text("{}")
+    (home / ".bicentennial-operator").touch()
+    prepared = Mock(side_effect=t1.T1Refused("synthetic_stop"))
+    monkeypatch.setattr(t1, "prepare", prepared)
+    monkeypatch.setattr(module, "LIVE_ENV", ())
+    runner = module.run_t2lite if module is t2lite else module.run_t2
+    out = tmp_path / "out"
+    assert runner(system=system, packs_dir=tmp_path / "packs", pack_hash="1" * 64, out=out,
+                  login_home=home, max_sends=0) == 3
+    assert json.loads((out / "refusal.json").read_bytes())["code"] == code
+    assert prepared.call_count == (code == "synthetic_stop")
