@@ -184,6 +184,38 @@ def test_restore_failure_is_not_a_repetition(kept_probe, monkeypatch):
         repeat(kept_probe, restore)
 
 
+def test_target_stop_leaves_other_items_not_restored(kept_probe, monkeypatch):
+    # A stop in the target's session gives its cause to the target only: no other item was restored.
+    restore = repro.load_bundle(kept_probe.directory)
+    session = adapter.HermesAdapter.run_session
+
+    def crash(self, index, **kwargs):
+        if index == restore.bundle["probe_session_index"]:
+            raise RuntimeError("planted target failure")
+        return session(self, index, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", crash)
+    identity = restore.records["attempt_identity"]
+    run = drive(kept_probe.case, kept_probe.scratch, probe_mode="per_item", keep_pre_probe=True,
+                pre_probe_attribution=T2_SPEC.pre_probe_attribution, live=FakeLive(), repro=restore,
+                stop_after_target=True, run=identity["run"], attempt=identity["attempt"])
+    assert run.stopped is not None and run.stopped[2] == restore.bundle["probe_session_index"]
+    assert run.classes[kept_probe.target] == run.stopped[:2]
+    others = [i["item_id"] for i in kept_probe.case["items"] if i["item_id"] != kept_probe.target]
+    assert others and all(run.classes[i] == ("INFRA_FAILURE", "not_restored") for i in others)
+
+
+def test_entry_surface_mismatch_refuses_before_running(kept_probe):
+    restore = repro.load_bundle(kept_probe.directory)
+    restore.records = copy.deepcopy(restore.records)
+    restore.records["director_bindings"]["probe_config"]["entry"]["surfaces"].append(
+        dict(root="HERMES_HOME", relative="other", volatile_paths=[]))
+    with pytest.raises(repro.ReproRefused, match="^starting_state_changed:director_bindings$"):
+        repeat(kept_probe, restore)
+    # Nothing ran: no gate session, no scratch tree.
+    assert not kept_probe.scratch.exists()
+
+
 def test_restore_forces_capture_and_skips_in_script_order(kept_probe, monkeypatch):
     restore = repro.load_bundle(kept_probe.directory)
     skipped, gated = [], []

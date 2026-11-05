@@ -315,6 +315,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         raise ValueError("invalid arm or branch")
     if repro is not None:
         keep_pre_probe = True
+        # A mismatch visible before the run refuses before anything runs (RING0 §14.8 (c)).
+        repro.check_entry(entry)
     if stop_after_target and repro is None:
         raise ValueError("stop_after_target requires repro")
     if pre_probe_attribution and not keep_pre_probe:
@@ -592,15 +594,15 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 if halted is not None:
                     # A breach seen before the stop still outranks it (runner/t2lite.py), so the egress goes with it.
                     halted.egress = egress
+        if repro is not None:
+            # Only the target is a repetition: every other item is not_restored, even after a stop gave it a cause.
+            evidence.classes.update((iid, ("INFRA_FAILURE", "not_restored")) for iid in sorted(by_id)
+                                    if iid != repro.item_id)
         if adapter is None:
             if leg is not None:
                 leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, cases)
             return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
-        if repro is not None:
-            for iid in by_id:
-                if iid != repro.item_id:
-                    evidence.classes.setdefault(iid, ("INFRA_FAILURE", "not_restored"))
         if leg is not None:
             leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, cases)
             transforms.extend(sorted(leg.transforms))

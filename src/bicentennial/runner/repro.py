@@ -247,6 +247,11 @@ class Restore:
         except (OSError, ValueError) as error:
             raise ReproRefused("snapshot_changed") from error
 
+    def check_entry(self, entry):
+        """Refuse before anything runs when the entry's surfaces are not the kept copy's."""
+        if entry.get("surfaces") != self.surfaces:
+            raise ReproRefused("starting_state_changed:director_bindings")
+
     def restore(self, surfaces, workspace, new_port):
         """Replace canonical trees after materialization, before the ordinary probe clones."""
         if [s for s, _ in surfaces] != self.surfaces:
