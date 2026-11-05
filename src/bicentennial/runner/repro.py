@@ -110,7 +110,7 @@ def _volatile(records):
 def _checkout_paths(records):
     checkout = records["director_bindings"]["probe_config"]["checkout"]
     paths = {checkout: "{CHECKOUT}"} if checkout else {}
-    # worker_env constructs this one benchmark path; other PYTHONPATH entries stay exact.
+    # worker_env constructs this one benchmark path; PYTHONPATH entries outside it stay exact.
     suffix = "/bicentennial/harness/hermes/clockshim"
     for value in records["environment_inputs"]["worker_env"].get("PYTHONPATH", "").split(":"):
         if value.endswith(suffix):
@@ -135,8 +135,9 @@ def _replace_paths(value, paths):
         return [_replace_paths(v, paths) for v in value]
     if isinstance(value, str):
         for path in sorted(paths, key=len, reverse=True):
-            # A directory prefix may be followed by a separator, never another name byte.
-            value = re.sub(re.escape(path) + r"(?=/|:|$)", lambda m, replacement=paths[path]: replacement, value)
+            # A directory prefix starts the value or follows ':' or '=', and a separator or the end follows it:
+            # a path that only contains it, or extends its last name, stays exact.
+            value = re.sub(r"(?<![^:=])" + re.escape(path) + r"(?=/|:|$)", lambda m, replacement=paths[path]: replacement, value)
     return value
 
 
@@ -288,6 +289,12 @@ def load_bundle(directory):
             raise ValueError("recorded port must be a string")
         _port_pattern(int(port))
         restore = Restore(directory, bundle, records)
+        # The digests can agree on a malformed entry: check the keys the snapshot check and restore read.
+        if not isinstance(restore.surfaces, list) or not all(
+                isinstance(s, dict) and isinstance(s.get("root"), str) and isinstance(s.get("relative"), str)
+                and isinstance(s.get("volatile_paths"), list) and all(isinstance(p, str) for p in s["volatile_paths"])
+                for s in restore.surfaces):
+            raise ValueError("surface metadata")
     except (OSError, ValueError, KeyError, TypeError, StopIteration) as error:
         raise ReproRefused("bundle_invalid") from error
     restore.check_snapshot()

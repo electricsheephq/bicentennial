@@ -175,6 +175,36 @@ def test_foreign_port_scan_and_snapshot_after_run(kept_probe):
     assert repro.foreign_port_refs([("surface", source.parent)], 1234) == ("surface/foreign",)
 
 
+def test_malformed_surface_metadata_refuses(kept_probe):
+    # Digests that agree do not make a kept entry well formed: a bad shape refuses and never crashes.
+    directory = kept_probe.directory
+    original = json.loads((directory / "bundle.json").read_bytes())
+    bindings = json.loads((directory / "context" / f"{original['replay_context']['director_bindings']}.json").read_bytes())
+    entry = bindings["probe_config"]["entry"]
+    surface = entry["surfaces"][0]
+
+    def load(entry):
+        record = copy.deepcopy(bindings)
+        record["probe_config"]["entry"] = entry
+        digest = sha256_canon(record)
+        (directory / "context" / f"{digest}.json").write_bytes(canon(record))
+        bundle = copy.deepcopy(original)
+        bundle["replay_context"]["director_bindings"] = digest
+        bundle["probe_config_sha256"] = sha256_canon(record["probe_config"])
+        (directory / "bundle.json").write_bytes(canon(bundle))
+        return repro.load_bundle(directory)
+
+    # The same rewrite of a well-formed entry loads, so each refusal below is the shape's.
+    assert load(dict(entry, unlisted=True)).surfaces == entry["surfaces"]
+    for malformed in ({}, [], {"surfaces": {}}, {"surfaces": 5}, {"surfaces": [5]},
+                      {"surfaces": [{k: v for k, v in surface.items() if k != "root"}]},
+                      {"surfaces": [dict(surface, relative=5)]},
+                      {"surfaces": [dict(surface, volatile_paths="x")]},
+                      {"surfaces": [dict(surface, volatile_paths=[5])]}):
+        with pytest.raises(repro.ReproRefused, match="^bundle_invalid$"):
+            load(malformed)
+
+
 def test_restore_failure_is_not_a_repetition(kept_probe, monkeypatch):
     restore = repro.load_bundle(kept_probe.directory)
     def broken(*args):
@@ -327,6 +357,39 @@ def test_checkout_and_sandbox_relocations():
         records["environment_inputs"]["worker_argv"] = ["/new-checkout/worker.py"]
         records["environment_inputs"]["worker_env"]["PYTHONPATH"] = "/new-checkout:/new-code/bicentennial/harness/hermes/clockshim"
     assert comparison(change) == "relocated(canonical_paths,checkout)"
+
+
+@pytest.mark.parametrize("move,before,after,result", [
+    # A path that only contains a moved directory is not under it, so it must match exactly.
+    ("checkout", "/u/checkout/w.py", "/u/checkout/w.py", "relocated(checkout)"),
+    ("checkout", "/u/checkout/w.py", "/u/new-checkout/w.py", None),
+    ("benchmark", "/u/code/lib", "/u/code/lib", "relocated(checkout)"),
+    ("benchmark", "/u/code/lib", "/u/new-code/lib", None),
+    ("sandbox", "/u/slot/x", "/u/slot/x", "relocated(canonical_paths)"),
+    ("sandbox", "/u/slot/x", "/u/new-slot/x", None),
+    # A path after an option's '=' is under the moved directory, so it moves with it.
+    ("checkout", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
+    ("checkout", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
+])
+def test_relocation_masks_path_prefixes_only(move, before, after, result):
+    fields, records = inputs()
+    env = records["environment_inputs"]
+    env["worker_argv"].append(before)
+    env["worker_env"]["PYTHONPATH"] += ":" + before
+    actual = copy.deepcopy(records)
+    checkout = "/new-checkout" if move == "checkout" else "/checkout"
+    code = "/new-code" if move == "benchmark" else "/code"
+    actual["director_bindings"]["probe_config"]["checkout"] = checkout
+    if move == "sandbox":
+        actual["director_bindings"]["run_values"]["sandbox_root"] = "/new-slot"
+    env = actual["environment_inputs"]
+    env["worker_argv"] = [checkout + "/worker.py", after]
+    env["worker_env"]["PYTHONPATH"] = f"{checkout}:{code}/bicentennial/harness/hermes/clockshim:{after}"
+    if result is None:
+        with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
+            repro.compare_records(fields, records, fields, actual)
+    else:
+        assert repro.compare_records(fields, records, fields, actual) == result
 
 
 def test_lock_relocation_requires_derived_attempt_id():
