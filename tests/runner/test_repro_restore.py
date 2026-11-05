@@ -372,6 +372,7 @@ def test_checkout_and_sandbox_relocations():
     # A '=' inside a path belongs to it; only an option's value after its first '=' is a path of its own.
     ("checkout", "both", "/u/name=/checkout/x", "/u/name=/checkout/x", "relocated(checkout)"),
     ("checkout", "both", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
+    ("checkout", "argv", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
     ("checkout", "argv", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
     ("checkout", "argv", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
     # A literal never reads as a placeholder.
