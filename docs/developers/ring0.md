@@ -83,7 +83,7 @@ python -c 'import json, pathlib; from bicentennial.report.receipt import loop_ti
 | T0 flag | Meaning |
 |---|---|
 | `--system` | Reference or registry name; give exactly one of `--system` and `--entry`. |
-| `--entry` | Outside registry entry file; see the [entry guide](entry.md). |
+| `--entry` | Outside registry entry file; see the [entry guide](entry.md) and its [worked example](entry.md#worked-example-the-benchmarks-own-baseline). |
 | `--pack` | Required, repeatable pack id or relative path; `all` selects the index. |
 | `--packs` | Required installed tier root. |
 | `--pack-hash` | Required hash printed by install. |
