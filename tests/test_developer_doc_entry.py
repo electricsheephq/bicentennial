@@ -36,12 +36,14 @@ def test_ci_block_matches_doc(tmp_path):
         "tests/runner/test_entry_write_life.py::test_outside_scripted_write_life",
         "--junitxml=build/entry-offline.xml"]
     guard = shlex.split(block[-1])
-    assert guard[:2] == ["python", "-c"]
+    # Exactly the interpreter, -c and the check: nothing after it, such as `|| true`, can mask its exit status.
+    assert len(guard) == 3 and guard[:2] == ["python", "-c"]
     report = tmp_path / "build/entry-offline.xml"
     report.parent.mkdir()
     for cases, expected in (("<testcase/>" * N, 0),
                             ("<testcase/>" * (N - 1) + "<testcase><skipped/></testcase>", 1),
-                            ("<testcase/>" * (N - 1), 1)):
+                            ("<testcase/>" * (N - 1), 1),
+                            ("<testcase/>" * (N + 1), 1)):
         report.write_text(f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
         result = subprocess.run([sys.executable, *guard[1:]], cwd=tmp_path, capture_output=True)
         assert result.returncode == expected

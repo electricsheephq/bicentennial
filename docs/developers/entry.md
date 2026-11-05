@@ -178,9 +178,10 @@ bicentennial t1 --entry ENTRY --packs PACKS_T1 --pack-hash "$PACK_HASH_T1" --her
 For v1, green means all of the following:
 
 - The all-pack T0 command exits 0. No file records that exit status; its written
-  equivalent is `gate_verdict = "PASS"` in every `OUT_T0_ALL/pack/<...>/card.json`
-  and no `OUT_T0_ALL/refusal.json`. T0 cards can only be `PASS`, `FAIL`, `INVALID`
-  or `BLOCKED`.
+  equivalent is one `OUT_T0_ALL/pack/<...>/card.json` for every pack in the installed
+  T0 `index.json`, each with `gate_verdict = "PASS"`, and no `OUT_T0_ALL/refusal.json`.
+  A run refused before it starts writes nothing, so a missing card is never green.
+  T0 cards can only be `PASS`, `FAIL`, `INVALID` or `BLOCKED`.
 - T1 exits 0. Its written equivalent for this first run, without a baseline, is
   `OUT_T1/system/card.json` field `gate_verdict` equal to `CONFORMANCE_PASS`, matching
   the `gate.final` property in `OUT_T1/system/junit.xml`. A run with a baseline uses
