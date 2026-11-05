@@ -296,7 +296,8 @@ def test_reversed_ties_are_not_defects(monkeypatch, tmp_path, source, packs):
 
 
 @pytest.mark.parametrize("fault,code", [("sha256", "pin_mismatch"), ("identity", "identity_mismatch"),
-                                       ("ref", "entry_ref_not_commit"), ("pack", "pack_hash_mismatch")])
+                                       ("ref", "entry_ref_not_commit"), ("pack", "pack_hash_mismatch"),
+                                       ("tier", "pack_hash_mismatch")])
 def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fault, code):
     entry = deepcopy(source[1])
     if fault == "sha256":
@@ -305,6 +306,10 @@ def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fa
         entry["recipe"]["provider"] = "other-provider"
     elif fault == "ref":
         entry["recipe"]["archive_tree"]["ref"] = "HEAD"
+    elif fault == "tier":
+        # A correctly hashed pack of another tier passes verify; only the T1 check refuses it.
+        verified = receipt.verify
+        monkeypatch.setattr(receipt, "verify", lambda *a, **k: dict(verified(*a, **k), tier="T2"))
     else:
         packs = packs[0], "0" * 64
     monkeypatch.setattr(receipt, "receipt", lambda *a: pytest.fail("receipt work began before refusal"))
