@@ -47,7 +47,7 @@ from bicentennial.runner.units import _unit as _unit
 from bicentennial.sandbox import fixedroot
 from bicentennial.score.classes import outcome as outcome
 from bicentennial.systems.hermes_plugin import cache_digest
-from bicentennial.systems.registry import operator_forbidden
+from bicentennial.systems.registry import operator_excluded
 
 MODEL, EFFORT = "gpt-6.1-sol", "medium"
 IDENTITY_TEXT = "Reply with the single word: ok."
@@ -290,7 +290,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             raise t1.T1Refused("output_overlap")
         out.mkdir(parents=True)
         created = True
-        if operator_forbidden(entry if entry is not None else {"name": system}) and (home / ".bicentennial-operator").exists():
+        if operator_excluded(entry if entry is not None else {"name": system}) and (home / ".bicentennial-operator").exists():
             raise t1.T1Refused("operator_identity")
         account = os.open(home / ".t2lite.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
