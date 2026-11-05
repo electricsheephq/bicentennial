@@ -381,6 +381,7 @@ PREFIX_ROWS = [
     ("none", "AP", "/slot/x", "{SANDBOX_ROOT}/x", None),
     ("checkout", "AP", "{SANDBOX_ROOT}/x", "/slot/x", None),
     ("none", "A", "--config=/slot/x", "--config={SANDBOX_ROOT}/x", None),
+    ("checkout", "A", "--config=/slot/x", "--config={SANDBOX_ROOT}/x", None),
 ]
 
 
