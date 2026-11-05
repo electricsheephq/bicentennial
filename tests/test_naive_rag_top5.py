@@ -95,7 +95,7 @@ def packs(tmp_path_factory):
     return installed, digest
 
 
-def invoke(tmp_path, source, packs, entry=None, name="receipt.json", cli=False):
+def invoke(tmp_path, source, packs, entry=None, name="receipt.json", cli=False, umask=-1):
     repo, original = source
     path = write_entry(tmp_path / "entry.toml", entry or original)
     out = tmp_path / name
@@ -103,7 +103,7 @@ def invoke(tmp_path, source, packs, entry=None, name="receipt.json", cli=False):
             "--pack-hash", packs[1], "--out", str(out)]
     if cli:
         child = subprocess.run([sys.executable, "-P", str(ROOT / "scripts/naive_rag_top5.py"), *args],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, umask=umask)
         assert not child.stderr, child.stderr
         status = child.returncode
     else:
@@ -119,7 +119,7 @@ def test_built_archive_passes(source, packs, tmp_path):
     # A dirty checkout must never be imported in place of the archive.
     for file in ("__init__.py", "store.py", "tfidf.py"):
         (source[0] / SUBDIRECTORY / file).write_text("raise AssertionError('checkout imported')\n")
-    status, out = invoke(tmp_path, source, packs, cli=True)
+    status, out = invoke(tmp_path, source, packs, cli=True, umask=0o027)
     result = read(out)
     assert status == 0 and result["pass"]
     assert result["part1"]["counts"]["defect"] == 0
@@ -131,7 +131,8 @@ def test_built_archive_passes(source, packs, tmp_path):
     assert all(not p["corpus_check_mismatch"] for p in result["part2"]["packs"])
     assert result["entry"]["file_sha256"] == sha256((tmp_path / "entry.toml").read_bytes()).hexdigest()
     assert not list(tmp_path.glob(".receipt-*"))
-    assert stat.S_IMODE(out.stat().st_mode) == 0o666 & ~receipt.umask()
+    # A plain write under the child's umask 027 gives 0640, unlike mkstemp's 0600 or a fixed 0644.
+    assert stat.S_IMODE(out.stat().st_mode) == 0o640
 
 
 def test_real_v1_archive_passes(packs, tmp_path):
@@ -364,11 +365,13 @@ def test_tool_failure_writes_nothing(source, packs, tmp_path, monkeypatch, capsy
         def crash(*args):
             raise RuntimeError("planted")
         monkeypatch.setattr(receipt, "receipt", crash)
+        planted = "RuntimeError: planted\n"
     elif fault == "link":
         def unlinkable(*args):
             raise OSError("planted")
         monkeypatch.setattr(receipt, "receipt", lambda *a: {"pass": True})
         monkeypatch.setattr(receipt.os, "link", unlinkable)
+        planted = "OSError: planted\n"
     else:
         opened = os.fdopen
 
@@ -393,12 +396,18 @@ def test_tool_failure_writes_nothing(source, packs, tmp_path, monkeypatch, capsy
                 raise OSError("planted partial write")
 
         monkeypatch.setattr(receipt, "receipt", lambda *a: {"pass": True})
-        monkeypatch.setattr(receipt.os, "fdopen", lambda descriptor, mode: Partial(opened(descriptor, mode)))
+        # Only the staged write fails: the pack check reads its files through os.fdopen too.
+        monkeypatch.setattr(receipt.os, "fdopen", lambda descriptor, mode, *args, **kwargs: (
+            Partial(opened(descriptor, mode)) if mode == "wb" else opened(descriptor, mode, *args, **kwargs)))
+        planted = "OSError: planted partial write\n"
     status, out = invoke(tmp_path, source, packs)
     err = capsys.readouterr().err
     assert status == 70 and not out.exists()
     assert not list(tmp_path.glob(".receipt-*"))
     assert err.startswith("tool_failure\n") and "Traceback" in err
+    # The planted fault is the one that fired, and the link and write faults fired in publish.
+    assert err.endswith(planted)
+    assert fault == "crash" or ", in publish\n" in err
 
 
 @pytest.mark.parametrize("when", ["before", "during"])
