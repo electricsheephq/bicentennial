@@ -72,7 +72,9 @@ Every tier and `pins` check write-tool coverage: the first write tool must match
 `recipe.write`, the forget delete tool is covered by `recipe.forget`, and any other
 write tool must appear in `recipe.unscripted`. Missing or undeclared mapped tools,
 an undeclared forget search tool, and fixed actions absent from a tool's non-empty declared actions use the
-mapping refusal codes below. `forget_mapping_missing` cannot be reached by an
+mapping refusal codes below. The check compares the recipe with the entry's own
+`write_tools` and `read_tools`, not with the plug-in's tool schemas, and an entry
+with no write tools skips it. `forget_mapping_missing` cannot be reached by an
 outside entry: a provider recipe requires both mappings, and an engine needs no
 forget mapping. Scripted `structured_formats` remain unsupported.
 

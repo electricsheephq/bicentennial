@@ -99,7 +99,8 @@ def test_recipe_mutation_keeps_write_calls(outside):
     ("unknown", "write_mapping_unknown:remove"),
     ("search", "forget_search_undeclared:search"),
     ("action", "write_mapping_action:store"),
-], ids=["first", "second", "unknown", "search", "action"])
+    ("embedding", "embedding_dim_invalid"),
+], ids=["first", "second", "unknown", "search", "action", "embedding"])
 @pytest.mark.parametrize("boundary", ["t0", "t1", "pins"])
 def test_mapping_refused_before_work(outside, tmp_path, monkeypatch, capsys, fault, code, boundary):
     declare(outside)
@@ -111,8 +112,11 @@ def test_mapping_refused_before_work(outside, tmp_path, monkeypatch, capsys, fau
         outside["write_tools"].pop()
     elif fault == "search":
         outside["read_tools"] = []
-    else:
+    elif fault == "action":
         outside["write_tools"][0]["actions"] = ["replace"]
+    else:
+        outside["own_model_routes"] = [dict(role="embeddings", alias="bicentennial-embeddings")]
+        outside["embedding_dim"] = 1
     monkeypatch.setattr(t0, "verify", lambda *a, **kw: pytest.fail("pack work started"))
     monkeypatch.setattr(t1, "verify", lambda *a, **kw: pytest.fail("pack work started"))
     monkeypatch.setattr(pins, "_measure", lambda *a, **kw: pytest.fail("installation started"))
@@ -140,6 +144,17 @@ def test_builtin_pins_ignores_coverage(tmp_path, monkeypatch):
     expected = {"fresh_install_hash": "1" * 64}
     monkeypatch.setattr(pins, "_measure", lambda *a, **kw: expected)
     assert pins.measure(builtin, hermes=tmp_path) == expected
+
+
+def test_engine_pins_needs_no_forget_mapping(outside, tmp_path, monkeypatch):
+    # An engine has no memory host, so pins checks its write coverage without a forget mapping.
+    raw = outside["recipe"]
+    raw["engine"] = raw.pop("provider").replace("provider", "engine")
+    del raw["forget"]
+    outside["write_tools"] = [dict(tool="store", actions=[])]
+    expected = {"fresh_install_hash": "1" * 64}
+    monkeypatch.setattr(pins, "_measure", lambda *a, **kw: expected)
+    assert pins.measure(outside, hermes=tmp_path, plugin_source=tmp_path) == expected
 
 
 def test_outside_structured_format_still_refused(outside):
