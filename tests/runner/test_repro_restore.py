@@ -375,6 +375,7 @@ PREFIX_ROWS = [
     ("checkout", "AP", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
     ("checkout", "A", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
     ("checkout", "A", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
+    ("checkout", "A", "--config=/checkout/a=b", "--config=/new-checkout/a=b", "relocated(checkout)"),
     # An option with no '=' is not the same option with an empty value.
     ("checkout", "A", "-x", "-x=", None),
     # A literal never reads as a placeholder, with or without a relocation beside it.
