@@ -71,7 +71,7 @@ and every tier's fresh-install check use the memory host.
 Every tier and `pins` check write-tool coverage: the first write tool must match
 `recipe.write`, the forget delete tool is covered by `recipe.forget`, and any other
 write tool must appear in `recipe.unscripted`. Missing or undeclared mapped tools,
-an undeclared forget search tool, and fixed actions outside a tool's actions use the
+an undeclared forget search tool, and fixed actions absent from a tool's non-empty declared actions use the
 mapping refusal codes below. `forget_mapping_missing` cannot be reached by an
 outside entry: a provider recipe requires both mappings, and an engine needs no
 forget mapping. Scripted `structured_formats` remain unsupported.
@@ -133,7 +133,7 @@ Other install and runner refusals are listed in the [Ring 0](ring0.md),
 | `write_mapping_missing:<tool>` | First write tool does not match `recipe.write`, or a write tool has no mapping. |
 | `write_mapping_unknown:<tool>` | A mapped write or forget delete tool, or an unscripted tool, is not declared in `write_tools`. |
 | `forget_search_undeclared:<tool>` | Forget search tool is absent from `read_tools`. |
-| `write_mapping_action:<tool>` | A fixed write or delete action is outside the tool's declared actions. |
+| `write_mapping_action:<tool>` | A fixed write or forget-delete action is absent from the tool's non-empty declared actions. |
 | `embedding_dim_invalid` | An embeddings route has no integer dimension of at least 2. |
 | `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
 | `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
