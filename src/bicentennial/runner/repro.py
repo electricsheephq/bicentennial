@@ -186,7 +186,9 @@ def compare_records(expected_fields, expected, actual_fields, actual):
             paths = _canonical_paths(records) | _checkout_paths(records)
             env["worker_argv"] = _mask_argv(env["worker_argv"], paths)
             if "PYTHONPATH" in env["worker_env"]:
-                env["worker_env"]["PYTHONPATH"] = [_mask_path(p, paths) for p in env["worker_env"]["PYTHONPATH"].split(":")]
+                # Split the recorded value: _volatile escaped its braces, and the listed directories are raw.
+                pythonpath = records["environment_inputs"]["worker_env"]["PYTHONPATH"]
+                env["worker_env"]["PYTHONPATH"] = [_mask_path(p, paths) for p in pythonpath.split(":")]
         if _checkout_paths(expected) != _checkout_paths(actual):
             reasons.add("checkout")
         mask(left["director_bindings"]["probe_config"], right["director_bindings"]["probe_config"], "checkout", "checkout")

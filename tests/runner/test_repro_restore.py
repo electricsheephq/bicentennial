@@ -375,6 +375,8 @@ PREFIX_ROWS = [
     ("checkout", "AP", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
     ("checkout", "A", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
     ("checkout", "A", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
+    # An option with no '=' is not the same option with an empty value.
+    ("checkout", "A", "-x", "-x=", None),
     # A literal never reads as a placeholder, with or without a relocation beside it.
     ("none", "AP", "/slot/x", "{SANDBOX_ROOT}/x", None),
     ("checkout", "AP", "{SANDBOX_ROOT}/x", "/slot/x", None),
@@ -416,6 +418,22 @@ def test_reordered_benchmark_roots_never_compare_identical():
     actual["environment_inputs"]["worker_env"]["PYTHONPATH"] = f"/b{shim}:/a{shim}"
     with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
         repro.compare_records(fields, records, fields, actual)
+
+
+def test_braces_in_moved_directories_still_relocate():
+    # A brace is part of a directory's name: the checkout and the benchmark root match as recorded.
+    shim = "/bicentennial/harness/hermes/clockshim"
+    fields, records = inputs()
+
+    def place(target, checkout, code):
+        target["director_bindings"]["probe_config"]["checkout"] = checkout
+        env = target["environment_inputs"]
+        env["worker_argv"] = [checkout + "/worker.py"]
+        env["worker_env"]["PYTHONPATH"] = f"{checkout}:{code}{shim}"
+    place(records, "/u/{x}/checkout", "/u/{x}/code")
+    actual = copy.deepcopy(records)
+    place(actual, "/u/{x}/new-checkout", "/u/{x}/new-code")
+    assert repro.compare_records(fields, records, fields, actual) == "relocated(checkout)"
 
 
 def test_checkout_nested_under_the_sandbox_root_relocates():
