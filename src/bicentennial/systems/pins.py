@@ -23,6 +23,7 @@ from bicentennial.runtime.clock import SimClock
 from bicentennial.sandbox import fixedroot
 from bicentennial.systems import recipe as recipes
 from bicentennial.systems.hermes_plugin import PluginCell, is_plugin
+from bicentennial.systems.mapping import check_mapping, resolve_mapping
 from bicentennial.systems.registry import (
     REGISTRY,
     ZERO_HASH,
@@ -59,6 +60,12 @@ def _validate(entry, hermes, plugin_source, worker_argv):
     reasons = check(entry)
     if reasons:
         raise SystemRefused(reasons)
+    if "recipe" in entry:
+        resolved = recipes.recipe(entry)
+        engine_only = resolved.engine is not None and resolved.provider is None
+        reason = check_mapping(entry, resolve_mapping(entry), require_forget=not engine_only)
+        if reason is not None:
+            raise PinsRefused(reason)
     if entry["harness"] != "hermes":
         raise PinsRefused("harness_not_hermes")
     plugin = is_plugin(entry)

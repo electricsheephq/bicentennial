@@ -124,6 +124,12 @@ def prepare(entry, tmp_path):
                       hermes=tmp_path, plugin_source=tmp_path, worker_argv=[])
 
 
+def test_outside_write_tools_admitted(outside):
+    outside["write_tools"] = [dict(tool=tool, actions=[]) for tool in ("store", "remove")]
+    assert registry.outside_reasons(outside, None) == []
+    assert mapping.check_mapping(outside, mapping.resolve_mapping(outside)) is None
+
+
 def change(entry, path, value):
     target = entry
     parts = path.split("/")
@@ -163,7 +169,6 @@ def change(entry, path, value):
     ("recipe/extra", True, "entry_recipe_invalid:extra"),
     ("structured_formats", {"extraction": {"kind": "text", "schema": None}},
         "entry_recipe_unsupported:structured_formats"),
-    ("write_tools", [dict(tool="store", actions=[])], "entry_scripted_writes_unsupported"),
     ("recipe/write", None, "t0_mapping_missing"),
     ("recipe/forget", None, "t0_mapping_missing"),
 ])
@@ -583,7 +588,8 @@ def test_entry_guide_codes():
     assert set(rows) == {"entry_unreadable", "entry_invalid", "entry_recipe_missing", "entry_name_invalid",
         "recipe_in_builtin",
         "entry_recipe_invalid:<field>", "entry_shadows_builtin", "entry_recipe_unsupported:structured_formats",
-        "entry_scripted_writes_unsupported", "t0_mapping_missing", "benchmark_operator_forbidden",
+        "write_mapping_missing:<tool>", "write_mapping_unknown:<tool>", "forget_search_undeclared:<tool>",
+        "write_mapping_action:<tool>", "embedding_dim_invalid", "t0_mapping_missing", "benchmark_operator_forbidden",
         "licence_not_osi", "artifact_unpinned", "route_unroutable", "compaction_alias_mismatch",
         "state_path_undeclared", "recall_placeholder", "schema_invalid",
         "unmeasured:artifact.sha256", "unmeasured:fresh_install_hash", "entry_surfaces_unsupported",

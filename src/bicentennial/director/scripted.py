@@ -197,7 +197,13 @@ class ScriptedResponder:
         if any((self.name, key) not in FORMATS for key in system_entry.get("structured_formats", {})):
             raise ValueError("scripted structured formats are not implemented")
         self.write_tools = tuple(t["tool"] for t in system_entry.get("write_tools", []))
-        self.write_args = WRITE_ARGS.get(system_entry["name"])
+        if "recipe" in system_entry:
+            from bicentennial.systems.recipe import recipe
+
+            write = recipe(system_entry).write
+            self.write_args = (write.tool, dict(write.fixed), write.content_key) if write is not None else None
+        else:
+            self.write_args = WRITE_ARGS.get(system_entry["name"])
         if self.write_tools and (self.write_args is None or self.write_args[0] != self.write_tools[0]):
             raise ValueError("scripted write arguments are not declared for this system")
         if self.write_args:
