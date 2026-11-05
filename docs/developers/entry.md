@@ -22,7 +22,7 @@ Supply these system fields:
 | `licence` | Provisional OSI licence identifier. |
 | `harness` | `hermes` for these runners. |
 | `artifact` | `name`, release-tag `version`, and archive `sha256`. |
-| `write_tools` | Tool/action rows; must be `[]` for an outside entry in this PR. |
+| `write_tools` | Tool/action rows: the first tool is covered by `recipe.write`, the forget delete tool by `recipe.forget`, and any other tool by `recipe.unscripted`. |
 | `read_tools` | Declared read-tool names. |
 | `recall` | Tool and `argument_template`, with only `{prompt}` substitution; omit when unused. |
 | `surfaces` | Rows with `root`, relative path, and `volatile_paths`; the state to preserve and scan. An outside entry has one HERMES_HOME row at `.`, the whole Hermes home, as every Hermes built-in has, and any SANDBOX_HOME rows. |
@@ -68,9 +68,15 @@ omitting it means no search tool. The fixed fields are argument tables. A provid
 requires both write and forget mappings even with `write_tools = []`, because T0
 and every tier's fresh-install check use the memory host.
 
-Every tier refuses outside entries with nonempty `write_tools` until the next PR
-routes the scripted responder through recipes. Scripted `structured_formats` are
-also unsupported. A recipe's memory-host mappings do not lift either restriction.
+Every tier and `pins` check write-tool coverage: the first write tool must match
+`recipe.write`, the forget delete tool is covered by `recipe.forget`, and any other
+write tool must appear in `recipe.unscripted`. Missing or undeclared mapped tools,
+an undeclared forget search tool, and fixed actions absent from a tool's non-empty declared actions use the
+mapping refusal codes below. The check compares the recipe with the entry's own
+`write_tools` and `read_tools`, not with the plug-in's tool schemas, and an entry
+with no write tools skips it. `forget_mapping_missing` cannot be reached by an
+outside entry: a provider recipe requires both mappings, and an engine needs no
+forget mapping. Scripted `structured_formats` remain unsupported.
 
 ## Measuring and running
 
@@ -127,7 +133,11 @@ Other install and runner refusals are listed in the [Ring 0](ring0.md),
 | `entry_recipe_invalid:<field>` | A recipe value breaks an outside-entry rule: both or neither of `provider` and `engine`, an ID that does not match the ID pattern, the `compressor` engine, `archive_tree.ref`, `archive_tree.subdirectory`, `worker_environment`, or an incomplete `forget` table; the code names the field. |
 | `entry_shadows_builtin` | Normalized entry name collides with a registry file or a built-in code-table key. |
 | `entry_recipe_unsupported:structured_formats` | Outside entries cannot declare scripted structured formats. |
-| `entry_scripted_writes_unsupported` | Outside entries cannot declare write tools until the responder uses recipes. |
+| `write_mapping_missing:<tool>` | First write tool does not match `recipe.write`, or a write tool has no mapping. |
+| `write_mapping_unknown:<tool>` | A mapped write or forget delete tool, or an unscripted tool, is not declared in `write_tools`. |
+| `forget_search_undeclared:<tool>` | Forget search tool is absent from `read_tools`. |
+| `write_mapping_action:<tool>` | A fixed write or forget-delete action is absent from the tool's non-empty declared actions. |
+| `embedding_dim_invalid` | An embeddings route has no integer dimension of at least 2. |
 | `t0_mapping_missing` | Provider recipe lacks its write or forget mapping, required by the install host. |
 | `entry_surfaces_unsupported` | An outside entry's surfaces are not one HERMES_HOME surface at `.` plus any SANDBOX_HOME surfaces. The life runners hash, clone and wipe the whole Hermes home, and run no other root. |
 | `entry_shadows_hermes_plugin` | An outside provider or engine has the name of one that the pinned Hermes bundles, which Hermes would load instead of the entry's archive. |

@@ -181,8 +181,6 @@ def outside_reasons(entry, operator=_ENV_OPERATOR):
         reasons.append(_recipe_error("worker_environment"))
     if entry.get("structured_formats"):
         reasons.append("entry_recipe_unsupported:structured_formats")
-    if entry.get("write_tools"):
-        reasons.append("entry_scripted_writes_unsupported")
     if "provider" in raw and ("write" not in raw or "forget" not in raw):
         reasons.append("t0_mapping_missing")
     if operator is _ENV_OPERATOR:
