@@ -359,23 +359,31 @@ def test_checkout_and_sandbox_relocations():
     assert comparison(change) == "relocated(canonical_paths,checkout)"
 
 
-@pytest.mark.parametrize("move,before,after,result", [
-    # A path that only contains a moved directory is not under it, so it must match exactly.
-    ("checkout", "/u/checkout/w.py", "/u/checkout/w.py", "relocated(checkout)"),
-    ("checkout", "/u/checkout/w.py", "/u/new-checkout/w.py", None),
-    ("benchmark", "/u/code/lib", "/u/code/lib", "relocated(checkout)"),
-    ("benchmark", "/u/code/lib", "/u/new-code/lib", None),
-    ("sandbox", "/u/slot/x", "/u/slot/x", "relocated(canonical_paths)"),
-    ("sandbox", "/u/slot/x", "/u/new-slot/x", None),
-    # A path after an option's '=' is under the moved directory, so it moves with it.
-    ("checkout", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
-    ("checkout", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
+@pytest.mark.parametrize("move,where,before,after,result", [
+    # A value that only contains a moved directory, or extends its last name, is not under it: it must match exactly.
+    ("checkout", "both", "/u/checkout/w.py", "/u/checkout/w.py", "relocated(checkout)"),
+    ("checkout", "both", "/u/checkout/w.py", "/u/new-checkout/w.py", None),
+    ("checkout", "both", "/checkout-old/x", "/checkout-old/x", "relocated(checkout)"),
+    ("checkout", "both", "/checkout-old/x", "/new-checkout-old/x", None),
+    ("benchmark", "both", "/u/code/lib", "/u/code/lib", "relocated(checkout)"),
+    ("benchmark", "both", "/u/code/lib", "/u/new-code/lib", None),
+    ("sandbox", "both", "/u/slot/x", "/u/slot/x", "relocated(canonical_paths)"),
+    ("sandbox", "both", "/u/slot/x", "/u/new-slot/x", None),
+    # A '=' inside a path belongs to it; only an option's value after its first '=' is a path of its own.
+    ("checkout", "both", "/u/name=/checkout/x", "/u/name=/checkout/x", "relocated(checkout)"),
+    ("checkout", "both", "/u/name=/checkout/x", "/u/name=/new-checkout/x", None),
+    ("checkout", "argv", "--config=/checkout/c.yaml", "--config=/new-checkout/c.yaml", "relocated(checkout)"),
+    ("checkout", "argv", "--config=/checkout/c.yaml", "--config=/checkout/c.yaml", None),
+    # A literal never reads as a placeholder.
+    ("none", "both", "/slot/x", "{SANDBOX_ROOT}/x", None),
+    ("none", "argv", "--config=/slot/x", "--config={SANDBOX_ROOT}/x", None),
 ])
-def test_relocation_masks_path_prefixes_only(move, before, after, result):
+def test_relocation_masks_path_prefixes_only(move, where, before, after, result):
     fields, records = inputs()
     env = records["environment_inputs"]
     env["worker_argv"].append(before)
-    env["worker_env"]["PYTHONPATH"] += ":" + before
+    if where == "both":
+        env["worker_env"]["PYTHONPATH"] += ":" + before
     actual = copy.deepcopy(records)
     checkout = "/new-checkout" if move == "checkout" else "/checkout"
     code = "/new-code" if move == "benchmark" else "/code"
@@ -384,12 +392,27 @@ def test_relocation_masks_path_prefixes_only(move, before, after, result):
         actual["director_bindings"]["run_values"]["sandbox_root"] = "/new-slot"
     env = actual["environment_inputs"]
     env["worker_argv"] = [checkout + "/worker.py", after]
-    env["worker_env"]["PYTHONPATH"] = f"{checkout}:{code}/bicentennial/harness/hermes/clockshim:{after}"
+    env["worker_env"]["PYTHONPATH"] = f"{checkout}:{code}/bicentennial/harness/hermes/clockshim" + (f":{after}" if where == "both" else "")
     if result is None:
         with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
             repro.compare_records(fields, records, fields, actual)
     else:
         assert repro.compare_records(fields, records, fields, actual) == result
+
+
+def test_checkout_nested_under_the_sandbox_root_relocates():
+    # The longest listed directory wins, whichever record lists it; the argv and PYTHONPATH shapes are the adapter's.
+    fields, records = inputs()
+    records["director_bindings"]["probe_config"]["checkout"] = "/slot/checkout"
+    env = records["environment_inputs"]
+    env["worker_argv"] = ["/slot/checkout/.venv/bin/python", "/code/bicentennial/harness/hermes/worker.py"]
+    env["worker_env"]["PYTHONPATH"] = "/code/bicentennial/harness/hermes/clockshim:/slot/checkout"
+    actual = copy.deepcopy(records)
+    actual["director_bindings"]["probe_config"]["checkout"] = "/slot/new-checkout"
+    env = actual["environment_inputs"]
+    env["worker_argv"][0] = "/slot/new-checkout/.venv/bin/python"
+    env["worker_env"]["PYTHONPATH"] = "/code/bicentennial/harness/hermes/clockshim:/slot/new-checkout"
+    assert repro.compare_records(fields, records, fields, actual) == "relocated(checkout)"
 
 
 def test_lock_relocation_requires_derived_attempt_id():
@@ -413,6 +436,9 @@ def test_clock_and_port_normalization():
             comparison(lambda r, key=key: r["clock_cadence"]["published"].update(**{key: 1}))
     with pytest.raises(repro.ReproRefused, match="starting_state_changed:clock_cadence"):
         comparison(lambda r: r["clock_cadence"].update(step_s=1))
+    # A literal never reads as the port's placeholder.
+    with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
+        comparison(lambda r: r["environment_inputs"]["worker_env"].update(HTTP_PROXY="http://127.0.0.1:{DIRECTOR_PORT}"))
 
 
 @pytest.mark.parametrize("record,path", [
@@ -436,6 +462,18 @@ def test_executor_inputs_refuse(record, path):
 def test_exact_json_types_and_canonical_paths_in_argv():
     with pytest.raises(repro.ReproRefused, match="bundle_invalid"):
         comparison(lambda r: r["clock_cadence"].update(step_s=60.0))
+    # Malformed environment values refuse; they never crash the comparison.
+    for change in (lambda r: r["environment_inputs"]["worker_env"].update(PATH=5),
+                   lambda r: r["environment_inputs"]["worker_env"].update(PYTHONPATH=["/checkout"])):
+        with pytest.raises(repro.ReproRefused, match="^bundle_invalid$"):
+            comparison(change)
+    # An argv that is not a list of strings is compared exactly: a dict keyed by the list's elements still differs,
+    # and an equal one with a number in it is still identical.
+    with pytest.raises(repro.ReproRefused, match="^starting_state_changed:environment_inputs$"):
+        comparison(lambda r: r["environment_inputs"].update(worker_argv=dict.fromkeys(r["environment_inputs"]["worker_argv"], 1)))
+    fields, records = inputs()
+    records["environment_inputs"]["worker_argv"].append(5)
+    assert repro.compare_records(fields, records, fields, copy.deepcopy(records)) == "identical"
     fields, records = inputs()
     with pytest.raises(repro.ReproRefused, match="starting_state_changed:probe_slot"):
         repro.compare_records(fields, records, dict(fields, probe_slot=False), records)

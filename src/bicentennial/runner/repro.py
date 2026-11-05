@@ -39,6 +39,11 @@ def _port_pattern(port):
     return rb"127\.0\.0\.1:(?<![0-9])" + str(port).encode() + rb"(?![0-9])"
 
 
+def _escape(text):
+    # Masks write {NAME} placeholders: doubling every literal brace first means no literal ever reads as one.
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def load_context(directory, fields):
     """Read exactly the nine retained records and verify their own canonical digests."""
     try:
@@ -103,7 +108,7 @@ def _volatile(records):
     bindings["run_values"]["director_port"] = "{DIRECTOR_PORT}"
     env = records["environment_inputs"]["worker_env"]
     for name, value in env.items():
-        env[name] = re.sub(pattern, b"127.0.0.1:{DIRECTOR_PORT}", value.encode()).decode()
+        env[name] = re.sub(pattern, b"127.0.0.1:{DIRECTOR_PORT}", _escape(value).encode()).decode()
     return records
 
 
@@ -130,15 +135,27 @@ def _canonical_paths(records):
     return paths
 
 
-def _replace_paths(value, paths):
-    if isinstance(value, list):
-        return [_replace_paths(v, paths) for v in value]
-    if isinstance(value, str):
-        for path in sorted(paths, key=len, reverse=True):
-            # A directory prefix starts the value or follows ':' or '=', and a separator or the end follows it:
-            # a path that only contains it, or extends its last name, stays exact.
-            value = re.sub(r"(?<![^:=])" + re.escape(path) + r"(?=/|:|$)", lambda m, replacement=paths[path]: replacement, value)
-    return value
+def _mask_path(value, paths):
+    """Mask the longest listed directory that starts the whole value; a path that only contains one stays exact."""
+    for path in sorted(paths, key=len, reverse=True):
+        if value == path or value.startswith(path + "/"):
+            return paths[path] + _escape(value[len(path):])
+    return _escape(value)
+
+
+def _mask_argv(argv, paths):
+    # Anything but a list of strings is compared exactly, as it was recorded.
+    if not isinstance(argv, list) or not all(isinstance(arg, str) for arg in argv):
+        return argv
+    masked = []
+    for arg in argv:
+        name, equals, value = arg.partition("=")
+        # An option's value after its first '=' is a path of its own; any other '=' belongs to a path.
+        if arg.startswith("-") and equals:
+            masked.append(_escape(name) + "=" + _mask_path(value, paths))
+        else:
+            masked.append(_mask_path(arg, paths))
+    return masked
 
 
 def compare_records(expected_fields, expected, actual_fields, actual):
@@ -162,19 +179,12 @@ def compare_records(expected_fields, expected, actual_fields, actual):
             mask(left[record], right[record], key, "canonical_paths")
         for target, records in ((left, expected), (right, actual)):
             env = target["environment_inputs"]
-            paths = _canonical_paths(records)
-            env["worker_argv"] = _replace_paths(env["worker_argv"], paths)
+            # One pass over every listed directory, so the longest one wins whichever record lists it.
+            paths = _canonical_paths(records) | _checkout_paths(records)
+            env["worker_argv"] = _mask_argv(env["worker_argv"], paths)
             if "PYTHONPATH" in env["worker_env"]:
-                env["worker_env"]["PYTHONPATH"] = _replace_paths(env["worker_env"]["PYTHONPATH"], paths)
-        before_checkout = [deepcopy(r["environment_inputs"]) for r in (left, right)]
-        for target, records in ((left, expected), (right, actual)):
-            paths = _checkout_paths(records)
-            env = target["environment_inputs"]
-            if "PYTHONPATH" in env["worker_env"]:
-                env["worker_env"]["PYTHONPATH"] = _replace_paths(env["worker_env"]["PYTHONPATH"], paths)
-            env["worker_argv"] = _replace_paths(env["worker_argv"], paths)
-        if (before_checkout[0]["worker_env"].get("PYTHONPATH") != before_checkout[1]["worker_env"].get("PYTHONPATH")
-                or before_checkout[0]["worker_argv"] != before_checkout[1]["worker_argv"]):
+                env["worker_env"]["PYTHONPATH"] = [_mask_path(p, paths) for p in env["worker_env"]["PYTHONPATH"].split(":")]
+        if _checkout_paths(expected) != _checkout_paths(actual):
             reasons.add("checkout")
         mask(left["director_bindings"]["probe_config"], right["director_bindings"]["probe_config"], "checkout", "checkout")
         a, b = left["environment_inputs"]["worker_env"], right["environment_inputs"]["worker_env"]
@@ -208,7 +218,7 @@ def compare_records(expected_fields, expected, actual_fields, actual):
             if name not in lf or name not in rf or canon(lf[name]) != canon(rf[name]):
                 raise ReproRefused(f"starting_state_changed:{name}")
         return "relocated(" + ",".join(sorted(reasons)) + ")" if reasons else "identical"
-    except (KeyError, TypeError, ValueError) as error:
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
         if isinstance(error, ReproRefused):
             raise
         raise ReproRefused("bundle_invalid") from error
