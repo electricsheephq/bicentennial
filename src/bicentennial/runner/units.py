@@ -272,6 +272,51 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
     return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=row, mono_ns=mono_ns)
 
 
+def _score_run(ctx, pack, branch, arm, run, attempt, floor_stops=None):
+    """Score one life run's items as T2 does: its scores, the items not scored live and its probe rows."""
+    from bicentennial.runner import t1
+
+    scores, excluded = {}, set()
+    probes = _read(run._root, "t2lite_probes.json")
+    # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
+    floor_stop = (floor_stops or {}).get(pack.life + branch)
+    relabel = (arm == "system" and is_plugin(ctx.entry) and run.stopped
+        and run.stopped[1] in t1.RELABEL and floor_stop and list(floor_stop)[1:] == list(run.stopped)[1:])
+    for item in pack.items[branch]:
+        iid = item["item_id"]
+        cls, label = run.classes.get(iid, (None, None))
+        if relabel and (cls, label) == ("SYSTEM_FAILURE", run.stopped[1]):
+            cls = "INFRA_FAILURE"
+        if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
+            cls, label = "INFRA_FAILURE", "audit"
+        shadow, answer = run.results.get(iid, MISSING), run.envelopes.get(iid, MISSING)
+        not_scored_live = (pack.genre == "G2" and item["stage"] == "act"
+                          and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"))
+        result = shadow
+        if isinstance(shadow, ReaderResult):
+            # The answer is the live model's; the selection and competitors are the shadow's. Ring 0
+            # ties the two, which does not hold here, so score the answer as L4's card check reads it.
+            asserted = isinstance(answer, dict) and answer.get("type") != "unknown"
+            result = replace(shadow, selected_option=_LIVE_ANSWER if asserted else None, competing_present=())
+        if not_scored_live:
+            excluded.add(iid)
+            scores[iid] = dict(identity0(item), infra_reruns=attempt, base_verdict=None,
+                score_milli=None, worst_case_milli=None, accuracy_correct=None,
+                tuesday_class=None, envelope=None, failure_class=None, benign_extra=False)
+        else:
+            scores[iid] = score_item(item, cls=cls, label=label,
+                result=result, envelope=answer,
+                act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
+                scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
+                stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
+        if isinstance(shadow, ReaderResult) and cls != "SYSTEM_FAILURE" and not isinstance(scores[iid], Infra):
+            scores[iid].update(selected_option=shadow.selected_option,
+                               competing_present=list(shadow.competing_present))
+        if cls or isinstance(scores[iid], Infra) or not_scored_live:
+            next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
+    return scores, excluded, probes
+
+
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
                    spec=T1_SPEC, keep=None, unit=None):
     from bicentennial.runner import t1
@@ -314,44 +359,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             if live.canary:
                 raise t1.T1Refused("canary")
             _check_stop(live)
-            scores, excluded = {}, set()
-            probes = _read(run._root, "t2lite_probes.json")
-            # T1's relabel (runner/t1.py): a stop the floor shared is the harness's, not the system's.
-            floor_stop = (floor_stops or {}).get(pack.life + branch)
-            relabel = (arm == "system" and is_plugin(ctx.entry) and run.stopped
-                and run.stopped[1] in t1.RELABEL and floor_stop and list(floor_stop)[1:] == list(run.stopped)[1:])
-            for item in pack.items[branch]:
-                iid = item["item_id"]
-                cls, label = run.classes.get(iid, (None, None))
-                if relabel and (cls, label) == ("SYSTEM_FAILURE", run.stopped[1]):
-                    cls = "INFRA_FAILURE"
-                if run.audit.get("status") != "OK" and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"):
-                    cls, label = "INFRA_FAILURE", "audit"
-                shadow, answer = run.results.get(iid, MISSING), run.envelopes.get(iid, MISSING)
-                not_scored_live = (pack.genre == "G2" and item["stage"] == "act"
-                                  and cls not in ("SYSTEM_FAILURE", "INFRA_FAILURE"))
-                result = shadow
-                if isinstance(shadow, ReaderResult):
-                    # The answer is the live model's; the selection and competitors are the shadow's. Ring 0
-                    # ties the two, which does not hold here, so score the answer as L4's card check reads it.
-                    asserted = isinstance(answer, dict) and answer.get("type") != "unknown"
-                    result = replace(shadow, selected_option=_LIVE_ANSWER if asserted else None, competing_present=())
-                if not_scored_live:
-                    excluded.add(iid)
-                    scores[iid] = dict(identity0(item), infra_reruns=attempt, base_verdict=None,
-                        score_milli=None, worst_case_milli=None, accuracy_correct=None,
-                        tuesday_class=None, envelope=None, failure_class=None, benign_extra=False)
-                else:
-                    scores[iid] = score_item(item, cls=cls, label=label,
-                        result=result, envelope=answer,
-                        act=run.act.get(iid, MISSING), case=pack.cases[iid], keys=pack.keys[iid],
-                        scoring_evidence=pack.scoring["evidence"].get(iid), attempt=attempt,
-                        stored_roots=run.stored_roots.get(iid), retained_roots=run.retained_roots.get(iid))
-                if isinstance(shadow, ReaderResult) and cls != "SYSTEM_FAILURE" and not isinstance(scores[iid], Infra):
-                    scores[iid].update(selected_option=shadow.selected_option,
-                                       competing_present=list(shadow.competing_present))
-                if cls or isinstance(scores[iid], Infra) or not_scored_live:
-                    next(p for p in probes if p["item_id"] == iid)["shadow"]["stage_attribution"] = None
+            scores, excluded, probes = _score_run(ctx, pack, branch, arm, run, attempt, floor_stops)
             _write(out, "t2lite_probes.json", probes)
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:
