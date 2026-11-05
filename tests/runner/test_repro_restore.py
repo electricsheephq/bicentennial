@@ -1,0 +1,427 @@
+"""Offline kept-probe restoration, strict input comparison and mutation checks."""
+
+import copy
+import json
+import runpy
+import shutil
+from contextlib import closing
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from bicentennial.canon import canon, sha256_canon
+from bicentennial.contracts.surfaces import tree_listing
+from bicentennial.director import core
+from bicentennial.director.compiler.hermes import compile_script
+from bicentennial.harness.hermes import adapter
+from bicentennial.render.stream import content
+from bicentennial.runner import repro
+from bicentennial.runner.kept import PreProbe
+from bicentennial.runner.lock import SessionGate, attempt_id
+from bicentennial.runner.units import T2_SPEC, _score_run
+from bicentennial.sandbox.surfaces import install_hash
+from bicentennial.world.db import open_world
+
+HELPERS = runpy.run_path(str(Path(__file__).with_name("test_per_item_kept.py")))
+lives = HELPERS["lives"]
+harness = HELPERS["harness"]
+unit_sessions = HELPERS["unit_sessions"]
+observed = HELPERS["observed"]
+drive = HELPERS["drive"]
+FakeLive = HELPERS["HELPERS"]["FakeLive"]
+ENTRY = HELPERS["HELPERS"]["ENTRY"]
+
+
+def score(case, run):
+    stream = [json.loads(line) for line in
+              (case["t"].out_dir / f"stream.{case['branch']}.jsonl").read_bytes().splitlines()]
+    evidence = {i["item_id"]: [content(r) for r in stream if r["event_id"] in i["gold_spans"]]
+                for i in case["items"]}
+    pack = SimpleNamespace(life=case["t"].life, genre=case["t"].genre,
+        items={case["branch"]: case["items"]}, cases=case["cases"], keys=case["keys"], scoring={"evidence": evidence})
+    return _score_run(SimpleNamespace(entry=ENTRY), pack, case["branch"], "system", run, run.attempt)[0]
+
+
+@pytest.fixture
+def kept_probe(observed, tmp_path, monkeypatch):
+    case = observed[0]
+    # A later item exercises the full compilation and cursor, with the kill in a skipped replay.
+    target = [i for i in case["items"] if i["stage"] != "act"][-1]["item_id"]
+    session = adapter.HermesAdapter.run_session
+
+    def planted(self, index, **kwargs):
+        spec = next(s for s in self.script["sessions"] if s["index"] == index)
+        if spec["kind"] != "probe":
+            for name in ("config.yaml", "mem0.json"):
+                (self.paths["hermes_home"] / name).write_text(
+                    f"endpoint=127.0.0.1:{self.server.port}\nnear=127.0.0.1:{self.server.port}5\nvalue=stable\n")
+        return session(self, index, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", planted)
+    scratch = tmp_path / "attempt"
+    original = HELPERS["run_observed"](observed, scratch, run="t2-0123456789abcdef", attempt=2,
+                                        pre_probe_attribution=T2_SPEC.pre_probe_attribution)
+    scores = score(case, original)
+    # FakeLive plants UNKNOWN instead of the required answer, giving a scored miss.
+    assert scores[target]["score_milli"] < 1000
+    record = original.pre_probe[target]
+    digests = [r["req_masked_sha256"] for r in original.records
+               if r.get("role") == "probe_main" and r.get("cursor", {}).get("session") == record.fields["probe_session_index"]]
+    out = tmp_path / "out"
+    HELPERS["publish"](original, [scores[target]], out)
+    directory = out / "kept" / original.life / original.branch / target
+    before = tree_listing(directory, [])
+    shutil.rmtree(scratch)
+
+    def serve(director, port):
+        director.run_values["director_port"] = "1235"
+        return SimpleNamespace(port=1235)
+
+    monkeypatch.setattr(adapter, "serve", serve)
+    return SimpleNamespace(case=case, target=target, scratch=scratch, directory=directory,
+                           before=before, digests=digests)
+
+
+def repeat(sample, restore, **kwargs):
+    identity = restore.records["attempt_identity"]
+    options = dict(probe_mode="per_item", keep_pre_probe=True,
+                pre_probe_attribution=T2_SPEC.pre_probe_attribution, live=FakeLive(), repro=restore,
+                stop_after_target=True, run=identity["run"], attempt=identity["attempt"])
+    run = drive(sample.case, sample.scratch, **(options | kwargs))
+    # Compare before scoring: compilation mutations must fail here, never in a score lookup.
+    assert restore.compare_run(run) == "identical"
+    return run
+
+
+def test_restored_probe_three_of_three(kept_probe):
+    sample = kept_probe
+    restore = repro.load_bundle(sample.directory)
+    for _ in range(3):
+        run = repeat(sample, restore)
+        assert run.audit["status"] == "OK"
+        assert run.stopped is None
+        assert len(run.pre_probe) == len(run.sessions) == 1
+        assert run.expected_call_ids == run.post_restart_requests == ()
+        assert not run.stored_roots
+        assert all(run.classes[i["item_id"]] == ("INFRA_FAILURE", "not_restored")
+                   for i in sample.case["items"] if i["item_id"] != sample.target)
+        assert sample.target not in run.classes
+        actual = repro.load_context(run.pre_probe[sample.target].directory, run.pre_probe[sample.target].fields)
+        assert actual["attempt_identity"] == restore.records["attempt_identity"]
+        assert [r["req_masked_sha256"] for r in run.records if r.get("role") == "probe_main"] == sample.digests
+        home = run.pre_probe[sample.target].roots[0]
+        for name in ("config.yaml", "mem0.json"):
+            assert "endpoint=127.0.0.1:1235\nnear=127.0.0.1:12345" in (home / name).read_text()
+        assert install_hash(home, restore.surfaces[0]["volatile_paths"], 1235) == restore.bundle["surface_hashes"]["HERMES_HOME/."]
+        assert restore.foreign_port_refs == ()
+        result = score(sample.case, run)[sample.target]
+        assert (result["score_milli"], result["failure_class"]) == (
+            restore.bundle["identity"]["score_milli"], restore.bundle["identity"]["failure_class"])
+        shutil.rmtree(sample.scratch)
+    restore.check_snapshot()
+    assert tree_listing(sample.directory, []) == sample.before
+
+
+@pytest.mark.parametrize("mutation", ["restore", "config.yaml", "mem0.json", "kept_byte", "items", "attempt",
+                                       "mem0_byte", "cursor"])
+def test_restore_mutants(kept_probe, monkeypatch, mutation):
+    sample = kept_probe
+    restore = repro.load_bundle(sample.directory)
+    kwargs = {}
+    if mutation == "restore":
+        monkeypatch.setattr(restore, "restore", lambda *args: None)
+    elif mutation in ("config.yaml", "mem0.json"):
+        rewrite = repro.rewrite_port
+
+        def skip_one(root, old, new):
+            path = Path(root) / mutation
+            data = path.read_bytes() if path.exists() else None
+            rewrite(root, old, new)
+            if data is not None:
+                path.write_bytes(data)
+        monkeypatch.setattr(repro, "rewrite_port", skip_one)
+    elif mutation == "kept_byte":
+        (sample.directory / "surfaces/0/replay-state").write_text("changed")
+        with pytest.raises(repro.ReproRefused, match="^snapshot_changed$"):
+            restore.check_snapshot()
+        return
+    elif mutation == "items":
+        kwargs["items"] = [i for i in sample.case["items"] if i["item_id"] == sample.target]
+    elif mutation == "attempt":
+        kwargs["attempt"] = 3
+    elif mutation == "mem0_byte":
+        restore_tree = restore.restore
+
+        def changed(*args):
+            restore_tree(*args)
+            path = args[0][0][1] / "mem0.json"
+            path.write_text(path.read_text().replace("stable", "mutant"))
+        monkeypatch.setattr(restore, "restore", changed)
+    elif mutation == "cursor":
+        def assign(self, index):
+            self.ctx.cursor = 1
+        monkeypatch.setattr(adapter.Director, "skip_session", assign)
+    with pytest.raises((AssertionError, repro.ReproRefused)):
+        repeat(sample, restore, **kwargs)
+
+
+def test_foreign_port_scan_and_snapshot_after_run(kept_probe):
+    restore = repro.load_bundle(kept_probe.directory)
+    source = kept_probe.directory / "surfaces/0/foreign"
+    source.write_bytes(b"127.0.0.1:1234 127.0.0.1:12345")
+    with pytest.raises(repro.ReproRefused, match="snapshot_changed"):
+        restore.check_snapshot()
+    assert repro.foreign_port_refs([("surface", source.parent)], 1234) == ("surface/foreign",)
+
+
+def test_restore_failure_is_not_a_repetition(kept_probe, monkeypatch):
+    restore = repro.load_bundle(kept_probe.directory)
+    def broken(*args):
+        raise OSError("synthetic clone failure")
+    monkeypatch.setattr(repro, "clone_tree", broken)
+    with pytest.raises(repro.ReproRefused, match="^probe_not_run$"):
+        repeat(kept_probe, restore)
+
+
+def test_restore_forces_capture_and_skips_in_script_order(kept_probe, monkeypatch):
+    restore = repro.load_bundle(kept_probe.directory)
+    skipped, gated = [], []
+    skip = adapter.Director.skip_session
+
+    def track(self, index):
+        skipped.append(index)
+        return skip(self, index)
+
+    start = SessionGate.start_session
+
+    def gate(self, lock, arm, life, branch, index, attempt):
+        gated.append(index)
+        return start(self, lock, arm, life, branch, index, attempt)
+
+    monkeypatch.setattr(adapter.Director, "skip_session", track)
+    monkeypatch.setattr(SessionGate, "start_session", gate)
+    run = repeat(kept_probe, restore, keep_pre_probe=False, stop_after_target=False)
+    actual = repro.load_context(run.pre_probe[restore.item_id].directory, run.pre_probe[restore.item_id].fields)
+    assert gated == [restore.bundle["probe_session_index"]]
+    # compile_script interleaves probe sessions in checkpoint order, rather than index order.
+    case = kept_probe.case
+    with closing(open_world(case["t"].out_dir / "world.B0.db", readonly=True)) as db:
+        compiled = compile_script(case["t"].out_dir, "B0", case["t"].schedule, db,
+                                  items=case["items"], step_s=60, probe_mode="per_item")
+    assert skipped == [s["index"] for s in compiled.script["sessions"] if s["index"] not in gated]
+    assert actual["attempt_identity"]["cursor"] == restore.records["attempt_identity"]["cursor"]
+    assert run.stopped is None
+
+
+def test_explicit_none_matches_default(lives, unit_sessions, tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "time", SimpleNamespace(time=lambda: 1, monotonic=lambda: 1))
+    monkeypatch.setattr(core, "os", SimpleNamespace(getloadavg=lambda: (0, 0, 0)))
+    case = lives["t1-g1", "B0"]
+    scratch = tmp_path / "attempt"
+    first = drive(case, scratch, live=FakeLive())
+    rows = first.records
+    probes = (first._root / "t2lite_probes.json").read_bytes()
+    store = tree_listing(first._root / "run/hermes-home", [])
+    scores = score(case, first)
+    shutil.rmtree(scratch)
+    second = drive(case, scratch, live=FakeLive(), repro=None)
+    assert second.records == rows
+    assert (second._root / "t2lite_probes.json").read_bytes() == probes
+    assert tree_listing(second._root / "run/hermes-home", []) == store
+    assert score(case, second) == scores
+
+
+def inputs():
+    identity = dict(run="recorded", life="life", branch="B0", attempt=2, lock_hash="a" * 64, cursor=8)
+    identity["attempt_id"] = attempt_id(identity["lock_hash"], "system", "life", "B0", 21, 2)
+    records = dict(canonical_paths=dict(root="/slot/run", home="/slot/run/home"),
+        director_bindings=dict(run_values=dict(director_port="1234", sandbox_root="/slot"),
+            probe_config=dict(checkout="/checkout", entry={}, live_probe={}), route_table={}),
+        attempt_identity=identity, resolved_route=dict(alias="alias"), replay_segment=dict(segment=1),
+        clock_cadence=dict(sim_t_s=60, step_s=60, clock_path="/slot/clock.json",
+                           published=dict(sim_start=60, wall_anchor=1, rate=0)),
+        compiled_probe=dict(index=21, turns=[]), workspace_inputs=dict(cwd="/slot/workspace", copy="workspace"),
+        environment_inputs=dict(seed={}, envwire_root="/slot/envwire", worker_argv=["/checkout/worker.py"],
+            worker_env=dict(PYTHONPATH="/checkout:/code/bicentennial/harness/hermes/clockshim", PATH="/bin", LANG="C",
+                LC_ALL="C", HERMES_HOME="/slot/store", HOME="/slot/home", TMPDIR="/slot/tmp",
+                BICENTENNIAL_CLOCK_FILE="/slot/clock.json", HTTP_PROXY="http://127.0.0.1:1234")))
+    fields = dict(surface_hashes={}, workspace_hash="a" * 64, environment_hash="a" * 64, sim_t_s=60,
+        probe_session_index=21, probe_slot=0, route_table_sha256=sha256_canon({}),
+        probe_config_sha256=sha256_canon(records["director_bindings"]["probe_config"]),
+        replay_context={k: sha256_canon(v) for k, v in records.items()})
+    return fields, records
+
+
+def comparison(change):
+    fields, records = inputs()
+    other, actual = copy.deepcopy(fields), copy.deepcopy(records)
+    change(actual)
+    other["probe_config_sha256"] = sha256_canon(actual["director_bindings"]["probe_config"])
+    return repro.compare_records(fields, records, other, actual)
+
+
+@pytest.mark.parametrize("record", sorted(repro.CONTEXT_RECORDS))
+def test_unlisted_record_change_refuses(record):
+    with pytest.raises(repro.ReproRefused, match=f"^starting_state_changed:{record}$"):
+        comparison(lambda records: records[record].update(unlisted=True))
+
+
+@pytest.mark.parametrize("field", sorted(repro.FIELDS - {"replay_context", "probe_config_sha256"}))
+def test_unlisted_field_change_refuses(field):
+    fields, records = inputs()
+    other = dict(fields, **{field: "changed"})
+    with pytest.raises(repro.ReproRefused, match=f"^starting_state_changed:{field}$"):
+        repro.compare_records(fields, records, other, records)
+
+
+@pytest.mark.parametrize("record,key,reason", [
+    ("canonical_paths", "home", "canonical_paths"), ("workspace_inputs", "cwd", "canonical_paths"),
+    ("clock_cadence", "clock_path", "canonical_paths"), ("environment_inputs", "envwire_root", "canonical_paths")])
+def test_path_relocations(record, key, reason):
+    assert comparison(lambda r: r[record].update(**{key: "/new/path"})) == f"relocated({reason})"
+
+
+@pytest.mark.parametrize("key", ["HERMES_HOME", "HOME", "TMPDIR", "BICENTENNIAL_CLOCK_FILE", "PATH", "LANG", "LC_ALL", "LC_TIME"])
+def test_environment_relocations(key):
+    reason = "canonical_paths" if key in ("HERMES_HOME", "HOME", "TMPDIR", "BICENTENNIAL_CLOCK_FILE") else key
+    assert comparison(lambda r: r["environment_inputs"]["worker_env"].update(**{key: "/new/value"})) == f"relocated({reason})"
+
+
+def test_checkout_and_sandbox_relocations():
+    def change(records):
+        records["director_bindings"]["probe_config"]["checkout"] = "/new-checkout"
+        records["director_bindings"]["run_values"]["sandbox_root"] = "/new-slot"
+        records["environment_inputs"]["worker_argv"] = ["/new-checkout/worker.py"]
+        records["environment_inputs"]["worker_env"]["PYTHONPATH"] = "/new-checkout:/new-code/bicentennial/harness/hermes/clockshim"
+    assert comparison(change) == "relocated(canonical_paths,checkout)"
+
+
+def test_lock_relocation_requires_derived_attempt_id():
+    def change(records):
+        identity = records["attempt_identity"]
+        identity["lock_hash"] = "b" * 64
+        identity["attempt_id"] = attempt_id("b" * 64, "system", "life", "B0", 21, 2)
+    assert comparison(change) == "relocated(lock_hash)"
+    with pytest.raises(repro.ReproRefused, match="starting_state_changed:attempt_identity"):
+        comparison(lambda r: r["attempt_identity"].update(lock_hash="b" * 64))
+
+
+def test_clock_and_port_normalization():
+    def change(records):
+        records["clock_cadence"]["published"]["wall_anchor"] = 999
+        records["director_bindings"]["run_values"]["director_port"] = "1235"
+        records["environment_inputs"]["worker_env"]["HTTP_PROXY"] = "http://127.0.0.1:1235"
+    assert comparison(change) == "identical"
+    for key in ("rate", "sim_start"):
+        with pytest.raises(repro.ReproRefused, match="starting_state_changed:clock_cadence"):
+            comparison(lambda r, key=key: r["clock_cadence"]["published"].update(**{key: 1}))
+    with pytest.raises(repro.ReproRefused, match="starting_state_changed:clock_cadence"):
+        comparison(lambda r: r["clock_cadence"].update(step_s=1))
+
+
+@pytest.mark.parametrize("record,path", [
+    ("attempt_identity", ("cursor",)), ("attempt_identity", ("run",)),
+    ("director_bindings", ("probe_config", "live_probe")),
+    ("director_bindings", ("route_table",)),
+    ("environment_inputs", ("seed",)), ("environment_inputs", ("worker_argv",)),
+    ("environment_inputs", ("worker_env", "UNLISTED")),
+    ("environment_inputs", ("worker_env", "PYTHONPATH")),
+])
+def test_executor_inputs_refuse(record, path):
+    def change(records):
+        value = records[record]
+        for key in path[:-1]:
+            value = value[key]
+        value[path[-1]] = "different"
+    with pytest.raises(repro.ReproRefused, match=f"^starting_state_changed:{record}$"):
+        comparison(change)
+
+
+def test_exact_json_types_and_canonical_paths_in_argv():
+    with pytest.raises(repro.ReproRefused, match="bundle_invalid"):
+        comparison(lambda r: r["clock_cadence"].update(step_s=60.0))
+    fields, records = inputs()
+    with pytest.raises(repro.ReproRefused, match="starting_state_changed:probe_slot"):
+        repro.compare_records(fields, records, dict(fields, probe_slot=False), records)
+    fields, records = inputs()
+    records["environment_inputs"]["worker_argv"] = ["worker", "/slot/run/home/settings"]
+    actual = copy.deepcopy(records)
+    actual["canonical_paths"]["home"] = "/new-home"
+    actual["environment_inputs"]["worker_argv"] = ["worker", "/new-home/settings"]
+    assert repro.compare_records(fields, records, fields, actual) == "relocated(canonical_paths)"
+
+
+def test_port_rewrite_hash_identity_and_scope(tmp_path):
+    old, new = 1234, 1235
+    for name in ("config.yaml", "mem0.json", "other"):
+        (tmp_path / name).write_text("127.0.0.1:1234 127.0.0.1:12345")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested/config.yaml").write_text("127.0.0.1:1234")
+    (tmp_path / "target").write_text("127.0.0.1:1234")
+    # The port helper must leave a symlink untouched even when its name is a port file.
+    before = install_hash(tmp_path, [], old)
+    repro.rewrite_port(tmp_path, old, new)
+    assert install_hash(tmp_path, [], new) == before
+    assert (tmp_path / "config.yaml").read_text() == "127.0.0.1:1235 127.0.0.1:12345"
+    assert repro.foreign_port_refs([("surface", tmp_path)], old) == (
+        "surface/nested/config.yaml", "surface/other", "surface/target")
+    (tmp_path / "config.yaml").unlink()
+    (tmp_path / "config.yaml").symlink_to("target")
+    repro.rewrite_port(tmp_path, old, new)
+    assert (tmp_path / "target").read_text() == "127.0.0.1:1234"
+
+
+@pytest.mark.parametrize("damage", ["digest", "missing", "reference", "config_hash", "record_set"])
+def test_context_bundle_invalid(tmp_path, damage):
+    fields, records = inputs()
+    context = tmp_path / "context"
+    context.mkdir()
+    for name, value in records.items():
+        (context / f"{fields['replay_context'][name]}.json").write_bytes(canon(value))
+    assert repro.load_context(tmp_path, fields) == records
+    path = context / f"{fields['replay_context']['compiled_probe']}.json"
+    if damage == "digest":
+        path.write_bytes(canon({}))
+    elif damage == "missing":
+        path.unlink()
+    elif damage == "reference":
+        fields["replay_context"]["compiled_probe"] = "pack:probe.json"
+    elif damage == "config_hash":
+        fields["probe_config_sha256"] = "b" * 64
+    else:
+        fields["replay_context"].pop("compiled_probe")
+    with pytest.raises(repro.ReproRefused, match="^bundle_invalid$"):
+        repro.load_context(tmp_path, fields)
+
+
+def test_bad_bundle_refuses(tmp_path):
+    (tmp_path / "bundle.json").write_bytes(canon({}))
+    with pytest.raises(repro.ReproRefused, match="^bundle_invalid$"):
+        repro.load_bundle(tmp_path)
+
+
+def test_missing_target_is_not_a_repetition():
+    restore = repro.Restore(Path("unused"), dict(identity=dict(item_id="target")), {})
+    with pytest.raises(repro.ReproRefused, match="^probe_not_run$"):
+        restore.compare_run(SimpleNamespace(pre_probe={}))
+
+
+def test_digest_is_checked_on_both_sides(tmp_path):
+    fields, records = inputs()
+    for side in ("expected", "actual"):
+        directory = tmp_path / side
+        (directory / "context").mkdir(parents=True)
+        for name, value in records.items():
+            (directory / "context" / f"{fields['replay_context'][name]}.json").write_bytes(canon(value))
+    restore = repro.Restore(tmp_path / "expected", dict(identity=dict(item_id="target"), **fields), records)
+    record = PreProbe(tmp_path / "actual", (), 10, fields)
+    run = SimpleNamespace(pre_probe={"target": record})
+    assert restore.compare_run(run) == "identical"
+    for side in ("expected", "actual"):
+        path = tmp_path / side / "context" / f"{fields['replay_context']['resolved_route']}.json"
+        saved = path.read_bytes()
+        path.write_bytes(canon({}))
+        with pytest.raises(repro.ReproRefused, match="^bundle_invalid$"):
+            restore.compare_run(run)
+        path.write_bytes(saved)

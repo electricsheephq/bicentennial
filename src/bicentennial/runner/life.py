@@ -309,10 +309,14 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
              live=None, live_model=None, turn_wait_s=1.0, probe_mode="ring0", keep_pre_probe=False,
-             pre_probe_attribution=False, cases=None) -> LifeRun:
+             pre_probe_attribution=False, cases=None, repro=None, stop_after_target=False) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
+    if repro is not None:
+        keep_pre_probe = True
+    if stop_after_target and repro is None:
+        raise ValueError("stop_after_target requires repro")
     if pre_probe_attribution and not keep_pre_probe:
         raise ValueError("pre_probe_attribution requires keep_pre_probe")
     if live is not None and cases is None:
@@ -434,9 +438,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
 
             previous_session = None
             for session in script["sessions"]:
+                index, probe = session["index"], probes.get(session["index"])
+                if repro is not None and (probe is None or repro.item_id not in probe.item_ids):
+                    adapter.director.skip_session(index)
+                    continue
                 if leg is not None:
                     leg.check_session(previous_session)
-                index, probe = session["index"], probes.get(session["index"])
                 previous_session = index
                 attempt_id = None
                 try:
@@ -449,6 +456,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         if probe and workspace_hash(paths["workspace"]) != expected[probe.checkpoint]["repo_tree_hash"]:
                             raise HarnessFailed("workspace_state")
                         workspace_ms[index] = int((_now() - m) * 1000)
+                    if repro is not None:
+                        repro.restore(surfaces, paths["workspace"], int(adapter.director.run_values["director_port"]))
                     instant = probe.sim_t_s if probe else schedule.sessions[index - 1].turn_t[0] - TURN_S
                     clock.set_session(instant, step_s=STEP_S if probe else TURN_S)
                     with ExitStack() as stack:
@@ -560,7 +569,11 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         live_cut = True
                         # Its unsent turns would hold the cursor, so no later request could match a scripted turn.
                         adapter.director.skip_session(index)
+                        if repro is not None and stop_after_target:
+                            break
                         continue
+                    break
+                if repro is not None and stop_after_target:
                     break
             if leg is not None:
                 leg.check_session(previous_session)
@@ -584,6 +597,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, cases)
             return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
+        if repro is not None:
+            for iid in by_id:
+                if iid != repro.item_id:
+                    evidence.classes.setdefault(iid, ("INFRA_FAILURE", "not_restored"))
         if leg is not None:
             leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, cases)
             transforms.extend(sorted(leg.transforms))
