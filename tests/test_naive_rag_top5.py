@@ -297,7 +297,7 @@ def test_reversed_ties_are_not_defects(monkeypatch, tmp_path, source, packs):
 
 @pytest.mark.parametrize("fault,code", [("sha256", "pin_mismatch"), ("identity", "identity_mismatch"),
                                        ("ref", "entry_ref_not_commit"), ("pack", "pack_hash_mismatch"),
-                                       ("tier", "pack_hash_mismatch")])
+                                       ("tier", "pack_not_t1")])
 def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fault, code):
     entry = deepcopy(source[1])
     if fault == "sha256":
@@ -316,6 +316,23 @@ def test_refusals_write_nothing(source, packs, tmp_path, monkeypatch, capsys, fa
     status, out = invoke(tmp_path, source, packs, entry)
     assert status == 3 and not out.exists()
     assert capsys.readouterr().err == code + "\n"
+
+
+@pytest.mark.parametrize("fault", ["crash", "unwritable"])
+def test_tool_failure_writes_nothing(source, packs, tmp_path, monkeypatch, capsys, fault):
+    # Exit 1 means a written receipt with a defect, so a crash must exit 70 instead.
+    if fault == "crash":
+        def crash(*args):
+            raise RuntimeError("planted")
+        monkeypatch.setattr(receipt, "receipt", crash)
+        name = "receipt.json"
+    else:
+        monkeypatch.setattr(receipt, "receipt", lambda *a: {"pass": True})
+        name = "missing/receipt.json"
+    status, out = invoke(tmp_path, source, packs, name=name)
+    err = capsys.readouterr().err
+    assert status == 70 and not out.exists()
+    assert err.startswith("tool_failure\n") and "Traceback" in err
 
 
 def test_compiled_write_texts_match_responder(source, packs, monkeypatch):

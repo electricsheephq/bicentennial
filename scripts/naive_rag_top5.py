@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import traceback
 from collections import Counter
 from contextlib import closing, contextmanager
 from fractions import Fraction
@@ -301,19 +302,24 @@ def main(argv=None):
             path = load_archive(entry, args.plugin_source, Path(folder))
             try:
                 index = verify(args.packs, pack_hash=args.pack_hash)
-                if index["tier"] != "T1":
-                    raise ValueError("tier")
             except (OSError, ValueError) as error:
                 raise Refused("pack_hash_mismatch") from error
+            if index["tier"] != "T1":
+                raise Refused("pack_not_t1")
             with load_baseline(path) as baseline:
                 result = receipt(entry, entry_sha256, args.pack_hash, Path(args.packs), index, baseline)
+        Path(args.out).write_bytes(canon(result))
     except SystemRefused as error:
         print(error.reasons[0], file=sys.stderr)
         return 3
     except (Refused, PinsRefused) as error:
         print(str(error), file=sys.stderr)
         return 3
-    Path(args.out).write_bytes(canon(result))
+    except Exception:
+        # The CLI's unexpected-failure convention: a crash writes no receipt and never shares exit 1 with a defect.
+        print("tool_failure", file=sys.stderr)
+        traceback.print_exc()
+        return 70
     return 0 if result["pass"] else 1
 
 
