@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-05: the reproduction checks' budgets and tries (#393, §14.8)
+- **RING0 §14.8:** the snapshot-probe reproduction budget (k = 3 in ≤ 5 min) and the live-class budget (k = 3 within 3 × T2's per-life budget, 18 min) are RING0's own, set before any measurement; PREREG-v0.5 §6 sets no reproduction budget, and §14.8 had attributed them to it. A reproduction's time is the whole `bicentennial repro` command on the monotonic clock, with its stage split published.
+- **Counting:** an item's try is its first started batch, and it counts only at k = 3 with `identical` starting conditions; a batch that does not complete ends the search and the bar is not met; an item whose probe its life never reached counts as tried and not reproduced; the live-class check is one replay with the candidate, whose probe is run 1, plus 2 restored probes, all 3 passing.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 contract change, 2026-11-05: outside entries with write tools (#390)
 - **Developer loop, RING0 §14.2:** an outside entry's scripted writes use its recipe's write mapping. All tiers and `pins` check declared tool coverage with the existing mapping refusal codes; scripted structured formats remain unsupported. No code pin moves.
 - **Recorded values:** `write_turn_package_hash` changes once for every system because `director/scripted.py` changed. Values derived from it (the lock hash, run and attempt ids, and ledger digests) change with it. No other recorded value of a built-in system changes. The developer report refuses a pair of T2 runs made before and after this change because their `pins.write_turn_package_hash` differs.
