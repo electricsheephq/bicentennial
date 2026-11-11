@@ -63,6 +63,7 @@ NOT_VISIBLE = ("not visible in run outputs (request bodies are not kept); covere
                " (no sealed identifier, option id or honeypot token in any block); the block half was also checked on all"
                " ten lives of the pack")
 DECLARED_ORDER = ("F1", "R1", "O1", "H1", "H2", "O2", "R2", "F2", "O3")
+SYSTEM_PINS = ("system_hash", "route_table_hash")  # the card pins that name the system under test (runner/t2.py)
 RERUN = "rerun once (§2.4, §2.5), then run again with --after-reruns"
 NAMES = {"low": "low", "naive": "near-solved by naive retrieval", "floor": "near-solved without memory"}
 
@@ -371,14 +372,22 @@ def checks(args, pack, arms, order, missing):
     print("every arm's served identity equal", len({a["card"]["served_identity"] for a in arms.values()}) == 1)
     # §1: one commit for every row. Differing card pins stop the table before any score.
     pins = sorted({key for k in ran for key in arms[k]["card"]["pins"]})
-    differ = {key: sorted({str(arms[k]["card"]["pins"].get(key))[:12] for k in ran}) for key in pins}
+    differ = {key: sorted({str(arms[k]["card"]["pins"].get(key)) for k in ran}) for key in pins}
     differ = {key: values for key, values in differ.items() if len(values) > 1}
     print("one commit for every core arm (card pins equal)", not differ)
     for key, values in differ.items():
-        print(f"PIN MISMATCH: {key}:", "; ".join(f"{v} ({','.join(k for k in ran if str(arms[k]['card']['pins'].get(key))[:12] == v)})"
+        print(f"PIN MISMATCH: {key}:", "; ".join(f"{v[:12]} ({','.join(k for k in ran if str(arms[k]['card']['pins'].get(key)) == v)})"
                                                  for v in values))
     if differ:
         invalid.add("card pins")
+    # An optional row is compared with the core rows only on the same code: every card pin except the two that name
+    # the system under test equals the core arms' (§1). Otherwise it is shown, marked, and left out of section 7.
+    core_pins = arms[ran[0]]["card"]["pins"]
+    for name in [k for k in arms if k.startswith("X-")]:
+        mine = arms[name]["card"]["pins"]
+        if any(str(mine.get(key)) != str(core_pins.get(key)) for key in set(mine) | set(core_pins) - set(SYSTEM_PINS)):
+            print(f"{name}: not run as declared (different code pins)")
+            off_order[name] = "different code pins"
     # §1: one pack for every row; the card's pack_hash is the installed tree's hash.
     expected_pack = pack_tree_hash(args.packs)
     for name in arms:

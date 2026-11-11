@@ -487,6 +487,28 @@ def test_missing_core_repeat(run):
         "classification: low unresolved; near-solved by naive retrieval unresolved; near-solved without memory unresolved")
 
 
+def test_pins_compare_in_full_and_optional_rows_need_the_same_code(run):
+    def card_pins(**pins):
+        def edit(label, path):
+            if label in pins:
+                card = json.loads((path / "card.json").read_text())
+                card["pins"].update(pins[label])
+                (path / "card.json").write_text(json.dumps(card))
+        return edit
+
+    # Two benchmark commits that share their first 12 characters still differ.
+    code, out = run(edit=card_pins(H2=dict(benchmark_commit="b" * 12 + "e" * 28)))
+    assert code == 3 and "== 3." not in out and "one commit for every core arm (card pins equal) False" in out
+    assert "PIN MISMATCH: benchmark_commit: bbbbbbbbbbbb (H2); bbbbbbbbbbbb (F1,F2,R1,R2,O1,O2,O3,H1)" in out.splitlines()
+    # An optional row at another scorer commit is shown, marked, and left out of the comparisons ...
+    code, out = run(extra=("X-omega",), edit=card_pins(**{"X-omega": dict(scorer_commit="e" * 40)}))
+    assert code == 0 and "X-omega: not run as declared (different code pins)" in out.splitlines()
+    assert "  X-omega " not in out.split("== 7.")[1]
+    # ... but its own system pins may differ.
+    code, out = run(extra=("X-omega",), edit=card_pins(**{"X-omega": dict(system_hash="s" * 64, route_table_hash="t" * 64)}))
+    assert code == 0 and "not run as declared" not in out and "  X-omega " in out.split("== 7.")[1]
+
+
 def test_pack_hash_must_match_the_packs(run):
     def other_pack(label, path):
         if label == "H2":
