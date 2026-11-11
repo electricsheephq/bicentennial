@@ -4,6 +4,7 @@ import fcntl
 import os
 import sys
 import time
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -17,6 +18,12 @@ from bicentennial.packs.install import verify
 from bicentennial.report.t2_card import _row_counts, build_t2_card
 from bicentennial.runner import t1
 from bicentennial.runner.arm_time import calculate_arm_times, units_json_inputs
+from bicentennial.runner.control_arm import (
+    CONTROL_ARMS,
+    FRAME_SHA256,
+    control_key_sha256,
+    control_units,
+)
 from bicentennial.runner.kept import KeptRefused, keep_failed
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
@@ -55,9 +62,9 @@ CODE_PINS = ("controls_sha256", "reader_sha256", "scoring_sha256", "scorer_sha25
 CARD_PINS = (*PIN_FIELDS, "system_hash", "route_table_hash", "write_turn_package_hash")
 
 
-def _scan_end_files(out, needles):
+def _scan_end_files(out, needles, arms=("system", "no_memory")):
     """Scan only the four timing files written after the run end was stamped."""
-    for name in ("units.json", "receipts/system.json", "receipts/no_memory.json", ".receipt.json"):
+    for name in ("units.json", *(f"receipts/{arm}.json" for arm in arms), ".receipt.json"):
         data = (out / name).read_bytes()
         if any(n in data for n in needles):
             raise t1.T1Refused("credential_scan")
@@ -81,15 +88,16 @@ def keep_hook(ctx, roots, needles):
     return keep
 
 
-def _card(ctx, results, floor, identity, out):
-    index = _read(out / "kept", "index.json")
+def _card(ctx, results, floor, identity, out, arm="system"):
+    # A control arm keeps no copies (only a system arm has a store to keep).
+    index = _read(out / "kept", "index.json") if arm == "system" else []
     pointers = {(r["life"], r["branch"], r["item_id"]): r["kept"] for r in index if r["kept"]}
     items, broken = [], set()
     for pack in ctx.packs:
         for row in _read(pack.dir / "sealed", "controls.json")["broken"]:
             broken.add((row["stage"], row["track"]))
         for branch in ("B0", "B1"):
-            unit = results[("system", pack.life, branch)]
+            unit = results[(arm, pack.life, branch)]
             for item in pack.items[branch]:
                 iid = item["item_id"]
                 items.append(dict(unit.scores[iid], life=pack.life, genre=pack.genre, branch=branch,
@@ -103,14 +111,19 @@ def _card(ctx, results, floor, identity, out):
         aa_prime=False, items=items, counts=counts, answer_contract_sha256=answer_contract.contract_hash(),
         not_scored_live=unscored, seed_source={"kind": "public"},
         groups=[list(g) for g in sorted({(r["cell_id"], r["stage"]) for r in items})], floor=floor,
-        controls_broken=[dict(stage=s, track=t) for s, t in sorted(broken)])
+        controls_broken=[dict(stage=s, track=t) for s, t in sorted(broken)],
+        control=None if arm == "system" else arm)
 
 
 def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
            plugin_source=None, model_cache=None, cache=None, sandbox_slot=0,
-           entry=None, worker_argv=None, turn_wait_s=3.0, slots=None):
+           entry=None, worker_argv=None, turn_wait_s=3.0, slots=None, control=None):
     if slots is not None and (type(slots) is not int or slots < 1):
         raise ValueError("slots must be a positive integer")
+    # control: run exactly one live control arm alone (runner/control_arm.py); it never uses the floor cache.
+    if control is not None and control not in CONTROL_ARMS:
+        raise ValueError("unknown control arm")
+    main = "system" if control is None else control
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
     mono_start = time.monotonic_ns()
@@ -153,7 +166,8 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
         ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2-" + uuid4().hex, "turn_wait_s": turn_wait_s}))
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
             t1.check_install(ctx, scratch)
-            queued = make_units(ctx, [Arm.from_context(ctx, "system")], scratch, out)
+            queued = (make_units(ctx, [Arm.from_context(ctx, "system")], scratch, out) if control is None
+                      else control_units(ctx, control, scratch, out))
             floors = [u for u in queued if u.arm.role == "no_memory"]
             paths, keys, floor, provenance = {}, {}, {}, {}
             for unit in floors:
@@ -161,12 +175,12 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 key = floor_key(ctx, unit.pack, unit.branch, probe_mode=T2_SPEC.probe_mode,
                                 turn_wait_s=turn_wait_s)
                 keys[name] = key
-                paths[name] = Path(cache) / (key + ".t2-floor.json") if cache else None
+                paths[name] = Path(cache) / (key + ".t2-floor.json") if cache and control is None else None
                 entry0 = _cached_floor(paths[name], {i["item_id"] for i in unit.pack.items[unit.branch]},
                                        {unit.pack.life + unit.branch})
                 if entry0 is not None:
                     floor[name] = entry0
-                provenance[name] = dict(cached=False, reason="cache miss")
+                provenance[name] = dict(cached=False, reason="cache miss" if control is None else "control arm")
             needles = _secrets(home)
             stack = build_live_stack(out / "spend.json", login_home=home, run=ctx.run_id,
                 token_url=os.environ[LIVE_ENV[0]], client_id=os.environ[LIVE_ENV[1]],
@@ -214,10 +228,10 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                         pending_cache.append((paths[name], entry0))
                 floor_block = dict(served_identity=identity, units={name: dict(cache_key=keys[name],
                     cached=provenance[name]["cached"]) for name in keys})
-                card = _card(ctx, results, floor_block, identity, out)
+                card = _card(ctx, results, floor_block, identity, out, main)
                 outcomes = {}
                 for unit in queued:
-                    if unit.arm.role == "system":
+                    if unit.arm.key == main:
                         result = results[unit.identity]
                         for iid, row in _joined(unit.pack, unit.branch, result.scores, result.probes).items():
                             outcomes[f"{unit.pack.life}/{unit.branch}/{iid}"] = row
@@ -234,13 +248,21 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
             if honeypot_hits:
                 raise t1.T1Refused("honeypot")
             _write(out, "outcomes.json", outcomes)
-            _write(out, "no_memory.json", floor)
+            # A control arm's units in the floor's shape, under its own name.
+            _write(out, "no_memory.json" if control is None else control + ".json", floor)
+            if control is not None:
+                _write(out, "control.json", dict(arm=control, frame_sha256=None if control == "no_memory" else FRAME_SHA256,
+                    control_key_sha256={p.life: control_key_sha256(p, control) for p in ctx.packs},
+                    block_sha256={f"{life}/{branch}/{iid}": sha256(text.encode()).hexdigest()
+                        for (life, branch), texts in sorted((queued[0].arm.probe_blocks or {}).items())
+                        for iid, text in sorted(texts.items())}))
             _write(out, "custody.json", custody_rows)
             _write(out, "disclosures.json", dict(honeypot_hits=honeypot_hits, turn_wait_s=str(turn_wait_s),
                 identity_check=identity_check, floor=provenance,
                 live=dict(stack.state(), holds=_holds(row for run in runs for row in run.records)), **{
                     key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
-                    for key, arm in (("t2.transforms", "system"), ("no_memory.transforms", "no_memory"))}))
+                    for key, arm in ((("t2.transforms", "system"), ("no_memory.transforms", "no_memory"))
+                                     if control is None else ((control + ".transforms", control),))}))
             order = {u.identity: (i, predicted_seconds(u)) for i, u in enumerate(queued)}
             unit_rows = []
             for row in units:
@@ -262,11 +284,12 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 t_end_ms=(mono_end - mono_start) // 1_000_000, units=unit_rows)
             timing["arm_time"] = calculate_arm_times(*units_json_inputs(timing))
             _write(out, "units.json", timing)
-            for arm in ("system", "no_memory"):
+            arms = ("system", "no_memory") if control is None else (control,)
+            for arm in arms:
                 _write(out / "receipts", arm + ".json", _receipt([r for r in runs if r.arm == arm],
                     start, "COMPLETE", turn_wait_s, [r for r in units if r["arm"] == arm], end_ms=end))
             _write(out, ".receipt.json", receipt)
-            _scan_end_files(out, needles)
+            _scan_end_files(out, needles, *([] if control is None else [arms]))
             for path, entry0 in pending_cache:
                 temp = path.with_name(path.name + "." + ctx.run_id)
                 _write(temp.parent, temp.name, entry0)

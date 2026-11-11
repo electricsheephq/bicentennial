@@ -309,7 +309,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
              gate, current_lock, voids, harness_pin, hermes=None, plugin_source=None,
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
              live=None, live_model=None, turn_wait_s=1.0, probe_mode="ring0", keep_pre_probe=False,
-             pre_probe_attribution=False, cases=None, repro=None, stop_after_target=False) -> LifeRun:
+             pre_probe_attribution=False, cases=None, repro=None, stop_after_target=False,
+             probe_blocks=None) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -321,6 +322,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         raise ValueError("stop_after_target requires repro")
     if pre_probe_attribution and not keep_pre_probe:
         raise ValueError("pre_probe_attribution requires keep_pre_probe")
+    if probe_blocks is not None and (arm != "no_memory" or live is None):
+        # A live control arm (runner/control_arm.py) is the live floor with a pinned control's text in each probe turn.
+        raise ValueError("probe blocks need the live no-memory arm")
     if live is not None and cases is None:
         # The live leg scores act items as the scorer does, from the pack's sealed cases.
         raise ValueError("live probes need the pack's cases")
@@ -353,6 +357,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         script = compiled.script
         if arm == "no_memory":
             script = dict(script, sessions=[s for s in script["sessions"] if s["kind"] == "probe"])
+        if probe_blocks is not None:
+            from bicentennial.runner.control_arm import with_blocks
+
+            script = with_blocks(script, compiled.probes, probe_blocks)
         faults = FaultLite.load([] if arm == "no_memory" else schedule.fault_lite(), script)
         kill = next(((f["session"], f["turn"]) for f in faults.to_obj() if f["kind"] == "kill"), None)
         entry_r = load(REGISTRY / "hermes-native.toml") if arm == "no_memory" else entry

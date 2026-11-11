@@ -173,6 +173,10 @@ def main(argv=None) -> int:
         command.add_argument("--" + name)
     command.add_argument("--sandbox-slot", type=int, default=0)
     command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=3.0, metavar="SECONDS")
+    # The benchmark owner's live control rows (runner/control_arm.py): one arm alone. Left out of --help and
+    # passed only when given, so the documented T2 command is unchanged.
+    command.add_argument("--control", choices=("no_memory", "naive_rag", "oracle_evidence"),
+                         default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     command = commands.add_parser("report")
     for name in ("current", "previous", "out"):
         command.add_argument("--" + name, required=True)
