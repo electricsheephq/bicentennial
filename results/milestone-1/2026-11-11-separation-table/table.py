@@ -19,6 +19,7 @@ or bundle ids, served identity values, or paths. Text arms need bicentennial.run
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from contextlib import redirect_stdout
@@ -49,9 +50,11 @@ ROWS = {"F": ("F1", "F2"), "R": ("R1", "R2"), "O": ("O1", "O2", "O3"), "H": ("H1
 CORE = tuple(a for arms in ROWS.values() for a in arms)
 CONTROL = {"F": "no_memory", "R": "naive_rag", "O": "oracle_evidence"}
 SEVEN = Fraction(7, 10)
-NOT_VISIBLE = ("not visible in run outputs (no request tools or memory block recorded); covered by the runner's"
-               " tests at the pinned commit (#496 test_c_floor_bodies_and_memory_off: memory fence, memory section and"
-               " memory tools absent from every control-arm request body)")
+NOT_VISIBLE = ("not visible in run outputs (request bodies are not kept); covered by the runner's tests at the"
+               " pinned commit (#496): test_c_floor_bodies_and_memory_off (no memory fence, memory section or memory or"
+               " search tool in any control-arm request body) and test_a_block_is_the_pinned_controls_text_in_the_probe_turn"
+               " (no sealed identifier, option id or honeypot token in any block); the block half was also checked on all"
+               " ten lives of the pack")
 DECLARED_ORDER = ("F1", "R1", "O1", "H1", "H2", "O2", "R2", "F2", "O3")
 RERUN = "rerun once (§2.4, §2.5), then run again with --after-reruns"
 NAMES = {"low": "low", "naive": "near-solved by naive retrieval", "floor": "near-solved without memory"}
@@ -89,7 +92,7 @@ def read(path):
 def refusal_code(run):
     """Only the refusal code string, never its detail."""
     code = (read(run / "refusal.json") or {}).get("code")
-    return code if isinstance(code, str) and code.replace("_", "").isalpha() else "none recorded"
+    return code if isinstance(code, str) and re.fullmatch(r"[a-z0-9_,]+", code) else "none recorded"
 
 
 def load_arm(name, run):
@@ -286,7 +289,28 @@ def checks(args, pack, arms, order):
     violation = next((f"{k} has no start or end time" for k, s, e in times if not (is_int(s) and is_int(e) and s <= e)),
                      None) or next((f"{b[0]} starts before {a[0]} ends" for a, b in pairwise(times) if b[1] < a[2]),
                                    None)
+    # Optional rows run alone after the nine core arms (§1). Overlapping a core arm is an order fault; any other
+    # departure keeps the row in section 3x, marked, and out of section 7.
+    off_order, core_end = {}, max((e for _, _, e in times if is_int(e)), default=None)
+    for name in [k for k in arms if k.startswith("X-")]:
+        s, e = arms[name]["units"].get("start_ms"), arms[name]["units"].get("end_ms")
+        if not (is_int(s) and is_int(e) and s <= e):
+            off_order[name] = "no start or end time"
+            continue
+        hit = next((k for k, cs, ce in times if is_int(cs) and is_int(ce) and s < ce and cs < e), None)
+        if hit:
+            violation = violation or f"{name} overlaps core arm {hit}"
+            continue
+        other = next((k for k in arms if k.startswith("X-") and k != name and is_int(arms[k]["units"].get("start_ms"))
+                      and is_int(arms[k]["units"].get("end_ms")) and s < arms[k]["units"]["end_ms"]
+                      and arms[k]["units"]["start_ms"] < e), None)
+        if core_end is not None and s < core_end:
+            off_order[name] = "starts before the last core arm ends"
+        elif other:
+            off_order[name] = f"overlaps {other}"
     print("run order verified" if violation is None else f"RUN ORDER VIOLATION: {violation}")
+    for name, reason in off_order.items():
+        print(f"{name}: not run as declared ({reason})")
     if violation is not None:
         invalid.add("run order")
     # The core identity is the most common among core arms (ties: the earliest label in F1..H2).
@@ -366,7 +390,7 @@ def checks(args, pack, arms, order):
         disclosed = arm["disclosures"].get("floor", {})
         cached = sum(u["cached"] is not False for u in units.values()) + sum(
             disclosed.get(u, {}).get("cached") is not False for u in units)
-        # Reached the live reader: every unit's probe records were served live and the unit was not stopped.
+        # Every unit's probe records were sent to the live reader and the unit was not stopped (answers: check 5).
         floor_file = read(arm["run"] / f"{arm['control']['arm']}.json") or {}
         found, records, live, stopped, covered = 0, 0, 0, 0, set()
         for unit in units:
@@ -383,7 +407,7 @@ def checks(args, pack, arms, order):
         ok = (bool(units) and cached == 0 and set(disclosed) == set(units) and found == len(units)
               and live == records and stopped == 0 and len(covered) == len(tasks))
         print(f"check 7 {name}: units {len(units)} cached or unconfirmed {cached} probe files found {found}"
-              f" probe records {records} served live {live} stopped units {stopped} (stops not all None, or none"
+              f" probe records {records} sent to the live reader {live} (answered probes are counted by check 5) stopped units {stopped} (stops not all None, or none"
               f" recorded) scored action tasks covered {len(covered)} of {len(tasks)} pass {ok}")
         if not ok:
             invalid.add(name)
@@ -395,15 +419,15 @@ def checks(args, pack, arms, order):
     print("check 6: pairs scored in every repeat of F, R and O used (common support for the flags):",
           {label(k): len(v) for k, v in support.items()}, "total", sum(map(len, support.values())))
     return dict(args=args, pack=pack, arms=arms, pairs=pairs, kinds=kinds, lives=lives, tasks=tasks, invalid=invalid,
-                violation=violation, mismatched=mismatched, incomplete=incomplete, used=used, short_rows=short_rows,
+                violation=violation, off_order=off_order, mismatched=mismatched, incomplete=incomplete, used=used, short_rows=short_rows,
                 support=support)
 
 
 def scores(ctx, failed):
     """Sections 3-8, printed only when no control row is invalid and no rerun is pending."""
     pack, arms, pairs, kinds, lives, tasks = (ctx[k] for k in ("pack", "arms", "pairs", "kinds", "lives", "tasks"))
-    invalid, mismatched, used, short_rows, support = (ctx[k] for k in (
-        "invalid", "mismatched", "used", "short_rows", "support"))
+    invalid, mismatched, used, short_rows, support, off_order = (ctx[k] for k in (
+        "invalid", "mismatched", "used", "short_rows", "support", "off_order"))
 
     # 3. Primary display.
     def groups(members):
@@ -416,7 +440,8 @@ def scores(ctx, failed):
         for row, members_arms in rows:
             for arm in members_arms:
                 print(f"-- {arm['name']}" + (" (INVALID CONTROL ROW)" if arm["name"] in invalid else "")
-                      + (" (identity mismatch: not pooled)" if arm["name"] in mismatched else ""))
+                      + (" (identity mismatch: not pooled)" if arm["name"] in mismatched else "")
+                      + (f" (not run as declared: {off_order[arm['name']]})" if arm["name"] in off_order else ""))
                 for group, members in groups(pairs):
                     print(f"  {group}: {line([pair_score(arm['outcomes'], p) for p in members])}")
             if row and len(ROWS.get(row, ())) > 1:
@@ -476,9 +501,9 @@ def scores(ctx, failed):
         print(f"-- {label(k)}: common pairs {n} f {exact(f)} r {exact(r)} c {exact(c)}"
               f" c over O1,O2,O3 {exact(pts(used['O'], members))}")
         rows_of = {"low": "O", "naive": "FRO", "floor": "FO"}
-        status = {}
+        status, means = {}, {}
         for flag in ("low", "naive", "floor"):
-            mean = state(flag, f, r, c)
+            mean = means[flag] = state(flag, f, r, c)
             combos = {"low": [(f, r, pts([o], members)) for o in used["O"]],
                       "naive": [(pts([x], members), pts([y], members), pts([o], members))
                                 for x, y, o in product(used["F"], used["R"], used["O"])],
@@ -500,7 +525,8 @@ def scores(ctx, failed):
         elif open_:
             verdict = "; ".join(open_)
         else:
-            verdict = "candidate"
+            verdict = "candidate" + (" (near-solved flags not interpreted: c <= f or c <= 0)"
+                                     if "not interpreted" in (means["naive"], means["floor"]) else "")
         print(f"  classification: {verdict}")
     print("flags: low c < 75; naive (near-solved by naive retrieval) r >= f + 0.7 (c - f); floor (near-solved"
           " without memory) f >= 0.7 c; near-solved flags not interpreted when c <= f or c <= 0. Margin in pairs ="
@@ -530,7 +556,8 @@ def scores(ctx, failed):
 
     # 7. Real systems.
     print("\n== 7. Real systems against the control rows (§5); no significance claimed")
-    systems = [("H", used["H"])] + [(a["name"], [a]) for a in optional if a["name"] not in mismatched]
+    systems = [("H", used["H"])] + [(a["name"], [a]) for a in optional
+                                       if a["name"] not in mismatched and a["name"] not in off_order]
 
     def life_line(name, row, what, system, control, items, life_of, score, group):
         if not system or not control:

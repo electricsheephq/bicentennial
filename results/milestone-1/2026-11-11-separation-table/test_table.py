@@ -328,10 +328,10 @@ def test_check_7_needs_every_unit_live(run):
             (path / "oracle_evidence.json").write_text(json.dumps(data))
 
     clean = next(x for x in run()[1].splitlines() if x.startswith("check 7 O1"))
-    assert clean == ("check 7 O1: units 4 cached or unconfirmed 0 probe files found 4 probe records 18 served live 18"
-                     " stopped units 0 (stops not all None, or none recorded) scored action tasks covered 16 of 16"
+    assert clean == ("check 7 O1: units 4 cached or unconfirmed 0 probe files found 4 probe records 18 sent to the live"
+                     " reader 18 (answered probes are counted by check 5) stopped units 0 (stops not all None, or none recorded) scored action tasks covered 16 of 16"
                      " pass True")
-    for edit, part in ((served_none, "served live 17"), (missing, "probe files found 3"), (stopped, "stopped units 1")):
+    for edit, part in ((served_none, "sent to the live reader 17"), (missing, "probe files found 3"), (stopped, "stopped units 1")):
         code, out = run(edit=edit)
         line = next(x for x in out.splitlines() if x.startswith("check 7 O1"))
         assert code == 3 and part in line and line.endswith("pass False") and "== 3." not in out
@@ -380,6 +380,35 @@ def test_failed_optional_attempt(run):
     code, out = run(extra=("X-omega",), edit=refuse)
     assert code == 0 and "X-omega: attempt failed, refusal code live_stop" in out.splitlines()
     assert "REFUSALDETAILZQ" not in out and "== 7." in out and "  X-omega " not in out.split("== 7.")[1]
+
+    def refuse_c7(label, path):
+        if label == "X-omega":
+            for name in ("card.json", "outcomes.json"):
+                (path / name).unlink()
+            write(path / "refusal.json", dict(code="c7_changed"))
+
+    assert "X-omega: attempt failed, refusal code c7_changed" in run(extra=("X-omega",), edit=refuse_c7)[1].splitlines()
+
+
+def test_candidate_says_when_near_solved_flags_were_not_interpreted(run):
+    right = {"corr": [1000, 1000]}
+    code, out = run({k: right for k in table.CORE if k[0] in "FRO"})
+    corr = flags(out, "Drift, correction twins")
+    assert code == 0 and "f 100 (100.0) r 100 (100.0) c 100 (100.0)" in corr[0]
+    assert corr[4].endswith("classification: candidate (near-solved flags not interpreted: c <= f or c <= 0)")
+    assert flags(out, "Drift, value twins")[4].endswith("classification: near-solved by naive retrieval")
+
+
+def test_optional_rows_run_after_the_core_arms_alone(run):
+    code, out = run(extra=("X-omega",), slots={"X-omega": ORDER.index("H2")})
+    assert code == 3 and "RUN ORDER VIOLATION: X-omega overlaps core arm H2" in out.splitlines() and "== 3." not in out
+    code, out = run(extra=("X-omega", "X-holo"))  # both after the core arms, at the same time
+    assert code == 0 and "X-omega: not run as declared (overlaps X-holo)" in out.splitlines()
+    assert "X-holo: not run as declared (overlaps X-omega)" in out.splitlines()
+    assert "-- X-omega (not run as declared: overlaps X-holo)" in out.splitlines()
+    assert "  X-omega " not in out.split("== 7.")[1] and "  X-holo " not in out.split("== 7.")[1]
+    code, out = run(extra=("X-holo",))
+    assert code == 0 and "not run as declared" not in out and "  X-holo " in out.split("== 7.")[1]
 
 
 def test_per_life_differences_for_every_comparison(run):
