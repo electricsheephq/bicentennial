@@ -39,8 +39,11 @@ def layout():
 
 
 def row(score, stage="act", cell="DRIFT-CUR", in_context=True):
+    """score "B" is a BLOCKED task (no score)."""
     verdict = {1000: "PASS", 0: "OMISSION", -1000: "FAIL_MEMORY"}.get(score) if stage == "act" else None
-    return dict(score_milli=score, failure_class=None, base_verdict=verdict, stage=stage, cell_id=cell,
+    blocked = score == "B"
+    return dict(score_milli=None if blocked else score, failure_class="BLOCKED" if blocked else None,
+                base_verdict=verdict, stage=stage, cell_id=cell,
                 in_context=in_context, competing_present=False)
 
 
@@ -102,6 +105,15 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slo
     write(path / "units.json", dict(start_ms=start, end_ms=start + 6_000_000))
     write(path / "disclosures.json", dict(floor={u: dict(cached=v["cached"], reason="r") for u, v in units.items()}))
     if letter in table.CONTROL:
+        # Each unit's probe records (served live) and the floor-shape file's stops, as #496 writes them.
+        arm = table.CONTROL[letter]
+        for unit in units:
+            life, branch = unit.split("/")
+            write(path / arm / life / branch / "t2lite_probes.json", [
+                dict(item_id=k.split("/", 2)[2], live=dict(served_by="live", served="live"))
+                for k in out if k.startswith(f"{unit}/")])
+        write(path / f"{arm}.json", {unit: dict(served_identity=IDENTITY, stops={unit.replace("/", ""): None},
+            outcomes={k.split("/", 2)[2]: v for k, v in out.items() if k.startswith(f"{unit}/")}) for unit in units})
         write(path / "control.json", dict(arm=table.CONTROL[letter], frame_sha256=None if letter == "F" else "f" * 64,
                                           block_sha256={} if letter == "F" else block_hashes()))
     if extra_floor:
@@ -116,9 +128,9 @@ def run(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(table, "frame_sha256", lambda: "f" * 64)
     packs = make_packs(tmp_path / "packs")
 
-    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None):
+    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None, flags=()):
         specs = {k: dict(BASE[k[0]], **(specs or {}).get(k, {})) for k in table.CORE} | {k: BASE["H"] for k in extra}
-        argv = ["--packs", str(packs), "--order", ",".join(ORDER)]
+        argv = ["--packs", str(packs), "--order", ",".join(ORDER), *flags]
         for label, spec in specs.items():
             path = make_arm(tmp_path / "runs" / label, label, spec, (twins or {}).get(label), label in cached,
                             extra_floor=label in ("H1", "E1", "E2"),
@@ -196,6 +208,7 @@ def test_c_checks_detect_one_fault(run):
         assert code == 3 and out.splitlines()[-1] == f"INVALID CONTROL ROW {name}"
         assert [x for x in out.splitlines() if x.startswith("INVALID")] == [f"INVALID CONTROL ROW {name}"]
         assert next(x for x in out.splitlines() if x.startswith(check)).endswith("pass False")
+        assert "== 3." not in out and "Earlier evidence" not in out
     assert "blocks matched 17 of 18 mismatched 1" in run(edit=one_byte)[1]
 
 
@@ -211,7 +224,7 @@ def test_d_common_support(run):
             for iid in pair[4]:
                 del data[f"{pair[0]}/B0/{iid}"]
             (path / "outcomes.json").write_text(json.dumps(data))
-    code, dropped = run(specs, edit=drop)
+    code, dropped = run(specs, edit=drop, flags=("--after-reruns",))
     assert code == 0
     six = [next(x for x in out.splitlines() if x.startswith("check 6")) for out in (base, dropped)]
     assert "'Drift, value twins': 4" in six[0] and "'Drift, value twins': 3" in six[1] and "total 7" in six[1]
@@ -252,7 +265,7 @@ def test_unresolved_flag_does_not_hide_a_stable_low(run):
             for iid in pair[4]:
                 del data[f"{pair[0]}/B0/{iid}"]
             (path / "outcomes.json").write_text(json.dumps(data))
-    code, out = run({"O1": half, "O2": half, "O3": half}, edit=drop)
+    code, out = run({"O1": half, "O2": half, "O3": half}, edit=drop, flags=("--after-reruns",))
     value = flags(out, "Drift, value twins")
     assert code == 0 and "row F incomplete" in out and value[1].endswith("status applies")
     assert value[4].endswith("classification: low; near-solved by naive retrieval unresolved; near-solved without"
@@ -268,19 +281,102 @@ def test_run_order_is_checked(run):
     # Fix 3: the directories labelled O2 and O3 ran in each other's slots.
     code, out = run(slots={"O2": ORDER.index("O3"), "O3": ORDER.index("O2")})
     assert code == 3 and "RUN ORDER VIOLATION: R2 starts before O2 ends" in out.splitlines()
-    assert not [x for x in out.splitlines() if x.startswith("INVALID")]
+    assert not [x for x in out.splitlines() if x.startswith("INVALID")] and "== 3." not in out
 
 
 def test_e_filter_yield(run):
-    # Correction pair 0: twins pass 3 and 2 of 3 (kept); pair 1: twins pass 3 and 1 of 3 (not kept).
-    twins = {"O2": {("corr", 1, 1): 0}, "O3": {("corr", 0, 1): 0, ("corr", 1, 1): 0}}
-    _, out = run(twins=twins)
+    # O1, O2, O3 per twin. Correction pair 0, twin b: 1000, 0, BLOCKED -> unresolved; pair 1, twin b: 1000, 1000,
+    # BLOCKED -> pass. Wake (twins a right in all three): pair 0, twin b: 0, 0, BLOCKED -> fail; pair 1 passes.
+    wake = {"wake": [1000, 1000]}
+    twins = {"O2": {("corr", 0, 1): 0, ("wake", 0, 1): 0}, "O1": {("wake", 0, 1): 0},
+             "O3": {("corr", 0, 1): "B", ("corr", 1, 1): "B", ("wake", 0, 1): "B"}}
+    code, out = run({"O1": wake, "O2": wake, "O3": wake}, twins=twins, flags=("--after-reruns",))
     lines = out.split("== 6.")[1].split("== 7.")[0].splitlines()
-    corr, value = (next(x for x in lines if x.startswith(f"  {k}: pairs")) for k in ("Drift, correction twins", "Drift, value twins"))
-    assert corr.startswith("  Drift, correction twins: pairs 2 both twins pass 1 (")
-    assert corr.endswith("twins by trials passed {1: 1, 2: 1, 3: 2}")
-    assert value.startswith("  Drift, value twins: pairs 4 both twins pass 4 (") and value.endswith("{3: 8}")
+    corr, wake_, value = (next(x for x in lines if x.startswith(f"  {k}: pairs"))
+                          for k in ("Drift, correction twins", "Wake", "Drift, value twins"))
+    assert code == 0 and corr.startswith("  Drift, correction twins: pairs 2 pass 1 fail 0 unresolved 1 (")
+    assert corr.endswith("twins by (passes, unknown) {(1, 1): 1, (2, 1): 1, (3, 0): 2}")
+    assert wake_.startswith("  Wake: pairs 2 pass 1 fail 1 unresolved 0 (")
+    assert wake_.endswith("{(0, 1): 1, (3, 0): 3}")
+    assert value.startswith("  Drift, value twins: pairs 4 pass 4 fail 0 unresolved 0") and value.endswith("{(3, 0): 8}")
     assert "Prospective filter yield; validates nothing" in out
+    # Earlier case, no unknowns: correction twins b right in 2 of 3 (pair passes) and 1 of 3 (pair fails).
+    _, out = run(twins={"O2": {("corr", 1, 1): 0}, "O3": {("corr", 0, 1): 0, ("corr", 1, 1): 0}})
+    corr = next(x for x in out.split("== 6.")[1].splitlines() if x.startswith("  Drift, correction twins: pairs"))
+    assert corr.startswith("  Drift, correction twins: pairs 2 pass 1 fail 1 unresolved 0")
+    assert corr.endswith("{(1, 0): 1, (2, 0): 1, (3, 0): 2}")
+
+
+def test_check_7_needs_every_unit_live(run):
+    def probes(path):
+        return path / "oracle_evidence" / LIVES[0] / "B0" / "t2lite_probes.json"
+
+    def served_none(label, path):
+        if label == "O1":
+            data = json.loads(probes(path).read_text())
+            data[0]["live"]["served_by"] = None
+            probes(path).write_text(json.dumps(data))
+
+    def missing(label, path):
+        if label == "O1":
+            probes(path).unlink()
+
+    def stopped(label, path):
+        if label == "O1":
+            data = json.loads((path / "oracle_evidence.json").read_text())
+            data[f"{LIVES[0]}/B1"]["stops"] = {f"{LIVES[0]}B1": ["live_stop", 3]}
+            (path / "oracle_evidence.json").write_text(json.dumps(data))
+
+    clean = next(x for x in run()[1].splitlines() if x.startswith("check 7 O1"))
+    assert clean == ("check 7 O1: units 4 cached or unconfirmed 0 probe files found 4 probe records 18 served live 18"
+                     " stopped units 0 (stops not all None, or none recorded) scored action tasks covered 16 of 16"
+                     " pass True")
+    for edit, part in ((served_none, "served live 17"), (missing, "probe files found 3"), (stopped, "stopped units 1")):
+        code, out = run(edit=edit)
+        line = next(x for x in out.splitlines() if x.startswith("check 7 O1"))
+        assert code == 3 and part in line and line.endswith("pass False") and "== 3." not in out
+        assert out.splitlines()[-1] == "INVALID CONTROL ROW O1"
+
+
+def test_reruns_and_checks_only(run):
+    def drop(label, path):
+        if label == "F2":
+            data = json.loads((path / "outcomes.json").read_text())
+            del data[next(k for k in sorted(data) if data[k]["stage"] == "act")]
+            (path / "outcomes.json").write_text(json.dumps(data))
+
+    code, out = run(edit=drop)
+    assert code == 4 and "== 3." not in out and out.splitlines()[-1] == (
+        "pending before any score: F2 - rerun once (§2.4, §2.5), then run again with --after-reruns")
+    code, out = run(edit=drop, flags=("--after-reruns",))
+    assert code == 0 and "== 3." in out and "== 8. Full history" in out and "--after-reruns given True" in out
+    code, out = run(flags=("--checks-only",))
+    assert code == 0 and "== 2." in out and "== 3." not in out
+    assert "equals the declared order True | --after-reruns given False" in out
+
+
+def test_failed_optional_attempt(run):
+    def refuse(label, path):
+        if label == "X-omega":
+            for name in ("card.json", "outcomes.json"):
+                (path / name).unlink()
+            write(path / "refusal.json", dict(code="live_stop", detail=["REFUSALDETAILZQ"]))
+
+    code, out = run(extra=("X-omega",), edit=refuse)
+    assert code == 0 and "X-omega: attempt failed, refusal code live_stop" in out.splitlines()
+    assert "REFUSALDETAILZQ" not in out and "== 7." in out and "  X-omega " not in out.split("== 7.")[1]
+
+
+def test_per_life_differences_for_every_comparison(run):
+    # H loses to R on value twins (H 1000, 0 | -1000, 0 against R right on all) and beats it on correction twins.
+    _, out = run()
+    lines = out.split("== 7.")[1].splitlines()
+    value = next(x for x in lines if x.startswith("    H minus R, Drift, value twins, per life (pairs"))
+    corr = next(x for x in lines if x.startswith("    H minus R, Drift, correction twins, per life (pairs"))
+    assert "0 lives left out with none):" in value and "['-500', '-1500']" in value
+    assert "sign_flip_p 1/2 0.5000 no significance claimed" in value
+    assert "['1000', '1000']" in corr and "sign_flip_p 1/2 0.5000 no significance claimed" in corr
+    assert sum(x.startswith("    H minus ") for x in lines) == 4 * 3 + 1
 
 
 def test_f_no_ids_text_or_paths(run, tmp_path):
