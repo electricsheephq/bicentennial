@@ -499,7 +499,7 @@ def test_pins_compare_in_full_and_optional_rows_need_the_same_code(run):
     # Two benchmark commits that share their first 12 characters still differ.
     code, out = run(edit=card_pins(H2=dict(benchmark_commit="b" * 12 + "e" * 28)))
     assert code == 3 and "== 3." not in out and "one commit for every core arm (card pins equal) False" in out
-    assert "PIN MISMATCH: benchmark_commit: bbbbbbbbbbbb (H2); bbbbbbbbbbbb (F1,F2,R1,R2,O1,O2,O3,H1)" in out.splitlines()
+    assert "PIN MISMATCH: benchmark_commit: bbbbbbbbbbbb (F1,F2,R1,R2,O1,O2,O3,H1); bbbbbbbbbbbb (H2)" in out.splitlines()
     # An optional row at another scorer commit is shown, marked, and left out of the comparisons ...
     code, out = run(extra=("X-omega",), edit=card_pins(**{"X-omega": dict(scorer_commit="e" * 40)}))
     assert code == 0 and "X-omega: not run as declared (different code pins)" in out.splitlines()

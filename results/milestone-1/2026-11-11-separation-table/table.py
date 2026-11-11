@@ -10,7 +10,7 @@ and life (§3); 4 single tasks, quiz items and agreement between repeats; 5 scre
 a check is open: after section 2 it exits 3 when a control row fails check 1, 2 or 7, the run order is violated, or
 the core arms' card pins differ (one commit for every row, §1), and 4 when a core arm fails check 4 or 5 and
 --after-reruns is not given. The order listed must be the declared one; only a rerun named in --reruns may run
-later than its slot, and never before an arm whose slot comes before its own (§11.9). Check 2 reads the probe turn's
+later than its slot, and never before an arm that was not itself rerun and whose slot comes before its own (§11.9). Check 2 reads the probe turn's
 first request, the one that carries the block (in_context_initial in each unit's probe records, §11.5). Check 3 (memory off) cannot fail here: run outputs do not record request tools or the
 memory block, so it prints as not visible, covered by the runner's tests at the pinned commit (#496:
 test_c_floor_bodies_and_memory_off). --checks-only stops after section 2 (exit 0 when
@@ -321,8 +321,8 @@ def checks(args, pack, arms, order, missing):
     for name, code in missing.items():
         print(f"{name}: missing (no card.json or outcomes.json; refusal code {code})"
               + (", published as missing after its rerun" if args.after_reruns else ""))
-    # §1 fixes the order. Only a named rerun may run later than its slot, and never before an arm whose slot comes
-    # before its own (§11.9).
+    # §1 fixes the order. Only a named rerun may run later than its slot, and never before an arm that was not itself
+    # rerun and whose slot comes before its own (§11.9).
     at = {k: n for n, k in enumerate(order)}
     departure = (("the order listed is not the declared order" + (f" apart from the reruns named ({','.join(reruns)})"
                                                                    if reruns else ""))
@@ -385,7 +385,7 @@ def checks(args, pack, arms, order, missing):
     core_pins = arms[ran[0]]["card"]["pins"]
     for name in [k for k in arms if k.startswith("X-")]:
         mine = arms[name]["card"]["pins"]
-        if any(str(mine.get(key)) != str(core_pins.get(key)) for key in set(mine) | set(core_pins) - set(SYSTEM_PINS)):
+        if any(str(mine.get(key)) != str(core_pins.get(key)) for key in (set(mine) | set(core_pins)) - set(SYSTEM_PINS)):
             print(f"{name}: not run as declared (different code pins)")
             off_order[name] = "different code pins"
     # §1: one pack for every row; the card's pack_hash is the installed tree's hash.
