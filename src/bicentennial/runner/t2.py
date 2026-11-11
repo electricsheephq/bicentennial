@@ -288,7 +288,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 _write(out / "receipts", arm + ".json", _receipt([r for r in runs if r.arm == arm],
                     start, "COMPLETE", turn_wait_s, [r for r in units if r["arm"] == arm], end_ms=end))
             _write(out, ".receipt.json", receipt)
-            _scan_end_files(out, needles, arms)
+            _scan_end_files(out, needles, *([] if control is None else [arms]))
             for path, entry0 in pending_cache:
                 temp = path.with_name(path.name + "." + ctx.run_id)
                 _write(temp.parent, temp.name, entry0)
