@@ -225,9 +225,11 @@ def test_e_filter_yield(run):
     # Correction pair 0: twins pass 3 and 2 of 3 (kept); pair 1: twins pass 3 and 1 of 3 (not kept).
     twins = {"O2": {("corr", 1, 1): 0}, "O3": {("corr", 0, 1): 0, ("corr", 1, 1): 0}}
     _, out = run(twins=twins)
-    assert ("  Drift, correction twins: pairs 2 both twins pass 1 twins by trials passed {1: 1, 2: 1, 3: 2}"
-            in out.splitlines())
-    assert "  Drift, value twins: pairs 4 both twins pass 4 twins by trials passed {3: 8}" in out.splitlines()
+    lines = out.split("== 6.")[1].split("== 7.")[0].splitlines()
+    corr, value = (next(x for x in lines if x.startswith(f"  {k}: pairs")) for k in ("Drift, correction twins", "Drift, value twins"))
+    assert corr.startswith("  Drift, correction twins: pairs 2 both twins pass 1 (")
+    assert corr.endswith("twins by trials passed {1: 1, 2: 1, 3: 2}")
+    assert value.startswith("  Drift, value twins: pairs 4 both twins pass 4 (") and value.endswith("{3: 8}")
     assert "Prospective filter yield; validates nothing" in out
 
 

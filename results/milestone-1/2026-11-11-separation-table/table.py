@@ -177,13 +177,27 @@ def main(argv=None):
                 by_kind.main()
         finally:
             sys.argv = saved
-        print(buffer.getvalue(), end="")
+        print(not_scored_labels(buffer.getvalue(), load_arm("E1" if "E1" in given else "E2", earlier[0])), end="")
         if len(earlier) == 2:
             e = {n: load_arm(n, Path(given[n])) for n in ("E1", "E2")}
             agreement(e["E1"], e["E2"], pairs_of(load_packs(args.earlier_packs or args.packs), e))
     for name in sorted(invalid):
         print("INVALID CONTROL ROW", name)
     return 3 if invalid else 0
+
+
+def not_scored_labels(text, first):
+    """Step 1's section H labels unscored pairs by kind only; add their genre and "not scored live" to each label."""
+    unscored = {(life, iid) for life, _branch, iid in first["card"]["not_scored_live"]}
+    genres = "/".join(sorted({str(first["outcomes"][k].get("genre")) for k in unscored if k in first["outcomes"]}))
+    lines, inside = [], False
+    for row in text.split("\n"):
+        inside = row.startswith("== H.") or (inside and not row.startswith("=="))
+        head, sep, tail = row.partition(": pairs ")
+        if inside and sep and row.startswith("  ") and not row.startswith("    "):
+            row = f"{head}, {genres}, not scored live{sep}{tail}"
+        lines.append(row)
+    return "\n".join(lines)
 
 
 def pairs_of(pack, arms):
@@ -284,7 +298,8 @@ def table(args, pack, arms, order):
         scored = sum(is_int(arm["outcomes"].get(k, {}).get("score_milli")) for k in tasks)
         blocked = sum(arm["outcomes"].get(k, {}).get("failure_class") == "BLOCKED" for k in tasks)
         print(f"check 5 {name}: scored action tasks assigned {len(tasks)} scored {scored} BLOCKED {blocked}"
-              f" missing {sum(k not in arm['outcomes'] for k in tasks)} complete {scored == len(tasks)}")
+              f" missing {sum(k not in arm['outcomes'] for k in tasks)} complete {scored == len(tasks)}"
+              " (scored = integer score_milli; missing = no outcome row)")
         if scored < len(tasks):
             incomplete.add(name)
     for name in controls:
@@ -325,7 +340,8 @@ def table(args, pack, arms, order):
                     t = [tally([pair_score(a["outcomes"], p) for p in both]) for a in used[row]]
                     m = [Fraction(sum(x[i] for x in t), len(t)) if t else None for i in range(3)]
                     print(f"  {group}: common pairs {len(both)} right {exact(m[0])} wrong {exact(m[1])}"
-                          f" no_credit {exact(m[2])} points {exact(pts(used[row], both))}")
+                          f" no_credit {exact(m[2])} points {exact(pts(used[row], both))} (common pairs = scored in every"
+                          " repeat used; counts are means over repeats)")
 
     display([(r, [arms[k] for k in names]) for r, names in ROWS.items()],
             "3. Scored action pairs by kind and life (pairs, right, wrong, no credit, non-result, net, points)")
@@ -348,7 +364,7 @@ def table(args, pack, arms, order):
             present = [x for x in rows if x is not None]
             right, wrong, none, nonresult = tally([x["score_milli"] if is_int(x["score_milli"]) else None for x in present])
             print(f"  {label(k)}: tasks {len(rows)} right {right} wrong {wrong} no_credit {none}"
-                  f" non_result {nonresult + len(rows) - len(present)}"
+                  f" non_result {nonresult + len(rows) - len(present)} (no integer score_milli, or no row)"
                   f" base_verdict {dict(sorted(Counter(str(x['base_verdict']) for x in present).items()))}"
                   f" failure_class {dict(sorted(Counter(str(x['failure_class']) for x in present).items()))}")
         quiz = [x for x in arm["outcomes"].values() if x["stage"] == "survive"]
@@ -410,8 +426,9 @@ def table(args, pack, arms, order):
     for k in kinds if len(trials) == 3 else ():
         passes = [[sum(t["outcomes"].get(key, {}).get("score_milli") == 1000 for t in trials) for key in p["keys"]]
                   for p in pairs if p["kind"] == k]
-        print(f"  {label(k)}: pairs {len(passes)} both twins pass {sum(min(x) >= 2 for x in passes)}"
-              f" twins by trials passed {dict(sorted(Counter(v for x in passes for v in x).items()))}")
+        print(f"  {label(k)}: pairs {len(passes)} both twins pass {sum(min(x) >= 2 for x in passes)} (each twin"
+              f" score_milli 1000 in >= 2 of O1, O2, O3) twins by trials passed"
+              f" {dict(sorted(Counter(v for x in passes for v in x).items()))}")
 
     # 7. Real systems.
     print("\n== 7. Real systems against the control rows (§5); no significance claimed")
@@ -426,7 +443,7 @@ def table(args, pack, arms, order):
                 diff = None if s is None or other is None else s - other
                 parts.append(f"{row} {exact(other)}, {name} minus {row} {exact(diff)} on {len(both)} pairs")
             print(f"  {name} {label(k) if k else 'pooled diagnostic'}: {name} points {exact(pts(system, common(system, members)))};"
-                  f" against " + "; ".join(parts))
+                  f" against " + "; ".join(parts) + " (pairs = scored in every repeat of both rows)")
         if not system or not used["F"]:
             print(f"  {name} minus F per life: unresolved (no usable repeat)")
             continue
@@ -438,7 +455,8 @@ def table(args, pack, arms, order):
             mine, floor = per_life(system, items, life_of, score), per_life(used["F"], items, life_of, score)
             d = {life: mine[life] - floor[life] for life in mine}
             p = sign_flip_p(d, seed=SEED, name=f"{name}-minus-F-{what}") if d else None
-            print(f"  {name} minus F per life, {what} (milli; {len(d)} lives):", [str(d[life]) for life in sorted(d)],
+            print(f"  {name} minus F per life, {what} (milli; {what} scored in every repeat of {name} and F;"
+                  f" {len(d)} lives):", [str(d[life]) for life in sorted(d)],
                   "exact two-sided sign_flip_p", "n/a" if p is None else f"{p} {float(p):.4f}", "no significance claimed")
 
     # 8. Full history.
