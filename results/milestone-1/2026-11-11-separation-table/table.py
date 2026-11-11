@@ -2,19 +2,22 @@
 
 Usage: python table.py --packs PACKS_DIR --order F1,R1,O1,H1,H2,O2,R2,F2,O3 F1=RUN_DIR ... H2=RUN_DIR
        [X-<name>=RUN_DIR ...] [E1=RUN_DIR E2=RUN_DIR [--earlier-packs PACKS_DIR]] [--reruns LABELS] [--after-reruns]
-       [--checks-only]
+       [--checks-only] [--check3 FILE]
 Core labels F1 F2 R1 R2 O1 O2 O3 H1 H2 are required together; with E1/E2 only, it prints the earlier evidence alone.
 Prints, in order: 1 header and identity; 2 checks before any score (declaration §2); 3 scored action pairs by kind
 and life (§3); 4 single tasks, quiz items and agreement between repeats; 5 screening flags (§4); 6 filter yield (§6);
 7 real systems (§5); 8 full history; then earlier evidence (step-1 by_kind.py on E1/E2). No score is printed while
-a check is open: after section 2 it exits 3 when a control row fails check 1, 2 or 7, the run order is violated, or
-the core arms' card pins differ (one commit for every row, §1), and 4 when a core arm fails check 4 or 5 and
---after-reruns is not given. The order listed must be the declared one; only a rerun named in --reruns may run
+a check is open: after section 2 it exits 3 when a control row fails check 1, 2 or 7, check 3's tests are not shown
+passing at the run commit, the run order is violated, or the core arms' card pins differ (one commit for every row,
+§1), and 4 when a core arm fails check 4 or 5 and --after-reruns is not given. Check 4 also counts an arm whose run
+discloses a change of served identity during the run, or records none, as mismatched (live.identity_drift, §11.15). The order listed must be the declared one; only a rerun named in --reruns may run
 later than its slot, and never before an arm that was not itself rerun and whose slot comes before its own (§11.9). Check 2 reads the probe turn's
-first request, the one that carries the block (in_context_initial in each unit's probe records, §11.5). Check 3 (memory off) cannot fail here: run outputs do not record request tools or the
-memory block, so it prints as not visible, covered by the runner's tests at the pinned commit (#496:
-test_c_floor_bodies_and_memory_off). --checks-only stops after section 2 (exit 0 when
-nothing is pending). An X- attempt without card.json or outcomes.json is shown as failed with its refusal code only;
+first request, the one that carries the block (in_context_initial in each unit's probe records, §11.5). Check 3
+(memory off) is not visible in run outputs (request bodies are not kept): it is the runner's own tests at the run
+commit (§11.7). --check3 FILE is their verbose pytest output, with a first line "commit <sha>" and a last line
+"exit <code>"; check 3 passes when the commit is the core cards' benchmark_commit, every test in CHECK3_TESTS shows
+PASSED, none shows another outcome, and the exit is 0. --checks-only stops after section 2 (exit 0 when nothing is
+pending). An X- attempt without card.json or outcomes.json is shown as failed with its refusal code only;
 a core label in that state is a missing repeat: pending (exit 4) without --after-reruns, published as missing with it.
 If no core arm has card.json and outcomes.json, it lists the missing arms and stops: 4 without --after-reruns, 3 with
 it (no row exists to publish).
@@ -57,11 +60,13 @@ ROWS = {"F": ("F1", "F2"), "R": ("R1", "R2"), "O": ("O1", "O2", "O3"), "H": ("H1
 CORE = tuple(a for arms in ROWS.values() for a in arms)
 CONTROL = {"F": "no_memory", "R": "naive_rag", "O": "oracle_evidence"}
 SEVEN = Fraction(7, 10)
-NOT_VISIBLE = ("not visible in run outputs (request bodies are not kept); covered by the runner's tests at the"
-               " pinned commit (#496): test_c_floor_bodies_and_memory_off (no memory fence, memory section or memory or"
-               " search tool in any control-arm request body) and test_a_block_is_the_pinned_controls_text_in_the_probe_turn"
-               " (no sealed identifier, option id or honeypot token in any block); the block half was also checked on all"
-               " ten lives of the pack")
+# Check 3 (§11.7): the runner's own tests at the run commit (tests/runner/test_control_arms.py). The first finds no
+# memory fence, memory section or memory or search tool in any control-arm request body; the other two find no sealed
+# identifier, option id or honeypot token in any naive-retrieval or oracle-evidence block.
+CHECK3_TESTS = ("test_c_floor_bodies_and_memory_off",
+                "test_a_block_is_the_pinned_controls_text_in_the_probe_turn[naive_rag]",
+                "test_a_block_is_the_pinned_controls_text_in_the_probe_turn[oracle_evidence]")
+OUTCOMES = ("PASSED", "FAILED", "ERROR", "SKIPPED", "XFAIL", "XPASS")
 DECLARED_ORDER = ("F1", "R1", "O1", "H1", "H2", "O2", "R2", "F2", "O3")
 SYSTEM_PINS = ("system_hash", "route_table_hash")  # the card pins that name the system under test (runner/t2.py)
 RERUN = "rerun once (§2.4, §2.5), then run again with --after-reruns"
@@ -126,6 +131,18 @@ def load_arm(name, run):
         sys.exit(f"{name} is not a {'control' if row in CONTROL else 'system'} run")
     return dict(name=name, row=row, run=run, card=card, outcomes=outcomes, floor=floor, control=control,
                 units=read(run / "units.json") or {}, disclosures=read(run / "disclosures.json") or {})
+
+
+def outcomes_of(lines, test):
+    """Pytest outcome words on the lines that name this test id (verbose lines and the short summary); a line that
+    names it with no outcome word, such as a warnings-summary heading, counts for nothing."""
+    found = Counter()
+    for x in lines:
+        if re.search(rf"::{re.escape(test)}(\s|$)", x):
+            word = next((o for o in OUTCOMES if f" {o}" in x or x.startswith(o + " ")), None)
+            if word:
+                found[word] += 1
+    return found
 
 
 def pair_score(outcomes, pair):
@@ -193,6 +210,7 @@ def main(argv=None):
     parser.add_argument("--after-reruns", action="store_true",
                         help="publish arms still mismatched or incomplete after their one rerun (§2.4-§2.6)")
     parser.add_argument("--checks-only", action="store_true", help="print sections 1 and 2 only")
+    parser.add_argument("--check3", type=Path, help="verbose pytest output of CHECK3_TESTS run at the run commit (§11.7)")
     parser.add_argument("arms", nargs="+", metavar="LABEL=RUN_DIR")
     args = parser.parse_args(argv)
     given = dict(a.split("=", 1) for a in args.arms)
@@ -230,7 +248,9 @@ def main(argv=None):
                 print("CARD PINS DIFFER between core arms (see PIN MISMATCH above): not pooled")
             if "pack" in ctx["invalid"]:
                 print("PACK DIFFERS from --packs for a core arm (see PACK MISMATCH above): not pooled")
-            for name in sorted(ctx["invalid"] - {"run order", "card pins", "pack"}):
+            if "check 3" in ctx["invalid"]:
+                print("CHECK 3 NOT SHOWN PASSING at the run commit (see check 3 above): no score is opened")
+            for name in sorted(ctx["invalid"] - {"run order", "card pins", "pack", "check 3"}):
                 print("INVALID CONTROL ROW", name)
             return 3
         pending = sorted((ctx["mismatched"] | ctx["incomplete"] | set(missing)) & set(CORE), key=CORE.index)
@@ -362,6 +382,14 @@ def checks(args, pack, arms, order, missing):
         invalid.add("run order")
     # The core identity is the most common among core arms (ties: the earliest label in F1..H2).
     core_id = Counter(arms[k]["card"]["served_identity"] for k in ran).most_common(1)[0][0]
+    # §2.4, §11.15: one served identity for the whole arm. A card keeps the first identity served; the run discloses a
+    # later change in disclosures.json (live.identity_drift). A change, or no record of one, makes the arm mismatched.
+    def drift(arm):
+        live = arm["disclosures"].get("live")
+        if not isinstance(live, dict) or "identity_drift" not in live:
+            return "not recorded"
+        return "no" if live["identity_drift"] is None else "yes"
+
     for name, arm in arms.items():
         card, units = arm["card"], arm["units"]
         when = [datetime.fromtimestamp(units[k] / 1000, UTC).isoformat(timespec="seconds") if k in units else "n/a"
@@ -369,7 +397,7 @@ def checks(args, pack, arms, order, missing):
         print(f"{name}: tier {card['tier']} {'control ' + arm['control']['arm'] if arm['control'] else 'system'}"
               f" model {card['model']} effort {card['effort']} pack_hash {card['pack_hash'][:12]} start {when[0]}"
               f" end {when[1]} served_identity {short(card['served_identity'])}"
-              f" matches_core {card['served_identity'] == core_id}")
+              f" matches_core {card['served_identity'] == core_id} identity changed during the run {drift(arm)}")
         print("  pins", json.dumps({k: card["pins"][k][:12] for k in sorted(card["pins"])}))
     print("every arm's served identity equal", len({a["card"]["served_identity"] for a in arms.values()}) == 1)
     # §1: one commit for every row. Differing card pins stop the table before any score.
@@ -401,7 +429,7 @@ def checks(args, pack, arms, order, missing):
             else:
                 print(f"{name}: not run as declared (different pack)")
                 off_order[name] = "different pack"
-    mismatched = {k for k in arms if arms[k]["card"]["served_identity"] != core_id}
+    mismatched = {k for k in arms if arms[k]["card"]["served_identity"] != core_id or drift(arms[k]) != "no"}
 
     # 2. Checks before any score.
     print("\n== 2. Checks before any score (§2)")
@@ -450,8 +478,20 @@ def checks(args, pack, arms, order, missing):
             continue
         if not ok:
             invalid.add(name)
-    print("check 3 (F, R, O): memory block, search tool, answer key and option order in the block:", NOT_VISIBLE)
-    print("check 4: see header (served identity); mismatched arms are not pooled:", len(mismatched))
+    commit = str(arms[ran[0]]["card"]["pins"].get("benchmark_commit"))
+    lines = args.check3.read_text().splitlines() if args.check3 and args.check3.is_file() else []
+    seen = {t: outcomes_of(lines, t) for t in CHECK3_TESTS}
+    ok3 = (lines[:1] == [f"commit {commit}"] and lines[-1:] == ["exit 0"]
+           and all(c["PASSED"] >= 1 and sum(c.values()) == c["PASSED"] for c in seen.values()))
+    print("check 3 (F, R, O): memory block, search tool, answer key and option order in the block are not visible in"
+          " run outputs (request bodies are not kept); the runner's own tests at the run commit", commit[:12], "(§11.7):",
+          "no --check3 file" if not lines else
+          f"file names commit {lines[0].removeprefix('commit ')[:12]}, last line {lines[-1]!r};"
+          + "".join(f" {t} {dict(sorted(c.items())) or 'not found'};" for t, c in seen.items()), "pass", ok3)
+    if not ok3:
+        invalid.add("check 3")
+    print("check 4: see header (served identity, and whether it changed during the run); mismatched arms are not"
+          " pooled:", len(mismatched))
     incomplete = set()
     for name, arm in arms.items():
         scored = sum(is_int(arm["outcomes"].get(k, {}).get("score_milli")) for k in tasks)
@@ -478,7 +518,7 @@ def checks(args, pack, arms, order, missing):
                 live += (record.get("live") or {}).get("served_by") == "live"
                 covered.add((life, record.get("item_id")))
             stops = floor_file.get(unit, {}).get("stops")
-            stopped += not isinstance(stops, dict) or any(v is not None for v in stops.values())
+            stopped += stops != {unit.replace("/", ""): None}
         covered &= probed
         ok = (set(units) == expected_units and set(disclosed) == expected_units and cached == 0
               and found == len(expected_units) and records > 0 and live == records and stopped == 0
@@ -486,7 +526,7 @@ def checks(args, pack, arms, order, missing):
         print(f"check 7 {name}: expected units {len(expected_units)} units listed {len(units)} (card) {len(disclosed)}"
               f" (disclosures) cached or unconfirmed {cached} probe files found {found} probed items covered"
               f" {len(covered)} of {len(probed)} probe records {records} sent to the live reader {live} (answered"
-              f" probes are counted by check 5) stopped units {stopped} (stops not all None, or none recorded) pass {ok}")
+              f" probes are counted by check 5) stopped units {stopped} (a unit's stop record is not exactly its own entry with no stop) pass {ok}")
         if not ok:
             invalid.add(name)
     used = {r: [arms[k] for k in names if k in arms and k not in invalid | mismatched] for r, names in ROWS.items()}
@@ -543,7 +583,12 @@ def scores(ctx, failed):
         for name, code in sorted(failed.items()):
             print(f"{name}: attempt failed, refusal code {code}")
     if "H1" in arms and arms["H1"]["floor"] is not None:
-        extra = dict(name="extra floor (H1's own no-memory floor; enters no mean, flag or comparison)",
+        # §1, §11.16: H1 measures its own floor; the card and the disclosures say which units came from a cache.
+        units, disclosed = arms["H1"]["card"]["floor"]["units"], arms["H1"]["disclosures"].get("floor", {})
+        cached = sum(u.get("cached") is not False or disclosed.get(k, {}).get("cached") is not False
+                     for k, u in units.items())
+        extra = dict(name=f"extra floor (H1's no-memory floor, measured live on {len(units) - cached} of {len(units)}"
+                     f" units, taken from a cache or unconfirmed on {cached}; enters no mean, flag or comparison)",
                      outcomes=arms["H1"]["floor"])
         display([(None, [extra])], "3e. Extra floor")
     else:

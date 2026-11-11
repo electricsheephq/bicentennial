@@ -24,6 +24,12 @@ BASE = {"F": {"value": [0] * 4, "corr": [0] * 2, "wake": [0] * 2},
         "O": {"value": [1000] * 4, "corr": [1000] * 2, "wake": [0] * 2},
         "H": {"value": [1000, 0, -1000, 0], "corr": [1000] * 2, "wake": [0] * 2}}
 
+# Check 3's evidence (§11.7): verbose pytest output of the named tests at the fixture cards' commit.
+CHECK3_OK = "\n".join([f"commit {'b' * 40}", "testslot: slot 0 of 1 (marker 0)",
+                        *(f"tests/runner/test_control_arms.py::{t} PASSED [{n}%]"
+                          for n, t in zip((33, 66, 100), table.CHECK3_TESTS, strict=True)),
+                        "3 passed in 1.00s", "exit 0"])
+
 
 def layout():
     """[(life, kind, index within kind, bundle id, (twin ids))] in global order, plus one quiz id per life."""
@@ -103,7 +109,8 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slo
     write(path / "outcomes.json", out)
     start = 1793796303380 + slot * 10_000_000  # one arm after another, in run-order slots
     write(path / "units.json", dict(start_ms=start, end_ms=start + 6_000_000))
-    write(path / "disclosures.json", dict(floor={u: dict(cached=v["cached"], reason="r") for u, v in units.items()}))
+    write(path / "disclosures.json", dict(floor={u: dict(cached=v["cached"], reason="r") for u, v in units.items()},
+                                          live=dict(identity_drift=None)))
     if letter in table.CONTROL:
         # Each unit's probe records (served live) and the floor-shape file's stops, as #496 writes them.
         arm = table.CONTROL[letter]
@@ -130,9 +137,12 @@ def run(tmp_path, monkeypatch, capsys):
     packs = make_packs(tmp_path / "packs")
     pack_hash = table.pack_tree_hash(packs)
 
-    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None, flags=(), order=ORDER):
+    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None, flags=(), order=ORDER, check3=CHECK3_OK):
         specs = {k: dict(BASE[k[0]], **(specs or {}).get(k, {})) for k in table.CORE} | {k: BASE["H"] for k in extra}
         argv = ["--packs", str(packs), "--order", ",".join(order), *flags]
+        if check3 is not None:
+            (tmp_path / "check3.txt").write_text(check3)
+            argv += ["--check3", str(tmp_path / "check3.txt")]
         for label, spec in specs.items():
             path = make_arm(tmp_path / "runs" / label, label, spec, (twins or {}).get(label), label in cached,
                             extra_floor=label in ("H1", "E1", "E2"),
@@ -307,6 +317,55 @@ def test_e_filter_yield(run):
     assert corr.endswith("{(1, 0): 1, (2, 0): 1, (3, 0): 2}")
 
 
+def test_check_3_needs_its_tests_passing_at_the_run_commit(run):
+    line = next(x for x in run()[1].splitlines() if x.startswith("check 3"))
+    assert "the runner's own tests at the run commit bbbbbbbbbbbb (§11.7): file names commit bbbbbbbbbbbb, last line" in line
+    assert line.count(" {'PASSED': 1};") == 3 and line.endswith("pass True")
+    # A warnings-summary heading names a test with no outcome word: it counts for nothing.
+    warned = CHECK3_OK.replace("3 passed", f"tests/runner/test_control_arms.py::{table.CHECK3_TESTS[0]}\n  Warning\n3 passed")
+    assert run(check3=warned)[0] == 0
+    one = f"tests/runner/test_control_arms.py::{table.CHECK3_TESTS[2]}"
+    for text in (None, CHECK3_OK.replace("b" * 40, "d" * 40), CHECK3_OK.replace("exit 0", "exit 1"),
+                 CHECK3_OK.replace(f"{one} PASSED", f"{one} FAILED"), CHECK3_OK.replace(f"{one} PASSED [100%]\n", ""),
+                 CHECK3_OK.replace("exit 0", f"SKIPPED {one}\nexit 0"), ""):
+        code, out = run(check3=text)
+        assert code == 3 and "== 3." not in out and "pass False" in next(x for x in out.splitlines() if x.startswith("check 3"))
+        assert out.splitlines()[-1] == "CHECK 3 NOT SHOWN PASSING at the run commit (see check 3 above): no score is opened"
+    assert "the run commit bbbbbbbbbbbb (§11.7): no --check3 file pass False" in run(check3=None)[1]
+
+
+def test_identity_change_during_an_arm_is_a_mismatch(run):
+    def drift(value):
+        def edit(label, path):
+            if label == "H1":
+                data = json.loads((path / "disclosures.json").read_text())
+                if value is None:
+                    del data["live"]
+                else:
+                    data["live"]["identity_drift"] = value
+                (path / "disclosures.json").write_text(json.dumps(data))
+        return edit
+
+    def header(out):
+        return next(x for x in out.splitlines() if x.startswith("H1: tier"))
+
+    assert header(run()[1]).endswith("matches_core True identity changed during the run no")
+    for value, said in ((dict(model="m", baseline=IDENTITY, served="identity-zq-later"), "yes"), (None, "not recorded")):
+        code, out = run(edit=drift(value))
+        assert code == 4 and header(out).endswith(f"matches_core True identity changed during the run {said}")
+        assert out.splitlines()[-1].startswith("pending before any score: H1 -") and "== 3." not in out
+        code, out = run(edit=drift(value), flags=("--after-reruns",))
+        assert code == 0 and "-- H1 (identity mismatch: not pooled)" in out.splitlines()
+        assert "row H incomplete: repeats used ['H2']" in out
+
+
+def test_h1_extra_floor_says_how_it_was_measured(run):
+    assert ("-- extra floor (H1's no-memory floor, measured live on 4 of 4 units, taken from a cache or unconfirmed"
+            " on 0; enters no mean, flag or comparison)") in run()[1].splitlines()
+    code, out = run(cached=("H1",))
+    assert code == 0 and "measured live on 3 of 4 units, taken from a cache or unconfirmed on 1;" in out
+
+
 def test_check_7_needs_every_unit_live(run):
     def probes(path):
         return path / "oracle_evidence" / LIVES[0] / "B0" / "t2lite_probes.json"
@@ -346,10 +405,22 @@ def test_check_7_needs_every_unit_live(run):
     clean = next(x for x in run()[1].splitlines() if x.startswith("check 7 O1"))
     assert clean == ("check 7 O1: expected units 4 units listed 4 (card) 4 (disclosures) cached or unconfirmed 0 probe"
                      " files found 4 probed items covered 18 of 18 probe records 18 sent to the live reader 18 (answered"
-                     " probes are counted by check 5) stopped units 0 (stops not all None, or none recorded) pass True")
+                     " probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own"
+                     " entry with no stop) pass True")
+
+    def stop_record(value):
+        def edit(label, path):
+            if label == "O1":
+                data = json.loads((path / "oracle_evidence.json").read_text())
+                data[f"{LIVES[0]}/B1"]["stops"] = value
+                (path / "oracle_evidence.json").write_text(json.dumps(data))
+        return edit
+
+    # A unit's stop record must be exactly its own entry with no stop: not empty, not another unit's, not two entries.
+    odd = [stop_record(v) for v in ({}, {f"{LIVES[1]}B1": None}, {f"{LIVES[0]}B1": None, f"{LIVES[0]}B0": None})]
     for edit, part in ((served_none, "sent to the live reader 17"), (missing, "probe files found 3"),
                        (stopped, "stopped units 1"), (dropped, "units listed 3 (card) 3 (disclosures)"),
-                       (empty, "probed items covered 9 of 18")):
+                       (empty, "probed items covered 9 of 18"), *((e, "stopped units 1") for e in odd)):
         code, out = run(edit=edit)
         line = next(x for x in out.splitlines() if x.startswith("check 7 O1"))
         assert code == 3 and part in line and line.endswith("pass False") and "== 3." not in out
