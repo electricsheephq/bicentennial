@@ -125,8 +125,10 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slo
         write(path / "control.json", dict(arm=table.CONTROL[letter], frame_sha256=None if letter == "F" else "f" * 64,
                                           block_sha256={} if letter == "F" else block_hashes()))
     if extra_floor:
-        write(path / "no_memory.json", {f"{life}/B0": dict(served_identity=IDENTITY, stops={}, outcomes={
-            k.split("/", 2)[2]: dict(v) for k, v in out.items() if k.startswith(life)}) for life in LIVES})
+        # The floor file as the runner writes it: every unit, each with its own stop entry (None: no stop).
+        write(path / "no_memory.json", {unit: dict(served_identity=IDENTITY, stops={unit.replace("/", ""): None},
+            outcomes={k.split("/", 2)[2]: dict(v) for k, v in out.items() if k.startswith(f"{unit}/")})
+            for unit in units})
     return path
 
 
@@ -365,10 +367,35 @@ def test_identity_change_during_an_arm_is_a_mismatch(run):
 
 
 def test_h1_extra_floor_says_how_it_was_measured(run):
-    assert ("-- extra floor (H1's no-memory floor, measured live on 4 of 4 units, taken from a cache or unconfirmed"
-            " on 0; enters no mean, flag or comparison)") in run()[1].splitlines()
+    assert ("-- extra floor (H1's no-memory floor, measured live on 4 of 4 units, stopped or not recorded on 0, taken"
+            " from a cache or unconfirmed on 0; enters no mean, flag or comparison)") in run()[1].splitlines()
     code, out = run(cached=("H1",))
-    assert code == 0 and "measured live on 3 of 4 units, taken from a cache or unconfirmed on 1;" in out
+    assert code == 0 and "measured live on 3 of 4 units, stopped or not recorded on 0, taken from a cache or unconfirmed on 1;" in out
+
+    def floor_edit(change):
+        def edit(label, path):
+            if label == "H1":
+                data = json.loads((path / "no_memory.json").read_text())
+                change(data)
+                (path / "no_memory.json").write_text(json.dumps(data))
+        return edit
+
+    # #503: an uncached unit that stopped during its live measurement, or has no stop record, was not measured live.
+    def stop(data):
+        data[f"{LIVES[1]}/B0"]["stops"] = {f"{LIVES[1]}B0": ["max_sends", "limit reached"]}
+
+    def unrecorded(data):
+        del data[f"{LIVES[1]}/B1"]
+
+    def empty(data):
+        data[f"{LIVES[0]}/B1"]["stops"] = {}
+
+    for change in (stop, unrecorded, empty):
+        code, out = run(edit=floor_edit(change))
+        assert code == 0 and "measured live on 3 of 4 units, stopped or not recorded on 1, taken from a cache or unconfirmed on 0;" in out
+    # A cached unit is counted as cached, never as stopped, whatever its stop record says.
+    code, out = run(cached=("H1",), edit=floor_edit(lambda d: d[f"{LIVES[0]}/B0"].update(stops={})))
+    assert code == 0 and "measured live on 3 of 4 units, stopped or not recorded on 0, taken from a cache or unconfirmed on 1;" in out
 
 
 def test_check_7_needs_every_unit_live(run):
