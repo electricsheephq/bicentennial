@@ -487,6 +487,44 @@ def test_missing_core_repeat(run):
         "classification: low unresolved; near-solved by naive retrieval unresolved; near-solved without memory unresolved")
 
 
+def test_a_row_with_no_usable_repeat_counts_no_pair(run):
+    def remove(*names):
+        def edit(label, path):
+            for name in names:
+                remove_run(name)(label, path)
+        return edit
+
+    def section(out, start, end):
+        return out.split(start)[1].split(end)[0].splitlines()
+
+    # Both H repeats missing after their reruns: H has no points, no support and no comparison.
+    code, out = run(edit=remove("H1", "H2"), flags=("--after-reruns",))
+    lines = out.splitlines()
+    at = lines.index("-- H mean of [] (incomplete)")
+    assert code == 0 and all(": common pairs 0 right n/a" in x for x in lines[at + 1:at + 7])
+    heads = [x for x in section(out, "== 7.", "== 8.") if x.startswith("  H ")]
+    gone = "; ".join(f"H minus {row} unresolved (no usable H repeat) on 0 pairs" for row in "FRO")
+    assert len(heads) == 4 and all(f": H unresolved (no usable repeat) on 0 pairs; against {gone} (" in x for x in heads)
+    # Both F repeats missing: only the comparisons with F are unresolved, on 0 pairs.
+    code, out = run(edit=remove("F1", "F2"), flags=("--after-reruns",))
+    seven = section(out, "== 7.", "== 8.")
+    lines = out.splitlines()
+    at = lines.index("-- F mean of [] (incomplete)")
+    assert code == 0 and all(": common pairs 0 right n/a" in x for x in lines[at + 1:at + 7])
+    assert ("  H Drift, value twins: H points 0 (0.0) on its own 4 scored pairs; against H minus F unresolved (no"
+            " usable F repeat) on 0 pairs; R 100 (100.0), H 0 (0.0), H minus R -100 (-100.0) on 4 pairs; O 100 (100.0),"
+            " H 0 (0.0), H minus O -100 (-100.0) on 4 pairs (each comparison on the pairs scored in every repeat of"
+            " both rows)") in seven
+    assert "    H minus F, Drift, value twins, per life (pairs): unresolved (no usable repeat)" in seven
+    # Every control repeat missing: the flags' common support is empty, and every comparison is unresolved.
+    code, out = run(edit=remove(*table.ROWS["F"], *table.ROWS["R"], *table.ROWS["O"]), flags=("--after-reruns",))
+    check6 = next(x for x in out.splitlines() if x.startswith("check 6:"))
+    assert code == 0 and check6.endswith(" total 0")
+    value = next(x for x in section(out, "== 7.", "== 8.") if x.startswith("  H Drift, value twins:"))
+    assert ("against H minus F unresolved (no usable F repeat) on 0 pairs; H minus R unresolved (no usable R repeat)"
+            " on 0 pairs; H minus O unresolved (no usable O1 or O2 repeat) on 0 pairs (") in value
+
+
 def test_pins_compare_in_full_and_optional_rows_need_the_same_code(run):
     def card_pins(**pins):
         def edit(label, path):

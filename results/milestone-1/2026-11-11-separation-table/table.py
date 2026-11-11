@@ -142,7 +142,8 @@ def line(scores):
 
 
 def common(arms, members):
-    return [p for p in members if all(pair_score(a["outcomes"], p) is not None for a in arms)]
+    """The members scored in every arm given. No arm, no support: a row with no usable repeat counts no pair."""
+    return [p for p in members if all(pair_score(a["outcomes"], p) is not None for a in arms)] if arms else []
 
 
 def pts(arms, members):
@@ -657,13 +658,19 @@ def scores(ctx, failed):
             parts = []
             for row in "FRO":
                 control = two_o if row == "O" else used[row]
+                if not system or not control:
+                    gone = name if not system else "O1 or O2" if row == "O" else row
+                    parts.append(f"{name} minus {row} unresolved (no usable {gone} repeat) on 0 pairs")
+                    continue
                 both = common(system + control, members)
                 s, other = pts(system, both), pts(control, both)
                 diff = None if s is None or other is None else s - other
                 parts.append(f"{row} {exact(other)}, {name} {exact(s)}, {name} minus {row} {exact(diff)} on {len(both)} pairs")
             own = common(system, members)
-            print(f"  {name} {group}: {name} points {exact(pts(system, own))} on its own {len(own)} scored pairs;"
-                  f" against " + "; ".join(parts) + " (each comparison on the pairs scored in every repeat of both rows)")
+            head = (f"{name} points {exact(pts(system, own))} on its own {len(own)} scored pairs" if system
+                    else f"{name} unresolved (no usable repeat) on 0 pairs")
+            print(f"  {name} {group}: {head}; against " + "; ".join(parts)
+                  + " (each comparison on the pairs scored in every repeat of both rows)")
             for row in "FRO":
                 control = two_o if row == "O" else used[row]
                 life_line(name, row, "pairs", system, control, common(system + control, members), lambda p: p["life"],
