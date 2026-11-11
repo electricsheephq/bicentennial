@@ -1,4 +1,4 @@
-"""Synthetic fixture tests for table.py: flag rules, checks 1, 2 and 7, common support, filter yield, no ids printed.
+"""Synthetic fixture tests for table.py: flag rules, checks 1, 2 and 7, run order, common support, filter yield, no ids.
 
 Run directly: PYTHONPATH=<checkout>/src python -m pytest results/milestone-1/2026-11-11-separation-table/test_table.py
 (not in CI's testpaths). The fixture has two lives; per life two value-twin pairs, one correction pair, one Wake pair.
@@ -110,8 +110,9 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slo
         for unit in units:
             life, branch = unit.split("/")
             write(path / arm / life / branch / "t2lite_probes.json", [
-                dict(item_id=k.split("/", 2)[2], live=dict(served_by="live", served="live"))
-                for k in out if k.startswith(f"{unit}/")])
+                dict(item_id=k.split("/", 2)[2], live=dict(served_by="live", served="live"),
+                     shadow=dict(in_context_initial=v["in_context"], in_context=v["in_context"]))
+                for k, v in out.items() if k.startswith(f"{unit}/")])
         write(path / f"{arm}.json", {unit: dict(served_identity=IDENTITY, stops={unit.replace("/", ""): None},
             outcomes={k.split("/", 2)[2]: v for k, v in out.items() if k.startswith(f"{unit}/")}) for unit in units})
         write(path / "control.json", dict(arm=table.CONTROL[letter], frame_sha256=None if letter == "F" else "f" * 64,
@@ -129,9 +130,9 @@ def run(tmp_path, monkeypatch, capsys):
     packs = make_packs(tmp_path / "packs")
     pack_hash = table.pack_tree_hash(packs)
 
-    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None, flags=()):
+    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None, flags=(), order=ORDER):
         specs = {k: dict(BASE[k[0]], **(specs or {}).get(k, {})) for k in table.CORE} | {k: BASE["H"] for k in extra}
-        argv = ["--packs", str(packs), "--order", ",".join(ORDER), *flags]
+        argv = ["--packs", str(packs), "--order", ",".join(order), *flags]
         for label, spec in specs.items():
             path = make_arm(tmp_path / "runs" / label, label, spec, (twins or {}).get(label), label in cached,
                             extra_floor=label in ("H1", "E1", "E2"),
@@ -199,9 +200,7 @@ def test_c_checks_detect_one_fault(run):
 
     def context(label, path):
         if label == "O2":
-            data = json.loads((path / "outcomes.json").read_text())
-            data[next(k for k in sorted(data) if data[k]["stage"] == "act")]["in_context"] = False
-            (path / "outcomes.json").write_text(json.dumps(data))
+            set_first_request(path / "oracle_evidence", lambda record: False)
 
     for kw, name, check in ((dict(edit=one_byte), "R1", "check 1 R1"), (dict(cached=("F2",)), "F2", "check 7 F2"),
                             (dict(edit=context), "O2", "check 2 O2")):
@@ -371,7 +370,82 @@ def test_reruns_and_checks_only(run):
     assert code == 0 and "== 3." in out and "== 8. Full history" in out and "--after-reruns given True" in out
     code, out = run(flags=("--checks-only",))
     assert code == 0 and "== 2." in out and "== 3." not in out
-    assert "equals the declared order True | --after-reruns given False" in out
+    assert "equals the declared order True | reruns named none | --after-reruns given False" in out
+
+
+def set_first_request(arm_dir, value, field="in_context_initial"):
+    """Set field on the first scored action task's probe record (the fixture puts every task in B0)."""
+    path = arm_dir / LIVES[0] / "B0" / "t2lite_probes.json"
+    records = json.loads(path.read_text())
+    record = next(r for r in records if not r["item_id"].endswith("quiz"))
+    record["shadow"][field] = value(record)
+    path.write_text(json.dumps(records))
+
+
+def test_check_2_reads_the_probe_turns_first_request(run):
+    # The live R smoke: a later request of the turn held a fact the reader fetched with its own tools. Check 2 reads
+    # the first request, the one that carries the block; neither the latest request nor outcomes.json enters it.
+    def latest_differs(label, path):
+        if label == "R1":
+            set_first_request(path / "naive_rag", lambda r: not r["shadow"]["in_context"], field="in_context")
+            data = json.loads((path / "outcomes.json").read_text())
+            key = next(k for k in sorted(data) if data[k]["stage"] == "act")
+            data[key]["in_context"] = not data[key]["in_context"]
+            (path / "outcomes.json").write_text(json.dumps(data))
+
+    code, out = run(edit=latest_differs)
+    assert code == 0 and next(x for x in out.splitlines() if x.startswith("check 2 R1")) == (
+        "check 2 R1: presence in the probe turn's first request equals the pack's scripted naive report on 18 of 18"
+        " tasks pass True")
+
+    def first_differs(label, path):
+        if label == "R2":
+            set_first_request(path / "naive_rag", lambda r: not r["shadow"]["in_context_initial"])
+        if label == "O3":
+            set_first_request(path / "oracle_evidence", lambda r: False)
+            set_first_request(path / "oracle_evidence", lambda r: True, field="in_context")
+
+    code, out = run(edit=first_differs)
+    assert code == 3 and "== 3." not in out
+    assert [x for x in out.splitlines() if x.startswith("INVALID")] == ["INVALID CONTROL ROW O3", "INVALID CONTROL ROW R2"]
+    assert "check 2 R2: presence in the probe turn's first request equals the pack's scripted naive report on 17 of 18" \
+           " tasks pass False" in out.splitlines()
+    assert "check 2 O3: needed fact in the probe turn's first request on 15 of 16 scored action tasks pass False" \
+           in out.splitlines()
+
+
+def test_run_order_must_be_the_declared_one(run):
+    # R1 ran first and --order says so: no rerun explains it, so no score opens.
+    first = ("R1", "F1", *ORDER[2:])
+    code, out = run(order=first, slots={"R1": 0, "F1": 1})
+    assert code == 3 and "== 3." not in out and "equals the declared order False | reruns named none" in out
+    assert "RUN ORDER VIOLATION: the order listed is not the declared order" in out.splitlines()
+    # A rerun named on the command line may run later than its slot ...
+    late = (*(k for k in ORDER if k != "R1"), "R1")
+    code, out = run(order=late, slots={"R1": 9}, flags=("--reruns", "R1"))
+    assert code == 0 and "run order verified" in out.splitlines() and "reruns named R1" in out
+    code, out = run(order=late, slots={"R1": 9})
+    assert code == 3 and "RUN ORDER VIOLATION: the order listed is not the declared order" in out.splitlines()
+    # ... but never before an arm whose slot comes before its own.
+    code, out = run(order=first, slots={"R1": 0, "F1": 1}, flags=("--reruns", "R1"))
+    assert code == 3 and "RUN ORDER VIOLATION: rerun R1 is listed before F1, whose slot comes before its own" \
+        in out.splitlines()
+    with pytest.raises(SystemExit):
+        run(flags=("--reruns", "R1,R1"))
+
+
+def test_every_core_repeat_missing(run):
+    def gone(label, path):
+        if label in table.CORE:
+            remove_run(label)(label, path)
+
+    code, out = run(extra=("E1",), edit=gone)
+    assert code == 4 and "Earlier evidence" not in out and "== 2." not in out and "== 3." not in out
+    assert out.splitlines()[-1].startswith("pending before any score: F1 F2 R1 R2 O1 O2 O3 H1 H2 -")
+    code, out = run(extra=("E1",), edit=gone, flags=("--after-reruns",))
+    assert code == 3 and "Earlier evidence" not in out and "== 3." not in out
+    assert out.splitlines()[-1] == "no core arm has card.json and outcomes.json: no check, row, flag or comparison can be computed"
+    assert run(edit=gone, flags=("--checks-only",))[0] == 4
 
 
 def test_card_pins_must_be_equal(run):

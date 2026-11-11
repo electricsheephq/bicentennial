@@ -1,18 +1,23 @@
 """Milestone 1: the separation table that results/milestone-1/DECLARATION.md says the results page prints.
 
 Usage: python table.py --packs PACKS_DIR --order F1,R1,O1,H1,H2,O2,R2,F2,O3 F1=RUN_DIR ... H2=RUN_DIR
-       [X-<name>=RUN_DIR ...] [E1=RUN_DIR E2=RUN_DIR [--earlier-packs PACKS_DIR]] [--after-reruns] [--checks-only]
+       [X-<name>=RUN_DIR ...] [E1=RUN_DIR E2=RUN_DIR [--earlier-packs PACKS_DIR]] [--reruns LABELS] [--after-reruns]
+       [--checks-only]
 Core labels F1 F2 R1 R2 O1 O2 O3 H1 H2 are required together; with E1/E2 only, it prints the earlier evidence alone.
 Prints, in order: 1 header and identity; 2 checks before any score (declaration §2); 3 scored action pairs by kind
 and life (§3); 4 single tasks, quiz items and agreement between repeats; 5 screening flags (§4); 6 filter yield (§6);
 7 real systems (§5); 8 full history; then earlier evidence (step-1 by_kind.py on E1/E2). No score is printed while
 a check is open: after section 2 it exits 3 when a control row fails check 1, 2 or 7, the run order is violated, or
 the core arms' card pins differ (one commit for every row, §1), and 4 when a core arm fails check 4 or 5 and
---after-reruns is not given. Check 3 (memory off) cannot fail here: run outputs do not record request tools or the
+--after-reruns is not given. The order listed must be the declared one; only a rerun named in --reruns may run
+later than its slot, and never before an arm whose slot comes before its own (§11.9). Check 2 reads the probe turn's
+first request, the one that carries the block (in_context_initial in each unit's probe records, §11.5). Check 3 (memory off) cannot fail here: run outputs do not record request tools or the
 memory block, so it prints as not visible, covered by the runner's tests at the pinned commit (#496:
 test_c_floor_bodies_and_memory_off). --checks-only stops after section 2 (exit 0 when
 nothing is pending). An X- attempt without card.json or outcomes.json is shown as failed with its refusal code only;
 a core label in that state is a missing repeat: pending (exit 4) without --after-reruns, published as missing with it.
+If no core arm has card.json and outcomes.json, it lists the missing arms and stops: 4 without --after-reruns, 3 with
+it (no row exists to publish).
 The core arms' card pack_hash must equal the --packs tree hash (bicentennial.packs.manifest.tree_sha256), or exit 3.
 Pairs and loaders are step 1's (by_kind.py).
 Prints counts, labels, 12-character hash prefixes and pass/fail only: never task text, answers, control text, item
@@ -182,6 +187,7 @@ def main(argv=None):
     parser.add_argument("--packs", type=Path, required=True)
     parser.add_argument("--earlier-packs", type=Path)
     parser.add_argument("--order")
+    parser.add_argument("--reruns", help="core labels rerun after their first attempt, in the order they reran (§11.9)")
     parser.add_argument("--after-reruns", action="store_true",
                         help="publish arms still mismatched or incomplete after their one rerun (§2.4-§2.6)")
     parser.add_argument("--checks-only", action="store_true", help="print sections 1 and 2 only")
@@ -195,10 +201,23 @@ def main(argv=None):
     order = args.order.split(",") if args.order else []
     if core_given and sorted(order) != sorted(CORE):
         parser.error("--order must list the nine core labels once each")
+    reruns = args.reruns.split(",") if args.reruns else []
+    if len(set(reruns)) != len(reruns) or not set(reruns) <= set(CORE) or (reruns and not core_given):
+        parser.error("--reruns must list core labels, each once")
     pack = load_packs(args.packs)
     arms = {k: load_arm(k, Path(v)) for k, v in given.items() if not k.startswith("E")}
     failed = {k: arms.pop(k)["failed"] for k in list(arms) if "failed" in arms[k]}
     missing = {k: failed.pop(k) for k in CORE if k in failed}
+    if core_given and not any(k in arms for k in CORE):
+        # No core arm has its outputs: no check, row, flag or comparison exists, and earlier evidence is not shown.
+        print("== 1. Header and identity")
+        for name, code in missing.items():
+            print(f"{name}: missing (no card.json or outcomes.json; refusal code {code})")
+        print("no core arm has card.json and outcomes.json: no check, row, flag or comparison can be computed")
+        if not args.after_reruns:
+            print("pending before any score:", " ".join(missing), "-", RERUN)
+            return 4
+        return 3
     if arms:
         ctx = checks(args, pack, arms, order, missing)
         if ctx["invalid"]:
@@ -294,16 +313,26 @@ def checks(args, pack, arms, order, missing):
 
     # 1. Header and identity.
     print("== 1. Header and identity")
+    reruns = args.reruns.split(",") if args.reruns else []
     print("run order", ",".join(order), "| equals the declared order", tuple(order) == DECLARED_ORDER,
-          "| --after-reruns given", args.after_reruns)
+          "| reruns named", ",".join(reruns) or "none", "| --after-reruns given", args.after_reruns)
     # Each arm in --order ran alone, after the one before it ended (units.json start and end times).
     for name, code in missing.items():
         print(f"{name}: missing (no card.json or outcomes.json; refusal code {code})"
               + (", published as missing after its rerun" if args.after_reruns else ""))
+    # §1 fixes the order. Only a named rerun may run later than its slot, and never before an arm whose slot comes
+    # before its own (§11.9).
+    at = {k: n for n, k in enumerate(order)}
+    departure = (("the order listed is not the declared order" + (f" apart from the reruns named ({','.join(reruns)})"
+                                                                   if reruns else ""))
+                 if [k for k in order if k not in reruns] != [k for k in DECLARED_ORDER if k not in reruns] else
+                 next((f"rerun {r} is listed before {k}, whose slot comes before its own"
+                       for r in reruns for k in DECLARED_ORDER[:DECLARED_ORDER.index(r)]
+                       if k not in reruns and at[k] > at[r]), None))
     times = [(k, arms[k]["units"].get("start_ms"), arms[k]["units"].get("end_ms")) for k in order if k in arms]
-    violation = next((f"{k} has no start or end time" for k, s, e in times if not (is_int(s) and is_int(e) and s <= e)),
-                     None) or next((f"{b[0]} starts before {a[0]} ends" for a, b in pairwise(times) if b[1] < a[2]),
-                                   None)
+    violation = departure or next((f"{k} has no start or end time" for k, s, e in times
+                                   if not (is_int(s) and is_int(e) and s <= e)), None) or next(
+        (f"{b[0]} starts before {a[0]} ends" for a, b in pairwise(times) if b[1] < a[2]), None)
     # Optional rows run alone after the nine core arms (§1). Overlapping a core arm is an order fault; any other
     # departure keeps the row in section 3x, marked, and out of section 7.
     off_order, core_end = {}, max((e for _, _, e in times if is_int(e)), default=None)
@@ -383,17 +412,28 @@ def checks(args, pack, arms, order, missing):
                   f" pass {bool(ok)}")
         if not ok:
             invalid.add(name)
+    # Checks 2 and 7 read each unit's own probe records for the pack's expected units and probed items, not the run's
+    # own list of them: <run>/<control arm>/<life>/<branch>/t2lite_probes.json.
+    expected_units = {f"{life}/{branch}" for life in pack for branch in ("B0", "B1")}
+    probed = {(life, i) for life in pack for i in pack[life]["arms"][SCRIPTED[0]]["reports"]}
+    probe_files = {name: {unit: read(arms[name]["run"] / arms[name]["control"]["arm"] / unit / "t2lite_probes.json")
+                          for unit in sorted(expected_units)} for name in controls}
+    # Presence is read from the probe turn's first request, the one that carries the block (in_context_initial). A
+    # later request of the same turn also holds what the reader fetched with its own tools (§11.5).
     for name in controls:
-        arm, out = arms[name], arms[name]["outcomes"]
+        arm = arms[name]
+        first = {(unit.split("/", 1)[0], record.get("item_id")): (record.get("shadow") or {}).get("in_context_initial")
+                 for unit, probes in probe_files[name].items() for record in probes or []}
         if arm["row"] == "O":
-            true = sum(out.get(k, {}).get("in_context") is True for k in tasks)
-            print(f"check 2 {name}: in_context true on {true} of {len(tasks)} scored action tasks pass {true == len(tasks)}")
+            true = sum(first.get(k) is True for k in tasks)
+            print(f"check 2 {name}: needed fact in the probe turn's first request on {true} of {len(tasks)} scored"
+                  f" action tasks pass {true == len(tasks)}")
             ok = true == len(tasks)
         elif arm["row"] == "R":
             reports = {(life, i): r["in_context"] for life in pack for i, r in pack[life]["arms"][SCRIPTED[0]]["reports"].items()}
-            equal = sum(k in out and out[k].get("in_context") == v for k, v in reports.items())
-            print(f"check 2 {name}: in_context equals the pack's scripted naive report on {equal} of {len(reports)}"
-                  f" tasks pass {equal == len(reports)}")
+            equal = sum(k in first and first[k] == v for k, v in reports.items())
+            print(f"check 2 {name}: presence in the probe turn's first request equals the pack's scripted naive report"
+                  f" on {equal} of {len(reports)} tasks pass {equal == len(reports)}")
             ok = equal == len(reports)
         else:
             continue
@@ -410,9 +450,6 @@ def checks(args, pack, arms, order, missing):
               " (scored = integer score_milli; missing = no outcome row)")
         if scored < len(tasks):
             incomplete.add(name)
-    # Check 7 reads the pack's expected units and probed items, not the run's own list of them.
-    expected_units = {f"{life}/{branch}" for life in pack for branch in ("B0", "B1")}
-    probed = {(life, i) for life in pack for i in pack[life]["arms"][SCRIPTED[0]]["reports"]}
     for name in controls:
         arm = arms[name]
         units = arm["card"]["floor"]["units"]
@@ -422,9 +459,8 @@ def checks(args, pack, arms, order, missing):
         # Every unit's probe records were sent to the live reader and the unit was not stopped (answers: check 5).
         floor_file = read(arm["run"] / f"{arm['control']['arm']}.json") or {}
         found, records, live, stopped, covered = 0, 0, 0, 0, set()
-        for unit in sorted(expected_units):
-            life, branch = unit.split("/", 1)
-            probes = read(arm["run"] / arm["control"]["arm"] / life / branch / "t2lite_probes.json")
+        for unit, probes in probe_files[name].items():
+            life = unit.split("/", 1)[0]
             found += probes is not None
             for record in probes or []:
                 records += 1
