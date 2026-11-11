@@ -44,16 +44,16 @@ At task level (40 tasks): F passes 5, H passes 18 in run 1 and 17 in run 2.
 
 1. **Without memory, nothing.** The live floor scores 0 on every kind of task. Whatever the other rows score is not available to the reader without memory on these lives.
 2. **Hermes's memory carries corrections that naive retrieval misses.** H is right on all 5 correction pairs in both runs. Scripted naive retrieval gets none: the correction never reaches its top five chunks (in context on 0 of 10 tasks), while H had it in context on all 10.
-3. **On value twins, Hermes has the evidence but picks the wrong value.** H had the current value in context on all 20 tasks, and the rival (old) value too. It answered 2 pairs right, 3 with the old value as a confident false memory, and 5 with no credit. Both scripted rows get all 10; their reader always picks the right value when it is in view, so this shows the evidence was retrievable, not that a live reader would use it.
+3. **On value twins, Hermes has the evidence but often gives a wrong value.** H had the current value in context on all 20 tasks, and a competing value too: the outcomes record that one was in context, not whether it was the superseded value, a planted one or the twin's. It answered 2 pairs right, 3 with a confident wrong value (a false memory), and 5 with no credit; the output does not show which wrong value it gave. Both scripted rows get all 10; their reader always picks the right value when it is in view, so this shows the evidence was retrievable, not that a live reader would use it.
 4. **Wake tasks: only the scripted oracle scores.** H had the evidence in context on 7 (run 1) and 8 (run 2) of 10 tasks and scored no pair. Scripted naive retrieval never had it in context.
 5. **The two runs agree pair for pair** (20 of 20 equal). Two task scores differ between them: one Wake task and one quiz item. Counting failure classes too, six tasks differ: five Wake tasks and that quiz item.
-6. **Two lives carry all of H's net.** Per life, H's net is 0, 2, 0, 0, 2 in both runs. The exact two-sided sign-flip test over five lives, H minus F, gives p = 1/2 on pairs and 1/16 on tasks. These are descriptive; with five lives no significance is claimed.
+6. **Two lives carry all of H's net.** Per life, H's net is 0, 2, 0, 0, 2 in both runs. The exact two-sided sign-flip test over five lives, H minus F, gives p = 1/2 on pairs and 1/16 on tasks. These are descriptive; with five lives no significance is claimed. They are also the most extreme values these data allow, not near misses: with five lives the exact two-sided test cannot go below 1/16 (all five on one side), and with three lives at exactly 0 the pair-level test cannot go below 1/2.
 
 **Quiz items** (the survive stage, 15 per arm; +1 right, −1 confident false memory): H answers all 10 recall items in both runs. On the five "as of" drift items it is right on 1 (run 1) and 2 (run 2), with 4 and 3 confident false memories. Both scripted rows answer all 15; the floor answers none.
 
 ## What the screening rule would say on the scripted rows
 
-For reference only. The [declaration](https://github.com/electricsheephq/bicentennial/pull/499) applies its screening flags to step 2's live control rows; applied here to the scripted rows (f, r, c = points of the floor, naive retrieval and oracle evidence):
+For reference only. The [declaration](https://github.com/electricsheephq/bicentennial/blob/main/results/milestone-1/DECLARATION.md) applies its screening flags to step 2's live control rows; applied here to the scripted rows (f, r, c = points of the floor, naive retrieval and oracle evidence), as the declaration was merged (`9087e35`):
 
 | Kind of task | f | r | c | Flag |
 | --- | --- | --- | --- | --- |
@@ -61,7 +61,7 @@ For reference only. The [declaration](https://github.com/electricsheephq/bicente
 | Drift, correction twins | 0 | 0 | 100 | candidate for fresh validation |
 | Wake | 0 | 0 | 100 | candidate for fresh validation |
 
-The pack's own stored rows (by track, not by twin kind) are printed in section C of the output below.
+c is above f and above 0 on every kind, so the declaration's guard (the near-solved flags are not interpreted when c <= f or c <= 0) does not apply here. Section C of the output below prints `specs/controls/naive_rag.md`'s own disclosure flags, which have no such guard, and the pack's own stored rows (by track, not by twin kind); the declaration's screen, with its guard, is computed by step 2's table script.
 
 ## What the live tier does not score here
 
