@@ -4,7 +4,7 @@ import json
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 from threading import Event, Lock
@@ -262,6 +262,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
 
     try:
         options = dict(spec=spec, keep=keep, unit=unit) if spec is not T1_SPEC or keep is not None else {}
+        if config.probe_blocks is not None:
+            options["probe_blocks"] = config.probe_blocks
         result = _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops, **options)
     except Exception as error:
         with live.launch:
@@ -330,7 +332,7 @@ def _finalise(pack, scores, probes):
 
 
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
-                   spec=T1_SPEC, keep=None, unit=None):
+                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None):
     from bicentennial.runner import t1
 
     measured, keep_ns = False, 0
@@ -346,7 +348,9 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 probe_mode=spec.probe_mode,
                 keep_pre_probe=spec.keep_pre_probe and arm != "no_memory",
                 pre_probe_attribution=spec.pre_probe_attribution and arm != "no_memory",
-                extra_env=resolve_worker_env(ctx.entry, ctx.model_cache) if arm != "no_memory" else None)
+                extra_env=resolve_worker_env(ctx.entry, ctx.model_cache) if arm != "no_memory" else None,
+                # A live control arm only: the pinned control's text for each probe item (runner/control_arm.py).
+                **({} if probe_blocks is None else {"probe_blocks": probe_blocks[pack.life, branch]}))
         except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
@@ -433,6 +437,10 @@ def reduce_refusals(errors):
     return min(errors, key=key) if errors else None
 
 
+# The floor's key, then the live control arms that run as the floor does with a pinned control's text.
+NO_MEMORY_KEYS = ("no_memory", "naive_rag", "oracle_evidence")
+
+
 @dataclass(frozen=True)
 class Arm:
     """Run-local identity, independent of the entry name and the life runner's role."""
@@ -443,12 +451,16 @@ class Arm:
     model_cache: object = None
     worker_argv: object = None
     role: str = "system"
+    # A live control arm's probe texts by (life, branch); such an arm runs as the floor does (runner/control_arm.py).
+    probe_blocks: dict | None = field(default=None, compare=False)
 
     def __post_init__(self):
         if not self.key or self.key in (".", "..") or "/" in self.key or "\\" in self.key:
             raise ValueError("invalid arm key")
-        if self.role not in ("system", "no_memory") or (self.key == "no_memory") != (self.role == "no_memory"):
+        if self.role not in ("system", "no_memory") or (self.key in NO_MEMORY_KEYS) != (self.role == "no_memory"):
             raise ValueError("invalid arm role")
+        if self.probe_blocks is not None and self.key not in NO_MEMORY_KEYS[1:]:
+            raise ValueError("only a text control arm carries probe blocks")
 
     @classmethod
     def from_context(cls, ctx, key="system"):

@@ -61,7 +61,7 @@ BASE_DIGESTS = {
 }
 
 
-def test_f_run_without_a_control_arm_keeps_base_bytes(t2_scenario, tmp_path):
+def test_f_run_without_a_control_arm_keeps_base_bytes(t2_scenario):  # noqa: F811
     # Acceptance F: with no control arm requested, a T2 fixture run writes the bytes it wrote before control arms
     # existed, for every file, and a floor cache entry is still read and written as before.
     s = t2_scenario
