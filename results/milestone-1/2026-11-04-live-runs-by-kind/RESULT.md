@@ -46,7 +46,7 @@ At task level (40 tasks): F passes 5, H passes 18 in run 1 and 17 in run 2.
 2. **Hermes's memory carries corrections that naive retrieval misses.** H is right on all 5 correction pairs in both runs. Scripted naive retrieval gets none: the correction never reaches its top five chunks (in context on 0 of 10 tasks), while H had it in context on all 10.
 3. **On value twins, Hermes has the evidence but picks the wrong value.** H had the current value in context on all 20 tasks, and the rival (old) value too. It answered 2 pairs right, 3 with the old value as a confident false memory, and 5 with no credit. Both scripted rows get all 10; their reader always picks the right value when it is in view, so this shows the evidence was retrievable, not that a live reader would use it.
 4. **Wake tasks: only the scripted oracle scores.** H had the evidence in context on 7 (run 1) and 8 (run 2) of 10 tasks and scored no pair. Scripted naive retrieval never had it in context.
-5. **The two runs agree pair for pair** (20 of 20 equal). Six task scores differ between them: five Wake tasks and one quiz item.
+5. **The two runs agree pair for pair** (20 of 20 equal). Two task scores differ between them: one Wake task and one quiz item. Counting failure classes too, six tasks differ: five Wake tasks and that quiz item.
 6. **Two lives carry all of H's net.** Per life, H's net is 0, 2, 0, 0, 2 in both runs. The exact two-sided sign-flip test over five lives, H minus F, gives p = 1/2 on pairs and 1/16 on tasks. These are descriptive; with five lives no significance is claimed.
 
 **Quiz items** (the survive stage, 15 per arm; +1 right, −1 confident false memory): H answers all 10 recall items in both runs. On the five "as of" drift items it is right on 1 (run 1) and 2 (run 2), with 4 and 3 confident false memories. Both scripted rows answer all 15; the floor answers none.
@@ -66,7 +66,7 @@ The pack's own stored rows (by track, not by twin kind) are printed in section C
 ## What the live tier does not score here
 
 - **G2's 30 action tasks (15 pairs)** are not scored live at T2 (the card labels them "G2 actions not scored live"). On them, scripted naive retrieval is right on 14 pairs and wrong on 1; scripted oracle evidence is right on all 15.
-- **The full-history ceiling fits the window at 0 of 85 checkpoints,** so its column is empty. No value is invented.
+- **The full-history ceiling fits the window on 0 of 85 items** (each item is tested at its own time), so its column is empty. No value is invented.
 - **The floor's outcomes record no in-context field,** so "in context" is reported only for H and the scripted rows.
 
 ## What this does not prove
