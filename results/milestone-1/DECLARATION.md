@@ -87,3 +87,25 @@ Expected flags: value twins and Wake low even with the evidence; correction twin
 
 ## 10. Scope note
 The Ring 0 documents describe controls as cached, scripted, API-mode rows, and put a Hermes-mode form of naive retrieval out of scope. The live control arms extend that. A dated, scoped extension note in the Ring 0 spec lands with the harness change. It changes no frozen scoring rule, calibration target or bar.
+
+## 11. Readings fixed before the runs (added 11 November 2026, before any core arm runs)
+The table script needs a reading wherever sections 1-10 leave a case open. These were settled while that script was reviewed, before any of the nine core arms ran. None of them changes a row, the order, a check, a threshold or a prediction.
+
+1. **An incomplete repeat stays in its row.** An arm still incomplete after its one rerun keeps its place in its row's mean, on the pairs it scored. §2.5 says that its row "uses the pairs it scored", and §2.6's common support (only pairs scored in every repeat used) has work to do only in this case, because a complete arm scores every pair. "Complete" in §2.6's first sentence therefore means present and identity-matched. Keeping both repeats also keeps each mean at the centre of the mirrored order. Every flag that uses the row reads "unresolved".
+2. **"Not interpreted" counts as not applying.** This holds both for instability and for the classification; the arithmetic is printed. A kind is a candidate when every flag is resolved and stable and none applies. A stable flag that applies is printed even when another flag of the same kind is unresolved.
+3. **The flags' common support includes O's third repeat**, since that repeat enters each flag's instability check.
+4. **Scores stay closed until the checks pass.** The table prints its checks first. It prints no score while any of these holds:
+   - a control row fails check 1, 2 or 7;
+   - the arms overlap in time, or ran out of the order listed;
+   - the core arms' card pins (the commit and code hashes each card records) differ.
+
+   Each such fault is fixed and the arm rerun before any score is opened. An identity mismatch or an incomplete arm (checks 4 and 5) also gets its one rerun before scores are opened; only after that is the arm published as mismatched or incomplete.
+5. **Check 1** compares each item's recorded block hash with a fresh call of the pinned control, and the frame's hash with the runner's. That each request carries exactly that framed block, at the top of the probe turn, is the runner's own test at the run commit. Presence (check 2) is read from the request body the live model received.
+6. **Check 2 for R** covers every task in the pack's scripted naive-retrieval report, not only the 40 scored action tasks, as "task by task" says.
+7. **Check 3** cannot be read from the run outputs, which do not keep request bodies. It is the runner's own test at the run commit: no control-arm request carries a memory section, a memory fence, or a memory or search tool. The page names that test and the CI run that passed it.
+8. **Check 7** reads each unit's own probe records. Every probe of every unit was served by the live reader, no unit stopped early, and the records cover all 40 scored action tasks. The cache provenance shows that no unit came from a cache.
+9. **A rerun keeps its label.** A rerun of arm 6, for example, is still O2, and it runs after the arms already done. The page prints the order in which the arms actually ran, checks that order against their recorded start and end times, and says whether it equals the declared order.
+10. **Filter yield (§6).** A trial with no score is unknown, not a failure. A twin passes with two passing trials. It fails when it could not reach two even if every unknown trial passed. Otherwise it is unresolved. The page prints pass, fail and unresolved counts.
+11. **Real systems (§5).** Each system is compared per kind with each of F, R and O, on that comparison's common support, with per-life differences and the exact sign-flip p for each comparison. O means O1 and O2, as for c.
+12. **A failed optional attempt** is printed as a failure, with its refusal code, and enters nothing else.
+13. **The smoke runs.** Before the core arms, each control arm (O, R, F) runs once at the head of the pull request that adds it, to check delivery and output format. Only the table's checks are read; its scores are not opened, and these runs enter no row.
