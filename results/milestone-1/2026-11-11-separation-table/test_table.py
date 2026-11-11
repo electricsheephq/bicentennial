@@ -98,7 +98,7 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slo
     if cached:
         units[f"{LIVES[0]}/B0"]["cached"] = True
     write(path / "card.json", dict(tier="T2", system="hermes-native", model="m", effort="medium", pack_hash="p" * 64,
-                                   pins=dict(scorer_commit="c" * 40), served_identity=IDENTITY, not_scored_live=[],
+                                   pins=dict(scorer_commit="c" * 40, benchmark_commit="b" * 40), served_identity=IDENTITY, not_scored_live=[],
                                    floor=dict(served_identity=IDENTITY, units=units)))
     write(path / "outcomes.json", out)
     start = 1793796303380 + slot * 10_000_000  # one arm after another, in run-order slots
@@ -353,6 +353,21 @@ def test_reruns_and_checks_only(run):
     code, out = run(flags=("--checks-only",))
     assert code == 0 and "== 2." in out and "== 3." not in out
     assert "equals the declared order True | --after-reruns given False" in out
+
+
+def test_card_pins_must_be_equal(run):
+    def other_commit(label, path):
+        if label == "H2":
+            card = json.loads((path / "card.json").read_text())
+            card["pins"]["benchmark_commit"] = "d" * 40
+            (path / "card.json").write_text(json.dumps(card))
+
+    code, out = run(edit=other_commit)
+    assert code == 3 and "== 3." not in out and "one commit for every core arm (card pins equal) False" in out
+    assert ("PIN MISMATCH: benchmark_commit: bbbbbbbbbbbb (F1,F2,R1,R2,O1,O2,O3,H1); dddddddddddd (H2)"
+            in out.splitlines())
+    assert out.splitlines()[-1] == "CARD PINS DIFFER between core arms (see PIN MISMATCH above): not pooled"
+    assert "card pins equal) True" in run()[1]
 
 
 def test_failed_optional_attempt(run):

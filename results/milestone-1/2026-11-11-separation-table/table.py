@@ -6,8 +6,11 @@ Core labels F1 F2 R1 R2 O1 O2 O3 H1 H2 are required together; with E1/E2 only, i
 Prints, in order: 1 header and identity; 2 checks before any score (declaration §2); 3 scored action pairs by kind
 and life (§3); 4 single tasks, quiz items and agreement between repeats; 5 screening flags (§4); 6 filter yield (§6);
 7 real systems (§5); 8 full history; then earlier evidence (step-1 by_kind.py on E1/E2). No score is printed while
-a check is open: after section 2 it exits 3 when a control row fails check 1, 2 or 7 or the run order is violated, and
-4 when a core arm fails check 4 or 5 and --after-reruns is not given. --checks-only stops after section 2 (exit 0 when
+a check is open: after section 2 it exits 3 when a control row fails check 1, 2 or 7, the run order is violated, or
+the core arms' card pins differ (one commit for every row, §1), and 4 when a core arm fails check 4 or 5 and
+--after-reruns is not given. Check 3 (memory off) cannot fail here: run outputs do not record request tools or the
+memory block, so it prints as not visible, covered by the runner's tests at the pinned commit (#496:
+test_c_floor_bodies_and_memory_off). --checks-only stops after section 2 (exit 0 when
 nothing is pending). An X- attempt without card.json or outcomes.json is shown as failed with its refusal code only.
 Pairs and loaders are step 1's (by_kind.py).
 Prints counts, labels, 12-character hash prefixes and pass/fail only: never task text, answers, control text, item
@@ -46,7 +49,9 @@ ROWS = {"F": ("F1", "F2"), "R": ("R1", "R2"), "O": ("O1", "O2", "O3"), "H": ("H1
 CORE = tuple(a for arms in ROWS.values() for a in arms)
 CONTROL = {"F": "no_memory", "R": "naive_rag", "O": "oracle_evidence"}
 SEVEN = Fraction(7, 10)
-NOT_VISIBLE = "not visible in run outputs; covered by #496's tests"
+NOT_VISIBLE = ("not visible in run outputs (no request tools or memory block recorded); covered by the runner's"
+               " tests at the pinned commit (#496 test_c_floor_bodies_and_memory_off: memory fence, memory section and"
+               " memory tools absent from every control-arm request body)")
 DECLARED_ORDER = ("F1", "R1", "O1", "H1", "H2", "O2", "R2", "F2", "O3")
 RERUN = "rerun once (§2.4, §2.5), then run again with --after-reruns"
 NAMES = {"low": "low", "naive": "near-solved by naive retrieval", "floor": "near-solved without memory"}
@@ -190,7 +195,9 @@ def main(argv=None):
             # §2: an invalid control row is fixed and rerun before any score is opened.
             if ctx["violation"]:
                 print(f"RUN ORDER VIOLATION: {ctx['violation']}")
-            for name in sorted(ctx["invalid"] - {"run order"}):
+            if "card pins" in ctx["invalid"]:
+                print("CARD PINS DIFFER between core arms (see PIN MISMATCH above): not pooled")
+            for name in sorted(ctx["invalid"] - {"run order", "card pins"}):
                 print("INVALID CONTROL ROW", name)
             return 3
         pending = sorted((ctx["mismatched"] | ctx["incomplete"]) & set(CORE))
@@ -294,8 +301,16 @@ def checks(args, pack, arms, order):
               f" matches_core {card['served_identity'] == core_id}")
         print("  pins", json.dumps({k: card["pins"][k][:12] for k in sorted(card["pins"])}))
     print("every arm's served identity equal", len({a["card"]["served_identity"] for a in arms.values()}) == 1)
-    print("one commit for every core arm (card pins equal)", len({json.dumps(arms[k]["card"]["pins"], sort_keys=True)
-                                                                  for k in CORE}) == 1)
+    # §1: one commit for every row. Differing card pins stop the table before any score.
+    pins = sorted({key for k in CORE for key in arms[k]["card"]["pins"]})
+    differ = {key: sorted({str(arms[k]["card"]["pins"].get(key))[:12] for k in CORE}) for key in pins}
+    differ = {key: values for key, values in differ.items() if len(values) > 1}
+    print("one commit for every core arm (card pins equal)", not differ)
+    for key, values in differ.items():
+        print(f"PIN MISMATCH: {key}:", "; ".join(f"{v} ({','.join(k for k in CORE if str(arms[k]['card']['pins'].get(key))[:12] == v)})"
+                                                 for v in values))
+    if differ:
+        invalid.add("card pins")
     mismatched = {k for k in arms if arms[k]["card"]["served_identity"] != core_id}
 
     # 2. Checks before any score.
