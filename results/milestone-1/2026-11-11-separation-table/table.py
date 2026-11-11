@@ -11,7 +11,9 @@ the core arms' card pins differ (one commit for every row, §1), and 4 when a co
 --after-reruns is not given. Check 3 (memory off) cannot fail here: run outputs do not record request tools or the
 memory block, so it prints as not visible, covered by the runner's tests at the pinned commit (#496:
 test_c_floor_bodies_and_memory_off). --checks-only stops after section 2 (exit 0 when
-nothing is pending). An X- attempt without card.json or outcomes.json is shown as failed with its refusal code only.
+nothing is pending). An X- attempt without card.json or outcomes.json is shown as failed with its refusal code only;
+a core label in that state is a missing repeat: pending (exit 4) without --after-reruns, published as missing with it.
+The core arms' card pack_hash must equal the --packs tree hash (bicentennial.packs.manifest.tree_sha256), or exit 3.
 Pairs and loaders are step 1's (by_kind.py).
 Prints counts, labels, 12-character hash prefixes and pass/fail only: never task text, answers, control text, item
 or bundle ids, served identity values, or paths. Text arms need bicentennial.runner.control_arm (#496) importable.
@@ -85,6 +87,12 @@ def recompute_blocks(packs, control):
     return out
 
 
+def pack_tree_hash(packs):
+    """The pack hash cards record: packs/install.py install() returns tree_sha256 of the installed tree."""
+    from bicentennial.packs.manifest import tree_sha256
+    return tree_sha256(packs)
+
+
 def read(path):
     return json.loads(path.read_text()) if path.exists() else None
 
@@ -97,9 +105,7 @@ def refusal_code(run):
 
 def load_arm(name, run):
     if not ((run / "card.json").exists() and (run / "outcomes.json").exists()):
-        if name.startswith("X-"):
-            return dict(name=name, failed=refusal_code(run))
-        sys.exit(f"{name}: no card.json or outcomes.json (a failed attempt); a core arm must be rerun")
+        return dict(name=name, failed=refusal_code(run))
     if (run / "no_memory.json").exists():
         card, outcomes, floor = by_kind.load_run(run)
     else:
@@ -192,18 +198,21 @@ def main(argv=None):
     pack = load_packs(args.packs)
     arms = {k: load_arm(k, Path(v)) for k, v in given.items() if not k.startswith("E")}
     failed = {k: arms.pop(k)["failed"] for k in list(arms) if "failed" in arms[k]}
+    missing = {k: failed.pop(k) for k in CORE if k in failed}
     if arms:
-        ctx = checks(args, pack, arms, order)
+        ctx = checks(args, pack, arms, order, missing)
         if ctx["invalid"]:
             # §2: an invalid control row is fixed and rerun before any score is opened.
             if ctx["violation"]:
                 print(f"RUN ORDER VIOLATION: {ctx['violation']}")
             if "card pins" in ctx["invalid"]:
                 print("CARD PINS DIFFER between core arms (see PIN MISMATCH above): not pooled")
-            for name in sorted(ctx["invalid"] - {"run order", "card pins"}):
+            if "pack" in ctx["invalid"]:
+                print("PACK DIFFERS from --packs for a core arm (see PACK MISMATCH above): not pooled")
+            for name in sorted(ctx["invalid"] - {"run order", "card pins", "pack"}):
                 print("INVALID CONTROL ROW", name)
             return 3
-        pending = sorted((ctx["mismatched"] | ctx["incomplete"]) & set(CORE))
+        pending = sorted((ctx["mismatched"] | ctx["incomplete"] | set(missing)) & set(CORE), key=CORE.index)
         if pending and not args.after_reruns:
             print("pending before any score:", " ".join(pending), "-", RERUN)
             return 4
@@ -272,8 +281,11 @@ def agreement(a, b, pairs):
           " either)", sum(either.values()), dict(sorted(either.items())))
 
 
-def checks(args, pack, arms, order):
-    """Sections 1 and 2; returns what sections 3-8 need."""
+def checks(args, pack, arms, order, missing):
+    """Sections 1 and 2; returns what sections 3-8 need. Missing core repeats enter no check (§2.6)."""
+    ran = [k for k in CORE if k in arms]
+    if not ran:
+        sys.exit("no core arm ran")
     pairs = pairs_of(pack, arms)
     kinds = sorted({p["kind"] for p in pairs}, key=kind_order)
     lives = sorted({p["life"] for p in pairs})
@@ -285,7 +297,10 @@ def checks(args, pack, arms, order):
     print("run order", ",".join(order), "| equals the declared order", tuple(order) == DECLARED_ORDER,
           "| --after-reruns given", args.after_reruns)
     # Each arm in --order ran alone, after the one before it ended (units.json start and end times).
-    times = [(k, arms[k]["units"].get("start_ms"), arms[k]["units"].get("end_ms")) for k in order]
+    for name, code in missing.items():
+        print(f"{name}: missing (no card.json or outcomes.json; refusal code {code})"
+              + (", published as missing after its rerun" if args.after_reruns else ""))
+    times = [(k, arms[k]["units"].get("start_ms"), arms[k]["units"].get("end_ms")) for k in order if k in arms]
     violation = next((f"{k} has no start or end time" for k, s, e in times if not (is_int(s) and is_int(e) and s <= e)),
                      None) or next((f"{b[0]} starts before {a[0]} ends" for a, b in pairwise(times) if b[1] < a[2]),
                                    None)
@@ -314,7 +329,7 @@ def checks(args, pack, arms, order):
     if violation is not None:
         invalid.add("run order")
     # The core identity is the most common among core arms (ties: the earliest label in F1..H2).
-    core_id = Counter(arms[k]["card"]["served_identity"] for k in CORE).most_common(1)[0][0]
+    core_id = Counter(arms[k]["card"]["served_identity"] for k in ran).most_common(1)[0][0]
     for name, arm in arms.items():
         card, units = arm["card"], arm["units"]
         when = [datetime.fromtimestamp(units[k] / 1000, UTC).isoformat(timespec="seconds") if k in units else "n/a"
@@ -326,20 +341,31 @@ def checks(args, pack, arms, order):
         print("  pins", json.dumps({k: card["pins"][k][:12] for k in sorted(card["pins"])}))
     print("every arm's served identity equal", len({a["card"]["served_identity"] for a in arms.values()}) == 1)
     # §1: one commit for every row. Differing card pins stop the table before any score.
-    pins = sorted({key for k in CORE for key in arms[k]["card"]["pins"]})
-    differ = {key: sorted({str(arms[k]["card"]["pins"].get(key))[:12] for k in CORE}) for key in pins}
+    pins = sorted({key for k in ran for key in arms[k]["card"]["pins"]})
+    differ = {key: sorted({str(arms[k]["card"]["pins"].get(key))[:12] for k in ran}) for key in pins}
     differ = {key: values for key, values in differ.items() if len(values) > 1}
     print("one commit for every core arm (card pins equal)", not differ)
     for key, values in differ.items():
-        print(f"PIN MISMATCH: {key}:", "; ".join(f"{v} ({','.join(k for k in CORE if str(arms[k]['card']['pins'].get(key))[:12] == v)})"
+        print(f"PIN MISMATCH: {key}:", "; ".join(f"{v} ({','.join(k for k in ran if str(arms[k]['card']['pins'].get(key))[:12] == v)})"
                                                  for v in values))
     if differ:
         invalid.add("card pins")
+    # §1: one pack for every row; the card's pack_hash is the installed tree's hash.
+    expected_pack = pack_tree_hash(args.packs)
+    for name in arms:
+        if arms[name]["card"]["pack_hash"] != expected_pack:
+            if name in CORE:
+                print(f"PACK MISMATCH: {name} pack_hash {arms[name]['card']['pack_hash'][:12]}"
+                      f" (--packs {expected_pack[:12]})")
+                invalid.add("pack")
+            else:
+                print(f"{name}: not run as declared (different pack)")
+                off_order[name] = "different pack"
     mismatched = {k for k in arms if arms[k]["card"]["served_identity"] != core_id}
 
     # 2. Checks before any score.
     print("\n== 2. Checks before any score (§2)")
-    blocks, controls = {}, [k for k in CORE if arms[k]["row"] in CONTROL]
+    blocks, controls = {}, [k for k in ran if arms[k]["row"] in CONTROL]
     for name in controls:
         arm, rec = arms[name], arms[name]["control"]
         kind_ok = rec["arm"] == CONTROL[arm["row"]]
@@ -384,6 +410,9 @@ def checks(args, pack, arms, order):
               " (scored = integer score_milli; missing = no outcome row)")
         if scored < len(tasks):
             incomplete.add(name)
+    # Check 7 reads the pack's expected units and probed items, not the run's own list of them.
+    expected_units = {f"{life}/{branch}" for life in pack for branch in ("B0", "B1")}
+    probed = {(life, i) for life in pack for i in pack[life]["arms"][SCRIPTED[0]]["reports"]}
     for name in controls:
         arm = arms[name]
         units = arm["card"]["floor"]["units"]
@@ -393,7 +422,7 @@ def checks(args, pack, arms, order):
         # Every unit's probe records were sent to the live reader and the unit was not stopped (answers: check 5).
         floor_file = read(arm["run"] / f"{arm['control']['arm']}.json") or {}
         found, records, live, stopped, covered = 0, 0, 0, 0, set()
-        for unit in units:
+        for unit in sorted(expected_units):
             life, branch = unit.split("/", 1)
             probes = read(arm["run"] / arm["control"]["arm"] / life / branch / "t2lite_probes.json")
             found += probes is not None
@@ -403,15 +432,17 @@ def checks(args, pack, arms, order):
                 covered.add((life, record.get("item_id")))
             stops = floor_file.get(unit, {}).get("stops")
             stopped += not isinstance(stops, dict) or any(v is not None for v in stops.values())
-        covered &= set(tasks)
-        ok = (bool(units) and cached == 0 and set(disclosed) == set(units) and found == len(units)
-              and live == records and stopped == 0 and len(covered) == len(tasks))
-        print(f"check 7 {name}: units {len(units)} cached or unconfirmed {cached} probe files found {found}"
-              f" probe records {records} sent to the live reader {live} (answered probes are counted by check 5) stopped units {stopped} (stops not all None, or none"
-              f" recorded) scored action tasks covered {len(covered)} of {len(tasks)} pass {ok}")
+        covered &= probed
+        ok = (set(units) == expected_units and set(disclosed) == expected_units and cached == 0
+              and found == len(expected_units) and records > 0 and live == records and stopped == 0
+              and covered == probed)
+        print(f"check 7 {name}: expected units {len(expected_units)} units listed {len(units)} (card) {len(disclosed)}"
+              f" (disclosures) cached or unconfirmed {cached} probe files found {found} probed items covered"
+              f" {len(covered)} of {len(probed)} probe records {records} sent to the live reader {live} (answered"
+              f" probes are counted by check 5) stopped units {stopped} (stops not all None, or none recorded) pass {ok}")
         if not ok:
             invalid.add(name)
-    used = {r: [arms[k] for k in names if k not in invalid | mismatched] for r, names in ROWS.items()}
+    used = {r: [arms[k] for k in names if k in arms and k not in invalid | mismatched] for r, names in ROWS.items()}
     short_rows = {r for r, names in ROWS.items() if len(used[r]) < len(names) or {a["name"] for a in used[r]} & incomplete}
     for r in sorted(short_rows):
         print(f"row {r} incomplete: repeats used {[a['name'] for a in used[r]]}")
@@ -419,15 +450,15 @@ def checks(args, pack, arms, order):
     print("check 6: pairs scored in every repeat of F, R and O used (common support for the flags):",
           {label(k): len(v) for k, v in support.items()}, "total", sum(map(len, support.values())))
     return dict(args=args, pack=pack, arms=arms, pairs=pairs, kinds=kinds, lives=lives, tasks=tasks, invalid=invalid,
-                violation=violation, off_order=off_order, mismatched=mismatched, incomplete=incomplete, used=used, short_rows=short_rows,
+                violation=violation, off_order=off_order, missing=missing, mismatched=mismatched, incomplete=incomplete, used=used, short_rows=short_rows,
                 support=support)
 
 
 def scores(ctx, failed):
     """Sections 3-8, printed only when no control row is invalid and no rerun is pending."""
     pack, arms, pairs, kinds, lives, tasks = (ctx[k] for k in ("pack", "arms", "pairs", "kinds", "lives", "tasks"))
-    invalid, mismatched, used, short_rows, support, off_order = (ctx[k] for k in (
-        "invalid", "mismatched", "used", "short_rows", "support", "off_order"))
+    invalid, mismatched, used, short_rows, support, off_order, missing = (ctx[k] for k in (
+        "invalid", "mismatched", "used", "short_rows", "support", "off_order", "missing"))
 
     # 3. Primary display.
     def groups(members):
@@ -439,6 +470,9 @@ def scores(ctx, failed):
         print(f"\n== {heading}")
         for row, members_arms in rows:
             for arm in members_arms:
+                if "missing" in arm:
+                    print(f"-- {arm['name']}: missing after its rerun (refusal code {arm['missing']})")
+                    continue
                 print(f"-- {arm['name']}" + (" (INVALID CONTROL ROW)" if arm["name"] in invalid else "")
                       + (" (identity mismatch: not pooled)" if arm["name"] in mismatched else "")
                       + (f" (not run as declared: {off_order[arm['name']]})" if arm["name"] in off_order else ""))
@@ -454,14 +488,14 @@ def scores(ctx, failed):
                           f" no_credit {exact(m[2])} points {exact(pts(used[row], both))} (common pairs = scored in every"
                           " repeat used; counts are means over repeats)")
 
-    display([(r, [arms[k] for k in names]) for r, names in ROWS.items()],
+    display([(r, [arms[k] if k in arms else dict(name=k, missing=missing[k]) for k in names]) for r, names in ROWS.items()],
             "3. Scored action pairs by kind and life (pairs, right, wrong, no credit, non-result, net, points)")
     optional = [arms[k] for k in arms if k.startswith("X-")]
     if optional or failed:
         display([(None, optional)], "3x. Optional rows (one attempt each; shown separately, never pooled)")
         for name, code in sorted(failed.items()):
             print(f"{name}: attempt failed, refusal code {code}")
-    if arms["H1"]["floor"] is not None:
+    if "H1" in arms and arms["H1"]["floor"] is not None:
         extra = dict(name="extra floor (H1's own no-memory floor; enters no mean, flag or comparison)",
                      outcomes=arms["H1"]["floor"])
         display([(None, [extra])], "3e. Extra floor")
@@ -487,7 +521,7 @@ def scores(ctx, failed):
             plus, zero, minus = s.count(1000), s.count(0), s.count(-1000)
             print(f"    {cell}: {plus} {zero} {minus} {len(s) - plus - zero - minus} net {plus - minus}")
     for names in ROWS.values():
-        for a, b in combinations([arms[k] for k in names], 2):
+        for a, b in combinations([arms[k] for k in names if k in arms], 2):
             agreement(a, b, pairs)
 
     # 5. Screening flags.
@@ -538,7 +572,7 @@ def scores(ctx, failed):
     print("\n== 6. Prospective filter yield; validates nothing (each twin right with only its evidence in >= 2 of 3"
           " O trials)")
     # A trial without an integer score_milli (BLOCKED, no row, or an excluded arm) is unknown, not a failure.
-    trials = [arms[k]["outcomes"] if k not in invalid | mismatched else {} for k in ROWS["O"]]
+    trials = [arms[k]["outcomes"] if k in arms and k not in invalid | mismatched else {} for k in ROWS["O"]]
 
     def twin(key):
         scored = [t[key]["score_milli"] for t in trials if key in t and is_int(t[key]["score_milli"])]

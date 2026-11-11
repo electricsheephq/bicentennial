@@ -81,7 +81,7 @@ def block_hashes():
     return {f"{life}/B0/{i}": sha256(f"control text for {i}".encode()).hexdigest() for life, i in ids}
 
 
-def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slot=0):
+def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slot=0, pack_hash="p" * 64):
     """spec: kind -> pair scores in global order; twins: {(kind, index, twin 0 or 1): score} overrides."""
     pairs, quiz = layout()
     letter = label[0]
@@ -97,7 +97,7 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slo
     units = {f"{life}/B{b}": dict(cache_key="k", cached=False) for life in LIVES for b in (0, 1)}
     if cached:
         units[f"{LIVES[0]}/B0"]["cached"] = True
-    write(path / "card.json", dict(tier="T2", system="hermes-native", model="m", effort="medium", pack_hash="p" * 64,
+    write(path / "card.json", dict(tier="T2", system="hermes-native", model="m", effort="medium", pack_hash=pack_hash,
                                    pins=dict(scorer_commit="c" * 40, benchmark_commit="b" * 40), served_identity=IDENTITY, not_scored_live=[],
                                    floor=dict(served_identity=IDENTITY, units=units)))
     write(path / "outcomes.json", out)
@@ -127,6 +127,7 @@ def run(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(table, "recompute_blocks", lambda packs, control: block_hashes())
     monkeypatch.setattr(table, "frame_sha256", lambda: "f" * 64)
     packs = make_packs(tmp_path / "packs")
+    pack_hash = table.pack_tree_hash(packs)
 
     def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None, flags=()):
         specs = {k: dict(BASE[k[0]], **(specs or {}).get(k, {})) for k in table.CORE} | {k: BASE["H"] for k in extra}
@@ -134,7 +135,7 @@ def run(tmp_path, monkeypatch, capsys):
         for label, spec in specs.items():
             path = make_arm(tmp_path / "runs" / label, label, spec, (twins or {}).get(label), label in cached,
                             extra_floor=label in ("H1", "E1", "E2"),
-                            slot=(slots or {}).get(label, ORDER.index(label) if label in ORDER else 20))
+                            slot=(slots or {}).get(label, ORDER.index(label) if label in ORDER else 20), pack_hash=pack_hash)
             if edit:
                 edit(label, path)
             argv.append(f"{label}={path}")
@@ -327,11 +328,29 @@ def test_check_7_needs_every_unit_live(run):
             data[f"{LIVES[0]}/B1"]["stops"] = {f"{LIVES[0]}B1": ["live_stop", 3]}
             (path / "oracle_evidence.json").write_text(json.dumps(data))
 
+    def dropped(label, path):
+        if label == "O1":
+            unit = f"{LIVES[0]}/B0"
+            for name, keys in (("card.json", ("floor", "units")), ("disclosures.json", ("floor",))):
+                data = json.loads((path / name).read_text())
+                target = data
+                for key in keys:
+                    target = target[key]
+                del target[unit]
+                (path / name).write_text(json.dumps(data))
+            probes(path).unlink()
+
+    def empty(label, path):
+        if label == "O1":
+            probes(path).write_text("[]")
+
     clean = next(x for x in run()[1].splitlines() if x.startswith("check 7 O1"))
-    assert clean == ("check 7 O1: units 4 cached or unconfirmed 0 probe files found 4 probe records 18 sent to the live"
-                     " reader 18 (answered probes are counted by check 5) stopped units 0 (stops not all None, or none recorded) scored action tasks covered 16 of 16"
-                     " pass True")
-    for edit, part in ((served_none, "sent to the live reader 17"), (missing, "probe files found 3"), (stopped, "stopped units 1")):
+    assert clean == ("check 7 O1: expected units 4 units listed 4 (card) 4 (disclosures) cached or unconfirmed 0 probe"
+                     " files found 4 probed items covered 18 of 18 probe records 18 sent to the live reader 18 (answered"
+                     " probes are counted by check 5) stopped units 0 (stops not all None, or none recorded) pass True")
+    for edit, part in ((served_none, "sent to the live reader 17"), (missing, "probe files found 3"),
+                       (stopped, "stopped units 1"), (dropped, "units listed 3 (card) 3 (disclosures)"),
+                       (empty, "probed items covered 9 of 18")):
         code, out = run(edit=edit)
         line = next(x for x in out.splitlines() if x.startswith("check 7 O1"))
         assert code == 3 and part in line and line.endswith("pass False") and "== 3." not in out
@@ -368,6 +387,44 @@ def test_card_pins_must_be_equal(run):
             in out.splitlines())
     assert out.splitlines()[-1] == "CARD PINS DIFFER between core arms (see PIN MISMATCH above): not pooled"
     assert "card pins equal) True" in run()[1]
+
+
+def remove_run(name):
+    def edit(label, path):
+        if label == name:
+            for file in ("card.json", "outcomes.json"):
+                (path / file).unlink()
+            write(path / "refusal.json", dict(code="live_stop"))
+    return edit
+
+
+def test_missing_core_repeat(run):
+    code, out = run(edit=remove_run("H2"))
+    assert code == 4 and "== 3." not in out and "H2: missing (no card.json or outcomes.json; refusal code live_stop)" in out
+    assert out.splitlines()[-1].startswith("pending before any score: H2 -")
+    code, out = run(edit=remove_run("H2"), flags=("--after-reruns",))
+    assert code == 0 and "== 8. Full history" in out and "row H incomplete: repeats used ['H1']" in out
+    assert "-- H2: missing after its rerun (refusal code live_stop)" in out.splitlines()
+    assert "-- H mean of ['H1'] (incomplete)" in out.splitlines()
+    code, out = run(edit=remove_run("O2"), flags=("--after-reruns",))
+    value = flags(out, "Drift, value twins")
+    assert code == 0 and "c 100 (100.0)" in value[0] and "check 1 O2" not in out
+    assert all(x.endswith("status unresolved") for x in value[1:4]) and value[4].endswith(
+        "classification: low unresolved; near-solved by naive retrieval unresolved; near-solved without memory unresolved")
+
+
+def test_pack_hash_must_match_the_packs(run):
+    def other_pack(label, path):
+        if label == "H2":
+            card = json.loads((path / "card.json").read_text())
+            card["pack_hash"] = "e" * 64
+            (path / "card.json").write_text(json.dumps(card))
+
+    code, out = run(edit=other_pack)
+    assert code == 3 and "== 3." not in out
+    assert any(x.startswith("PACK MISMATCH: H2 pack_hash eeeeeeeeeeee (--packs ") for x in out.splitlines())
+    assert out.splitlines()[-1] == "PACK DIFFERS from --packs for a core arm (see PACK MISMATCH above): not pooled"
+    assert "PACK MISMATCH" not in run()[1]
 
 
 def test_failed_optional_attempt(run):
