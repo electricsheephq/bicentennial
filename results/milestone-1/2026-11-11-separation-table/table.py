@@ -306,7 +306,8 @@ def checks(args, pack, arms, order, missing):
     ran = [k for k in CORE if k in arms]
     if not ran:
         sys.exit("no core arm ran")
-    pairs = pairs_of(pack, arms)
+    # The task inventory comes from the pack and the core cards only: an optional row never changes the core table (§1).
+    pairs = pairs_of(pack, {k: arms[k] for k in CORE if k in arms})
     kinds = sorted({p["kind"] for p in pairs}, key=kind_order)
     lives = sorted({p["life"] for p in pairs})
     tasks = [k for p in pairs for k in p["keys"]]
@@ -659,9 +660,10 @@ def scores(ctx, failed):
                 both = common(system + control, members)
                 s, other = pts(system, both), pts(control, both)
                 diff = None if s is None or other is None else s - other
-                parts.append(f"{row} {exact(other)}, {name} minus {row} {exact(diff)} on {len(both)} pairs")
-            print(f"  {name} {group}: {name} points {exact(pts(system, common(system, members)))};"
-                  f" against " + "; ".join(parts) + " (pairs = scored in every repeat of both rows)")
+                parts.append(f"{row} {exact(other)}, {name} {exact(s)}, {name} minus {row} {exact(diff)} on {len(both)} pairs")
+            own = common(system, members)
+            print(f"  {name} {group}: {name} points {exact(pts(system, own))} on its own {len(own)} scored pairs;"
+                  f" against " + "; ".join(parts) + " (each comparison on the pairs scored in every repeat of both rows)")
             for row in "FRO":
                 control = two_o if row == "O" else used[row]
                 life_line(name, row, "pairs", system, control, common(system + control, members), lambda p: p["life"],

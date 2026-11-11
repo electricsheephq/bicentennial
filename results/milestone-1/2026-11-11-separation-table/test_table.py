@@ -564,6 +564,39 @@ def test_optional_rows_run_after_the_core_arms_alone(run):
     assert code == 0 and "not run as declared" not in out and "  X-holo " in out.split("== 7.")[1]
 
 
+def test_optional_rows_never_change_the_core_inventory(run):
+    # An optional card from another pack that lists a core task as not scored live changes no core count or flag.
+    def excludes(label, path):
+        if label == "X-omega":
+            card = json.loads((path / "card.json").read_text())
+            pair = layout()[0][0]
+            card.update(pack_hash="e" * 64, not_scored_live=[[pair[0], "B0", pair[4][0]]])
+            (path / "card.json").write_text(json.dumps(card))
+
+    _, base = run()
+    code, out = run(extra=("X-omega",), edit=excludes)
+    assert code == 0 and "X-omega: not run as declared (different pack)" in out.splitlines()
+    six = [next(x for x in o.splitlines() if x.startswith("check 6")) for o in (base, out)]
+    assert six[0] == six[1] and "total 8" in six[1]
+    assert flags(out, "Drift, value twins") == flags(base, "Drift, value twins")
+
+
+def test_each_comparison_prints_the_system_on_its_own_pairs(run):
+    # F2 misses one value pair and is published after its rerun: H's points beside F are on F's three pairs.
+    def drop(label, path):
+        if label == "F2":
+            data = json.loads((path / "outcomes.json").read_text())
+            pair = layout()[0][0]
+            for iid in pair[4]:
+                del data[f"{pair[0]}/B0/{iid}"]
+            (path / "outcomes.json").write_text(json.dumps(data))
+
+    code, out = run(edit=drop, flags=("--after-reruns",))
+    line = next(x for x in out.split("== 7.")[1].splitlines() if x.startswith("  H Drift, value twins:"))
+    assert code == 0 and line.startswith("  H Drift, value twins: H points 0 (0.0) on its own 4 scored pairs; against")
+    assert "against F 0 (0.0), H -100/3 (-33.3), H minus F -100/3 (-33.3) on 3 pairs;" in line
+
+
 def test_per_life_differences_for_every_comparison(run):
     # H loses to R on value twins (H 1000, 0 | -1000, 0 against R right on all) and beats it on correction twins.
     _, out = run()
