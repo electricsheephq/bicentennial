@@ -334,8 +334,8 @@ def test_check_3_needs_its_tests_passing_at_the_run_commit(run):
         assert out.splitlines()[-1] == "CHECK 3 NOT SHOWN PASSING at the run commit (see check 3 above): no score is opened"
     assert "the run commit bbbbbbbbbbbb (§11.7): no --check3 file pass False" in run(check3=None)[1]
     # A malformed file fails without its own text reaching the output: no path, item id or traceback line.
-    code, out = run(check3=f"/home/zq/{LIVES[0]}.py\nTraceback\n  File \"/home/zq/ITEMZQ0value0a.py\", line 1")
-    assert code == 3 and "/home/zq" not in out and "ITEMZQ" not in out and "LIFEZQ" not in out and "Traceback" not in out
+    code, out = run(check3=f"/srv/zq/{LIVES[0]}.py\nTraceback\n  File \"/srv/zq/ITEMZQ0value0a.py\", line 1")
+    assert code == 3 and "/srv/zq" not in out and "ITEMZQ" not in out and "LIFEZQ" not in out and "Traceback" not in out
     assert "file names commit (no commit line), ends with exit 0 False;" in out
 
 
