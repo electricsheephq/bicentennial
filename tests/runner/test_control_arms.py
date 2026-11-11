@@ -3,6 +3,7 @@
 import json
 import runpy
 from contextlib import closing
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from test_t2lite import live_settings, scenario  # noqa: F401
 
 from bicentennial.audit.readback import life_ids
 from bicentennial.canon import canon
+from bicentennial.contracts.run import validate
 from bicentennial.controls import common, naive_rag, oracle_evidence
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.hermes import compile_script
@@ -23,7 +25,7 @@ from bicentennial.ledger import apply_masks
 from bicentennial.packs import build
 from bicentennial.packs.scoring import control_input, make_score
 from bicentennial.probe.scripted_reader import UNKNOWN
-from bicentennial.runner import control_arm, t1
+from bicentennial.runner import control_arm, t1, t2, units
 from bicentennial.runner.life import STEP_S
 from bicentennial.runner.units import T2_SPEC
 from bicentennial.systems.registry import REGISTRY, load
@@ -279,6 +281,122 @@ def test_time_block_holds_nothing_after_the_probe(t2_packs):
                     cut = dict(inp.events)
                     cut[life] = dict(cut[life], **{branch: [e for e in inp.events[life][branch] if e["t_sim"] <= sim[iid]]})
                     cut_inp = common.ControlInput(inp.pack, inp.keys, cut, inp.now, inp.scoring_sha256)
+                    # Only this item, so the cut cannot remove a later probe's own evidence.
+                    alone = replace(pack, items={b: [i for i in pack.items[b] if i["item_id"] == iid]
+                                                 for b in ("B0", "B1")})
                     with pytest.MonkeyPatch.context() as mp:
                         mp.setattr(control_arm, "control_input", lambda d, value=cut_inp: value)
-                        assert control_arm.probe_blocks(pack, control)[life, branch][iid] == text, (control, iid)
+                        assert control_arm.probe_blocks(alone, control)[life, branch][iid] == text, (control, iid)
+
+
+# ---- the T2 runner with one control arm, on the T2 fixture's synthetic packs ----
+
+def synthetic_text(pack, branch, iid):
+    return f"synthetic control text for {pack.life} {branch} {iid}"
+
+
+@pytest.fixture
+def control_scenario(t2_scenario, monkeypatch):  # noqa: F811
+    s = t2_scenario
+    monkeypatch.setattr(control_arm, "probe_blocks", lambda pack, control: {
+        (pack.life, b): {i["item_id"]: synthetic_text(pack, b, i["item_id"]) for i in pack.items[b]}
+        for b in ("B0", "B1")})
+    monkeypatch.setattr(t2, "control_key_sha256", lambda pack, control: f"{control}-{pack.life}-key")
+    s.lives, drive_life = [], units.run_life
+
+    def recorded(**kw):
+        s.lives.append(kw)
+        return drive_life(**kw)
+
+    monkeypatch.setattr(units, "run_life", recorded)
+    return s
+
+
+@pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
+def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scenario, control):
+    s = control_scenario
+    assert s.invoke(control=control) == 0
+    out = s.out
+    names = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+    assert {"card.json", "outcomes.json", control + ".json", "control.json", "units.json", "receipt.json",
+            f"receipts/{control}.json", "disclosures.json", "custody.json", "spend.json"} <= names
+    assert not any(n.startswith(("system/", "kept/", "receipts/system")) for n in names)
+    assert control == "no_memory" or "no_memory.json" not in names
+    card = read(out, "card.json")
+    validate("card_t2", card)
+    assert card["live_roles"] == ["probe_main"] and card["served_identity"] == read(out, control + ".json")[
+        f"{s.ctx.packs[0].life}/B0"]["served_identity"]
+    assert len(read(out, "outcomes.json")) == len(card["items"]) == 8
+    floor = read(out, control + ".json")
+    assert set(floor) == set(card["floor"]["units"]) and all(
+        set(v) == {"outcomes", "stops", "served_identity"} for v in floor.values())
+    assert not any(v["cached"] for v in card["floor"]["units"].values())
+    for name in ("receipt.json", f"receipts/{control}.json"):
+        validate("receipt", read(out, name))
+    timing = read(out, "units.json")
+    assert len(timing["units"]) == 4 and all(r["arm"] == control for r in timing["units"])
+    assert all(r["end_ms"] >= r["start_ms"] > 0 for r in timing["units"])
+    assert all(r == dict(cached=False, reason="control arm") for r in read(out, "disclosures.json")["floor"].values())
+    record = read(out, "control.json")
+    texts = {f"{p.life}/{b}/{i['item_id']}": synthetic_text(p, b, i["item_id"])
+             for p in s.ctx.packs for b in ("B0", "B1") for i in p.items[b]}
+    assert record == dict(arm=control,
+        frame_sha256=None if control == "no_memory" else sha256(control_arm.FRAME.encode()).hexdigest(),
+        control_key_sha256={p.life: f"{control}-{p.life}-key" for p in s.ctx.packs},
+        block_sha256={} if control == "no_memory" else {k: sha256(v.encode()).hexdigest() for k, v in texts.items()})
+    # Each unit's life receives exactly its own blocks; the no_memory arm receives none.
+    for kw in s.lives:
+        pack = next(p for p in s.ctx.packs if p.life == kw["life_dir"].name)
+        assert kw["arm"] == "no_memory" and kw["probe_mode"] == "per_item"
+        assert kw.get("probe_blocks") == (None if control == "no_memory" else {
+            i["item_id"]: synthetic_text(pack, kw["branch"], i["item_id"]) for i in kw["items"]})
+
+
+@pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
+def test_c_runner_hands_each_arm_the_floors_life_inputs(control_scenario, control):
+    s = control_scenario
+    assert s.invoke("base") == 0
+    floor = {(kw["life_dir"].name, kw["branch"]): kw for kw in s.lives if kw["arm"] == "no_memory"}
+    s.lives.clear()
+    assert s.invoke(control=control) == 0
+    arm = {(kw["life_dir"].name, kw["branch"]): kw for kw in s.lives}
+    assert set(arm) == set(floor) and len(arm) == 4
+
+    def same(kw):
+        # The live stack and run id are per run; the scratch path names the arm (runner/units.py make_units).
+        return {k: v for k, v in kw.items() if k not in ("live", "run", "voids", "scratch", "probe_blocks")}
+
+    for unit, kw in arm.items():
+        assert same(kw) == same(floor[unit])
+        assert type(kw["voids"]) is type(floor[unit]["voids"])
+        assert kw["scratch"].parts[-4:] == (control, *floor[unit]["scratch"].parts[-3:])
+        assert ("probe_blocks" in kw) == (control != "no_memory")
+
+
+@pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
+def test_d_another_live_role_refuses_a_control_arm(control_scenario, monkeypatch, control):
+    s = control_scenario
+    drive_life = units.run_life
+
+    def breach(**kw):
+        run = drive_life(**kw)
+        return replace(run, records=(*run.records, {"role": "replay_main", "served_by": "live"}))
+
+    monkeypatch.setattr(units, "run_life", breach)
+    assert s.invoke(control=control) == 3
+    assert read(s.out, "refusal.json") == {"code": "isolation"}
+
+
+@pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
+def test_e_control_arm_never_aliases_the_floor_cache(control_scenario, tmp_path, control):
+    s, cache = control_scenario, tmp_path / "cache"
+    assert s.invoke("floor", cache=cache) == 0
+    before = {p.name: p.read_bytes() for p in cache.iterdir()}
+    assert len(before) == 4
+    for n in range(2):
+        s.executed.clear()
+        assert s.invoke(f"arm{n}", control=control, cache=cache) == 0
+        calls = s.stacks[-1].calls
+        assert [c.role for c in calls] == ["probe_main"] * 4  # every unit sends; no identity check for a cache hit
+        assert sorted(s.executed) == sorted(("no_memory", p.life, b) for p in s.ctx.packs for b in ("B0", "B1"))
+        assert {p.name: p.read_bytes() for p in cache.iterdir()} == before
