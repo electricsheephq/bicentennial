@@ -10,10 +10,10 @@
   - **F, no memory:** memory off, no search tool, no added text.
   - **R, naive retrieval:** the pinned naive-retrieval control (hashed TF-IDF, 240-character chunks, top five), queried with the task as the pack does at the probe's time, its five chunks handed to the live reader.
   - **O, oracle evidence:** the task's listed evidence events that exist at the probe's time, as the pinned oracle-evidence control returns them, handed to the live reader.
-  - **H, Hermes native:** the registered system, as on 4-5 November.
+  - **H, Hermes native:** the registered system, as on 4 November.
 - **Where control text goes:** at the top of the probe turn's user message, in one labelled block, the same for R and O. The arm otherwise equals F.
-- **The nine core arms and their order:** F, R, O, H, H, O, R, F, O. The first eight are mirrored, which mitigates order effects without removing them; the ninth is oracle evidence's third repeat. Each arm runs alone over the whole pack, from a clean state, and never reads a cached result of its own kind. H's first run also produces a fresh no-memory floor beside it. That extra floor is shown separately and enters no mean, flag or comparison: the two scheduled F arms are the floor. Each arm's start and end times and served model identity are recorded.
-- **Earlier runs:** the Hermes native runs of 4-5 November and their one live floor are shown as earlier evidence at an older commit, never pooled with the new rows.
+- **The nine core arms and their order:** F, R, O, H, H, O, R, F, O. The first eight are mirrored, which mitigates order effects without removing them; the ninth is oracle evidence's third repeat. Each arm runs alone over the whole pack, from a clean state, and never reads a cached result of its own kind. H's first run also produces a fresh no-memory floor beside it, and H's second run may take that floor from the cache. That extra floor is shown separately and enters no mean, flag or comparison: the two scheduled F arms are the floor. Each arm's start and end times and served model identity are recorded.
+- **Earlier runs:** the Hermes native runs of 4 November and their one live floor are shown as earlier evidence at an older commit, never pooled with the new rows.
 - **Optional rows:** Holographic and OMEGA, one attempt each, only after the nine core arms. They are shown separately; a failed attempt is published as a failure, and nothing about them changes the core table.
 
 ## 2. Checks before any score is read
@@ -23,7 +23,8 @@
 4. **Identity:** every arm was served the same model identity. An arm that differs is rerun once; a mismatched arm is shown separately and never pooled.
 5. **Completeness:** a core arm with any scored action task left BLOCKED is rerun once, whole. If it is still incomplete it is published as incomplete, with its assigned, scored and excluded counts; its row uses the pairs it scored, and any flag that depends on it reads "unresolved". A system failure is a scored failure, as the scorer already treats it, never an exclusion.
 6. **Repeats and common support:** a row's mean uses only its complete, identity-matched repeats. If a required repeat is still missing or mismatched after its one rerun, the row is published with the repeats it has, marked incomplete, and every flag that uses it reads "unresolved". Whenever rows are compared or a flag is computed, only the pairs scored in every repeat used on both sides count, and the page prints that number.
-If check 1, 2 or 3 fails, the arm is not a valid control row: the fault is fixed and the arm rerun before any score is opened.
+7. **Live units:** every unit of every F, R and O arm ran live in that arm, as the run's own records show; none came from a cache.
+If check 1, 2, 3 or 7 fails, the arm is not a valid control row: the fault is fixed and the arm rerun before any score is opened.
 
 ## 3. What is scored
 - **Primary display:** the 20 scored action pairs of the five software-partner lives, by kind: Drift value twins (10), Drift correction twins (5), Wake (5), and per life. A pair's score is the lower of its two twins' penalised scores (+1 right, 0 no credit, -1 a confident false memory), from the unchanged scorer. Right, confidently wrong and no-credit pairs are shown separately. A row's points are 100 times its mean pair score; a repeated row shows every repeat and their mean.
@@ -32,11 +33,13 @@ If check 1, 2 or 3 fails, the arm is not a valid control row: the fault is fixed
 - **Not scored:** the 30 personal-assistant actions, which the live tiers do not score yet.
 
 ## 4. Exploratory screening flags, from control rows only
-Per kind, with f, r and c the points of F, R and O (the mean of each row's repeats):
+Points are raw penalised points, from -100 to +100 (PREREG-v0.5 §7), the scale on which §9's 75 is set. Per kind, with f, r and c the points of F, R and O: f and r are the means of their two repeats, and c is the mean of O's first two repeats (arms 3 and 6), so each of the three means sits at the same centre of the mirrored order. O's third repeat (arm 9) enters the instability check below and the filter yield (§6), and the page also prints c over all three repeats.
 - **low even with the evidence handed over** when c < 75;
 - **near-solved by naive retrieval** when r >= f + 0.7 (c - f);
 - **near-solved without memory** when f >= 0.7 c;
-- otherwise **a candidate for fresh validation**.
+- **a candidate for fresh validation** when none of the three applies.
+
+A kind can carry more than one flag, and every flag that applies is printed. When "low" applies together with a near-solved flag, the low row of §6 governs first: the template gets a new version, and the near-solved flags are computed again on that version's own control trials. Until then the kind is also excluded from any claim that memory beats retrieval.
 
 What these are and are not:
 - The 75 is the pilot's frozen calibration target for oracle evidence (PREREG-v0.5 §9), and the two 0.7 rules are the naive-retrieval control's frozen near-solved disclosures. There they apply to whole tracks on calibration lives. Applying them to kinds of five or ten pairs on public lives is new in this declaration. They screen; they are not gates, and a candidate is not a validated ranking task.
@@ -70,7 +73,7 @@ H (and any optional row) is reported per kind against F, R and O, with per-life 
 Expected flags: value twins and Wake low even with the evidence; correction twins a candidate.
 
 ## 8. What was already seen when this was written
-- The 4-5 November results of F and H, kind by kind. In particular, the correction twins are already known to favour H.
+- The 4 November results of F and H, kind by kind. In particular, the correction twins are already known to favour H.
 - The pack's scripted control rows. They are evidence-availability diagnostics: their reader always picks the right value when a rival is in view, so they are not live retrieval results.
 - The thresholds in section 4 predate both; their use here does not. The kinds in section 3 are the pack's own templates and twin types, not groups chosen from results.
 
@@ -80,7 +83,7 @@ Expected flags: value twins and Wake low even with the evidence; correction twin
 - One real system (three with the optional rows).
 - Whole arms in a mirrored order, not arms interleaved within each life as the board will run them; and equal served-model names do not prove equal service behaviour across two days.
 - Where the control text is placed is a declared choice that can move the oracle row.
-- The table lacks two rows a published board table must carry, and says so: the agent-key validation row (no auditor panel exists yet) and the full-history ceiling (the history fits the window at none of the pack's checkpoints).
+- The table lacks two rows a published board table must carry, and says so: the agent-key validation row (no auditor panel exists yet) and the full-history ceiling (the history fits the window for none of the pack's items, each tested at its own time).
 
 ## 10. Scope note
 The Ring 0 documents describe controls as cached, scripted, API-mode rows, and put a Hermes-mode form of naive retrieval out of scope. The live control arms extend that. A dated, scoped extension note in the Ring 0 spec lands with the harness change. It changes no frozen scoring rule, calibration target or bar.
