@@ -483,11 +483,14 @@ def checks(args, pack, arms, order, missing):
     seen = {t: outcomes_of(lines, t) for t in CHECK3_TESTS}
     ok3 = (lines[:1] == [f"commit {commit}"] and lines[-1:] == ["exit 0"]
            and all(c["PASSED"] >= 1 and sum(c.values()) == c["PASSED"] for c in seen.values()))
+    # Only what the validation found is printed, never the file's own text (it could hold a path or an item id).
+    named = re.fullmatch(r"commit ([0-9a-f]{40})", lines[0]) if lines else None
     print("check 3 (F, R, O): memory block, search tool, answer key and option order in the block are not visible in"
           " run outputs (request bodies are not kept); the runner's own tests at the run commit", commit[:12], "(§11.7):",
           "no --check3 file" if not lines else
-          f"file names commit {lines[0].removeprefix('commit ')[:12]}, last line {lines[-1]!r};"
-          + "".join(f" {t} {dict(sorted(c.items())) or 'not found'};" for t, c in seen.items()), "pass", ok3)
+          f"file names commit {named.group(1)[:12] if named else '(no commit line)'}, ends with exit 0"
+          f" {lines[-1] == 'exit 0'};" + "".join(f" {t} {dict(sorted(c.items())) or 'not found'};"
+                                                 for t, c in seen.items()), "pass", ok3)
     if not ok3:
         invalid.add("check 3")
     print("check 4: see header (served identity, and whether it changed during the run); mismatched arms are not"

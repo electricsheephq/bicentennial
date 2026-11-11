@@ -319,7 +319,8 @@ def test_e_filter_yield(run):
 
 def test_check_3_needs_its_tests_passing_at_the_run_commit(run):
     line = next(x for x in run()[1].splitlines() if x.startswith("check 3"))
-    assert "the runner's own tests at the run commit bbbbbbbbbbbb (§11.7): file names commit bbbbbbbbbbbb, last line" in line
+    assert ("the runner's own tests at the run commit bbbbbbbbbbbb (§11.7): file names commit bbbbbbbbbbbb, ends with"
+            " exit 0 True;") in line
     assert line.count(" {'PASSED': 1};") == 3 and line.endswith("pass True")
     # A warnings-summary heading names a test with no outcome word: it counts for nothing.
     warned = CHECK3_OK.replace("3 passed", f"tests/runner/test_control_arms.py::{table.CHECK3_TESTS[0]}\n  Warning\n3 passed")
@@ -332,6 +333,10 @@ def test_check_3_needs_its_tests_passing_at_the_run_commit(run):
         assert code == 3 and "== 3." not in out and "pass False" in next(x for x in out.splitlines() if x.startswith("check 3"))
         assert out.splitlines()[-1] == "CHECK 3 NOT SHOWN PASSING at the run commit (see check 3 above): no score is opened"
     assert "the run commit bbbbbbbbbbbb (§11.7): no --check3 file pass False" in run(check3=None)[1]
+    # A malformed file fails without its own text reaching the output: no path, item id or traceback line.
+    code, out = run(check3=f"/home/zq/{LIVES[0]}.py\nTraceback\n  File \"/home/zq/ITEMZQ0value0a.py\", line 1")
+    assert code == 3 and "/home/zq" not in out and "ITEMZQ" not in out and "LIFEZQ" not in out and "Traceback" not in out
+    assert "file names commit (no commit line), ends with exit 0 False;" in out
 
 
 def test_identity_change_during_an_arm_is_a_mismatch(run):
