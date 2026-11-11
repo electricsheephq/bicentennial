@@ -364,10 +364,14 @@ def test_c_runner_hands_each_arm_the_floors_life_inputs(control_scenario, contro
 
     def same(kw):
         # The live stack and run id are per run; the scratch path names the arm (runner/units.py make_units).
-        return {k: v for k, v in kw.items() if k not in ("live", "run", "voids", "scratch", "probe_blocks")}
+        return {k: v for k, v in kw.items() if k not in (
+            "live", "run", "voids", "scratch", "probe_blocks", "gate", "current_lock")}
 
     for unit, kw in arm.items():
         assert same(kw) == same(floor[unit])
+        # Per-unit wrappers: the same lock, and the session gate keyed by the arm's run-local key.
+        assert kw["current_lock"]() == floor[unit]["current_lock"]()
+        assert (kw["gate"].key, floor[unit]["gate"].key) == (control, "no_memory")
         assert type(kw["voids"]) is type(floor[unit]["voids"])
         assert kw["scratch"].parts[-4:] == (control, *floor[unit]["scratch"].parts[-3:])
         assert ("probe_blocks" in kw) == (control != "no_memory")
