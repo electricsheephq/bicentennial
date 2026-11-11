@@ -324,6 +324,7 @@ def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scena
     assert control == "no_memory" or "no_memory.json" not in names
     card = read(out, "card.json")
     validate("card_t2", card)
+    assert card["control"] == control and card["system"] == "hermes-native"
     assert card["live_roles"] == ["probe_main"] and card["served_identity"] == read(out, control + ".json")[
         f"{s.ctx.packs[0].life}/B0"]["served_identity"]
     assert len(read(out, "outcomes.json")) == len(card["items"]) == 8

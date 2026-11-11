@@ -120,6 +120,17 @@ def test_item_2_wrong_tier_refused(tier):
         validate("card_t2", card)
 
 
+@pytest.mark.parametrize("arm", ["no_memory", "naive_rag", "oracle_evidence"])
+def test_a_control_arms_card_names_the_arm(arm):
+    # A live control arm (RING0 §15) runs through the system's harness with memory off: its card says which arm.
+    assert "control" not in complete_card()
+    card = cards.build_t2_card(**inputs(), control=arm)
+    assert card["control"] == arm and validate("card_t2", card) is None
+    assert {k: v for k, v in card.items() if k != "control"} == complete_card()
+    with pytest.raises(ValueError, match="control"):
+        validate("card_t2", dict(card, control="hermes-native"))
+
+
 def test_item_2_gate_verdict_refused():
     card = dict(complete_card(), gate_verdict=None)
     with pytest.raises(ValueError, match="^t2_card:gate_verdict$"):

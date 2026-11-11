@@ -111,7 +111,8 @@ def _card(ctx, results, floor, identity, out, arm="system"):
         aa_prime=False, items=items, counts=counts, answer_contract_sha256=answer_contract.contract_hash(),
         not_scored_live=unscored, seed_source={"kind": "public"},
         groups=[list(g) for g in sorted({(r["cell_id"], r["stage"]) for r in items})], floor=floor,
-        controls_broken=[dict(stage=s, track=t) for s, t in sorted(broken)])
+        controls_broken=[dict(stage=s, track=t) for s, t in sorted(broken)],
+        control=None if arm == "system" else arm)
 
 
 def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
