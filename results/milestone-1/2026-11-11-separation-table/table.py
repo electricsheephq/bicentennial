@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from fractions import Fraction
 from hashlib import sha256
 from io import StringIO
-from itertools import combinations, product
+from itertools import combinations, pairwise, product
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "2026-11-04-live-runs-by-kind"))
@@ -44,6 +44,7 @@ CORE = tuple(a for arms in ROWS.values() for a in arms)
 CONTROL = {"F": "no_memory", "R": "naive_rag", "O": "oracle_evidence"}
 SEVEN = Fraction(7, 10)
 NOT_VISIBLE = "not visible in run outputs; covered by #496's tests"
+NAMES = {"low": "low", "naive": "near-solved by naive retrieval", "floor": "near-solved without memory"}
 
 
 def short(text):
@@ -181,7 +182,7 @@ def main(argv=None):
         if len(earlier) == 2:
             e = {n: load_arm(n, Path(given[n])) for n in ("E1", "E2")}
             agreement(e["E1"], e["E2"], pairs_of(load_packs(args.earlier_packs or args.packs), e))
-    for name in sorted(invalid):
+    for name in sorted(invalid - {"run order"}):
         print("INVALID CONTROL ROW", name)
     return 3 if invalid else 0
 
@@ -239,6 +240,14 @@ def table(args, pack, arms, order):
     # 1. Header and identity.
     print("== 1. Header and identity")
     print("run order", ",".join(order))
+    # Each arm in --order ran alone, after the one before it ended (units.json start and end times).
+    times = [(k, arms[k]["units"].get("start_ms"), arms[k]["units"].get("end_ms")) for k in order]
+    violation = next((f"{k} has no start or end time" for k, s, e in times if not (is_int(s) and is_int(e) and s <= e)),
+                     None) or next((f"{b[0]} starts before {a[0]} ends" for a, b in pairwise(times) if b[1] < a[2]),
+                                   None)
+    print("run order verified" if violation is None else f"RUN ORDER VIOLATION: {violation}")
+    if violation is not None:
+        invalid.add("run order")
     # The core identity is the most common among core arms (ties: the earliest label in F1..H2).
     core_id = Counter(arms[k]["card"]["served_identity"] for k in CORE).most_common(1)[0][0]
     for name, arm in arms.items():
@@ -395,27 +404,30 @@ def table(args, pack, arms, order):
                       "naive": [(pts([x], members), pts([y], members), pts([o], members))
                                 for x, y, o in product(used["F"], used["R"], used["O"])],
                       "floor": [(pts([x], members), r, pts([o], members)) for x, o in product(used["F"], used["O"])]}[flag]
-            states = [state(flag, *v) for v in combos]
+            # Stability and classification read only whether a flag applies; "not interpreted" is a disclosure.
+            agree = [(s == "applies") == (mean == "applies") for s in map(lambda v: state(flag, *v), combos)]
             unresolved = any(row in short_rows for row in rows_of[flag]) or n == 0
-            status[flag] = "unresolved" if unresolved else "unstable" if any(s != mean for s in states) else mean
+            status[flag] = ("unresolved" if unresolved else "unstable" if not all(agree)
+                            else "applies" if mean == "applies" else "does not apply")
             print(f"  {flag}: on means {mean} margin_pairs {exact(margin(flag, f, r, c, n))}"
-                  f" combinations {len(states)} agreeing {sum(s == mean for s in states)} status {status[flag]}")
+                  f" combinations {len(agree)} agreeing on whether it applies {sum(agree)} status {status[flag]}")
         applied = [x for x in ("low", "naive", "floor") if status[x] == "applies"]
-        if "unresolved" in status.values():
-            verdict = "unresolved"
-        elif "unstable" in status.values():
+        open_ = [NAMES[x] + " unresolved" for x in ("low", "naive", "floor") if status[x] == "unresolved"]
+        if "unstable" in status.values():
             verdict = "unstable; no classification"
         elif applied:
-            verdict = " + ".join(applied) + ("; low governs first (§6)" if "low" in applied and len(applied) > 1 else "")
-        elif "not interpreted" in status.values():
-            verdict = "no flag applies, but a near-solved flag is not interpreted; candidate not determined"
+            verdict = "; ".join([" + ".join(NAMES[x] for x in applied)
+                                 + ("; low governs first (§6)" if "low" in applied and len(applied) > 1 else "")] + open_)
+        elif open_:
+            verdict = "; ".join(open_)
         else:
             verdict = "candidate"
         print(f"  classification: {verdict}")
     print("flags: low c < 75; naive (near-solved by naive retrieval) r >= f + 0.7 (c - f); floor (near-solved"
           " without memory) f >= 0.7 c; near-solved flags not interpreted when c <= f or c <= 0. Margin in pairs ="
           " (left - right) x pairs / 100, low as 75 - c; it applies when the margin is > 0 (low) or >= 0. Combinations:"
-          " one repeat per row used (naive F x R x O, floor F x O, low O); any disagreement is unstable.")
+          " one repeat per row used (naive F x R x O, floor F x O, low O); a flag is unstable when whether it applies"
+          " differs between the means and any combination; not interpreted counts as not applying (disclosure only).")
 
     # 6. Filter yield.
     print("\n== 6. Prospective filter yield; validates nothing (each twin right with only its evidence in >= 2 of 3"

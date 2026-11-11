@@ -18,6 +18,7 @@ import table  # noqa: E402
 LIVES = ("LIFEZQA", "LIFEZQB")
 KINDS = {"value": ("DRIFT-CUR", "fork", 2), "corr": ("DRIFT-CUR", "trigger", 1), "wake": ("WAKE-LOOP", "fork", 1)}
 IDENTITY = "identity-zq-served-value"
+ORDER = ("F1", "R1", "O1", "H1", "H2", "O2", "R2", "F2", "O3")
 BASE = {"F": {"value": [0] * 4, "corr": [0] * 2, "wake": [0] * 2},
         "R": {"value": [1000] * 4, "corr": [0] * 2, "wake": [0] * 2},
         "O": {"value": [1000] * 4, "corr": [1000] * 2, "wake": [0] * 2},
@@ -77,7 +78,7 @@ def block_hashes():
     return {f"{life}/B0/{i}": sha256(f"control text for {i}".encode()).hexdigest() for life, i in ids}
 
 
-def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False):
+def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False, slot=0):
     """spec: kind -> pair scores in global order; twins: {(kind, index, twin 0 or 1): score} overrides."""
     pairs, quiz = layout()
     letter = label[0]
@@ -97,7 +98,8 @@ def make_arm(path, label, spec, twins=None, cached=False, extra_floor=False):
                                    pins=dict(scorer_commit="c" * 40), served_identity=IDENTITY, not_scored_live=[],
                                    floor=dict(served_identity=IDENTITY, units=units)))
     write(path / "outcomes.json", out)
-    write(path / "units.json", dict(start_ms=1793796303380, end_ms=1793802913487))
+    start = 1793796303380 + slot * 10_000_000  # one arm after another, in run-order slots
+    write(path / "units.json", dict(start_ms=start, end_ms=start + 6_000_000))
     write(path / "disclosures.json", dict(floor={u: dict(cached=v["cached"], reason="r") for u, v in units.items()}))
     if letter in table.CONTROL:
         write(path / "control.json", dict(arm=table.CONTROL[letter], frame_sha256=None if letter == "F" else "f" * 64,
@@ -114,12 +116,13 @@ def run(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(table, "frame_sha256", lambda: "f" * 64)
     packs = make_packs(tmp_path / "packs")
 
-    def go(specs=None, twins=None, cached=(), extra=(), edit=None):
+    def go(specs=None, twins=None, cached=(), extra=(), edit=None, slots=None):
         specs = {k: dict(BASE[k[0]], **(specs or {}).get(k, {})) for k in table.CORE} | {k: BASE["H"] for k in extra}
-        argv = ["--packs", str(packs), "--order", "F1,R1,O1,H1,H2,O2,R2,F2,O3"]
+        argv = ["--packs", str(packs), "--order", ",".join(ORDER)]
         for label, spec in specs.items():
             path = make_arm(tmp_path / "runs" / label, label, spec, (twins or {}).get(label), label in cached,
-                            extra_floor=label in ("H1", "E1", "E2"))
+                            extra_floor=label in ("H1", "E1", "E2"),
+                            slot=(slots or {}).get(label, ORDER.index(label) if label in ORDER else 20))
             if edit:
                 edit(label, path)
             argv.append(f"{label}={path}")
@@ -156,18 +159,19 @@ def test_flags_end_to_end(run):
     assert code == 0 and "INVALID" not in out
     value, corr, wake = flags(out, "Drift, value twins"), flags(out, "Drift, correction twins"), flags(out, "Wake")
     assert "f 0 (0.0) r 100 (100.0) c 100 (100.0)" in value[0]
-    assert "naive: on means applies margin_pairs 6/5 (1.2)" in value[2] and value[4].endswith("classification: naive")
+    assert "naive: on means applies margin_pairs 6/5 (1.2)" in value[2] and value[4].endswith(
+        "classification: near-solved by naive retrieval")
     assert corr[4].endswith("classification: candidate")
     assert "naive: on means not interpreted" in wake[2] and wake[4].endswith("classification: low")
     # Co-occurring low and naive, stable across all combinations.
     half = {"wake": [1000, 0]}
     code, out = run({"R1": half, "R2": half, "O1": half, "O2": half, "O3": half})
-    assert flags(out, "Wake")[4].endswith("classification: low + naive; low governs first (§6)")
+    assert flags(out, "Wake")[4].endswith("classification: low + near-solved by naive retrieval; low governs first (§6)")
     # Instability, and c over O1,O2 against c over all three.
     code, out = run({"O3": {"value": [0] * 4}})
     value = flags(out, "Drift, value twins")
     assert "c 100 (100.0) c over O1,O2,O3 200/3 (66.7)" in value[0]
-    assert "low: on means no" in value[1] and "combinations 3 agreeing 2 status unstable" in value[1]
+    assert "low: on means no" in value[1] and "combinations 3 agreeing on whether it applies 2 status unstable" in value[1]
     assert "combinations 12 agreeing" in value[2] and "combinations 6 agreeing" in value[3]
     assert value[4].endswith("classification: unstable; no classification")
 
@@ -215,10 +219,56 @@ def test_d_common_support(run):
     assert before[0].startswith("-- Drift, value twins: common pairs 4 f 25 (25.0) r 75 (75.0) c 100 (100.0)")
     assert after[0].startswith("-- Drift, value twins: common pairs 3 f 0 (0.0) r 200/3 (66.7) c 100 (100.0)")
     assert all(a != b for a, b in zip(before[:4], after[:4], strict=True))
-    assert after[4].endswith("classification: unresolved") and "row F incomplete" in dropped
+    assert after[4].endswith("classification: near-solved by naive retrieval unresolved; near-solved without memory"
+                             " unresolved") and "row F incomplete" in dropped
     mean = [next(x for x in out.split("-- F mean")[1].splitlines() if "value twins" in x) for out in (base, dropped)]
     assert "common pairs 4" in mean[0] and "common pairs 3" in mean[1]
     assert "check 5 F2: scored action tasks assigned 16 scored 14 BLOCKED 0 missing 2 complete False" in dropped
+
+
+def test_not_interpreted_is_a_disclosure_not_instability(run):
+    # Fix 1: f = r = c = 0 on the means (near-solved flags not interpreted); O3 alone has one value pair right of four
+    # (25 points; the fixture's value kind has four pairs), so in O3's combinations the near-solved flags read "no".
+    zero = {"value": [0] * 4}
+    _, out = run({k: zero for k in ("F1", "F2", "R1", "R2", "O1", "O2")} | {"O3": {"value": [1000, 0, 0, 0]}})
+    value = flags(out, "Drift, value twins")
+    assert "c 0 (0.0) c over O1,O2,O3 25/3 (8.3)" in value[0]
+    assert "low: on means applies" in value[1] and value[1].endswith("status applies")
+    assert "naive: on means not interpreted" in value[2] and value[2].endswith("agreeing on whether it applies 12"
+                                                                              " status does not apply")
+    assert "floor: on means not interpreted" in value[3] and value[3].endswith("6 status does not apply")
+    assert value[4].endswith("classification: low") and "unstable" not in "\n".join(value)
+
+
+def test_unresolved_flag_does_not_hide_a_stable_low(run):
+    # Fix 2: F2 is incomplete (one value pair missing); O1-O3 complete, c = 100/3 on the three pairs left (the
+    # fixture's four-pair kind cannot make 40).
+    half = {"value": [1000, 1000, 0, 0]}
+
+    def drop(label, path):
+        if label == "F2":
+            data = json.loads((path / "outcomes.json").read_text())
+            pair = layout()[0][0]
+            for iid in pair[4]:
+                del data[f"{pair[0]}/B0/{iid}"]
+            (path / "outcomes.json").write_text(json.dumps(data))
+    code, out = run({"O1": half, "O2": half, "O3": half}, edit=drop)
+    value = flags(out, "Drift, value twins")
+    assert code == 0 and "row F incomplete" in out and value[1].endswith("status applies")
+    assert value[4].endswith("classification: low; near-solved by naive retrieval unresolved; near-solved without"
+                             " memory unresolved")
+    # The correction kind keeps all its pairs but still uses the incomplete F row: no candidate.
+    assert flags(out, "Drift, correction twins")[4].endswith("classification: near-solved by naive retrieval"
+                                                             " unresolved; near-solved without memory unresolved")
+
+
+def test_run_order_is_checked(run):
+    code, out = run()
+    assert code == 0 and "run order verified" in out.splitlines()
+    # Fix 3: the directories labelled O2 and O3 ran in each other's slots.
+    code, out = run(slots={"O2": ORDER.index("O3"), "O3": ORDER.index("O2")})
+    assert code == 3 and "RUN ORDER VIOLATION: R2 starts before O2 ends" in out.splitlines()
+    assert not [x for x in out.splitlines() if x.startswith("INVALID")]
 
 
 def test_e_filter_yield(run):
