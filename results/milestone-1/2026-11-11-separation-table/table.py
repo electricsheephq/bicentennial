@@ -586,13 +586,19 @@ def scores(ctx, failed):
         for name, code in sorted(failed.items()):
             print(f"{name}: attempt failed, refusal code {code}")
     if "H1" in arms and arms["H1"]["floor"] is not None:
-        # §1, §11.16: H1 measures its own floor; the card and the disclosures say which units came from a cache.
+        # §1, §11.16: H1 measures its own floor; the card and the disclosures say which units came from a cache, and
+        # the floor file's stop records say which of the others stopped before their measurement ended (#503): a unit
+        # is measured live only when its stop record is exactly its own entry with no stop, as check 7 reads it.
         units, disclosed = arms["H1"]["card"]["floor"]["units"], arms["H1"]["disclosures"].get("floor", {})
-        cached = sum(u.get("cached") is not False or disclosed.get(k, {}).get("cached") is not False
-                     for k, u in units.items())
-        extra = dict(name=f"extra floor (H1's no-memory floor, measured live on {len(units) - cached} of {len(units)}"
-                     f" units, taken from a cache or unconfirmed on {cached}; enters no mean, flag or comparison)",
-                     outcomes=arms["H1"]["floor"])
+        floor_file = read(arms["H1"]["run"] / "no_memory.json") or {}
+        cached = {k for k, u in units.items()
+                  if u.get("cached") is not False or disclosed.get(k, {}).get("cached") is not False}
+        stopped = {k for k in units if k not in cached
+                   and (floor_file.get(k) or {}).get("stops") != {k.replace("/", ""): None}}
+        live = len(units) - len(cached) - len(stopped)
+        extra = dict(name=f"extra floor (H1's no-memory floor, measured live on {live} of {len(units)} units, stopped"
+                     f" or not recorded on {len(stopped)}, taken from a cache or unconfirmed on {len(cached)}; enters no"
+                     " mean, flag or comparison)", outcomes=arms["H1"]["floor"])
         display([(None, [extra])], "3e. Extra floor")
     else:
         extra = None
