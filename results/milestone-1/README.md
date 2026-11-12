@@ -1,6 +1,6 @@
 # Milestone 1: the first separation table
 
-One question: through one fixed live reader, on action-scored tasks, where do no memory, naive retrieval, Hermes's own memory and oracle evidence land, and which kinds of task can rank a memory system at all? The plan is in `ROADMAP.md` ("Now") and in [#494](https://github.com/electricsheephq/bicentennial/issues/494).
+One question: through one fixed live reader, on action-scored tasks, where do no memory, naive retrieval, Hermes's own memory and oracle evidence land, and which kinds of task can rank a memory system at all? The plan is in [#494](https://github.com/electricsheephq/bicentennial/issues/494) and the declaration below; what comes next is in `ROADMAP.md` ("Now").
 
 These are developer-tier results on public lives: no bar, no certification, and not predictive of the full tier.
 
