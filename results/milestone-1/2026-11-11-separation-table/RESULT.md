@@ -1,6 +1,6 @@
 # Milestone 1, step 2: the first separation table (#497)
 
-Claim class: nine live T2 arms at one commit on the public T2 pack: no memory (F, two repeats), naive retrieval (R, two), oracle evidence (O, three) and one real system, Hermes native (H, two), all through one live reader; read by the rules in [`DECLARATION.md`](../DECLARATION.md), written and merged before any of these arms ran. ⟨Optional rows sentence.⟩ Five public lives carry scored actions. A developer-tier result: no bar, no certification, not predictive of the full tier. The screening flags are exploratory, and no significance is claimed.
+Claim class: nine live T2 arms at one commit on the public T2 pack: no memory (F, two repeats), naive retrieval (R, two), oracle evidence (O, three) and one real system, Hermes native (H, two), all through one live reader; read by the rules in [`DECLARATION.md`](../DECLARATION.md), written and merged before any of these arms ran. Two optional rows ran after the core arms, one attempt each, and are shown separately: Holographic's attempt stopped at the run's cap on live reader calls and has no score; OMEGA ran to the end with its reranker off, as registered. Five public lives carry scored actions. A developer-tier result: no bar, no certification, not predictive of the full tier. The screening flags are exploratory, and no significance is claimed.
 
 This is the second step of [Milestone 1](https://github.com/electricsheephq/bicentennial/issues/494). Step 1 ([`2026-11-04-live-runs-by-kind`](../2026-11-04-live-runs-by-kind/RESULT.md)) read two earlier runs beside the pack's scripted controls. Step 2 runs every row live.
 
@@ -34,7 +34,7 @@ R and O share one placement of text, chosen before the runs (DECLARATION §9); H
 
 ## Deviations from the declaration
 
-None. The run log has one start, end and exit 0 for each arm in the declared order; there is no rerun record; every check below passes. The table script and the declaration's readings were merged before the first arm started: §11 and the script at `ca3b379` (#502), one display-label fix at `e4e0f69` (#504). ⟨Optional-row deviations, if any.⟩
+None. The run log has one start, end and exit 0 for each arm in the declared order; there is no rerun record; every check below passes. The table script and the declaration's readings were merged before the first arm started: §11 and the script at `ca3b379` (#502), one display-label fix at `e4e0f69` (#504). The optional rows ran as declared (§1): after the core arms, one at a time, one attempt each, with OMEGA's card pins equal to the core arms' except the two that name the system; Holographic's failed attempt is published as a failure (§12).
 
 ## Checks before any score
 
@@ -99,7 +99,26 @@ Points on each comparison's common pairs; O is the mean of O1 and O2, as in the 
 
 Hermes's net per life is 0, 2, 0, 0 and 2 in both runs, as on 4 November.
 
-⟨Optional rows section.⟩
+## The optional rows: Holographic and OMEGA
+
+Both ran after the nine core arms, one attempt each, as DECLARATION §1 allows: at the run commit and pack, through the same live reader, one at a time, each with a fresh, empty cache, on 12 November 2026. Their install pins were measured equal to the registry's before the attempts. They are shown separately and never pooled, and nothing about them changes the core table, the flags or the comparisons above (§1, §12).
+
+**Holographic (16:15:09 to 18:19:51 UTC): the attempt failed, refusal code `spend_stop`, so there is no score.** It reached the run's cap of 1,000 live reader calls near its end, about two hours in; the runner then refused the arm and discarded its partial results, as it does with every refusal (the receipt's status `INFRA_FAILURE` is that refusal's fixed label). The cap counts every live call of the attempt: the system's probes, every repeated attempt of a unit, and automatic re-sends after transient errors. It also counted the no-memory floor the runner measures beside a system: this row started with an empty cache, so its floor ran live, an estimated 410 calls (the no-memory arms alone used 408 and 413) that enter no result. Three of the system's 20 units ran three attempts, the most the runner allows, because each earlier attempt had at least one task scored as an infrastructure failure; the cause is not kept. The cap was crossed during the last of those repeats. By estimate, not measurement, the attempt would have stayed under the cap without either the six repeated attempts or the live floor; Hermes native's first core run, which also measured its floor live, used 858. By the declaration a failed attempt is published as a failure and is not rerun here. This failure says the attempt did not finish within the run's budget as I set it up; it says nothing about how well Holographic remembers. The cap and the fresh cache were choices in the launch script, which is in the evidence. [#507](https://github.com/electricsheephq/bicentennial/issues/507) tracks the fix and a later, separately labelled run.
+
+**OMEGA (18:19:53 to 19:54:26 UTC) ran to the end.** It was served the same model identity as the core arms throughout, with no change recorded; every card pin except the two that name the system equals the core arms'; it scored all 40 of its scored action tasks, with none blocked. It ran as registered, offline, with its cross-encoder reranker and its query expansion off ([#289](https://github.com/electricsheephq/bicentennial/issues/289) is open), so this row understates OMEGA as shipped and is not a comparison of OMEGA with any system. At T2 only the probe answers are live: the turns that decide what is stored are scripted and the same for every system, while OMEGA's own storing, embedding (its local model, staged offline) and search code runs as shipped.
+
+OMEGA scored no pair right and none confidently wrong: net 0 on every kind, as the no-memory row does. Against the control rows (points on each comparison's common pairs; O is the mean of O1 and O2; exact two-sided sign-flip p over the five lives, no significance claimed):
+
+| Kind of task | OMEGA | OMEGA − F (p) | OMEGA − R (p) | OMEGA − O (p) |
+|---|---|---|---|---|
+| Drift, value twins | 0 | 0 (1) | +30 (3/8) | +30 (3/8) |
+| Drift, correction twins | 0 | 0 (1) | 0 (1) | 0 (1) |
+| Wake | 0 | 0 (1) | 0 (1) | −100 (1/16) |
+| Pooled diagnostic | 0 | 0 (1; 1 on tasks) | +15 (3/8) | −10 (5/8) |
+
+At task level it passed 5 of 40, as the no-memory row does. On the quiz it was right on 12 of 15 and wrong on 3, all "as of" Drift questions; its five count answers parsed and were right.
+
+Read after the table from the run's outcome and probe records (counts only; outside the declared reading): In none of OMEGA's 85 probe turns was the needed fact in the turn's first request (its registered adapter's prompt hook records the prompt and does not search), so a stored fact reached the reader only through a search during the turn. The needed fact reached the reader on all 15 quiz items but on only 11 of the 40 scored action tasks: all 10 of `drift-chain-fault`, which no row with evidence scores, and 1 of `drift-config`. Hermes native, whose memory file is in the prompt, had it in view on 38 and 36. On `drift-config`, `drift-quote` and Wake its verdict counts are close to the no-memory row's: identical on `drift-config` (5 passed, 5 omitted) and Wake (10 omitted), and on `drift-quote` 5 failed tasks and 5 omissions against 4 and 6.
 
 ## Predictions against the result
 
@@ -135,6 +154,7 @@ Nine of the 20 pairs would be kept.
 5. **Naive retrieval scores below no memory on value twins.** The pinned naive-retrieval row nets −3 (1 right, 4 confidently wrong) against no memory's 0, exactly as the oracle row does on that kind, and scores nothing on the other two kinds. This is a description, not a declared reading: on value twins the near-solved flags are not interpreted, because the oracle row is below the floor.
 6. **Hermes native reproduces exactly.** Its two runs are identical pair for pair, and identical to the two 4 November runs at an older commit: value twins −1 (2 right, 3 wrong), correction twins 5 of 5, Wake 0. On correction twins it gets every pair, which the oracle row with the evidence handed over does not; on Wake it gets none, while the oracle row gets every pair. These are comparisons of whole paths, and no significance is claimed.
 7. **My predictions missed where the reader works from handed-over evidence.** They were right for no memory and for Hermes (whose behaviour was already known from 4 November), and wrong for naive retrieval on value twins and for every oracle cell on its mean (one repeat, O3 on correction twins, landed inside its range). In this run the scripted controls did not predict the live oracle row, which is why the declaration has it run live.
+8. **The two optional rows add little to this table.** Holographic has no score: its attempt stopped at the run's cap on live reader calls, a budget I set up, which says nothing about its memory. OMEGA nets 0 on every kind, as no memory does; read after the table, its search brought the needed fact to the reader on all 15 quiz items but on only 11 of the 40 scored action tasks. It ran with its reranker off, so the row understates OMEGA as shipped.
 
 ## After the table: where the failures sit
 
@@ -153,13 +173,14 @@ By DECLARATION §6, decided before the runs:
 
 - **Value twins and correction twins (low):** `drift-chain-fault`, `drift-quote` and `drift-config` get new versions, after the mechanism above is measured. Each new version needs three oracle trials on fresh control-only lives and a frozen task list before any system runs on it. The work is tracked in [#505](https://github.com/electricsheephq/bicentennial/issues/505) (`drift-chain-fault`) and [#506](https://github.com/electricsheephq/bicentennial/issues/506) (`drift-quote` and `drift-config`).
 - **Wake (candidate):** goes into the fresh-seed follow-up ([#394](https://github.com/electricsheephq/bicentennial/issues/394)) with every other kind, repaired versions included.
-- No kind is promoted or dropped because of how Hermes scored on it; the follow-up carries every kind.
+- No kind is promoted or dropped because of how Hermes or OMEGA scored on it; the follow-up carries every kind.
+- **Optional rows:** the send budget that stopped Holographic is fixed before Holographic's or OMEGA's next run ([#507](https://github.com/electricsheephq/bicentennial/issues/507)), and OMEGA's reranker is staged before any OMEGA result is compared with another system's ([#289](https://github.com/electricsheephq/bicentennial/issues/289)). Neither run belongs to Milestone 1.
 
 ## What this does not prove
 
 - Public lives, not fresh ones. One reader model at one effort. Five lives with scored actions.
 - A scripted life: no system's own judgment about what to store is tested.
-- One real system in the core table. ⟨Optional rows.⟩
+- One real system in the core table. Of the two optional rows, Holographic has no score, and OMEGA ran with its reranker and query expansion off.
 - Whole arms in a mirrored order, not arms interleaved within each life as the board will run them; and equal served-model names do not prove equal service behaviour across the run's hours.
 - Where the control text is placed is a declared choice that can move the oracle row.
 - The table lacks two rows a published board table must carry, and says so: the agent-key validation row (no auditor panel exists yet) and the full-history ceiling (the history fits the window for none of the pack's items, each tested at its own time).
@@ -170,7 +191,7 @@ By DECLARATION §6, decided before the runs:
 `table.py` reads the run trees, the T2 pack, the output of check 3's tests at the run commit, and (as earlier evidence) the two 4 November runs. It prints counts, labels, pass/fail and 12-character hash prefixes only (the served identity among them, as a prefix): never task text, answers, item or bundle ids, or paths. From a checkout of this repository at `e4e0f69`, with the run trees and the check-3 output from the evidence tag:
 
 ```
-PYTHONPATH=<checkout>/src python3 -s -P table.py --packs <packs> --check3 <check3 output> --order F1,R1,O1,H1,H2,O2,R2,F2,O3 --after-reruns F1=<run> R1=<run> O1=<run> H1=<run> H2=<run> O2=<run> R2=<run> F2=<run> O3=<run> ⟨X rows⟩ E1=<4 Nov run 1> E2=<4 Nov run 2>
+PYTHONPATH=<checkout>/src python3 -s -P table.py --packs <packs> --check3 <check3 output> --order F1,R1,O1,H1,H2,O2,R2,F2,O3 --after-reruns F1=<run> R1=<run> O1=<run> H1=<run> H2=<run> O2=<run> R2=<run> F2=<run> O3=<run> X-holographic=<run> X-omega=<run> E1=<4 Nov run 1> E2=<4 Nov run 2>
 ```
 
 Check 3's output is the three tests named in `table.py` (`CHECK3_TESTS`, in `tests/runner/test_control_arms.py`), run with `pytest -v` in a clean checkout at the run commit, between a first line `commit <sha>` and a last line `exit <code>`.
@@ -178,5 +199,538 @@ Check 3's output is the three tests named in `table.py` (`CHECK3_TESTS`, in `tes
 Its output, verbatim:
 
 ```
-⟨output⟩
+== 1. Header and identity
+run order F1,R1,O1,H1,H2,O2,R2,F2,O3 | equals the declared order True | reruns named none | --after-reruns given True
+run order verified
+F1: tier T2 control no_memory model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T16:39:52+00:00 end 2026-11-11T17:00:57+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+R1: tier T2 control naive_rag model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T17:00:59+00:00 end 2026-11-11T17:21:31+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+O1: tier T2 control oracle_evidence model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T17:21:34+00:00 end 2026-11-11T17:37:50+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+H1: tier T2 system model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T17:37:52+00:00 end 2026-11-11T19:03:16+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+H2: tier T2 system model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T19:03:27+00:00 end 2026-11-11T20:06:38+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+O2: tier T2 control oracle_evidence model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T20:06:41+00:00 end 2026-11-11T20:19:59+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+R2: tier T2 control naive_rag model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T20:20:01+00:00 end 2026-11-11T20:36:55+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+F2: tier T2 control no_memory model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T20:36:57+00:00 end 2026-11-11T20:50:00+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+O3: tier T2 control oracle_evidence model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-11T20:50:02+00:00 end 2026-11-11T20:59:22+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "42aea53d0e30", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+X-omega: tier T2 system model gpt-6.1-sol effort medium pack_hash 15141b194ab8 start 2026-11-12T18:19:53+00:00 end 2026-11-12T19:54:26+00:00 served_identity 6e0b2b52fc6f matches_core True identity changed during the run no
+  pins {"benchmark_commit": "42aea53d0e30", "director_commit": "42aea53d0e30", "generator_commit": "42aea53d0e30", "harness_hash": "dbf03edef301", "route_table_hash": "4a328cfa9525", "scorer_commit": "42aea53d0e30", "system_hash": "cee7131d9fb3", "write_turn_package_hash": "cf5d8ed51482"}
+every arm's served identity equal True
+one commit for every core arm (card pins equal) True
+
+== 2. Checks before any score (§2)
+check 1 F1: arm True no blocks True pass True
+check 1 F2: arm True no blocks True pass True
+check 1 R1: arm matches label True frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 R2: arm matches label True frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 O1: arm matches label True frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 O2: arm matches label True frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 O3: arm matches label True frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 2 R1: presence in the probe turn's first request equals the pack's scripted naive report on 85 of 85 tasks pass True
+check 2 R2: presence in the probe turn's first request equals the pack's scripted naive report on 85 of 85 tasks pass True
+check 2 O1: needed fact in the probe turn's first request on 40 of 40 scored action tasks pass True
+check 2 O2: needed fact in the probe turn's first request on 40 of 40 scored action tasks pass True
+check 2 O3: needed fact in the probe turn's first request on 40 of 40 scored action tasks pass True
+check 3 (F, R, O): memory block, search tool, answer key and option order in the block are not visible in run outputs (request bodies are not kept); the runner's own tests at the run commit 42aea53d0e30 (§11.7): file names commit 42aea53d0e30, ends with exit 0 True; test_c_floor_bodies_and_memory_off {'PASSED': 1}; test_a_block_is_the_pinned_controls_text_in_the_probe_turn[naive_rag] {'PASSED': 1}; test_a_block_is_the_pinned_controls_text_in_the_probe_turn[oracle_evidence] {'PASSED': 1}; pass True
+check 4: see header (served identity, and whether it changed during the run); mismatched arms are not pooled: 0
+check 5 F1: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 R1: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 O1: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 H1: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 H2: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 O2: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 R2: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 F2: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 O3: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 5 X-omega: scored action tasks assigned 40 scored 40 BLOCKED 0 missing 0 complete True (scored = integer score_milli; missing = no outcome row)
+check 7 F1: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 7 F2: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 7 R1: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 7 R2: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 7 O1: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 7 O2: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 7 O3: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probed items covered 85 of 85 probe records 85 sent to the live reader 85 (answered probes are counted by check 5) stopped units 0 (a unit's stop record is not exactly its own entry with no stop) pass True
+check 6: pairs scored in every repeat of F, R and O used (common support for the flags): {'Drift, value twins': 10, 'Drift, correction twins': 5, 'Wake': 5} total 20
+
+== 3. Scored action pairs by kind and life (pairs, right, wrong, no credit, non-result, net, points)
+-- F1
+  Drift, value twins: pairs 10 right 0 wrong 0 no_credit 10 non_result 0 net 0 points 0.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 2: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 3: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 4: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 5: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  pooled diagnostic (all 20): pairs 20 right 0 wrong 0 no_credit 20 non_result 0 net 0 points 0.0
+-- F2
+  Drift, value twins: pairs 10 right 0 wrong 0 no_credit 10 non_result 0 net 0 points 0.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 2: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 3: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 4: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 5: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  pooled diagnostic (all 20): pairs 20 right 0 wrong 0 no_credit 20 non_result 0 net 0 points 0.0
+-- F mean of ['F1', 'F2']
+  Drift, value twins: common pairs 10 right 0 (0.0) wrong 0 (0.0) no_credit 10 (10.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Drift, correction twins: common pairs 5 right 0 (0.0) wrong 0 (0.0) no_credit 5 (5.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Wake: common pairs 5 right 0 (0.0) wrong 0 (0.0) no_credit 5 (5.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 1: common pairs 4 right 0 (0.0) wrong 0 (0.0) no_credit 4 (4.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 2: common pairs 4 right 0 (0.0) wrong 0 (0.0) no_credit 4 (4.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 3: common pairs 4 right 0 (0.0) wrong 0 (0.0) no_credit 4 (4.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 4: common pairs 4 right 0 (0.0) wrong 0 (0.0) no_credit 4 (4.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 5: common pairs 4 right 0 (0.0) wrong 0 (0.0) no_credit 4 (4.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  pooled diagnostic (all 20): common pairs 20 right 0 (0.0) wrong 0 (0.0) no_credit 20 (20.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+-- R1
+  Drift, value twins: pairs 10 right 1 wrong 4 no_credit 5 non_result 0 net -3 points -30.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 2: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 3: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 4: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 5: pairs 4 right 1 wrong 0 no_credit 3 non_result 0 net 1 points 25.0
+  pooled diagnostic (all 20): pairs 20 right 1 wrong 4 no_credit 15 non_result 0 net -3 points -15.0
+-- R2
+  Drift, value twins: pairs 10 right 1 wrong 4 no_credit 5 non_result 0 net -3 points -30.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 2: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 3: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 4: pairs 4 right 0 wrong 1 no_credit 3 non_result 0 net -1 points -25.0
+  life 5: pairs 4 right 1 wrong 0 no_credit 3 non_result 0 net 1 points 25.0
+  pooled diagnostic (all 20): pairs 20 right 1 wrong 4 no_credit 15 non_result 0 net -3 points -15.0
+-- R mean of ['R1', 'R2']
+  Drift, value twins: common pairs 10 right 1 (1.0) wrong 4 (4.0) no_credit 5 (5.0) points -30 (-30.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Drift, correction twins: common pairs 5 right 0 (0.0) wrong 0 (0.0) no_credit 5 (5.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Wake: common pairs 5 right 0 (0.0) wrong 0 (0.0) no_credit 5 (5.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 1: common pairs 4 right 0 (0.0) wrong 1 (1.0) no_credit 3 (3.0) points -25 (-25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 2: common pairs 4 right 0 (0.0) wrong 1 (1.0) no_credit 3 (3.0) points -25 (-25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 3: common pairs 4 right 0 (0.0) wrong 1 (1.0) no_credit 3 (3.0) points -25 (-25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 4: common pairs 4 right 0 (0.0) wrong 1 (1.0) no_credit 3 (3.0) points -25 (-25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 5: common pairs 4 right 1 (1.0) wrong 0 (0.0) no_credit 3 (3.0) points 25 (25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  pooled diagnostic (all 20): common pairs 20 right 1 (1.0) wrong 4 (4.0) no_credit 15 (15.0) points -15 (-15.0) (common pairs = scored in every repeat used; counts are means over repeats)
+-- O1
+  Drift, value twins: pairs 10 right 1 wrong 4 no_credit 5 non_result 0 net -3 points -30.0
+  Drift, correction twins: pairs 5 right 2 wrong 3 no_credit 0 non_result 0 net -1 points -20.0
+  Wake: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  life 1: pairs 4 right 1 wrong 2 no_credit 1 non_result 0 net -1 points -25.0
+  life 2: pairs 4 right 1 wrong 2 no_credit 1 non_result 0 net -1 points -25.0
+  life 3: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 4: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 5: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  pooled diagnostic (all 20): pairs 20 right 8 wrong 7 no_credit 5 non_result 0 net 1 points 5.0
+-- O2
+  Drift, value twins: pairs 10 right 1 wrong 4 no_credit 5 non_result 0 net -3 points -30.0
+  Drift, correction twins: pairs 5 right 3 wrong 2 no_credit 0 non_result 0 net 1 points 20.0
+  Wake: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  life 1: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 2: pairs 4 right 1 wrong 2 no_credit 1 non_result 0 net -1 points -25.0
+  life 3: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 4: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 5: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  pooled diagnostic (all 20): pairs 20 right 9 wrong 6 no_credit 5 non_result 0 net 3 points 15.0
+-- O3
+  Drift, value twins: pairs 10 right 1 wrong 4 no_credit 5 non_result 0 net -3 points -30.0
+  Drift, correction twins: pairs 5 right 4 wrong 1 no_credit 0 non_result 0 net 3 points 60.0
+  Wake: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  life 1: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 2: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 3: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 4: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  life 5: pairs 4 right 2 wrong 1 no_credit 1 non_result 0 net 1 points 25.0
+  pooled diagnostic (all 20): pairs 20 right 10 wrong 5 no_credit 5 non_result 0 net 5 points 25.0
+-- O mean of ['O1', 'O2', 'O3']
+  Drift, value twins: common pairs 10 right 1 (1.0) wrong 4 (4.0) no_credit 5 (5.0) points -30 (-30.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Drift, correction twins: common pairs 5 right 3 (3.0) wrong 2 (2.0) no_credit 0 (0.0) points 20 (20.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Wake: common pairs 5 right 5 (5.0) wrong 0 (0.0) no_credit 0 (0.0) points 100 (100.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 1: common pairs 4 right 5/3 (1.7) wrong 4/3 (1.3) no_credit 1 (1.0) points 25/3 (8.3) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 2: common pairs 4 right 4/3 (1.3) wrong 5/3 (1.7) no_credit 1 (1.0) points -25/3 (-8.3) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 3: common pairs 4 right 2 (2.0) wrong 1 (1.0) no_credit 1 (1.0) points 25 (25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 4: common pairs 4 right 2 (2.0) wrong 1 (1.0) no_credit 1 (1.0) points 25 (25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 5: common pairs 4 right 2 (2.0) wrong 1 (1.0) no_credit 1 (1.0) points 25 (25.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  pooled diagnostic (all 20): common pairs 20 right 9 (9.0) wrong 6 (6.0) no_credit 5 (5.0) points 15 (15.0) (common pairs = scored in every repeat used; counts are means over repeats)
+-- H1
+  Drift, value twins: pairs 10 right 2 wrong 3 no_credit 5 non_result 0 net -1 points -10.0
+  Drift, correction twins: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 1 wrong 1 no_credit 2 non_result 0 net 0 points 0.0
+  life 2: pairs 4 right 2 wrong 0 no_credit 2 non_result 0 net 2 points 50.0
+  life 3: pairs 4 right 1 wrong 1 no_credit 2 non_result 0 net 0 points 0.0
+  life 4: pairs 4 right 1 wrong 1 no_credit 2 non_result 0 net 0 points 0.0
+  life 5: pairs 4 right 2 wrong 0 no_credit 2 non_result 0 net 2 points 50.0
+  pooled diagnostic (all 20): pairs 20 right 7 wrong 3 no_credit 10 non_result 0 net 4 points 20.0
+-- H2
+  Drift, value twins: pairs 10 right 2 wrong 3 no_credit 5 non_result 0 net -1 points -10.0
+  Drift, correction twins: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 1 wrong 1 no_credit 2 non_result 0 net 0 points 0.0
+  life 2: pairs 4 right 2 wrong 0 no_credit 2 non_result 0 net 2 points 50.0
+  life 3: pairs 4 right 1 wrong 1 no_credit 2 non_result 0 net 0 points 0.0
+  life 4: pairs 4 right 1 wrong 1 no_credit 2 non_result 0 net 0 points 0.0
+  life 5: pairs 4 right 2 wrong 0 no_credit 2 non_result 0 net 2 points 50.0
+  pooled diagnostic (all 20): pairs 20 right 7 wrong 3 no_credit 10 non_result 0 net 4 points 20.0
+-- H mean of ['H1', 'H2']
+  Drift, value twins: common pairs 10 right 2 (2.0) wrong 3 (3.0) no_credit 5 (5.0) points -10 (-10.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Drift, correction twins: common pairs 5 right 5 (5.0) wrong 0 (0.0) no_credit 0 (0.0) points 100 (100.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  Wake: common pairs 5 right 0 (0.0) wrong 0 (0.0) no_credit 5 (5.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 1: common pairs 4 right 1 (1.0) wrong 1 (1.0) no_credit 2 (2.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 2: common pairs 4 right 2 (2.0) wrong 0 (0.0) no_credit 2 (2.0) points 50 (50.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 3: common pairs 4 right 1 (1.0) wrong 1 (1.0) no_credit 2 (2.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 4: common pairs 4 right 1 (1.0) wrong 1 (1.0) no_credit 2 (2.0) points 0 (0.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  life 5: common pairs 4 right 2 (2.0) wrong 0 (0.0) no_credit 2 (2.0) points 50 (50.0) (common pairs = scored in every repeat used; counts are means over repeats)
+  pooled diagnostic (all 20): common pairs 20 right 7 (7.0) wrong 3 (3.0) no_credit 10 (10.0) points 20 (20.0) (common pairs = scored in every repeat used; counts are means over repeats)
+
+== 3x. Optional rows (one attempt each; shown separately, never pooled)
+-- X-omega
+  Drift, value twins: pairs 10 right 0 wrong 0 no_credit 10 non_result 0 net 0 points 0.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 2: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 3: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 4: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 5: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  pooled diagnostic (all 20): pairs 20 right 0 wrong 0 no_credit 20 non_result 0 net 0 points 0.0
+X-holographic: attempt failed, refusal code spend_stop
+
+== 3e. Extra floor
+-- extra floor (H1's no-memory floor, measured live on 20 of 20 units, stopped or not recorded on 0, taken from a cache or unconfirmed on 0; enters no mean, flag or comparison)
+  Drift, value twins: pairs 10 right 0 wrong 0 no_credit 10 non_result 0 net 0 points 0.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  life 1: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 2: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 3: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 4: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  life 5: pairs 4 right 0 wrong 0 no_credit 4 non_result 0 net 0 points 0.0
+  pooled diagnostic (all 20): pairs 20 right 0 wrong 0 no_credit 20 non_result 0 net 0 points 0.0
+
+== 4. Single tasks in scored action pairs, quiz items, agreement between repeats
+-- F1
+  Drift, value twins: tasks 20 right 0 wrong 0 no_credit 20 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_TASK': 4, 'OMISSION': 16} failure_class {'FAIL_TASK': 4, 'None': 16}
+  Drift, correction twins: tasks 10 right 5 wrong 0 no_credit 5 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 5, 'PASS': 5} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 0 5 0 0 net 0
+    RECALL-AGG: 0 5 0 0 net 0
+    RECALL-VERB: 0 5 0 0 net 0
+-- R1
+  Drift, value twins: tasks 20 right 3 wrong 7 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 7, 'FAIL_TASK': 10, 'PASS': 3} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 5 wrong 0 no_credit 5 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 5, 'PASS': 5} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 1 0 4 0 net -3
+    RECALL-AGG: 2 0 3 0 net -1
+    RECALL-VERB: 5 0 0 0 net 5
+-- O1
+  Drift, value twins: tasks 20 right 3 wrong 7 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 7, 'FAIL_TASK': 10, 'PASS': 3} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 7 wrong 3 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 3, 'PASS': 7} failure_class {'None': 10}
+  Wake: tasks 10 right 10 wrong 0 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'PASS': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 5 0 0 0 net 5
+    RECALL-AGG: 0 0 5 0 net -5
+    RECALL-VERB: 5 0 0 0 net 5
+-- H1
+  Drift, value twins: tasks 20 right 7 wrong 3 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 3, 'FAIL_TASK': 10, 'PASS': 7} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 10 wrong 0 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'PASS': 10} failure_class {'None': 10}
+  Wake: tasks 10 right 1 wrong 0 no_credit 9 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_TASK': 5, 'OMISSION': 4, 'PASS': 1} failure_class {'FAIL_TASK': 5, 'None': 5}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 1 0 4 0 net -3
+    RECALL-AGG: 5 0 0 0 net 5
+    RECALL-VERB: 5 0 0 0 net 5
+-- H2
+  Drift, value twins: tasks 20 right 7 wrong 3 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 3, 'FAIL_TASK': 10, 'PASS': 7} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 10 wrong 0 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'PASS': 10} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_TASK': 5, 'OMISSION': 5} failure_class {'FAIL_TASK': 5, 'None': 5}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 2 0 3 0 net -1
+    RECALL-AGG: 5 0 0 0 net 5
+    RECALL-VERB: 5 0 0 0 net 5
+-- O2
+  Drift, value twins: tasks 20 right 2 wrong 8 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 8, 'FAIL_TASK': 10, 'PASS': 2} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 8 wrong 2 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 2, 'PASS': 8} failure_class {'None': 10}
+  Wake: tasks 10 right 10 wrong 0 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'PASS': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 5 0 0 0 net 5
+    RECALL-AGG: 0 0 5 0 net -5
+    RECALL-VERB: 5 0 0 0 net 5
+-- R2
+  Drift, value twins: tasks 20 right 3 wrong 7 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 7, 'FAIL_TASK': 10, 'PASS': 3} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 5 wrong 0 no_credit 5 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 5, 'PASS': 5} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 1 0 4 0 net -3
+    RECALL-AGG: 2 0 3 0 net -1
+    RECALL-VERB: 5 0 0 0 net 5
+-- F2
+  Drift, value twins: tasks 20 right 0 wrong 0 no_credit 20 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_TASK': 4, 'OMISSION': 16} failure_class {'FAIL_TASK': 4, 'None': 16}
+  Drift, correction twins: tasks 10 right 5 wrong 0 no_credit 5 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 5, 'PASS': 5} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 0 5 0 0 net 0
+    RECALL-AGG: 0 5 0 0 net 0
+    RECALL-VERB: 0 5 0 0 net 0
+-- O3
+  Drift, value twins: tasks 20 right 3 wrong 7 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 7, 'FAIL_TASK': 10, 'PASS': 3} failure_class {'FAIL_TASK': 10, 'None': 10}
+  Drift, correction twins: tasks 10 right 9 wrong 1 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_MEMORY': 1, 'PASS': 9} failure_class {'None': 10}
+  Wake: tasks 10 right 10 wrong 0 no_credit 0 non_result 0 (no integer score_milli, or no row) base_verdict {'PASS': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 5 0 0 0 net 5
+    RECALL-AGG: 0 0 5 0 net -5
+    RECALL-VERB: 5 0 0 0 net 5
+-- X-omega
+  Drift, value twins: tasks 20 right 0 wrong 0 no_credit 20 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_TASK': 15, 'OMISSION': 5} failure_class {'FAIL_TASK': 15, 'None': 5}
+  Drift, correction twins: tasks 10 right 5 wrong 0 no_credit 5 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 5, 'PASS': 5} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 2 0 3 0 net -1
+    RECALL-AGG: 5 0 0 0 net 5
+    RECALL-VERB: 5 0 0 0 net 5
+-- extra floor (H1's no-memory floor, measured live on 20 of 20 units, stopped or not recorded on 0, taken from a cache or unconfirmed on 0; enters no mean, flag or comparison)
+  Drift, value twins: tasks 20 right 0 wrong 0 no_credit 20 non_result 0 (no integer score_milli, or no row) base_verdict {'FAIL_TASK': 5, 'OMISSION': 15} failure_class {'FAIL_TASK': 5, 'None': 15}
+  Drift, correction twins: tasks 10 right 5 wrong 0 no_credit 5 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 5, 'PASS': 5} failure_class {'None': 10}
+  Wake: tasks 10 right 0 wrong 0 no_credit 10 non_result 0 (no integer score_milli, or no row) base_verdict {'OMISSION': 10} failure_class {'None': 10}
+  quiz items 15 by cell: +1000, 0, -1000, other, net
+    DRIFT-ASOF: 0 5 0 0 net 0
+    RECALL-AGG: 0 5 0 0 net 0
+    RECALL-VERB: 0 5 0 0 net 0
+-- F1 vs F2: scored pairs with equal score 20 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 0 {}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+-- R1 vs R2: scored pairs with equal score 20 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+-- O1 vs O2: scored pairs with equal score 19 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+-- O1 vs O3: scored pairs with equal score 18 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 4 {'DRIFT-CUR': 4}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 4 {'DRIFT-CUR': 4}
+-- O2 vs O3: scored pairs with equal score 19 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 2 {'DRIFT-CUR': 2}
+-- H1 vs H2: scored pairs with equal score 20 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 2 {'DRIFT-ASOF': 1, 'WAKE-LOOP': 1}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 3 {'DRIFT-ASOF': 1, 'WAKE-LOOP': 2}
+
+== 5. Screening flags from control rows (§4): f, r = means of F1,F2 and R1,R2; c = mean of O1,O2; exact points on each kind's common support
+-- Drift, value twins: common pairs 10 f 0 (0.0) r -30 (-30.0) c -30 (-30.0) c over O1,O2,O3 -30 (-30.0)
+  low: on means applies margin_pairs 21/2 (10.5) combinations 3 agreeing on whether it applies 3 status applies
+  naive: on means not interpreted margin_pairs -9/10 (-0.9) combinations 12 agreeing on whether it applies 12 status does not apply
+  floor: on means not interpreted margin_pairs 21/10 (2.1) combinations 6 agreeing on whether it applies 6 status does not apply
+  classification: low
+-- Drift, correction twins: common pairs 5 f 0 (0.0) r 0 (0.0) c 0 (0.0) c over O1,O2,O3 20 (20.0)
+  low: on means applies margin_pairs 15/4 (3.8) combinations 3 agreeing on whether it applies 3 status applies
+  naive: on means not interpreted margin_pairs 0 (0.0) combinations 12 agreeing on whether it applies 12 status does not apply
+  floor: on means not interpreted margin_pairs 0 (0.0) combinations 6 agreeing on whether it applies 6 status does not apply
+  classification: low
+-- Wake: common pairs 5 f 0 (0.0) r 0 (0.0) c 100 (100.0) c over O1,O2,O3 100 (100.0)
+  low: on means no margin_pairs -5/4 (-1.2) combinations 3 agreeing on whether it applies 3 status does not apply
+  naive: on means no margin_pairs -7/2 (-3.5) combinations 12 agreeing on whether it applies 12 status does not apply
+  floor: on means no margin_pairs -7/2 (-3.5) combinations 6 agreeing on whether it applies 6 status does not apply
+  classification: candidate
+flags: low c < 75; naive (near-solved by naive retrieval) r >= f + 0.7 (c - f); floor (near-solved without memory) f >= 0.7 c; near-solved flags not interpreted when c <= f or c <= 0. Margin in pairs = (left - right) x pairs / 100, low as 75 - c; it applies when the margin is > 0 (low) or >= 0. Combinations: one repeat per row used (naive F x R x O, floor F x O, low O); a flag is unstable when whether it applies differs between the means and any combination; not interpreted counts as not applying (disclosure only).
+
+== 6. Prospective filter yield; validates nothing (each twin right with only its evidence in >= 2 of 3 O trials)
+  Drift, value twins: pairs 10 pass 1 fail 9 unresolved 0 (twin: pass when right in >= 2 trials, fail when right + unknown < 2; pair: pass when both twins pass, fail when either fails) twins by (passes, unknown) {(0, 0): 16, (1, 0): 2, (3, 0): 2}
+  Drift, correction twins: pairs 5 pass 3 fail 2 unresolved 0 (twin: pass when right in >= 2 trials, fail when right + unknown < 2; pair: pass when both twins pass, fail when either fails) twins by (passes, unknown) {(0, 0): 1, (1, 0): 1, (2, 0): 1, (3, 0): 7}
+  Wake: pairs 5 pass 5 fail 0 unresolved 0 (twin: pass when right in >= 2 trials, fail when right + unknown < 2; pair: pass when both twins pass, fail when either fails) twins by (passes, unknown) {(3, 0): 10}
+
+== 7. Real systems against the control rows (§5); no significance claimed
+  H Drift, value twins: H points -10 (-10.0) on its own 10 scored pairs; against F 0 (0.0), H -10 (-10.0), H minus F -10 (-10.0) on 10 pairs; R -30 (-30.0), H -10 (-10.0), H minus R 20 (20.0) on 10 pairs; O -30 (-30.0), H -10 (-10.0), H minus O 20 (20.0) on 10 pairs (each comparison on the pairs scored in every repeat of both rows)
+    H minus F, Drift, value twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['-500', '500', '-500', '-500', '500'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    H minus R, Drift, value twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '1000', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    H minus O, Drift, value twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '1000', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+  H Drift, correction twins: H points 100 (100.0) on its own 5 scored pairs; against F 0 (0.0), H 100 (100.0), H minus F 100 (100.0) on 5 pairs; R 0 (0.0), H 100 (100.0), H minus R 100 (100.0) on 5 pairs; O 0 (0.0), H 100 (100.0), H minus O 100 (100.0) on 5 pairs (each comparison on the pairs scored in every repeat of both rows)
+    H minus F, Drift, correction twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['1000', '1000', '1000', '1000', '1000'] exact two-sided sign_flip_p 1/16 0.0625 no significance claimed
+    H minus R, Drift, correction twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['1000', '1000', '1000', '1000', '1000'] exact two-sided sign_flip_p 1/16 0.0625 no significance claimed
+    H minus O, Drift, correction twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['1000', '2000', '0', '0', '2000'] exact two-sided sign_flip_p 1/4 0.2500 no significance claimed
+  H Wake: H points 0 (0.0) on its own 5 scored pairs; against F 0 (0.0), H 0 (0.0), H minus F 0 (0.0) on 5 pairs; R 0 (0.0), H 0 (0.0), H minus R 0 (0.0) on 5 pairs; O 100 (100.0), H 0 (0.0), H minus O -100 (-100.0) on 5 pairs (each comparison on the pairs scored in every repeat of both rows)
+    H minus F, Wake, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    H minus R, Wake, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    H minus O, Wake, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['-1000', '-1000', '-1000', '-1000', '-1000'] exact two-sided sign_flip_p 1/16 0.0625 no significance claimed
+  H pooled diagnostic: H points 20 (20.0) on its own 20 scored pairs; against F 0 (0.0), H 20 (20.0), H minus F 20 (20.0) on 20 pairs; R -15 (-15.0), H 20 (20.0), H minus R 35 (35.0) on 20 pairs; O 10 (10.0), H 20 (20.0), H minus O 10 (10.0) on 20 pairs (each comparison on the pairs scored in every repeat of both rows)
+    H minus F, pooled diagnostic, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '500', '0', '0', '500'] exact two-sided sign_flip_p 1/2 0.5000 no significance claimed
+    H minus R, pooled diagnostic, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['250', '750', '250', '250', '250'] exact two-sided sign_flip_p 1/16 0.0625 no significance claimed
+    H minus O, pooled diagnostic, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '750', '-250', '-250', '250'] exact two-sided sign_flip_p 7/8 0.8750 no significance claimed
+    H minus F, pooled diagnostic, per life (tasks, milli; tasks scored in every repeat of both rows; 0 lives left out with none): ['125', '375', '375/2', '125', '375'] exact two-sided sign_flip_p 1/16 0.0625 no significance claimed
+  X-omega Drift, value twins: X-omega points 0 (0.0) on its own 10 scored pairs; against F 0 (0.0), X-omega 0 (0.0), X-omega minus F 0 (0.0) on 10 pairs; R -30 (-30.0), X-omega 0 (0.0), X-omega minus R 30 (30.0) on 10 pairs; O -30 (-30.0), X-omega 0 (0.0), X-omega minus O 30 (30.0) on 10 pairs (each comparison on the pairs scored in every repeat of both rows)
+    X-omega minus F, Drift, value twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    X-omega minus R, Drift, value twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['500', '500', '500', '500', '-500'] exact two-sided sign_flip_p 3/8 0.3750 no significance claimed
+    X-omega minus O, Drift, value twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['500', '500', '500', '500', '-500'] exact two-sided sign_flip_p 3/8 0.3750 no significance claimed
+  X-omega Drift, correction twins: X-omega points 0 (0.0) on its own 5 scored pairs; against F 0 (0.0), X-omega 0 (0.0), X-omega minus F 0 (0.0) on 5 pairs; R 0 (0.0), X-omega 0 (0.0), X-omega minus R 0 (0.0) on 5 pairs; O 0 (0.0), X-omega 0 (0.0), X-omega minus O 0 (0.0) on 5 pairs (each comparison on the pairs scored in every repeat of both rows)
+    X-omega minus F, Drift, correction twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    X-omega minus R, Drift, correction twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    X-omega minus O, Drift, correction twins, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '1000', '-1000', '-1000', '1000'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+  X-omega Wake: X-omega points 0 (0.0) on its own 5 scored pairs; against F 0 (0.0), X-omega 0 (0.0), X-omega minus F 0 (0.0) on 5 pairs; R 0 (0.0), X-omega 0 (0.0), X-omega minus R 0 (0.0) on 5 pairs; O 100 (100.0), X-omega 0 (0.0), X-omega minus O -100 (-100.0) on 5 pairs (each comparison on the pairs scored in every repeat of both rows)
+    X-omega minus F, Wake, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    X-omega minus R, Wake, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    X-omega minus O, Wake, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['-1000', '-1000', '-1000', '-1000', '-1000'] exact two-sided sign_flip_p 1/16 0.0625 no significance claimed
+  X-omega pooled diagnostic: X-omega points 0 (0.0) on its own 20 scored pairs; against F 0 (0.0), X-omega 0 (0.0), X-omega minus F 0 (0.0) on 20 pairs; R -15 (-15.0), X-omega 0 (0.0), X-omega minus R 15 (15.0) on 20 pairs; O 10 (10.0), X-omega 0 (0.0), X-omega minus O -10 (-10.0) on 20 pairs (each comparison on the pairs scored in every repeat of both rows)
+    X-omega minus F, pooled diagnostic, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+    X-omega minus R, pooled diagnostic, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['250', '250', '250', '250', '-250'] exact two-sided sign_flip_p 3/8 0.3750 no significance claimed
+    X-omega minus O, pooled diagnostic, per life (pairs, milli; pairs scored in every repeat of both rows; 0 lives left out with none): ['0', '250', '-250', '-250', '-250'] exact two-sided sign_flip_p 5/8 0.6250 no significance claimed
+    X-omega minus F, pooled diagnostic, per life (tasks, milli; tasks scored in every repeat of both rows; 0 lives left out with none): ['0', '0', '0', '0', '0'] exact two-sided sign_flip_p 1 1.0000 no significance claimed
+
+== 8. Full history
+  fits the window on 0 of 85 items, summed over lives
+
+== Earlier evidence: the 4 November runs at an older commit (step-1 by_kind.py); never pooled
+== A. Header
+run 1: tier T2 system hermes-native model gpt-6.1-sol effort medium pack_hash 15141b194ab8
+  pins {"benchmark_commit": "ac81423de4bc", "director_commit": "ac81423de4bc", "generator_commit": "ac81423de4bc", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "ac81423de4bc", "system_hash": "dbf03edef301", "write_turn_package_hash": "753f83e1bd00"}
+run 2: tier T2 system hermes-native model gpt-6.1-sol effort medium pack_hash 15141b194ab8
+  pins {"benchmark_commit": "ac81423de4bc", "director_commit": "ac81423de4bc", "generator_commit": "ac81423de4bc", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "ac81423de4bc", "system_hash": "dbf03edef301", "write_turn_package_hash": "753f83e1bd00"}
+same pack_hash in every run True
+same scorer_commit in every run True
+floor items in run 2 that differ from run 1's floor 0
+scored pairs (by run 1) not scored in floor (live) 0
+scored pairs (by run 1) not scored in system (live), run 1 0
+scored pairs (by run 1) not scored in system (live), run 2 0
+
+== B. Scored action pairs by kind (pairs, right, wrong, no credit, non-result, net, points)
+scored action pairs 20 {'Drift, value twins': 10, 'Drift, correction twins': 5, 'Wake': 5}
+-- floor (live)
+  Drift, value twins: pairs 10 right 0 wrong 0 no_credit 10 non_result 0 net 0 points 0.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  total: pairs 20 right 0 wrong 0 no_credit 20 non_result 0 net 0 points 0.0
+-- system (live), run 1
+  Drift, value twins: pairs 10 right 2 wrong 3 no_credit 5 non_result 0 net -1 points -10.0
+  Drift, correction twins: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  total: pairs 20 right 7 wrong 3 no_credit 10 non_result 0 net 4 points 20.0
+-- system (live), run 2
+  Drift, value twins: pairs 10 right 2 wrong 3 no_credit 5 non_result 0 net -1 points -10.0
+  Drift, correction twins: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  total: pairs 20 right 7 wrong 3 no_credit 10 non_result 0 net 4 points 20.0
+-- naive retrieval (scripted)
+  Drift, value twins: pairs 10 right 10 wrong 0 no_credit 0 non_result 0 net 10 points 100.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  total: pairs 20 right 10 wrong 0 no_credit 10 non_result 0 net 10 points 50.0
+-- oracle evidence (scripted)
+  Drift, value twins: pairs 10 right 10 wrong 0 no_credit 0 non_result 0 net 10 points 100.0
+  Drift, correction twins: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  Wake: pairs 5 right 5 wrong 0 no_credit 0 non_result 0 net 5 points 100.0
+  total: pairs 20 right 20 wrong 0 no_credit 0 non_result 0 net 20 points 100.0
+-- floor (scripted)
+  Drift, value twins: pairs 10 right 0 wrong 0 no_credit 10 non_result 0 net 0 points 0.0
+  Drift, correction twins: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  Wake: pairs 5 right 0 wrong 0 no_credit 5 non_result 0 net 0 points 0.0
+  total: pairs 20 right 0 wrong 0 no_credit 20 non_result 0 net 0 points 0.0
+
+== C. Naive-retrieval control flags on mean pair score in milli (f floor, r naive, c oracle, scripted)
+  Drift, value twins: f 0.0 r 1000.0 c 1000.0 between False rag_near_solved True floor_near_solved False
+  Drift, correction twins: f 0.0 r 0.0 c 1000.0 between False rag_near_solved False floor_near_solved False
+  Wake: f 0.0 r 0.0 c 1000.0 between False rag_near_solved False floor_near_solved False
+  total: f 0.0 r 500.0 c 1000.0 between True rag_near_solved False floor_near_solved False
+pack rows as stored (stage, track, floor, naive_rag, ceiling, between, rag_near_solved, floor_near_solved): lives
+   act Drift 0 0 1000 False False False 1
+   act Drift 0 1000 1000 False True False 4
+   act Drift 0 667 1000 True False False 5
+   act Keep 0 1000 1000 False True False 5
+   act Wake 0 0 1000 False False False 5
+   survive Drift 0 1000 1000 False True False 5
+   survive Recall 0 1000 1000 False True False 10
+
+== D. Single tasks in scored action pairs, by kind
+-- floor (live)
+  Drift, value twins: tasks 20 base_verdict {'FAIL_TASK': 3, 'OMISSION': 17} in_context absent (field not in outcomes) competing_present 0
+  Drift, correction twins: tasks 10 base_verdict {'OMISSION': 5, 'PASS': 5} in_context absent (field not in outcomes) competing_present 0
+  Wake: tasks 10 base_verdict {'OMISSION': 10} in_context absent (field not in outcomes) competing_present 0
+-- system (live), run 1
+  Drift, value twins: tasks 20 base_verdict {'FAIL_MEMORY': 3, 'FAIL_TASK': 10, 'PASS': 7} in_context 20 (absent on 0) competing_present 20
+  Drift, correction twins: tasks 10 base_verdict {'PASS': 10} in_context 10 (absent on 0) competing_present 5
+  Wake: tasks 10 base_verdict {'FAIL_TASK': 3, 'OMISSION': 6, 'PASS': 1} in_context 7 (absent on 0) competing_present 0
+-- system (live), run 2
+  Drift, value twins: tasks 20 base_verdict {'FAIL_MEMORY': 3, 'FAIL_TASK': 10, 'PASS': 7} in_context 20 (absent on 0) competing_present 20
+  Drift, correction twins: tasks 10 base_verdict {'PASS': 10} in_context 10 (absent on 0) competing_present 5
+  Wake: tasks 10 base_verdict {'FAIL_TASK': 5, 'OMISSION': 5} in_context 8 (absent on 0) competing_present 0
+-- naive retrieval (scripted)
+  Drift, value twins: tasks 20 accuracy_correct 20 in_context 20
+  Drift, correction twins: tasks 10 accuracy_correct 5 in_context 0
+  Wake: tasks 10 accuracy_correct 0 in_context 0
+-- oracle evidence (scripted)
+  Drift, value twins: tasks 20 accuracy_correct 20 in_context 20
+  Drift, correction twins: tasks 10 accuracy_correct 10 in_context 10
+  Wake: tasks 10 accuracy_correct 10 in_context 10
+-- floor (scripted)
+  Drift, value twins: tasks 20 accuracy_correct 0 in_context 0
+  Drift, correction twins: tasks 10 accuracy_correct 5 in_context 0
+  Wake: tasks 10 accuracy_correct 0 in_context 0
+
+== E. Per life (lives with scored action pairs)
+lives 5
+  net per life, floor (live): [0, 0, 0, 0, 0]
+  net per life, system (live), run 1: [0, 2, 0, 0, 2]
+  net per life, system (live), run 2: [0, 2, 0, 0, 2]
+  net per life, naive retrieval (scripted): [2, 2, 2, 2, 2]
+  net per life, oracle evidence (scripted): [4, 4, 4, 4, 4]
+  net per life, floor (scripted): [0, 0, 0, 0, 0]
+  run 1 pairs: per-life mean difference system minus floor (milli) ['0', '500', '0', '0', '500'] sign_flip_p 1/2 0.5000
+  run 1 tasks: per-life mean difference system minus floor (milli) ['125', '375', '125', '125', '500'] sign_flip_p 1/16 0.0625
+  run 2 pairs: per-life mean difference system minus floor (milli) ['0', '500', '0', '0', '500'] sign_flip_p 1/2 0.5000
+  run 2 tasks: per-life mean difference system minus floor (milli) ['125', '375', '125', '125', '375'] sign_flip_p 1/16 0.0625
+
+== F. Agreement between run 1 and run 2
+  scored pairs with equal score 20 of 20
+  keys only in one run 0
+  scored tasks whose (score_milli, failure_class) differ 6 {'DRIFT-ASOF': 1, 'WAKE-LOOP': 5}
+  action tasks whose pass or fail (base_verdict PASS) differs 1 {'WAKE-LOOP': 1}
+  quiz items whose score_milli differs 1 {'DRIFT-ASOF': 1}
+
+== G. Quiz items (stage survive) by cell: +1000, 0, -1000, other, net
+-- floor (live): quiz items 15
+  DRIFT-ASOF: +1000 0 0 5 -1000 0 other 0 net 0
+  RECALL-AGG: +1000 0 0 5 -1000 0 other 0 net 0
+  RECALL-VERB: +1000 0 0 5 -1000 0 other 0 net 0
+-- system (live), run 1: quiz items 15
+  DRIFT-ASOF: +1000 1 0 0 -1000 4 other 0 net -3
+  RECALL-AGG: +1000 5 0 0 -1000 0 other 0 net 5
+  RECALL-VERB: +1000 5 0 0 -1000 0 other 0 net 5
+-- system (live), run 2: quiz items 15
+  DRIFT-ASOF: +1000 2 0 0 -1000 3 other 0 net -1
+  RECALL-AGG: +1000 5 0 0 -1000 0 other 0 net 5
+  RECALL-VERB: +1000 5 0 0 -1000 0 other 0 net 5
+-- naive retrieval (scripted): quiz items 15
+  DRIFT-ASOF: +1000 5 0 0 -1000 0 other 0 net 5
+  RECALL-AGG: +1000 5 0 0 -1000 0 other 0 net 5
+  RECALL-VERB: +1000 5 0 0 -1000 0 other 0 net 5
+-- oracle evidence (scripted): quiz items 15
+  DRIFT-ASOF: +1000 5 0 0 -1000 0 other 0 net 5
+  RECALL-AGG: +1000 5 0 0 -1000 0 other 0 net 5
+  RECALL-VERB: +1000 5 0 0 -1000 0 other 0 net 5
+-- floor (scripted): quiz items 15
+  DRIFT-ASOF: +1000 0 0 5 -1000 0 other 0 net 0
+  RECALL-AGG: +1000 0 0 5 -1000 0 other 0 net 0
+  RECALL-VERB: +1000 0 0 5 -1000 0 other 0 net 0
+
+== H. Pairs the live tier does not score (run 1), by kind: right, wrong, no credit
+unscored pairs 15 stages {'act': 30}
+  Drift, value twins, G2, not scored live: pairs 10
+    naive retrieval (scripted): right 9 wrong 1 no_credit 0 non_result 0
+    oracle evidence (scripted): right 10 wrong 0 no_credit 0 non_result 0
+  KEEP-INC/fork, G2, not scored live: pairs 5
+    naive retrieval (scripted): right 5 wrong 0 no_credit 0 non_result 0
+    oracle evidence (scripted): right 5 wrong 0 no_credit 0 non_result 0
+
+== I. Full history fits over lives
+  run 0 of 85
+-- E1 vs E2: scored pairs with equal score 20 of 20 scored in both; keys only in one 0
+   task scores that differ (score_milli differs; tasks scored in either) 2 {'DRIFT-ASOF': 1, 'WAKE-LOOP': 1}
+   tasks whose score or failure class differs ((score_milli, failure_class) differs; tasks scored in either) 6 {'DRIFT-ASOF': 1, 'WAKE-LOOP': 5}
+exit 0
 ```
