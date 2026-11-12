@@ -138,9 +138,9 @@ Nine of the 20 pairs would be kept.
 
 ## After the table: where the failures sit
 
-Read from the run's outcome records after the table, as counts only; this is not part of the declared reading and moves no flag. Each kind of task here is made by one or two templates.
+Read from the run's outcome records after the table, as counts only, with one note from reading the code; none of it is part of the declared reading, and it moves no flag. Each kind of task here is made by one or two templates.
 
-- **Value twins are two templates of five pairs each.** On `drift-chain-fault-v1`, every row that saw any evidence (R, O and H, every repeat) scored all 10 tasks as a failed task, no credit. Under this template's decision table, the scorer gives a failed task when the reader changed the repository but left it matching neither the current value nor a retracted one. The no-memory row did nothing (an omission). So five of the ten value pairs earn no credit in any row. The run keeps neither request bodies nor the edited files, so why the change never matches is not measured; the repair has to measure it first.
+- **Value twins are two templates of five pairs each.** On `drift-chain-fault-v1`, every row that saw any evidence (R, O and H, every repeat) scored all 10 tasks as a failed task, no credit. Under this template's decision table, the scorer gives a failed task when the reader changed the repository but left it matching neither the current value nor a retracted one. The no-memory row did nothing (an omission). So five of the ten value pairs earn no credit in any row. The run keeps neither request bodies nor the edited files, so why the change never matches is not measured; the repair has to measure it first. Reading the code after the table suggests one cause, still unmeasured: in these lives the reader edits the file with shell commands it writes itself, and the check accepts only an entry keyed by the bare milestone name, in a strict format, while the prompt names the entry with the word "deadline" after the name. A reader that writes the key as the prompt phrases it would score exactly this. [#505](https://github.com/electricsheephq/bicentennial/issues/505) has the code references; one run that keeps the edited file settles it.
 - On `drift-quote-v1`, a competing value was in view on every task in every row with evidence. The oracle row asserted the wrong value on 7, 8 and 7 of the 10 tasks; naive retrieval on 7 in both repeats; Hermes on 3 in both runs.
 - **Correction twins** (`drift-config-v1`): the oracle row failed only on tasks where a competing value was in view, 3, 2 and 1 of those five tasks in its three repeats, and passed every task without one. Hermes passed all ten, those five included.
 - **Quiz:** the oracle row answered every "as of" Drift question and every value-recall question right, and every count question wrong (`recall-count-v1`, 0 of 5 in each repeat). Hermes answered every count and value-recall question right.
@@ -163,7 +163,7 @@ By DECLARATION §6, decided before the runs:
 - Whole arms in a mirrored order, not arms interleaved within each life as the board will run them; and equal served-model names do not prove equal service behaviour across the run's hours.
 - Where the control text is placed is a declared choice that can move the oracle row.
 - The table lacks two rows a published board table must carry, and says so: the agent-key validation row (no auditor panel exists yet) and the full-history ceiling (the history fits the window for none of the pack's items, each tested at its own time).
-- The flags are exploratory screening from control rows; a kind's flag is a reason to repair or validate it, not a finding about any system. The section after the table is a post-hoc reading of counts and names no cause.
+- The flags are exploratory screening from control rows; a kind's flag is a reason to repair or validate it, not a finding about any system. The section after the table is a post-hoc reading of counts; the one cause it mentions comes from reading code and is not measured.
 
 ## Reproduce
 
