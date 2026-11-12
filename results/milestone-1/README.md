@@ -16,7 +16,7 @@ Nine live arms at one commit, through one live reader, on the 20 scored action p
 
 \* Over its three repeats; the screen uses the first two, where it nets 0.
 
-Two of the three kinds fail the oracle test: a reader handed the needed evidence still fails them, so a score on them cannot be read as a memory result yet. By the declaration, their templates get new versions, each validated with its own oracle trials on fresh lives before any system runs on it. Wake is the one candidate and goes on to fresh validation with every other kind. Hermes native reproduced its 4 November result pair for pair. The screen is exploratory, and no significance is claimed. Two optional rows ran after the core arms, one attempt each, and are shown separately on the page: Holographic's attempt stopped at the run's cap on live reader calls and has no score; OMEGA, run with its reranker off as registered, nets 0 on every kind.
+Two of the three kinds fail the oracle test: a reader handed the needed evidence still fails them, so a score on them cannot be read as a memory result yet. By the declaration, their templates get new versions, each validated with its own oracle trials on fresh lives before any system runs on it. Wake is the one candidate and goes on to fresh validation with every other kind. Hermes native reproduced its 4 November result: the same score on each of the 20 pairs, by the outcome records. The screen is exploratory, and no significance is claimed. Two optional rows ran after the core arms, one attempt each, and are shown separately on the page: Holographic's attempt stopped at the run's cap on live reader calls and has no score; OMEGA, run with its reranker off as registered, nets 0 on every kind.
 
 | File | What it is |
 |---|---|
