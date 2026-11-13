@@ -1,0 +1,478 @@
+{
+ "F1": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[OMISSION] meets no predicate: unchanged": 10
+   },
+   "drift-config-v2": {
+    "[OMISSION competing=False] meets no predicate: unchanged": 5,
+    "[PASS competing=False] meets no predicate: unchanged": 5
+   },
+   "drift-quote-v2": {
+    "[OMISSION] meets no predicate: unchanged": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "other wording": {
+    "[OMISSION] meets no predicate": 10
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 740,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 40
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 0] parses; value wrong": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 10
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 6,
+    "turns=5": 4
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 1,
+    "turns=4": 5,
+    "turns=5": 4
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 3,
+    "turns=4": 2
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ },
+ "F2": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[OMISSION] meets no predicate: unchanged": 10
+   },
+   "drift-config-v2": {
+    "[OMISSION competing=False] meets no predicate: unchanged": 5,
+    "[PASS competing=False] meets no predicate: unchanged": 5
+   },
+   "drift-quote-v2": {
+    "[OMISSION] meets no predicate: unchanged": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "other wording": {
+    "[OMISSION] meets no predicate": 10
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 740,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 40
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 0] parses; value wrong": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 4,
+    "turns=4": 6
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 9,
+    "turns=5": 1
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 8,
+    "turns=5": 2
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 3,
+    "turns=4": 2
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ },
+ "O1": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[PASS] meets holds:current": 10
+   },
+   "drift-config-v2": {
+    "[PASS competing=False] meets holds:update": 5,
+    "[PASS competing=True] meets no predicate: unchanged": 5
+   },
+   "drift-quote-v2": {
+    "[PASS] meets holds:current": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "hearsay ('It was said that')": {
+    "[PASS] meets holds:current": 6
+   },
+   "other wording": {
+    "[PASS] meets holds:current": 4
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 740,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 40
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 1000] parses; value right": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 1,
+    "turns=4": 9
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 5,
+    "turns=4": 3,
+    "turns=5": 2
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=6": 3,
+    "turns=7": 7
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=1": 5
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ },
+ "O2": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[PASS] meets holds:current": 10
+   },
+   "drift-config-v2": {
+    "[PASS competing=False] meets holds:update": 5,
+    "[PASS competing=True] meets no predicate: unchanged": 5
+   },
+   "drift-quote-v2": {
+    "[PASS] meets holds:current": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "hearsay ('It was said that')": {
+    "[PASS] meets holds:current": 6
+   },
+   "other wording": {
+    "[PASS] meets holds:current": 4
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 740,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 40
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 1000] parses; value right": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 10
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 5,
+    "turns=4": 3,
+    "turns=5": 2
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=5": 1,
+    "turns=6": 4,
+    "turns=7": 5
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=1": 5
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ },
+ "O3": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[PASS] meets holds:current": 10
+   },
+   "drift-config-v2": {
+    "[PASS competing=False] meets holds:update": 5,
+    "[PASS competing=True] meets no predicate: unchanged": 5
+   },
+   "drift-quote-v2": {
+    "[PASS] meets holds:current": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "hearsay ('It was said that')": {
+    "[PASS] meets holds:current": 6
+   },
+   "other wording": {
+    "[PASS] meets holds:current": 4
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 795,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 44,
+    "no parsed state": 1
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 1000] parses; value right": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 9,
+    "turns=5": 1
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 5,
+    "turns=4": 5
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=7": 9,
+    "turns=8": 1
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=1": 5
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ },
+ "R1": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[PASS] meets holds:current": 10
+   },
+   "drift-config-v2": {
+    "[PASS competing=False] meets holds:update": 5,
+    "[PASS competing=False] meets no predicate: unchanged": 1,
+    "[PASS competing=True] meets no predicate: unchanged": 4
+   },
+   "drift-quote-v2": {
+    "[PASS] meets holds:current": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "hearsay ('It was said that')": {
+    "[PASS] meets holds:current": 8
+   },
+   "other wording": {
+    "[PASS] meets holds:current": 2
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 740,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 40
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 1000] parses; value right": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 7,
+    "turns=5": 3
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=3": 4,
+    "turns=5": 4,
+    "turns=6": 1,
+    "turns=7": 1
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=6": 1,
+    "turns=7": 9
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=1": 5
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ },
+ "R2": {
+  "act": {
+   "drift-chain-fault-v2": {
+    "[PASS] meets holds:current": 10
+   },
+   "drift-config-v2": {
+    "[PASS competing=False] meets holds:update": 5,
+    "[PASS competing=False] meets no predicate: unchanged": 1,
+    "[PASS competing=True] meets no predicate: unchanged": 4
+   },
+   "drift-quote-v2": {
+    "[PASS] meets holds:current": 10
+   }
+  },
+  "drift_quote_by_wording": {
+   "hearsay ('It was said that')": {
+    "[PASS] meets holds:current": 8
+   },
+   "other wording": {
+    "[PASS] meets holds:current": 2
+   }
+  },
+  "items": 35,
+  "manifest": {
+   "failures": {},
+   "files": 740,
+   "rescan": "clean",
+   "skips": {
+    "git metadata": 40
+   }
+  },
+  "missing": {},
+  "qa": {
+   "recall-count-v2": {
+    "[score 1000] parses; value right": 5
+   }
+  },
+  "reply_shapes": {
+   "drift-chain-fault-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=4": 8,
+    "turns=5": 2
+   },
+   "drift-config-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=2": 1,
+    "turns=3": 4,
+    "turns=4": 2,
+    "turns=5": 1,
+    "turns=6": 1,
+    "turns=7": 1
+   },
+   "drift-quote-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=6": 1,
+    "turns=7": 9
+   },
+   "recall-count-v2": {
+    "a length stop": 0,
+    "last reply ended in a tool call": 0,
+    "no trajectory rows": 0,
+    "turns=1": 5
+   }
+  },
+  "target_rows_without_diagnostics": 0
+ }
+}
