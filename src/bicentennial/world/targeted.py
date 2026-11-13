@@ -694,13 +694,23 @@ def t1_lives(spec, templates_by_genre, *, root):
                          out_dir=Path(root) / row["life"]) for row in spec["lives"])
 
 
-def t2_dry_run(spec, templates_by_genre, *, root):
-    """Freeze a roster in order, disclosing every failed seed and consuming one shared pool."""
+def t2_dry_run(spec, templates_by_genre, *, root, pool=None):
+    """Freeze a roster in order, disclosing every failed seed and consuming one shared pool.
+
+    With `pool` (ordered ints), replacements come only from it; a terminal PlacementError carries the
+    placement `table` and `replacements` so far."""
     rows, table = [], []
     replacements = list(spec.get("replacements", ()))
     used = {1, 2, 3, *(r["seed"] for r in spec["lives"])}
     used.update(r[key] for r in replacements for key in ("seed", "replacement_seed"))
     next_seed, design_failures = 14, 0
+    spares = None if pool is None else iter([n for n in pool if seed_text(n)])  # validate before any build
+
+    def stop(rule):
+        error = PlacementError(rule)
+        error.table, error.replacements = [dict(r) for r in table], [dict(r) for r in replacements]
+        return error
+
     for original in spec["lives"]:
         row = dict(original)
         life_dir = Path(root) / row["life"]
@@ -733,15 +743,20 @@ def t2_dry_run(spec, templates_by_genre, *, root):
                                   item_id=getattr(error, "item_id", "life")))
                 design_failures += first
                 if design_failures > 1:
-                    raise PlacementError("design_failures") from error
+                    raise stop("design_failures") from error
                 failures += 1
                 if failures > MAX_REPLACEMENTS:
-                    raise PlacementError("replacements") from error
-                while next_seed in used:
+                    raise stop("replacements") from error
+                if spares is None:
+                    while next_seed in used:
+                        next_seed += 1
+                    replacement = next_seed
                     next_seed += 1
-                replacement = next_seed
+                else:
+                    replacement = next((n for n in spares if n not in used), None)
+                    if replacement is None:
+                        raise stop("pool") from error
                 used.add(replacement)
-                next_seed += 1
                 replacements.append(dict(life=row["life"], seed=row["seed"], replacement_seed=replacement,
                                          rule=table[-1]["rule"], item_id=table[-1]["item_id"]))
                 row["seed"] = replacement
