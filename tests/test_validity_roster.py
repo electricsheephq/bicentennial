@@ -26,10 +26,17 @@ def _no_seed_printed(out, seeds):
     assert not any(str(seed) in out for seed in seeds)
 
 
-def test_committed_seeds():
-    seeds = roster.committed_seeds()
-    assert set(range(1, 14)) <= seeds  # T0/T1 seeds 1-3, public T2 seeds 4-13, catalogue seeds and schedule seeds
-    assert all(type(s) is int for s in seeds)
+def test_collisions_are_whole_numbers_outside_git(tmp_path):
+    long, inner = 1234567890123456789, 234567890123456
+    (tmp_path / "a.json").write_bytes(b'{"seed": 1234567890123456789, "seat": "WINDOW-7401"}')
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "objects").write_bytes(b"6101")
+    assert roster.collisions([long, inner, 7401, 6101, 740], root=tmp_path) == {long, 7401}
+
+
+@pytest.mark.parametrize("seed", [6101, 7401])
+def test_repository_seeds_collide(seed):
+    assert roster.collisions([seed, 2 ** 62]) == {seed}
 
 
 def test_draw(tmp_path, capsys):
@@ -42,7 +49,7 @@ def test_draw(tmp_path, capsys):
     seeds = [*data["design"], *data["spares"]]
     assert (len(data["design"]), len(data["spares"]), len(set(seeds))) == (10, 16, 26)
     assert all(type(s) is int and 0 <= s < 2 ** 63 for s in seeds)
-    assert not set(seeds) & roster.committed_seeds()
+    assert not roster.collisions(seeds)
     printed = capsys.readouterr().out
     assert printed.splitlines() == [f"sha256 {hashlib.sha256(raw).hexdigest()}", "design 10 spares 16"]
     _no_seed_printed(printed, seeds)
@@ -53,6 +60,8 @@ def test_draw(tmp_path, capsys):
 
 @pytest.mark.parametrize("values", [
     [4, *range(2 ** 62, 2 ** 62 + 25)],  # a committed public T2 seed
+    [*range(2 ** 62, 2 ** 62 + 25), 6101],  # a seed in spikes/ and tests/fixtures/
+    [7401, *range(2 ** 62, 2 ** 62 + 25)],  # a seed in schemas/fixtures/gen/
     [2 ** 62, *range(2 ** 62, 2 ** 62 + 25)],  # a duplicate within the draw
 ])
 def test_draw_refusals_write_nothing(tmp_path, monkeypatch, capsys, values):
@@ -64,6 +73,18 @@ def test_draw_refusals_write_nothing(tmp_path, monkeypatch, capsys, values):
     captured = capsys.readouterr()
     assert captured.out == ""
     _no_seed_printed(captured.err, [v for v in values if v > 13])
+
+
+def test_draw_seed_inside_longer_number_is_free(tmp_path, monkeypatch, capsys):
+    seeds = [2 ** 62 + i for i in range(26)]
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "numbers.txt").write_text(" ".join(f"9{n}0" for n in seeds))
+    drawn = iter(seeds)
+    monkeypatch.setattr(secrets, "randbits", lambda bits: next(drawn))
+    assert roster.draw(tmp_path / "DRAW.json", root=repo) == 0
+    assert json.loads((tmp_path / "DRAW.json").read_bytes())["spares"] == seeds[10:]
+    _no_seed_printed(capsys.readouterr().out, seeds)
 
 
 def _draw(tmp_path):
@@ -168,3 +189,20 @@ def test_place_refuses_malformed_draw(tmp_path, monkeypatch, edit):
     with pytest.raises(roster.Refused):
         roster.place(draw, tmp_path / "work", tmp_path / "SPEC.toml", tmp_path / "TABLE.json", templates=TEMPLATES)
     assert tried == [] and not (tmp_path / "SPEC.toml").exists() and not (tmp_path / "TABLE.json").exists()
+
+
+@pytest.mark.parametrize("case", ["same-path", "missing-spec-dir", "missing-table-dir"])
+def test_place_refuses_stranded_outputs(tmp_path, monkeypatch, case):
+    tried = _stub(monkeypatch, lambda seed: False)
+    draw, _, _ = _draw(tmp_path)
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    if case == "same-path":
+        spec_out, table_out = tmp_path / "OUT", tmp_path / "sub" / ".." / "OUT"  # one file, two spellings
+    elif case == "missing-spec-dir":
+        spec_out = tmp_path / "missing" / "SPEC.toml"
+    else:
+        table_out = tmp_path / "missing" / "TABLE.json"
+    before = sorted(tmp_path.rglob("*"))
+    assert roster.main(["place", "--draw", str(draw), "--work", str(tmp_path / "work"),
+                        "--spec-out", str(spec_out), "--table-out", str(table_out)]) == 2
+    assert tried == [] and sorted(tmp_path.rglob("*")) == before

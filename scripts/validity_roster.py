@@ -8,8 +8,10 @@ receipt when the dry run stops. Neither prints a seed.
 import argparse
 import hashlib
 import json
+import os
 import re
 import secrets
+import stat
 import sys
 import tomllib
 from datetime import UTC, datetime
@@ -20,7 +22,6 @@ from bicentennial.world import targeted
 
 ROOT = Path(__file__).resolve().parents[1]
 DESIGN, SPARES, BITS = 10, 16, 63
-SEED_KEYS = ("seed", "seeds", "replacement_seed", "schedule_seed")
 BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -28,22 +29,16 @@ class Refused(ValueError):
     pass
 
 
-def committed_seeds(root=ROOT):
-    """Every seed committed in the life specs and the pack catalogue."""
+def collisions(seeds, root=ROOT):
+    """Seeds whose decimal text appears as a whole number in any regular file under `root` (outside .git)."""
+    number = re.compile(rb"(?<![0-9])(" + b"|".join(str(n).encode() for n in seeds) + rb")(?![0-9])")
     found = set()
-
-    def walk(value, key=None):
-        if isinstance(value, dict):
-            for k, v in value.items():
-                walk(v, k)
-        elif isinstance(value, list):
-            for v in value:
-                walk(v, key)
-        elif key in SEED_KEYS and type(value) is int:
-            found.add(value)
-
-    for path in (*sorted((root / "tiers/life_specs").glob("*.toml")), root / "packs/catalogue-v0.toml"):
-        walk(tomllib.loads(path.read_text(encoding="utf-8")))
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in files:
+            path = Path(folder) / name
+            if name != ".git" and stat.S_ISREG(path.lstat().st_mode):
+                found.update(int(n) for n in number.findall(path.read_bytes()))
     return found
 
 
@@ -59,8 +54,8 @@ def draw(out, *, root=ROOT):
     seeds = [secrets.randbits(BITS) for _ in range(DESIGN + SPARES)]
     if len(set(seeds)) != len(seeds):
         raise Refused("duplicate seed within the draw")
-    if set(seeds) & committed_seeds(root):
-        raise Refused("draw overlaps a committed seed")
+    if collisions(seeds, root):
+        raise Refused("a drawn seed appears as a number in the repository")
     drawn_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     digest = _write_new(out, canon(dict(design=seeds[:DESIGN], spares=seeds[DESIGN:], drawn_at=drawn_at)) + b"\n")
     print(f"sha256 {digest}")
@@ -106,9 +101,13 @@ def _read_draw(path):
 
 
 def place(draw_path, work, spec_out, table_out, *, templates=None, root=ROOT):
+    if Path(spec_out).resolve() == Path(table_out).resolve():
+        raise Refused("--spec-out and --table-out are the same path")
     for path in (spec_out, table_out):
         if Path(path).exists():
             raise Refused(f"{path} exists")
+        if not Path(path).parent.is_dir():
+            raise Refused(f"{Path(path).parent} is not a directory")
     data, draw_sha = _read_draw(draw_path)
     if templates is None:  # the edition map lands in a sibling PR; import it only when placing for real
         from bicentennial.items.editions import EDITIONS
