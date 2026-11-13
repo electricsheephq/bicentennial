@@ -153,16 +153,16 @@ fresh lives, so round 2 then targets Wake alone. Every screened card's results a
 | # | Item | Before | Lane |
 |---|---|---|---|
 | 1 | Merge PR #528 (#524) | the first scored oracle smoke (it decides whether a reader-corrupted repository is scored or rerun) | maintainers |
-| 2 | Anchors: specs, adapters, scripted reports, live arm names, RING0 note | the screen | `gpt-6.1-sol`; review by another model family with named probes |
-| 3 | Screening-set seeds committed; G1-only build and read check; with #521 (`--spec` tier check) and #523 (hermetic roster tests) | the first candidate report | `gpt-6.1-sol`; maintainers' check |
-| 4 | Candidate cards, v3 templates and edition-3 C-7, with #522's CHANGELOG line | the screen | cards: maintainers; code: `gpt-6.1-sol` |
-| 5 | Screen reports; finalists | oracle smoke | maintainers (scripted) |
-| 6 | Oracle smoke | round-2 predictions | maintainers (bench host) |
-| 7 | Round-2 declaration, adversarial review (`gpt-6-astra`), merge | the draw | maintainers; `gpt-6-astra` |
+| 2 | Anchors: specs, adapters, scripted reports, live arm names, RING0 note (#531, #532) | the screen | `gpt-6.1-sol`; review by another model family with named probes |
+| 3 | Screening-set seeds committed; G1-only build and read check; with #521 (`--spec` tier check) and #523 (hermetic roster tests) (#533) | the first candidate report | `gpt-6.1-sol`; maintainers' check |
+| 4 | Candidate cards, v3 templates and edition-3 C-7, with #522's CHANGELOG line (#534) | the screen | cards: maintainers; code: `gpt-6.1-sol` |
+| 5 | Screen reports; finalists (#534) | oracle smoke | maintainers (scripted) |
+| 6 | Oracle smoke (#535) | round-2 predictions | maintainers (bench host) |
+| 7 | Round-2 declaration, adversarial review (`gpt-6-astra`), merge (#536) | the draw | maintainers; `gpt-6-astra` |
 | 8 | #529 | round-2 admissions | `gpt-6.1-sol`; adversarial review by `gpt-6-astra` (a guard) |
 | 9 | #526 | the follow-up's first system arm (it decides what is rerun and what is scored) | `gpt-6.1-sol`; review by another model family |
 | 10 | #507's cap and refusal record | Hermes native's next T2 run | per #507 |
-| 11 | Follow-up declaration, review, rehearsal at the run commit, draw, run, results | | maintainers; `gpt-6-astra` |
+| 11 | Follow-up declaration, review, rehearsal at the run commit, draw, run, results (#394) | | maintainers; `gpt-6-astra` |
 Items 2, 3, 9 and 10 can start now; 4 starts when 2 lands (cards can be written now).
 
 ## 9. Claim discipline
