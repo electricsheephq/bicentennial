@@ -259,3 +259,44 @@ def test_failed_write_removes_only_its_own_file(tmp_path):
     with pytest.raises(FileExistsError):
         roster._write_new(theirs, b"new")
     assert theirs.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("where", ["whole-file", "design", "parser-recursion"])
+def test_deeply_nested_draw_exits_refused(tmp_path, monkeypatch, capsys, where):
+    tried = _stub(monkeypatch, lambda seed: False)
+    if where == "parser-recursion":  # 3.11-3.13 raise RecursionError on deep nesting; 3.14's parser does not
+
+        def too_deep(*args, **kwargs):
+            raise RecursionError("maximum recursion depth exceeded while decoding a JSON array")
+
+        monkeypatch.setattr(json, "loads", too_deep)
+    draw, _, spares = _draw(tmp_path)
+    deep = b"[" * 100_000 + b"]" * 100_000
+    draw.write_bytes(deep if where == "whole-file" else
+                     b'{"design": ' + deep + b', "spares": ' + canon(spares) + b', "drawn_at": "2026-11-13T00:00:00Z"}')
+    before = sorted(tmp_path.rglob("*"))
+    assert roster.main(["place", "--draw", str(draw), "--work", str(tmp_path / "work"),
+                        "--spec-out", str(tmp_path / "SPEC.toml"), "--table-out", str(tmp_path / "TABLE.json")]) == 2
+    assert capsys.readouterr().err == "refused: malformed draw\n"
+    assert tried == [] and sorted(tmp_path.rglob("*")) == before
+
+
+def test_spec_check_raising_leaves_no_spec(tmp_path, monkeypatch, capsys):
+    draw, _, _ = _draw(tmp_path)
+    _stub(monkeypatch, lambda seed: False)
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    load_tier = t.load_tier
+
+    def refusing(path):
+        if Path(path) == spec_out:
+            raise t.PlacementError("composition")
+        return load_tier(path)
+
+    monkeypatch.setattr(t, "load_tier", refusing)
+    with pytest.raises(t.PlacementError, match="^composition$"):
+        roster.place(draw, tmp_path / "work", spec_out, table_out, templates=TEMPLATES)
+    assert not spec_out.exists() and not table_out.exists()
+    monkeypatch.setattr(t, "load_tier", load_tier)
+    assert roster.place(draw, tmp_path / "work", spec_out, table_out, templates=TEMPLATES) == 0
+    assert t.load_tier(spec_out)["tier"] == "T2" and table_out.exists()
+    _no_seed_printed(capsys.readouterr().out, json.loads(draw.read_bytes())["design"])

@@ -97,7 +97,7 @@ def _read_draw(path):
     raw = Path(path).read_bytes()
     try:
         data = json.loads(raw)
-    except ValueError:  # not UTF-8 or not JSON
+    except (ValueError, RecursionError):  # not UTF-8, not JSON, or nested too deep to parse
         raise Refused("malformed draw") from None
     if not isinstance(data, dict) or set(data) != {"design", "spares", "drawn_at"}:
         raise Refused("malformed draw")
@@ -144,7 +144,12 @@ def place(draw_path, work, spec_out, table_out, *, templates=None, root=ROOT):
     if tomllib.loads(text) != spec:
         raise ValueError("spec TOML does not round-trip")
     spec_sha = _write_new(spec_out, text.encode("utf-8"))
-    if targeted.load_tier(spec_out) != spec:
+    try:
+        loaded = targeted.load_tier(spec_out)
+    except BaseException:
+        Path(spec_out).unlink()  # created above by this call
+        raise
+    if loaded != spec:
         Path(spec_out).unlink()
         raise ValueError("spec TOML fails load_tier")
     try:
