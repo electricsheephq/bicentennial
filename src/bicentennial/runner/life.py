@@ -5,7 +5,6 @@ import shutil
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from bicentennial.audit.effects import hermes as hermes_effects
 from bicentennial.audit.readback import (
@@ -190,8 +189,11 @@ def _read_action_state(workspace, scratch):
     """Read each live action file with the pinned parser; omit only reader-made failures."""
     state, unreadable = {}, False
     empty = render({p: {} for p in PATHS.values()})
-    with TemporaryDirectory(dir=scratch, prefix="act-state-") as directory:
-        root = Path(directory)
+    # One fixed scratch folder inside the life's fresh root: tempfile's random names are outside this module's
+    # firewall (tests/runner/test_life_fake.py). A leftover folder can only come from a failed cleanup and raises.
+    root = Path(scratch) / "act-state"
+    root.mkdir()
+    try:
         for p, data in empty.items():
             (root / p).parent.mkdir(parents=True, exist_ok=True)
             (root / p).write_bytes(data)
@@ -212,6 +214,8 @@ def _read_action_state(workspace, scratch):
                     raise
                 unreadable = True
             (root / p).write_bytes(empty[p])
+    finally:
+        shutil.rmtree(root)
     return state, unreadable
 
 
