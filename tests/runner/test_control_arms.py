@@ -69,7 +69,8 @@ def test_cli_accepts_anchor_control_but_keeps_it_hidden(monkeypatch, capsys, con
 def _digests(out, budget=None):
     """Every file a run writes, with only its wall-clock and monotonic timing fields zeroed.
 
-    budget: a system run's send-budget disclosure (#507), removed from disclosures.json and checked here.
+    budget: a system run's send-budget disclosure (#507), removed from disclosures.json and checked here,
+    along with the additive zero unreadable-state counters (#524).
     """
     result = {}
     for path in sorted(out.rglob("*")):
@@ -80,6 +81,7 @@ def _digests(out, budget=None):
             value = json.loads(data)
             if budget is not None and path.name == "disclosures.json":
                 assert {k: value["live"].pop(k) for k in budget} == budget
+                assert value.pop("unreadable_state") == {"system": 0, "no_memory": 0}
             def zero(obj):
                 if isinstance(obj, dict):
                     return {k: 0 if k in TIMING else zero(v) for k, v in obj.items()}

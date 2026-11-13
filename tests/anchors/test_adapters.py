@@ -67,6 +67,14 @@ def test_utf8_newlines_exact_budget_and_stop_before_large_event(cls):
     assert query(cls, events, "猫", window=2) == answer()
 
 
+def test_joining_newlines_count_toward_the_window():
+    # "bbbb\naaaa" is 9 bytes, 3 estimated tokens; without its newline it would be 8 bytes, 2 tokens, and both would fit.
+    events = [event("old", "aaaa", 1), event("new", "bbbb", 2)]
+    assert query(RecentWindow, events, window=2)["citations"] == ["new"]
+    # Grep takes the rarer term first, ties alphabetical, so "aaaa" (the older event), then stops before "bbbb".
+    assert query(Grep, events, "aaaa bbbb", window=2)["citations"] == ["old"]
+
+
 def test_quote_recall_requires_tokens_together_and_counts_id_fallback():
     key = dict(oracle_spans=["a", "b", "missing"], required=["alpha", "beta"])
     events = {"a": event("a", "alpha beta"), "b": event("b", "other")}
