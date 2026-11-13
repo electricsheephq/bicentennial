@@ -4,6 +4,8 @@
 
 `bicentennial t2lite` runs T1's two public lives and their B0/B1 twins, sending only the probes to a live model. It produces a developer card and, against your earlier run, a flip list. It is not predictive of the full tier and never certifies. It has no gate verdict or decision bar.
 
+In a live run, a repository the reader's own edits leave unreadable is scored as the reader's failed task, never rerun. A G1 action probe records each such item with the diagnostic label `unreadable_state`; `disclosures.json` counts these items per arm under that key, across all observed attempts and repetitions (including attempts voided for a separate harness fault). The item's decision table scores a changed repository with every predicate false. Harness faults still rerun the whole unit; scripted probes retain their infrastructure class.
+
 ## What you need
 
 Use a source git checkout, Python 3.14, a virtual environment with the package installed, and `PYTHONHASHSEED=0`. Install `nice` and, on macOS, `taskpolicy`; the CLI re-executes at niceness 19 and background QoS. Build and install a T1 pack with the [Ring 0 guide](ring0.md#7-run-t1-as-a-merge-gate), keeping the printed pack hash. Use the registered system's pinned Hermes checkout and dependencies, including its `mcp` extra. Plug-ins also need `--plugin-source`; only `omega` among built-ins needs `--model-cache`, or an outside recipe whose worker environment uses `{model_cache}`. The system's registration and artifact measurements must pass T1 preparation.

@@ -31,6 +31,7 @@ from bicentennial.report.t2lite_flips import (
 )
 from bicentennial.runner import t1
 from bicentennial.runner.hermes_score import identity0 as identity0
+from bicentennial.runner.hermes_score import unreadable_counts
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
 from bicentennial.runner.units import (
@@ -402,6 +403,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
             _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits, "turn_wait_s": str(turn_wait_s),
+                "unreadable_state": unreadable_counts(runs),
                 "identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})

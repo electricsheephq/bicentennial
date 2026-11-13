@@ -50,6 +50,7 @@ from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
+from bicentennial.runner.hermes_score import UNREADABLE
 from bicentennial.runner.lock import LockMismatch
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
@@ -108,6 +109,7 @@ class LifeRun:
     stored_roots: dict = field(default_factory=dict)
     retained_roots: dict = field(default_factory=dict)
     act: dict = field(default_factory=dict)
+    item_labels: dict = field(default_factory=dict)
     kill: tuple | None = None
     expected_call_ids: tuple = ()
     post_restart_requests: tuple = ()
@@ -524,9 +526,20 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         elif by_id[probe.item_ids[0]]["stage"] == "act":
                             if genre == "G2":  # the probe's server may still be writing its session_end
                                 wiring.wait_end(index, END_WAIT_S)
-                            for iid in probe.item_ids:
-                                evidence.act[iid] = read_state(paths["workspace"]) if genre == "G1" else {
-                                    "records": wiring.records(index)}
+                            if genre == "G1":
+                                try:
+                                    state = read_state(paths["workspace"])
+                                except (ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError):
+                                    if leg is None:
+                                        raise
+                                    state = UNREADABLE
+                                for iid in probe.item_ids:
+                                    evidence.act[iid] = state
+                                    if state is UNREADABLE:
+                                        evidence.item_labels[iid] = "unreadable_state"
+                            else:
+                                for iid in probe.item_ids:
+                                    evidence.act[iid] = {"records": wiring.records(index)}
                     if probe:
                         code = _probe_code(adapter.records(), attempt_id, probe_live=leg is not None)
                         for n, final in result.finals:

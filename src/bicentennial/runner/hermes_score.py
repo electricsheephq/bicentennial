@@ -17,6 +17,13 @@ from bicentennial.score.qa import score_qa
 from bicentennial.systems.registry import SystemRefused
 
 MISSING = object()
+UNREADABLE = object()
+
+
+def unreadable_counts(runs):
+    """Count labelled items per arm across all observed attempts (and repetitions)."""
+    return {arm: sum(label == "unreadable_state" for run in runs if run.arm == arm
+                     for label in run.item_labels.values()) for arm in sorted({run.arm for run in runs})}
 
 
 @dataclass(frozen=True)
@@ -50,7 +57,10 @@ def score_item(item, *, cls, label, result, envelope, act, case, scoring_evidenc
         if act is MISSING:
             return Infra("no_act")
         try:
-            if case.seed is None:
+            if act is UNREADABLE:
+                predicates = {name: False for name in case.checks}
+                trace = Trace(False, True, case.t_sim)
+            elif case.seed is None:
                 predicates = repo_state_predicates(act, case.checks)
                 changed = canon(act) != canon(case.state0)
                 trace = Trace(False, changed, case.t_sim if changed else None)
