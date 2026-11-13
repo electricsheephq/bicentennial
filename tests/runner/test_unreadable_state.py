@@ -10,12 +10,13 @@ from test_t2 import t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 
 from bicentennial.contracts.run import validate
+from bicentennial.genres.g1_software.diffs import PATHS, read_state, render
 from bicentennial.harness.hermes import adapter
+from bicentennial.items.checks.repo import RepoCheck, repo_state_predicates
 from bicentennial.runner import life, t2, t2lite, units
 from bicentennial.runner.diagnostics import Diagnostics
 from bicentennial.runner.hermes_score import (
     MISSING,
-    UNREADABLE,
     Infra,
     score_item,
     unreadable_counts,
@@ -41,6 +42,9 @@ def damage_probe(monkeypatch, case, damage):
         result = original(self, index, **kw)
         visited.append(index)
         if index == probe.index:
+            if callable(damage):
+                damage(self.paths["workspace"])
+                return result
             path = self.paths["workspace"] / "docs/decisions.md"
             if damage == "blank":
                 path.write_text(path.read_text().replace("# Decisions\n", "# Decisions\n\n", 1))
@@ -87,8 +91,10 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
         assert not isinstance(row, Infra)
         assert row["infra_reruns"] == 0
         if iid in probe.item_ids:
-            assert run.act[iid] is UNREADABLE
-            scored = expected(case["cases"][iid])
+            assert set(run.act[iid]) == set(PATHS.values()) - {"docs/decisions.md"}
+            c = case["cases"][iid]
+            scored = score_action(c.item, c.table, Trace(False, True, c.t_sim),
+                                  repo_state_predicates(run.act[iid], c.checks), window=c.window)
             assert row["failure_class"] == scored.failure_class
             assert row["score_milli"] == row["worst_case_milli"] == scored.score_milli <= 0
         else:
@@ -141,10 +147,10 @@ def test_live_read_exception_boundary(lives, unit_sessions, tmp_path, monkeypatc
         assert not result.item_labels
     else:
         assert result.stopped is None and result.item_labels
-        assert all(result.act[iid] is UNREADABLE for iid in result.item_labels)
+        assert all(result.act[iid] == {} for iid in result.item_labels)
 
 
-def test_sentinel_uses_each_items_changed_matches_neither_row(lives):
+def test_empty_state_uses_each_items_changed_matches_neither_row(lives):
     case = lives["t1-g1", "B0"]
     for item in case["items"]:
         if item["stage"] != "act":
@@ -153,7 +159,7 @@ def test_sentinel_uses_each_items_changed_matches_neither_row(lives):
         reader = SimpleNamespace(selected_option=None, competing_present=(), carry_over=False,
                                  in_context=True, kind="act")
         row = score_item(item, cls=None, label=None, result=reader, envelope=MISSING,
-            act=UNREADABLE, case=case["cases"][iid], scoring_evidence=None, keys=case["keys"][iid],
+            act={}, case=case["cases"][iid], scoring_evidence=None, keys=case["keys"][iid],
             stored_roots=None, retained_roots=None, attempt=0)
         scored = expected(case["cases"][iid])
         assert not isinstance(row, Infra)
@@ -161,6 +167,80 @@ def test_sentinel_uses_each_items_changed_matches_neither_row(lives):
         assert row["score_milli"] == row["worst_case_milli"] == scored.score_milli
         assert row["selected_option"] is None and row["competing_present"] == []
         validate("item_outcome", row)
+
+
+@pytest.mark.parametrize("write,broken,verdict,score", [
+    ("stale", "other", "FAIL_MEMORY", -1000),
+    ("right", "other", "PASS", 1000),
+    ("benign", "other", "PASS", 0),
+    ("right", "checked", "FAIL_TASK", 0),
+    ("right", "all", "FAIL_TASK", 0),
+])
+def test_live_partial_state_scores_surviving_files(lives, unit_sessions, tmp_path, monkeypatch,
+                                                  write, broken, verdict, score):
+    case = dict(lives["t1-g1", "B0"])
+    probe = act_probe(case)
+    target = next(case["cases"][iid] for iid in probe.item_ids
+                  if case["cases"][iid].table["gold"] == "act")
+    # Retarget a real sealed template's checks to flags for the cross-file regression.
+    checks = {name: tuple(tuple(replace(c, path="config/flags.toml") for c in group) for group in groups)
+              for name, groups in target.checks.items()}
+    table = dict(target.table, benign_extras=["holds:extra"])
+    checks["holds:extra"] = ((RepoCheck(kind="constant", path="service/routes.toml",
+                                      name="benign", value="extra"),),)
+    target = replace(target, checks=checks, table=table)
+    case["cases"] = dict(case["cases"], **{target.item["item_id"]: target})
+    predicate = (target.table["disqualifiers"][0]["predicate"] if write == "stale"
+                 else target.table["admissible"][0])
+    written = {}
+
+    def damage(workspace):
+        state = read_state(workspace)
+        for check in checks[predicate][0]:
+            state[check.path][check.name] = check.value
+        if write == "benign":
+            state["service/routes.toml"]["benign"] = "extra"
+        for p, data in render(state).items():
+            (workspace / p).write_bytes(data)
+        bad = (set(PATHS.values()) if broken == "all" else
+               {"config/flags.toml"} if broken == "checked" else {"docs/decisions.md"})
+        for p in bad:
+            (workspace / p).write_bytes(b"\n" if p.endswith(".md") else b"invalid = [\n")
+        written.update({p: entries for p, entries in state.items() if p not in bad})
+
+    damage_probe(monkeypatch, case, damage)
+    result = unit(case, tmp_path)
+    assert result.attempts == 1 and result.stop is None
+    run, = result.runs
+    assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
+    assert unreadable_counts(result.runs) == {"system": len(probe.item_ids)}
+    iid = target.item["item_id"]
+    assert run.act[iid] == written
+    row = result.scores[iid]
+    assert row["base_verdict"] == verdict
+    assert row["score_milli"] == row["worst_case_milli"] == score
+    assert row["benign_extra"] is (write == "benign")
+    assert row["infra_reruns"] == 0
+
+
+@pytest.mark.parametrize("path", sorted(PATHS.values()))
+def test_live_any_file_harness_fault_is_infrastructure(lives, unit_sessions, tmp_path, monkeypatch, path):
+    read, calls = life.read_state, []
+
+    def fault(root):
+        current = sorted(PATHS.values())[len(calls)]
+        calls.append(current)
+        if current == path:
+            raise PermissionError("synthetic harness permission fault")
+        if len(calls) == 1:
+            raise ValueError("reader-made malformed file before harness fault")
+        return read(root)
+
+    monkeypatch.setattr(life, "read_state", fault)
+    run = helpers.drive(lives["t1-g1", "B0"], tmp_path, live=helpers.FakeLive())
+    assert run.stopped[:2] == ("INFRA_FAILURE", "PermissionError")
+    assert not run.item_labels and not run.act
+    assert unreadable_counts([run]) == {"system": 0}
 
 
 @pytest.mark.parametrize("tier", ["t2", "t2lite"])
@@ -208,15 +288,17 @@ def test_unreadable_counts_only_the_scored_attempt():
     assert unreadable_counts([]) == {}
 
 
-def test_diagnostics_skips_an_unreadable_state(tmp_path, monkeypatch):
+@pytest.mark.parametrize("partial", [{"config/flags.toml": {"flag": "stale"}}, {}])
+def test_diagnostics_writes_partial_state(tmp_path, monkeypatch, partial):
     diag = Diagnostics(tmp_path / "diag", tmp_path / "home")
     puts = []
-    monkeypatch.setattr(diag, "_put", lambda rel, make: puts.append(rel))
+    monkeypatch.setattr(diag, "_needles", lambda: ())
     monkeypatch.setattr(diag, "_workspace", lambda rel, run, session: puts.append(rel + "/workspace"))
-    run = SimpleNamespace(act={"i1": UNREADABLE}, records=())
+    run = SimpleNamespace(act={"i1": partial}, item_labels={"i1": "unreadable_state"}, records=())
     diag._item("L/B0/0/i1", {"item_id": "i1", "stage": "act"}, run, None, None, 3, 1, {}, None)
-    assert "L/B0/0/i1/act.json" not in puts and "L/B0/0/i1/workspace" in puts
-    assert diag.skips == [dict(path="L/B0/0/i1/act.json", reason="unreadable state")]
+    assert json.loads((diag.root / "L/B0/0/i1/act.json").read_bytes()) == partial
+    assert "L/B0/0/i1/workspace" in puts
+    assert diag.skips == []
     assert diag.failures == []
 
 
