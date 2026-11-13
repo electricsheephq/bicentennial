@@ -114,10 +114,10 @@ def positions(attempts, order, reruns):
     seq = attempts.split(",")
     firsts = [a for a in seq if a in CORE]
     again = [a.removesuffix(".rerun") for a in seq if a.endswith(".rerun")]
-    if (sorted(firsts) != sorted(CORE) or sorted(again) != sorted(reruns) or len(firsts) + len(again) != len(seq)
+    if (firsts != list(DECLARED_ORDER) or sorted(again) != sorted(reruns) or len(firsts) + len(again) != len(seq)
             or any(seq.index(f"{r}.rerun") < seq.index(r) for r in again)):
-        return None, ("--attempts must list each of the seven labels once as a first attempt, each --reruns label once"
-                      " more as L.rerun after it, and nothing else")
+        return None, ("--attempts must list the seven labels once each as first attempts in the declared order, each"
+                      " --reruns label once more as L.rerun after it, and nothing else")
     last = {a.removesuffix(".rerun"): n for n, a in enumerate(seq, 1)}
     if sorted(last, key=last.get) != order:
         return None, "--attempts does not give the --order sequence (each label's last attempt)"
@@ -231,7 +231,7 @@ def main(argv=None):
         # §4: a rerun failing check 1, 2 or 7 again, or check 3 still failing after the reruns, ends the round.
         again = sorted(ctx["invalid"] & set(reruns), key=CORE.index)
         if again or ("check 3" in ctx["invalid"] and args.after_reruns):
-            round_ends(ctx, again)
+            round_ends(ctx, again, args.after_reruns)
             return 5
         if ctx["violation"]:
             print(f"RUN ORDER VIOLATION: {ctx['violation']}")
@@ -424,13 +424,16 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree, place):
                 incomplete=incomplete, use=use, left=left, tasks_sha256=args.tasks_sha256.lower())
 
 
-def round_ends(ctx, again):
+def round_ends(ctx, again, after_reruns):
     """§4: a rerun failed check 1, 2 or 7 again, or check 3 still fails after the reruns. The checks are above; the
-    missing observations, then no score."""
+    missing observations, then no score. Check 3 voids every arm only once it still fails with --after-reruns."""
+    check3 = "check 3" in ctx["invalid"]
+    final3 = check3 and after_reruns
     said = [f"{k} fails check {','.join(map(str, ctx['failed'][k]))} again after its rerun" for k in again] + (
-        ["check 3 is not shown passing at the run commit after the reruns"] if "check 3" in ctx["invalid"] else [])
+        ["check 3 is not shown passing at the run commit after the reruns"] if final3 else
+        ["check 3 not shown passing (not yet rerun)"] if check3 else [])
     print(f"\nROUND ENDS: {'; '.join(said)} (§4); no score is opened")
-    gone = list(CORE) if "check 3" in ctx["invalid"] else sorted(
+    gone = list(CORE) if final3 else sorted(
         set(ctx["failed"]) | set(ctx["missing"]) | ctx["mismatched"], key=CORE.index)
     print("missing observations: arms without usable trials", " ".join(gone))
     for t in ctx["templates"]:
@@ -453,9 +456,11 @@ def reading(ctx, t):
     low = state("low", f, r, c)
     trials = [(a["name"], state("low", None, None, pts([a], support))) for a in used["O"]]
     disagree = [n for n, s in trials if (s == "applies") != (low == "applies")]
+    told = ("n/a (mean unavailable)" if low == "n/a" else "n/a (no combinations)" if not trials
+            else len(disagree))
     out.append(f"  low (c < 75): on means {low} margin_bundles {exact(margin('low', f, r, c, len(support)))};"
                f" each O trial alone: " + ", ".join(f"{n} {s}" for n, s in trials)
-               + f"; disagreeing with the means {len(disagree)}")
+               + f"; disagreeing with the means {told}")
     labels = []
     for flag, name in (("naive", "near-solved by naive retrieval"), ("floor", "near-solved without memory")):
         mean = state(flag, f, r, c)
@@ -463,9 +468,11 @@ def reading(ctx, t):
                    for x, y, o in product(used["F"], used["R"], used["O"])] if flag == "naive" else
                   [(pts([x], support), r, pts([o], support)) for x, o in product(used["F"], used["O"])])
         agree = [(state(flag, *v) == "applies") == (mean == "applies") for v in combos]
+        told = ("n/a (mean unavailable)" if mean == "n/a" else "n/a (no combinations)" if not agree
+                else f"{sum(agree)} {'stable' if all(agree) else 'unstable'}")
         out.append(f"  {flag} ({name}): on means {mean} margin_bundles {exact(margin(flag, f, r, c, len(support)))}"
-                   f" combinations {len(agree)} agreeing on whether it applies {sum(agree)}"
-                   f" {'stable' if all(agree) else 'unstable'} (printed only; never enters the reading)")
+                   f" combinations {len(agree)} agreeing on whether it applies {told} (printed only; never enters the"
+                   " reading)")
         if mean == "applies":
             labels.append(name)
     if labels:

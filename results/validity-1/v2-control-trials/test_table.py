@@ -262,6 +262,13 @@ def test_completeness_is_per_template(run):
     assert "bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 50 (50.0)" in config[0]
     assert "check 6 drift-config-v2: repeats used F1 F2 R1 R2 O1 O2 O3; left out none" in out.splitlines()
     assert reading_of(out, "drift-config-v2") == "cleared"
+    # O2 left out of the count template: c is unavailable, and the low and near-solved lines say so.
+    code, out = run(twins={"O2": {(COUNT, 1, 0): "B"}}, flags=("--after-reruns",))
+    count = section(out, COUNT)
+    assert code == 0 and count[1].startswith("  low (c < 75): on means n/a margin_bundles n/a; each O trial alone:")
+    assert count[1].endswith("O1 no, O3 no; disagreeing with the means n/a (mean unavailable)")
+    assert all("agreeing on whether it applies n/a (mean unavailable) (printed only" in x for x in count[2:4])
+    assert reading_of(out, COUNT) == "unresolved" and reading_of(out, "drift-quote-v2") == "cleared"
 
 
 # 3. Readings.
@@ -409,6 +416,17 @@ def test_check_3_after_reruns_ends_the_round(run):
     assert "missing observations: arms without usable trials F1 F2 R1 R2 O1 O2 O3" in out
     assert [x for x in out.splitlines() if x.startswith("reading ")] == [f"reading {t}: unresolved" for t in TEMPLATES]
     assert "== 3." not in out and "points" not in out
+    # A named rerun failing check 7 again ends the round while check 3 has not been rerun: only that arm is listed.
+    def cached(label, path):
+        if label == "R2":
+            edit_json(path / "card.json", lambda d: d["floor"]["units"][f"{G1[0]}/B0"].update(cached=True))
+
+    late = (*(k for k in ORDER if k != "R2"), "R2")
+    code, out = run(check3=bad, edit=cached, order=late, slots={"R2": 9}, flags=("--reruns", "R2"))
+    assert code == 5 and ("ROUND ENDS: R2 fails check 7 again after its rerun; check 3 not shown passing (not yet"
+                          " rerun) (§4); no score is opened") in out
+    assert "missing observations: arms without usable trials R2" in out.splitlines()
+    assert "after the reruns" not in out and "== 3." not in out
 
 
 def test_check_2_r_reads_the_target_items_against_the_scripted_report(run):
@@ -464,13 +482,18 @@ def test_row_centres_in_the_order_the_arms_ran(run):
                     attempts=(*ORDER, "R1.rerun", "O3.rerun"))
     assert code == 0 and centres(out).endswith("(positions 1-9) F 7/2 (3.5) R 13/2 (6.5) O 7/2 (3.5); O3 at 9"
                                                " (declared order: each centre 7/2)")
+    # A rerun run straight after its own first attempt.
+    code, out = run(flags=("--reruns", "R1"), attempts=("F1", "R1", "R1.rerun", *ORDER[2:]))
+    assert code == 0 and centres(out).endswith("(positions 1-8) F 4 (4.0) R 9/2 (4.5) O 9/2 (4.5); O3 at 8"
+                                               " (declared order: each centre 7/2)")
     # Reruns named and no --attempts: not computed, never guessed.
     code, out = run(order=late, slots={"O1": 9}, flags=("--reruns", "O1"))
     assert code == 0 and centres(out) == "row centres in the order the arms actually ran: not computed (pass --attempts)"
     # An --attempts that does not fit: refused.
     for attempts, reruns, order in (((*ORDER, "O1.rerun"), "O1", ORDER), ((*ORDER, "O1.rerun"), "O3", late),
                                     (("O1.rerun", *ORDER), "O1", late), ((*ORDER, "O1.rerun", "X"), "O1", late),
-                                    (ORDER[:-1] + ("O1.rerun",), "O1", late)):
+                                    (ORDER[:-1] + ("O1.rerun",), "O1", late),
+                                    (("R1", "F1", "R1.rerun", *ORDER[2:]), "R1", ORDER)):
         code, out = run(order=order, slots={"O1": 9}, flags=("--reruns", reruns), attempts=attempts)
         assert code == 3 and out.startswith("REFUSED: --attempts") and "== 1." not in out
 
