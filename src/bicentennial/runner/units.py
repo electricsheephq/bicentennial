@@ -450,7 +450,7 @@ def reduce_refusals(errors):
 
 
 # The floor's key, then the live control arms that run as the floor does with a pinned control's text.
-NO_MEMORY_KEYS = ("no_memory", "naive_rag", "oracle_evidence")
+NO_MEMORY_KEYS = ("no_memory", "naive_rag", "oracle_evidence", "bm25", "grep", "recent_window")
 
 
 @dataclass(frozen=True)

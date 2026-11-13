@@ -12,6 +12,9 @@ import pytest
 from test_t2 import read, t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 
+from bicentennial import cli
+from bicentennial.anchors import run as run_anchor
+from bicentennial.anchors.report import ANCHORS, header
 from bicentennial.audit.readback import life_ids
 from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
@@ -35,8 +38,32 @@ from bicentennial.world.targeted import load_tier
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = runpy.run_path(str(Path(__file__).with_name("test_life_fake.py")))
 drive = HELPERS["drive"]
-TEXT_ARMS = ("naive_rag", "oracle_evidence")
+TEXT_ARMS = ("naive_rag", "oracle_evidence", *ANCHORS)
 MEMORY_TOOLS = {"memory", "session_search", "fact_store", "fact_feedback"}
+
+# Raw bytes captured on 87e4d9a, before anchor live arms; no timing normalization.
+LEGACY_BYTES = {
+    "no_memory": ("46201410aeacfdb657920c2780dcd05cd8e0c7a00a3813650bdfee6b9bc37c6f",
+                  "d66c079fb07603f22a9293f411d03f77003e92bd58f0f19d1976da6c238763bc"),
+    "naive_rag": ("0e8b2114afdab6dbc0f9bc7026ed9ce26ee7cfceda8a49af90055ec1c14ea6f4",
+                  "d3147bc5c60edde78c6b49742bccd3ddd9bd890ac7e0bf64aa2bbce996b3a047"),
+    "oracle_evidence": ("e055824285fcae667104139d2db84cf9615501138c0e76d4e47758cfa26aef72",
+                        "1e93f2e0d2ffd86471258bd0cd15263df40281611806fa0da77f41d77bb6e199"),
+}
+
+
+@pytest.mark.parametrize("control", ANCHORS)
+def test_cli_accepts_anchor_control_but_keeps_it_hidden(monkeypatch, capsys, control):
+    seen = []
+    monkeypatch.setattr(cli, "reexec_niced", lambda argv: None)
+    monkeypatch.setattr(cli, "run_t2", lambda **kw: seen.append(kw) or 0)
+    assert cli.main(["t2", "--system", "hermes-native", "--packs", "packs", "--pack-hash", "a" * 64,
+                     "--out", "out", "--login-home", "synthetic-home", "--max-sends", "100",
+                     "--control", control]) == 0
+    assert seen[0]["control"] == control
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["t2", "--help"])
+    assert caught.value.code == 0 and "--control" not in capsys.readouterr().out
 
 
 def _digests(out, budget=None):
@@ -150,8 +177,21 @@ def pinned_texts(pack, control):
     score = make_score(json.loads((pack.dir / "sealed/scoring.json").read_bytes()))
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(common, "read_api", spy)
-        {"naive_rag": naive_rag, "oracle_evidence": oracle_evidence}[control].run(control_input(pack.dir), score=score)
+        if control in ANCHORS:
+            run_anchor(control_input(pack.dir), ANCHORS[control], score=score)
+        else:
+            {"naive_rag": naive_rag, "oracle_evidence": oracle_evidence}[control].run(
+                control_input(pack.dir), score=score)
     return seen
+
+
+@pytest.mark.parametrize("control", TEXT_ARMS)
+def test_probe_blocks_equal_the_scripted_outputs(t2_packs, control):
+    for pack in t2_packs:
+        expected = pinned_texts(pack, control)
+        assert control_arm.probe_blocks(pack, control) == {
+            (pack.life, b): {i["item_id"]: expected[i["item_id"]] for i in pack.items[b]}
+            for b in ("B0", "B1")}
 
 
 def run_unit(pack, branch, control, scratch):
@@ -246,6 +286,26 @@ def test_b_naive_rag_in_context_equals_the_packs_scripted_report(t2_packs, arm_u
                 iid: reports[iid]["in_context"] for iid in probes}
 
 
+@pytest.mark.parametrize("control", ANCHORS)
+def test_b_anchor_initial_in_context_equals_the_scripted_report(t2_packs, arm_units, control):
+    for pack in t2_packs:
+        score = make_score(json.loads((pack.dir / "sealed/scoring.json").read_bytes()))
+        scripted = run_anchor(control_input(pack.dir), ANCHORS[control], score=score)
+        reports = {r["item_id"]: r for r in scripted["reports"]}
+        for branch in ("B0", "B1"):
+            probes = arm_units[pack.life, branch, control].probes
+            assert set(probes) == {i["item_id"] for i in pack.items[branch]}
+            assert {iid: p["shadow"]["in_context_initial"] for iid, p in probes.items()} == {
+                iid: reports[iid]["in_context"] for iid in probes}
+
+
+@pytest.mark.parametrize("control", ANCHORS)
+def test_anchor_has_no_sealed_key(t2_packs, control):
+    for pack in t2_packs:
+        assert not (pack.dir / "sealed" / f"{control}.json").exists()
+        assert control_arm.control_key_sha256(pack, control) is None
+
+
 def test_c_floor_bodies_and_memory_off(t2_packs, arm_units):
     # The no_memory arm is the plain floor (no block); each text arm's bodies are the floor's plus the block alone.
     for pack in t2_packs:
@@ -307,7 +367,9 @@ def control_scenario(t2_scenario, monkeypatch):  # noqa: F811
     monkeypatch.setattr(control_arm, "probe_blocks", lambda pack, control: {
         (pack.life, b): {i["item_id"]: synthetic_text(pack, b, i["item_id"]) for i in pack.items[b]}
         for b in ("B0", "B1")})
-    monkeypatch.setattr(t2, "control_key_sha256", lambda pack, control: f"{control}-{pack.life}-key")
+    key_hash = t2.control_key_sha256
+    monkeypatch.setattr(t2, "control_key_sha256", lambda pack, control: (
+        key_hash(pack, control) if control in ANCHORS else f"{control}-{pack.life}-key"))
     s.lives, drive_life = [], units.run_life
 
     def recorded(**kw):
@@ -345,12 +407,20 @@ def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scena
     assert all(r["end_ms"] >= r["start_ms"] > 0 for r in timing["units"])
     assert all(r == dict(cached=False, reason="control arm") for r in read(out, "disclosures.json")["floor"].values())
     record = read(out, "control.json")
+    if control in LEGACY_BYTES:
+        assert tuple(sha256((out / n).read_bytes()).hexdigest()
+                     for n in ("control.json", "card.json")) == LEGACY_BYTES[control]
     texts = {f"{p.life}/{b}/{i['item_id']}": synthetic_text(p, b, i["item_id"])
              for p in s.ctx.packs for b in ("B0", "B1") for i in p.items[b]}
-    assert record == dict(arm=control,
+    expected = dict(arm=control,
         frame_sha256=None if control == "no_memory" else sha256(control_arm.FRAME.encode()).hexdigest(),
-        control_key_sha256={p.life: f"{control}-{p.life}-key" for p in s.ctx.packs},
+        control_key_sha256={p.life: None if control in ANCHORS else f"{control}-{p.life}-key" for p in s.ctx.packs},
         block_sha256={} if control == "no_memory" else {k: sha256(v.encode()).hexdigest() for k, v in texts.items()})
+    if control in ANCHORS:
+        definition = header()["anchors"][control]
+        expected["anchor"] = dict(name=control, **{k: definition[k] for k in (
+            "version", "spec_sha256", "code_sha256")})
+    assert record == expected
     # Each unit's life receives exactly its own blocks; the no_memory arm receives none.
     for kw in s.lives:
         pack = next(p for p in s.ctx.packs if p.life == kw["life_dir"].name)

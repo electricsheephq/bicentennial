@@ -5,6 +5,7 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
+from bicentennial.anchors.report import ANCHORS, header
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.contracts.items import reader_view
 from bicentennial.controls.common import check
@@ -14,10 +15,11 @@ from bicentennial.probe.scripted_reader import api_task
 from bicentennial.runner.units import NO_MEMORY_KEYS, Arm, Unit
 
 CONTROL_ARMS = NO_MEMORY_KEYS
-# The pinned control each text arm calls unchanged, and the sealed entry that holds its key.
+# Each text arm's factory, oracle flag, and sealed key entry (anchors have none).
 _CONTROLS = {"naive_rag": (NaiveRag, False, "naive_rag.json"),
-             "oracle_evidence": (OracleEvidence, True, "controls.json")}
-# One frame for both text arms: the control's text, then the unchanged probe turn.
+             "oracle_evidence": (OracleEvidence, True, "controls.json"),
+             **{name: (factory, False, None) for name, factory in ANCHORS.items()}}
+# One frame for all text arms: the control's text, then the unchanged probe turn.
 FRAME = "Context for the request below:\n<context>\n{}\n</context>\n\n"
 FRAME_SHA256 = sha256(FRAME.encode()).hexdigest()
 
@@ -59,9 +61,18 @@ def probe_blocks(pack, control):
 
 
 def control_key_sha256(pack, control):
-    if control == "no_memory":
+    if control == "no_memory" or _CONTROLS[control][2] is None:
         return None
     return json.loads((Path(pack.dir) / "sealed" / _CONTROLS[control][2]).read_bytes())["key_sha256"]
+
+
+def anchor_metadata(control):
+    """Only anchor arms add provenance; existing control records keep their bytes."""
+    if control not in ANCHORS:
+        return {}
+    definition = header()["anchors"][control]
+    return dict(anchor=dict(name=control, **{k: definition[k] for k in (
+        "version", "spec_sha256", "code_sha256")}))
 
 
 def control_units(ctx, control, scratch, out, diagnostics=None):

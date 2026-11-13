@@ -176,7 +176,7 @@ def main(argv=None) -> int:
     command.add_argument("--turn-wait", dest="turn_wait_s", type=_turn_wait, default=3.0, metavar="SECONDS")
     # The benchmark owner's live control rows (runner/control_arm.py): one arm alone. Left out of --help and
     # passed only when given, so the documented T2 command is unchanged.
-    command.add_argument("--control", choices=("no_memory", "naive_rag", "oracle_evidence"),
+    command.add_argument("--control", choices=("no_memory", "naive_rag", "oracle_evidence", "bm25", "grep", "recent_window"),
                          default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     # Its reader trace, kept privately outside the run directory (runner/diagnostics.py); a control arm only.
     command.add_argument("--diagnostics", default=argparse.SUPPRESS, help=argparse.SUPPRESS)

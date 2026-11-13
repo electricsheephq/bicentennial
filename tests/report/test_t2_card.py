@@ -120,7 +120,7 @@ def test_item_2_wrong_tier_refused(tier):
         validate("card_t2", card)
 
 
-@pytest.mark.parametrize("arm", ["no_memory", "naive_rag", "oracle_evidence"])
+@pytest.mark.parametrize("arm", ["no_memory", "naive_rag", "oracle_evidence", "bm25", "grep", "recent_window"])
 def test_a_control_arms_card_names_the_arm(arm):
     # A live control arm (RING0 §15) runs through the system's harness with memory off: its card says which arm.
     assert "control" not in complete_card()

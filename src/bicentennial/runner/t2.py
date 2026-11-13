@@ -21,6 +21,7 @@ from bicentennial.runner.arm_time import calculate_arm_times, units_json_inputs
 from bicentennial.runner.control_arm import (
     CONTROL_ARMS,
     FRAME_SHA256,
+    anchor_metadata,
     control_key_sha256,
     control_units,
 )
@@ -291,7 +292,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     control_key_sha256={p.life: control_key_sha256(p, control) for p in ctx.packs},
                     block_sha256={f"{life}/{branch}/{iid}": sha256(text.encode()).hexdigest()
                         for (life, branch), texts in sorted((queued[0].arm.probe_blocks or {}).items())
-                        for iid, text in sorted(texts.items())}))
+                        for iid, text in sorted(texts.items())}, **anchor_metadata(control)))
             _write(out, "custody.json", custody_rows)
             # Each arm's own live sends under its own max_sends; a control run is one phase, disclosed as before.
             budget = {} if control is not None else dict(max_sends=max_sends, phase_sends=dict(floor=floor_sends,
