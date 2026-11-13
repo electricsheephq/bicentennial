@@ -21,9 +21,19 @@ UNREADABLE = object()
 
 
 def unreadable_counts(runs):
-    """Count labelled items per arm across all observed attempts (and repetitions)."""
-    return {arm: sum(label == "unreadable_state" for run in runs if run.arm == arm
-                     for label in run.item_labels.values()) for arm in sorted({run.arm for run in runs})}
+    """Count, per arm, the items scored as unreadable_state: labelled items with no cause class, in the scored
+    attempt of each unit. A unit's runs are contiguous and number their attempts from 0, so a run is scored when the
+    next run of its arm, life and branch starts another unit (attempt 0, as in a T2-lite repetition) or there is none.
+    An attempt voided by a harness fault is not counted."""
+    runs = list(runs)
+    counts = {arm: 0 for arm in sorted({run.arm for run in runs})}
+    for n, run in enumerate(runs):
+        key = (run.arm, run.life, run.branch)
+        later = next((r for r in runs[n + 1:] if (r.arm, r.life, r.branch) == key), None)
+        if later is None or later.attempt == 0:
+            counts[run.arm] += sum(label == "unreadable_state" and not run.classes.get(iid, (None, None))[0]
+                                   for iid, label in run.item_labels.items())
+    return counts
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,7 @@
 
 `bicentennial t2lite` runs T1's two public lives and their B0/B1 twins, sending only the probes to a live model. It produces a developer card and, against your earlier run, a flip list. It is not predictive of the full tier and never certifies. It has no gate verdict or decision bar.
 
-In a live run, a repository the reader's own edits leave unreadable is scored as the reader's failed task, never rerun. A G1 action probe records each such item with the diagnostic label `unreadable_state`; `disclosures.json` counts these items per arm under that key, across all observed attempts and repetitions (including attempts voided for a separate harness fault). The item's decision table scores a changed repository with every predicate false. Harness faults still rerun the whole unit; scripted probes retain their infrastructure class.
+In a live run, a repository the reader's own edits leave unreadable is scored as the reader's failed task, never rerun. A G1 action probe records each such item with the diagnostic label `unreadable_state`; `disclosures.json` counts the items scored this way per arm under that key, over the scored attempt of each unit in every repetition (an attempt voided by a harness fault is not counted). The item's decision table scores a changed repository with every predicate false. Harness faults still rerun the whole unit; scripted probes retain their infrastructure class.
 
 ## What you need
 

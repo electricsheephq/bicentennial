@@ -12,7 +12,14 @@ from test_t2lite import live_settings, scenario  # noqa: F401
 from bicentennial.contracts.run import validate
 from bicentennial.harness.hermes import adapter
 from bicentennial.runner import life, t2, t2lite, units
-from bicentennial.runner.hermes_score import MISSING, UNREADABLE, Infra, score_item
+from bicentennial.runner.diagnostics import Diagnostics
+from bicentennial.runner.hermes_score import (
+    MISSING,
+    UNREADABLE,
+    Infra,
+    score_item,
+    unreadable_counts,
+)
 from bicentennial.runner.lock import SessionGate, build_lock
 from bicentennial.score.action import Trace, score_action
 
@@ -179,3 +186,28 @@ def test_developer_docs_name_label_and_rule():
         assert "never rerun" in text
     assert "no empty lines" in (helpers.ROOT / "docs/genres/G1-software-partner.md").read_text()
 
+
+def test_unreadable_counts_only_the_scored_attempt():
+    def run(arm, life_name, branch, attempt, labelled, cls=None):
+        return life.LifeRun(arm, life_name, branch, attempt,
+                            item_labels={"i": "unreadable_state"} if labelled else {},
+                            classes={"i": cls} if cls else {})
+
+    runs = [run("system", "L1", "B0", 0, True), run("system", "L1", "B0", 1, False),  # voided, then its redo
+            run("system", "L1", "B1", 0, True),  # scored
+            run("no_memory", "L1", "B0", 0, True), run("no_memory", "L1", "B0", 0, True),  # two repetitions
+            run("system", "L2", "B0", 0, True, ("INFRA_FAILURE", "x"))]  # classed, so not scored as unreadable
+    assert unreadable_counts(runs) == {"no_memory": 2, "system": 1}
+    assert unreadable_counts([]) == {}
+
+
+def test_diagnostics_skips_an_unreadable_state(tmp_path, monkeypatch):
+    diag = Diagnostics(tmp_path / "diag", tmp_path / "home")
+    puts = []
+    monkeypatch.setattr(diag, "_put", lambda rel, make: puts.append(rel))
+    monkeypatch.setattr(diag, "_workspace", lambda rel, run, session: puts.append(rel + "/workspace"))
+    run = SimpleNamespace(act={"i1": UNREADABLE}, records=())
+    diag._item("L/B0/0/i1", {"item_id": "i1", "stage": "act"}, run, None, None, 3, 1, {}, None)
+    assert "L/B0/0/i1/act.json" not in puts and "L/B0/0/i1/workspace" in puts
+    assert diag.skips == [dict(path="L/B0/0/i1/act.json", reason="unreadable state")]
+    assert diag.failures == []
