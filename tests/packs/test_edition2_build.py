@@ -208,6 +208,21 @@ def admissions_with_count():
     return record
 
 
+def test_shipped_admissions_match_their_frozen_entries_and_result():
+    """The shipped record admits exactly round 1's cleared versions, at their frozen C-7 content, with the scope and
+    label their result page states."""
+    record = json.loads(t1.TEMPLATE_ADMISSIONS.read_bytes())
+    entries = build.c7_entries(ROOT / C7_FILES[2])
+    assert set(record["admitted"]) == {"drift-chain-fault-v2", "drift-config-v2", "drift-quote-v2"}
+    for ref, admission in record["admitted"].items():
+        assert admission["reading"] == "cleared" and admission["round"] == "validity-1"
+        assert admission["entry_sha256"] == entries[ref]["entry_sha256"]
+        assert admission["scope"] == "fresh-seed follow-up (#394)"
+        assert admission["labels"] == ["near-solved by naive retrieval"]
+        page = (ROOT / admission["result"]).read_text()
+        assert f"`{ref.removesuffix('-v2')}` v2" in page and "near-solved by naive retrieval" in page
+
+
 def test_system_run_accepts_all_v2_when_admitted(edition2, tmp_path, monkeypatch):
     path = tmp_path / "admissions.json"
     path.write_text(json.dumps(admissions_with_count()))
