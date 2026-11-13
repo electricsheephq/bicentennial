@@ -552,3 +552,16 @@ def test_floor_identity_disclosure(t2_scenario, tmp_path, identity):
     assert len([k for k in s.executed if k[0] == "no_memory"]) == 4
     reason = "served identity differs" if identity == "different" else "served identity not confirmed"
     assert all(r == dict(cached=False, reason=reason) for r in read(s.out, "disclosures.json")["floor"].values())
+
+
+@pytest.mark.parametrize("control", [None, *t2.CONTROL_ARMS])
+def test_preparation_passes_control_flag(t2_scenario, monkeypatch, control):
+    seen = []
+
+    def prepare(**kw):
+        seen.append(kw["control"])
+        raise t2.t1.T1Refused("template_not_admitted")
+
+    monkeypatch.setattr(t2.t1, "prepare", prepare)
+    assert t2_scenario.invoke(control=control) == 3
+    assert seen == [control is not None]

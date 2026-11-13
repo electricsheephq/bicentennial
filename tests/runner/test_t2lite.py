@@ -1735,3 +1735,15 @@ def test_flip_rerun_command_keeps_the_runs_turn_wait(scenario, tmp_path):
     assert s.invoke(baseline=tmp_path / "baseline", cache=tmp_path / "cache", turn_wait_s=0.5) == 0
     command = runner._read(s.out, "flips.json")["rows"][0]["rerun"]
     assert " --repeat 3 --turn-wait 0.5 --out <new dir>" in command
+
+
+def test_preparation_keeps_system_admission(scenario, monkeypatch):
+    seen = []
+
+    def prepare(**kw):
+        seen.append(kw.get("control", False))
+        raise runner.t1.T1Refused("template_not_admitted")
+
+    monkeypatch.setattr(runner.t1, "prepare", prepare)
+    assert scenario.invoke() == 3
+    assert seen == [False]

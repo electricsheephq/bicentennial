@@ -178,7 +178,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
             raise t1.T1Refused("account_busy") from None
         ctx = t1.prepare(system=system, packs=packs_dir, pack_hash=pack_hash, hermes=hermes,
             plugin_source=plugin_source, model_cache=model_cache, entry=entry, worker_argv=worker_argv,
-            turn_wait_s=turn_wait_s, spec=T2_SPEC)
+            turn_wait_s=turn_wait_s, spec=T2_SPEC, control=control is not None)
         effective = ctx.roots if slots is None else slots
         if effective > ctx.roots:
             raise ValueError("slots exceed admission")
