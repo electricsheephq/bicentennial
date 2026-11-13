@@ -1,0 +1,96 @@
+# Validity round 1 validation spec, placed from draw sha256 c88cdf35f2a597290baffe85da356cb661943bc577a5f061bbfeff0ab8f42abb.
+canary = "c168e5f8-3948-4553-8554-7aa162054723"
+tier = "T2"
+scale = "t2"
+window = 16384
+window_label = "provisional C-5"
+levers_label = "uncalibrated"
+evidence_by = 8
+replacements = []
+checkpoints = [5, 10]
+cold_restart = "every session start after the first"
+min_distance_sessions = 2
+early_sessions = 2
+min_early_bundles = 2
+qa_per_checkpoint = 6
+act_per_checkpoint = 2
+not_exercised = ["KEEP-FORGET", "KEEP-NEIGH", "TUE-EVENT"]
+
+[kill]
+session = 6
+turn = 1
+
+[swap]
+session = 8
+wiring_only = true
+from_alias = "bicentennial-main"
+to_alias = "bicentennial-swap"
+
+[compaction]
+min_sprints = 2
+
+[g1]
+deadline_at = [[[1, 1], [2, 1]], [[1, 2], [2, 2]]]
+
+[g2]
+pref_at = { seat-long = [[1, 1], [2, 1]], seat-short = [[1, 2], [2, 4]] }
+
+[[lives]]
+life = "t2-g1-1"
+genre = "G1"
+seed = 5545720610271766161
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-2"
+genre = "G1"
+seed = 4625706226786424521
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-3"
+genre = "G1"
+seed = 6507868068581993179
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-4"
+genre = "G1"
+seed = 5277291750751818193
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-5"
+genre = "G1"
+seed = 3103845902349320397
+reads_session = 1
+
+[[lives]]
+life = "t2-g2-1"
+genre = "G2"
+seed = 6113759887608731798
+
+[[lives]]
+life = "t2-g2-2"
+genre = "G2"
+seed = 1235463976226953351
+
+[[lives]]
+life = "t2-g2-3"
+genre = "G2"
+seed = 6346333440873827456
+
+[[lives]]
+life = "t2-g2-4"
+genre = "G2"
+seed = 5264330172953393218
+
+[[lives]]
+life = "t2-g2-5"
+genre = "G2"
+seed = 9016409420360721722
+
+[selection]
+g1 = ["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"]
+g2 = ["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"]
+pinned = { drift-chain-fault = 10, drift-booking = 10 }
