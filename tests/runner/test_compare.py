@@ -1117,3 +1117,16 @@ def test_turn_wait_card_bytes_and_junit(synth, installed, tmp_path, monkeypatch,
         outputs.append(out)
     for arm in compare.GATED:
         assert (outputs[0] / arm / "card.json").read_bytes() == (outputs[1] / arm / "card.json").read_bytes()
+
+
+def test_preparation_keeps_system_admission(tmp_path, monkeypatch):
+    seen = []
+
+    def prepare(**kw):
+        seen.append(kw.get("control", False))
+        raise t1.T1Refused("template_not_admitted")
+
+    monkeypatch.setattr(t1, "prepare", prepare)
+    assert compare.run_t1(system="hermes-native", packs_dir=tmp_path / "packs",
+                          pack_hash="a" * 64, out=tmp_path / "out") == 3
+    assert seen == [False]

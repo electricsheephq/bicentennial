@@ -1,0 +1,35 @@
+{
+  "about": "Template versions outside edition 1 that a non-control run may use. A version is listed only after a validity reading clears it; scope and labels record what that reading licenses, as its result page states them. The run gate checks only the reading and the entry hash; a validation pack stays control-only (#529).",
+  "admitted": {
+    "drift-chain-fault-v2": {
+      "reading": "cleared",
+      "scope": "fresh-seed follow-up (#394)",
+      "labels": [
+        "near-solved by naive retrieval"
+      ],
+      "entry_sha256": "f9deec94e6c69d79d6828704f20a51f2a7c662aa0e2b14c2a32f7b38fbb41e37",
+      "round": "validity-1",
+      "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
+    },
+    "drift-config-v2": {
+      "reading": "cleared",
+      "scope": "fresh-seed follow-up (#394)",
+      "labels": [
+        "near-solved by naive retrieval"
+      ],
+      "entry_sha256": "93952b1cf8d56f8663fb2130e919777b1ae825364170fe7f08853b018b7fb1c4",
+      "round": "validity-1",
+      "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
+    },
+    "drift-quote-v2": {
+      "reading": "cleared",
+      "scope": "fresh-seed follow-up (#394)",
+      "labels": [
+        "near-solved by naive retrieval"
+      ],
+      "entry_sha256": "656b0c9eadbd91d6cdda5358a038000f104ad9069c85e87ffeb18e84be502488",
+      "round": "validity-1",
+      "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
+    }
+  }
+}

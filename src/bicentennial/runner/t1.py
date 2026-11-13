@@ -53,6 +53,7 @@ UNIT_ORDER = ("no_memory", "system", "wiped")
 GATED_ARMS = ("system", "wiped")
 RELABEL = ("end_timeout", "final_mismatch", "resume_failed", "turn_timeout")
 REPO = Path(__file__).resolve().parents[3]
+TEMPLATE_ADMISSIONS = REPO / "specs/ring0/template-admissions.json"
 
 
 class T1Refused(RuntimeError):
@@ -235,7 +236,7 @@ def _lock(index, packs, entry, table, pack_hash):
 
 
 def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=None,
-            worker_argv=None, model_cache=None, turn_wait_s=1.0, spec=T1_SPEC) -> T1Context:
+            worker_argv=None, model_cache=None, turn_wait_s=1.0, spec=T1_SPEC, control=False) -> T1Context:
     """Refuse invalid inputs and pin both lives before constructing any adapter."""
     turn_wait_s = validate_turn_wait(turn_wait_s)
     if entry is None:
@@ -304,7 +305,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if sorted(_json(Path(packs) / rel / "sealed/meta.json")["genre"] for rel in rels) != sorted(spec.composition):
         raise T1Refused("tier_composition")
     packed = tuple(_pack(Path(packs), rel) for rel in rels)
-    _check_c7(packed)
+    _check_c7(packed, control=control)
     table = _routes(system)
 
     def current_lock():
@@ -322,7 +323,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         properties, turn_wait_s)
 
 
-def _check_c7(packed):
+def _check_c7(packed, control=False):
     """Every pack record's template ref has one C-7 entry, across every edition's freeze, that its template rebuilds;
     and one template edition holds every ref of every pack, so v1 and v2 of a template never meet in a run."""
     freeze, cells, seen = {}, c7.cells(REPO), set()
@@ -341,6 +342,19 @@ def _check_c7(packed):
                 raise T1Refused("c7_changed")
     if not any(seen <= {t.ref for templates in edition.values() for t in templates} for edition in EDITIONS.values()):
         raise T1Refused("c7_edition")
+    outside = seen - {t.ref for templates in EDITIONS[1].values() for t in templates}
+    if outside and not control:
+        try:
+            admitted = _json(TEMPLATE_ADMISSIONS)["admitted"]
+        except (OSError, ValueError, KeyError, TypeError):
+            raise T1Refused("template_not_admitted") from None
+        if not isinstance(admitted, dict) or any(
+            not isinstance(admitted.get(ref), dict)
+            or admitted[ref].get("reading") != "cleared"
+            or admitted[ref].get("entry_sha256") != freeze[ref]["entry_sha256"]
+            for ref in outside
+        ):
+            raise T1Refused("template_not_admitted")
 
 
 def check_install(ctx, sandbox):
