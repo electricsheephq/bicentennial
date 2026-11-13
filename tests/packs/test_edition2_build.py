@@ -227,6 +227,19 @@ def test_system_run_refuses_wrong_admission(edition2, tmp_path, monkeypatch, cha
     assert caught.value.code == "template_not_admitted"
 
 
+@pytest.mark.parametrize("entry", [None, "cleared", [], {"reading": "cleared"}])
+def test_system_run_refuses_a_malformed_entry(edition2, tmp_path, monkeypatch, entry):
+    # Every other v2 ref is admitted, so the refusal comes from this one entry alone.
+    record = admissions_with_count()
+    record["admitted"]["drift-quote-v2"] = entry
+    path = tmp_path / "admissions.json"
+    path.write_text(json.dumps(record))
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", path)
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7(tuple(edition2.packs.values()))
+    assert caught.value.code == "template_not_admitted"
+
+
 @pytest.mark.parametrize("content", [None, "{", "[]", "null", "{}", '{"admitted": []}',
                                      '{"admitted": {"drift-quote-v2": null}}'])
 def test_admissions_missing_or_malformed(edition1, edition2, tmp_path, monkeypatch, content):
