@@ -32,7 +32,7 @@ Scale: 1 simulated week ≈ 150-400K tokens of rendered stream depending on acti
 - Session structure: the stream is cut into harness sessions (work sessions of 10-200 turns); session boundaries, restarts and idle gaps follow the team's calendar.
 
 ## 4. Question templates (examples; each compiles to a DB query)
-The G1 workspace's `docs/decisions.md` format requires one `- name: value` entry per line after the `# Decisions` heading, with no empty lines; in a live action probe, a file that does not parse is the reader's failure.
+The G1 workspace's `docs/decisions.md` format requires the `# Decisions` heading on the first line, then one `- name: value` entry per line, with no empty lines, a non-empty name and value, and no name twice; in a live action probe, a file that does not parse is the reader's failure.
 
 | Family | Template | Gold source |
 |---|---|---|
