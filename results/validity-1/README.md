@@ -5,5 +5,6 @@ Two questions, with the needed evidence handed to the reader: do the new version
 | File | What it is |
 |---|---|
 | [`DECLARATION.md`](DECLARATION.md) | How the trials are read, written and merged before any seed is drawn: the lives, the seven control arms, the checks, the reading rule, the predictions, and what the result does not prove. |
+| [`reviews/2026-11-13-adversarial-review.md`](reviews/2026-11-13-adversarial-review.md) | The adversarial review of the repair plan and the declaration by a model family other than the author's, with its check of the fixes. |
 
 Results are added here when the trials have run.

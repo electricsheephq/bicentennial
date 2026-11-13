@@ -33,7 +33,7 @@ Milestone 1's checks (its §2) and its readings 4-9 (§11) apply, with the 35 ta
 1. **Payload:** each R and O block equals the pinned control's text, byte for byte.
 2. **Presence:** for O, the needed facts are in what the reader received, on all 35 target items. For R, presence equals the pack's scripted naive-retrieval report, task by task.
 3. **Memory off:** the runner's own tests at the run commit, as in Milestone 1.
-4. **Identity:** every arm was served one model identity, the most common among the seven arms (on a tie, that of the arm that ran first). An arm served another identity, or whose run discloses a change of identity during the arm or records none (Milestone 1's §11.15), is rerun once. If it is still mismatched, it is never pooled and its trials count as unscored.
+4. **Identity:** every arm was served one model identity, the most common among the seven arms (on a tie, the tied identity served to the earliest-run arm). An arm served another identity, or whose run discloses a change of identity during the arm or records none (Milestone 1's §11.15), is rerun once. If it is still mismatched, it is never pooled and its trials count as unscored.
 5. **Completeness:** an arm with a target item BLOCKED, or with no score, is rerun once, whole. A system failure is a scored failure, never an exclusion.
 6. **Repeats and common support:** a template's reading uses only complete, identity-matched repeats, and only the items scored in every repeat used. After the one rerun, a target item that is still unscored, or a required repeat that is still missing or mismatched, makes that template's reading **unresolved**.
 7. **Live units:** every unit of every arm ran live in that arm.
