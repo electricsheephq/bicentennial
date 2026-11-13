@@ -5,19 +5,24 @@ keeps, per item, under DIR/<life>/<branch>/<attempt>/<item_id>/:
 
 - trajectory.json: every probe_main ledger row of the item's probe session, each with a `bodies` field holding its
   decoded req/resp blobs and each upstream entry's;
-- act.json and workspace/<path>: for an act item, the state the scorer read and the post-action workspace clone's files;
+- act.json and workspace/<path>: for an act item, the state the scorer read (a skip when none was parsed) and the
+  post-action workspace clone's files, bounded by MAX_FILE_BYTES and MAX_ENTRIES and without git metadata;
 - final.txt: for a QA item, the raw final reply text, when there is one;
 - score.json and probe.json: the attempt's score row and probe row.
 
-Every file is scanned for the run's current credential needles before it is written, and DIR/manifest.json records
+Every file is scanned for the needles the run knows at that moment before it is written, and DIR/manifest.json records
 each file's size and sha256, every skip and failure, and a rescan of DIR with the run's final needle set. Nothing here
 writes under the run directory, and no failure here reaches the attempt (it is recorded by path and exception type).
+Apart from the time the copy adds to the run's own timing records (units.json, the receipts, arm_time), the option
+changes nothing in the run directory.
 """
 
 import json
 import os
+import stat
 import sys
 from hashlib import sha256
+from itertools import islice
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -27,6 +32,10 @@ from bicentennial.ledger import BlobStore, Guard
 from bicentennial.runner.kept import _needle_forms, plain_item_id
 from bicentennial.runner.t2lite import _secrets
 from bicentennial.sandbox import fixedroot
+
+# Bounds on one act item's workspace copy: a larger file is skipped unread, and entries past the cap are not walked.
+MAX_FILE_BYTES = 16 << 20
+MAX_ENTRIES = 10_000
 
 
 def refusal(diagnostics, control, out, others):
@@ -70,8 +79,13 @@ class Diagnostics:
         self._lock = Lock()
 
     def create(self):
-        self.root.parent.mkdir(parents=True, exist_ok=True)
-        os.mkdir(self.root, 0o700)
+        """Make DIR; the refusal code if it cannot be made, since a run with this option exists for its trace."""
+        try:
+            self.root.parent.mkdir(parents=True, exist_ok=True)
+            os.mkdir(self.root, 0o700)
+        except Exception:  # noqa: BLE001
+            return "diagnostics_create"
+        return None
 
     def _needles(self):
         # Every needle the run knows now: the login home's, and the live login's once the stack exists.
@@ -81,19 +95,24 @@ class Diagnostics:
         with self._lock:
             self.failures.append(dict(path=rel, error=type(error).__name__))
 
-    def _put(self, rel, data, needles):
+    def _skip(self, rel, reason):
+        with self._lock:
+            self.skips.append(dict(path=rel, reason=reason))
+
+    def _put(self, rel, data):
         """Write one file atomically, never over an existing one; a needle in its path or bytes skips it.
 
-        data is bytes, or a function that makes them, so a failure to make them costs this file only."""
+        data is bytes, or a function that makes them, so a failure to make them costs this file only. The needles are
+        read for each file, so a login another unit refreshed meanwhile is already in the set."""
         try:
+            needles = self._needles()
             data = data() if callable(data) else data
             if any(n in os.fsencode(rel) for n in needles):
                 with self._lock:
                     self.skips.append(dict(path_sha256=sha256(rel.encode()).hexdigest(), reason="credential_path"))
                 return
             if any(n in data for n in needles):
-                with self._lock:
-                    self.skips.append(dict(path=rel, reason="credential"))
+                self._skip(rel, "credential")
                 return
             target = self.root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -116,7 +135,6 @@ class Diagnostics:
         try:
             if not (plain_item_id(pack.life) and plain_item_id(branch)):
                 raise ValueError("path")
-            needles = self._needles()
             store = BlobStore(run._root / "run/ledger/blobs", Guard([]))
             sessions = {p["item_id"]: p for p in probes}
             finals = {s.session: dict(s.finals) for s in run.sessions}
@@ -133,16 +151,16 @@ class Diagnostics:
                 session = probe["probe_session"] if probe else None
                 # The compiler keeps item order within a probe session (runner/units.py _floor_measured).
                 turns[session] = turns.get(session, 0) + 1
-                self._item(f"{base}/{iid}", item, run, store, needles, probe, session, turns[session],
+                self._item(f"{base}/{iid}", item, run, store, probe, session, turns[session],
                            finals.get(session, {}), scores.get(iid))
             except Exception as error:  # noqa: BLE001
                 self._fail(f"{base}/{iid}", error)
 
-    def _item(self, rel, item, run, store, needles, probe, session, turn, finals, score):
+    def _item(self, rel, item, run, store, probe, session, turn, finals, score):
         iid = item["item_id"]
-        self._put(f"{rel}/probe.json", lambda: canon(probe), needles)
+        self._put(f"{rel}/probe.json", lambda: canon(probe))
         self._put(f"{rel}/score.json", lambda: canon(score if isinstance(score, dict) or score is None
-                                                     else dict(infra=getattr(score, "label", None))), needles)
+                                                     else dict(infra=getattr(score, "label", None))))
 
         def trajectory():
             # A missing or undecodable blob costs this file only.
@@ -157,39 +175,60 @@ class Diagnostics:
                 rows.append(dict(row, bodies=bodies))
             return canon(rows)
 
-        self._put(f"{rel}/trajectory.json", trajectory, needles)
-        if iid in run.act:
-            self._put(f"{rel}/act.json", lambda: canon(run.act[iid]), needles)
-            self._workspace(rel, run, session, needles)
-        elif item.get("stage") != "act" and turn in finals:
-            self._put(f"{rel}/final.txt", lambda: finals[turn].encode(), needles)
+        self._put(f"{rel}/trajectory.json", trajectory)
+        if item.get("stage") == "act":
+            # The workspace is kept even when no state was parsed: a read_state failure is a case to explain.
+            if iid in run.act:
+                self._put(f"{rel}/act.json", lambda: canon(run.act[iid]))
+            else:
+                self._skip(f"{rel}/act.json", "no parsed state")
+            if session is not None:
+                self._workspace(rel, run, session)
+        elif turn in finals:
+            self._put(f"{rel}/final.txt", lambda: finals[turn].encode())
 
-    def _workspace(self, rel, run, session, needles):
+    def _workspace(self, rel, run, session):
         # life.py clones the surfaces, then the workspace last, to probe/<session>/<n>; swap_in's restore returns the
         # edited workspace to its clone path, so the highest n holds what the reader left.
+        top = f"{rel}/workspace"
         try:
             clones = run._root / "probe" / str(session)
-            clone = clones / str(max(int(p.name) for p in clones.iterdir() if p.name.isdigit()))
-            paths = sorted(clone.rglob("*"))
+            numbers = [int(p.name) for p in clones.iterdir() if p.name.isdigit()] if clones.is_dir() else []
+            if not numbers:
+                self._skip(top, "no workspace clone")  # the probe session never ran
+                return
+            clone = clones / str(max(numbers))
+            pruned = []
+            entries = list(islice(_entries(clone, pruned, lambda path, error: self._fail(
+                f"{top}/{Path(path).relative_to(clone).as_posix()}", error)), MAX_ENTRIES + 1))
         except Exception as error:  # noqa: BLE001
-            self._fail(f"{rel}/workspace", error)
+            self._fail(top, error)
             return
-        for path in paths:
-            name = f"{rel}/workspace/{path.relative_to(clone).as_posix()}"
+        for git in pruned:
+            self._skip(f"{top}/{git.relative_to(clone).as_posix()}", "git metadata")
+        if len(entries) > MAX_ENTRIES:
+            entries = entries[:MAX_ENTRIES]
+            self._skip(top, "entries")
+        for path in sorted(entries):
+            name = f"{top}/{path.relative_to(clone).as_posix()}"
             try:
-                if path.is_symlink():
-                    with self._lock:
-                        self.skips.append(dict(path=name, reason="symlink"))
-                elif path.is_file():
-                    self._put(name, path.read_bytes, needles)  # an unreadable file costs that file only
+                info = path.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    self._skip(name, "symlink")
+                elif not stat.S_ISREG(info.st_mode):
+                    self._skip(name, "not a file")
+                elif info.st_size > MAX_FILE_BYTES:
+                    self._skip(name, "size")
+                else:
+                    self._put(name, path.read_bytes)  # an unreadable file costs that file only
             except Exception as error:  # noqa: BLE001
                 self._fail(name, error)
 
     def finish(self, needles):
         """Rescan DIR with the final needle set and write the manifest; any failure is one stderr warning code."""
-        if not self.root.is_dir():
-            return
         try:
+            if not self.root.is_dir():
+                return
             try:
                 final = set(needles) | set(_secrets(self.home, self.login))
             except Exception:  # noqa: BLE001 - the run's own final set still applies
@@ -237,6 +276,21 @@ class Diagnostics:
         if isinstance(rel, str) and any(n in os.fsencode(rel) for n in needles):
             return "sha256:" + sha256(rel.encode()).hexdigest()
         return rel
+
+
+def _entries(root, pruned, failed):
+    """Each non-directory entry below root, lazily and without following links; a .git is pruned whole."""
+    for top, dirs, names in os.walk(root, onerror=lambda error: failed(error.filename or root, error)):
+        for listed in (dirs, names):
+            if ".git" in listed:
+                listed.remove(".git")
+                pruned.append(Path(top) / ".git")
+        for name in sorted(dirs):
+            if os.path.islink(os.path.join(top, name)):  # walked as an entry, never followed
+                dirs.remove(name)
+                yield Path(top) / name
+        for name in names:
+            yield Path(top) / name
 
 
 def _hit(path, needles):

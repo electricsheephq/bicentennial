@@ -159,7 +159,10 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
         if diagnostics is not None:
             diag = Diagnostics(diagnostics, home)
             diag.control = control
-            diag.create()
+            reason = diag.create()
+            if reason is not None:
+                diag = None  # nothing of this run is in DIR, so it writes no manifest there
+                raise t1.T1Refused(reason)
         out.mkdir(parents=True)
         created = True
         if operator_excluded(entry if entry is not None else {"name": system}) and (home / ".bicentennial-operator").exists():
