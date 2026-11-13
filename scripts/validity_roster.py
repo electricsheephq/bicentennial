@@ -43,8 +43,13 @@ def collisions(seeds, root=ROOT):
 
 
 def _write_new(path, data):
-    with Path(path).open("xb") as out:  # never overwrite
-        out.write(data)
+    out = Path(path).open("xb")  # never overwrite; a failed write removes only the file this call created
+    try:
+        with out:
+            out.write(data)
+    except BaseException:
+        Path(path).unlink(missing_ok=True)
+        raise
     return hashlib.sha256(data).hexdigest()
 
 
@@ -90,12 +95,16 @@ def toml_text(spec, comment):
 
 def _read_draw(path):
     raw = Path(path).read_bytes()
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except ValueError:  # not UTF-8 or not JSON
+        raise Refused("malformed draw") from None
     if not isinstance(data, dict) or set(data) != {"design", "spares", "drawn_at"}:
         raise Refused("malformed draw")
-    seeds = [*data["design"], *data["spares"]]
-    if (len(data["design"]) != DESIGN or len(data["spares"]) != SPARES or len(set(seeds)) != len(seeds)
-            or any(type(n) is not int or not 0 <= n < 2 ** BITS for n in seeds)):
+    design, spares = data["design"], data["spares"]
+    if (type(design) is not list or type(spares) is not list or len(design) != DESIGN or len(spares) != SPARES
+            or any(type(n) is not int or not 0 <= n < 2 ** BITS for n in (*design, *spares))
+            or len({*design, *spares}) != DESIGN + SPARES):  # elements are ints before any set is built
         raise Refused("malformed draw")
     return data, hashlib.sha256(raw).hexdigest()
 
@@ -138,7 +147,11 @@ def place(draw_path, work, spec_out, table_out, *, templates=None, root=ROOT):
     if targeted.load_tier(spec_out) != spec:
         Path(spec_out).unlink()
         raise ValueError("spec TOML fails load_tier")
-    table_sha = _write_new(table_out, canon(table) + b"\n")
+    try:
+        table_sha = _write_new(table_out, canon(table) + b"\n")
+    except BaseException:
+        Path(spec_out).unlink()  # created above by this call; a failed place leaves neither output
+        raise
     print(f"draw_sha256 {draw_sha}")
     print(f"spec_sha256 {spec_sha}")
     print(f"table_sha256 {table_sha}")

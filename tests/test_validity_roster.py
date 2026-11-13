@@ -206,3 +206,56 @@ def test_place_refuses_stranded_outputs(tmp_path, monkeypatch, case):
     assert roster.main(["place", "--draw", str(draw), "--work", str(tmp_path / "work"),
                         "--spec-out", str(spec_out), "--table-out", str(table_out)]) == 2
     assert tried == [] and sorted(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("edit", ["design-null", "spares-string", "spares-int", "nested-list", "not-json"])
+def test_malformed_draw_exits_refused(tmp_path, monkeypatch, capsys, edit):
+    tried = _stub(monkeypatch, lambda seed: False)
+    draw, design, spares = _draw(tmp_path)
+    data = dict(design=design, spares=spares, drawn_at="2026-11-13T00:00:00Z")
+    if edit == "design-null":
+        data["design"] = None
+    elif edit == "spares-string":
+        data["spares"] = "x"
+    elif edit == "spares-int":
+        data["spares"] = 5
+    elif edit == "nested-list":
+        data["design"] = [[design[0]], *design[1:]]
+    draw.write_bytes(b"\xff{" if edit == "not-json" else canon(data))
+    before = sorted(tmp_path.rglob("*"))
+    assert roster.main(["place", "--draw", str(draw), "--work", str(tmp_path / "work"),
+                        "--spec-out", str(tmp_path / "SPEC.toml"), "--table-out", str(tmp_path / "TABLE.json")]) == 2
+    assert capsys.readouterr().err == "refused: malformed draw\n"
+    assert tried == [] and sorted(tmp_path.rglob("*")) == before
+
+
+def test_failed_table_write_leaves_no_spec(tmp_path, monkeypatch, capsys):
+    draw, _, _ = _draw(tmp_path)
+    _stub(monkeypatch, lambda seed: False)
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    write_new = roster._write_new
+
+    def full_disk(path, data):
+        if Path(path) == table_out:
+            raise OSError("disk full")
+        return write_new(path, data)
+
+    monkeypatch.setattr(roster, "_write_new", full_disk)
+    with pytest.raises(OSError, match="^disk full$"):
+        roster.place(draw, tmp_path / "work", spec_out, table_out, templates=TEMPLATES)
+    assert not spec_out.exists() and not table_out.exists()
+    monkeypatch.setattr(roster, "_write_new", write_new)
+    assert roster.place(draw, tmp_path / "work", spec_out, table_out, templates=TEMPLATES) == 0
+    assert spec_out.exists() and table_out.exists()
+    _no_seed_printed(capsys.readouterr().out, json.loads(draw.read_bytes())["design"])
+
+
+def test_failed_write_removes_only_its_own_file(tmp_path):
+    ours, theirs = tmp_path / "ours.json", tmp_path / "theirs.json"
+    theirs.write_bytes(b"keep")
+    with pytest.raises(TypeError):
+        roster._write_new(ours, "not bytes")  # the file is created, then the write fails
+    assert not ours.exists()
+    with pytest.raises(FileExistsError):
+        roster._write_new(theirs, b"new")
+    assert theirs.read_bytes() == b"keep"
