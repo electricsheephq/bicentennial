@@ -48,7 +48,7 @@ bar or calibration target" (RING0 §15, extension of 11 November), so these read
 - Admitting round 2's finalists would admit every template of its control-only pack: #529 is due first.
 
 ## 3. Step A: the three anchors
-- **Freeze:** each anchor's spec is merged with its code and tests before its first report on any pack; every report and card records the anchor's spec and code hashes; any change is a new anchor version and voids earlier reports; the anchors move into the controls pin at the next deliberate pin move, with the pack rebuild it needs.
+- **Freeze:** each anchor's spec is merged with its code and tests before its first report on any pack; every report and card records the anchor's spec and code hashes, the code hash covering the anchor's import closure (as `controls/cache.py` computes the controls pin), so an edit to a module it reuses, such as `api/adapters/bm25.py` or naive retrieval's chunker, also counts; any change is a new anchor version and voids earlier reports; the anchors move into the controls pin at the next deliberate pin move, with the pack rebuild it needs.
 - Each anchor is an adapter with `query(task, now)`, so the existing control runner and the scripted reader give its
   per-item report unchanged; each has a one-page spec in `specs/controls/`, deterministic and system-agnostic like
   `naive_rag.md`, computed only from events visible at `now`.
@@ -112,8 +112,12 @@ Every screened card and its reports are published with round 2, finalists or not
 
 ## 5. Step C: oracle smoke (D7)
 One live oracle-evidence arm (`--control oracle_evidence`) on the public T2 lives built with the candidate edition 3,
-read for the finalists only: a finalist below 75 there is dropped before round 2. Recorded in round 2's "what was
-already seen". Then round 2's predictions are written (ROADMAP, Repair).
+read for the finalists only: a finalist below 75 there is dropped before round 2. The public lives give each template
+five G1 pairs, one per G1 life, so the score moves in steps of 20: a finalist is kept only with no confidently wrong
+pair and at most one pair without credit (100 or 80). An item labelled `unreadable_state` counts as scored, as #524 and
+#537 define it; a unit that fails for infrastructure reruns once (round 1's single-rerun rule), and a pair still blocked
+after that counts as no credit. The smoke runs once: a finalist at 80 gets no repeat, because round 2's three oracle
+rows on fresh lives are its confirmation. Recorded in round 2's "what was already seen". Then round 2's predictions are written (ROADMAP, Repair).
 
 ## 6. Step D: validity round 2
 Runs even if no Drift candidate reaches the screen's gate: Wake has never met the three anchors or had oracle trials on
@@ -121,6 +125,9 @@ fresh lives, so round 2 then targets Wake alone. Every screened card's results a
 - **Pack:** one fresh control-only pack of ten G1 lives (D6), seeds drawn after the declaration merges, commitment
   posted, task list frozen at build, spec and seeds hidden until results (validity-1 declaration §2 and §3). Edition:
   the finalists, `wake-loop-v1`, the cleared v2s where no finalist replaces them, edition 1 elsewhere.
+- **Run gate:** the T2 gate refuses a pack whose genres differ from T2's five G1 and five G2 lives, control runs
+  included (`runner/t1.py` `prepare`, `tier_composition`); #539 lets control runs accept ten G1 lives while system
+  runs keep T2's composition. It lands before round 2's rehearsal.
 - **Targets:** the finalists' pairs and Wake's (Wake has never had oracle trials on fresh lives, and no new anchor has
   met it).
 - **Arms (13, one commit, mirrored order):** F R B G W O O W G B R F O (B, G, W: BM25, grep, recent window). Round 1's
@@ -129,7 +136,8 @@ fresh lives, so round 2 then targets Wake alone. Every screened card's results a
   low: not admitted, its v2 stays; unstable: one extension pack by round 1's pooled rule; **the follow-up starts only if round 2
   establishes at least one ranking candidate; that frozen set (Wake included only if it qualifies) is the follow-up's
   ranking set, and every other kind is carried descriptively.** The page prints each anchor's scripted score beside its live score.
-- **Admissions** merge only after #529.
+- **Admissions** merge only after #529, and round 2's pack hash joins #529's refusal list before round 2's results
+  publish (the pack is control-only, like validity-1's).
 
 ## 7. Step E: the fresh-seed follow-up (#394)
 - **Lives:** 24 from one draw (RING0 §15's Ring 1 composition: n = max(10, ceil(12/f)) with f = 5/10, G1 on odd
@@ -152,18 +160,19 @@ fresh lives, so round 2 then targets Wake alone. Every screened card's results a
 ## 8. Order and dependencies
 | # | Item | Before | Lane |
 |---|---|---|---|
-| 1 | Merge PR #528 (#524) | the first scored oracle smoke (it decides whether a reader-corrupted repository is scored or rerun) | maintainers |
+| 1 | Merge PR #528 (#524), then #537 (score the files that still parse) | the first scored oracle smoke (they decide whether a reader-corrupted repository is scored or rerun, and on which files) | maintainers; #537: `gpt-6.1-sol`, review by another model family |
 | 2 | Anchors: specs, adapters, scripted reports, live arm names, RING0 note (#531, #532) | the screen | `gpt-6.1-sol`; review by another model family with named probes |
 | 3 | Screening-set seeds committed; G1-only build and read check; with #521 (`--spec` tier check) and #523 (hermetic roster tests) (#533) | the first candidate report | `gpt-6.1-sol`; maintainers' check |
 | 4 | Candidate cards, v3 templates and edition-3 C-7, with #522's CHANGELOG line (#534) | the screen | cards: maintainers; code: `gpt-6.1-sol` |
 | 5 | Screen reports; finalists (#534) | oracle smoke | maintainers (scripted) |
 | 6 | Oracle smoke (#535) | round-2 predictions | maintainers (bench host) |
 | 7 | Round-2 declaration, adversarial review (`gpt-6-astra`), merge (#536) | the draw | maintainers; `gpt-6-astra` |
-| 8 | #529 | round-2 admissions | `gpt-6.1-sol`; adversarial review by `gpt-6-astra` (a guard) |
+| 7a | Control runs accept the ten-G1-life pack; system runs keep T2's composition (#539) | round 2's rehearsal | `gpt-6.1-sol`; review by another model family (a guard) |
+| 8 | #529, with round 2's pack hash added to its refusal list | round-2 admissions; the hash goes in before round 2's results publish | `gpt-6.1-sol`; adversarial review by `gpt-6-astra` (a guard) |
 | 9 | #526 | the follow-up's first system arm (it decides what is rerun and what is scored) | `gpt-6.1-sol`; review by another model family |
 | 10 | #507's cap and refusal record | Hermes native's next T2 run | per #507 |
 | 11 | Follow-up declaration, review, rehearsal at the run commit, draw, run, results (#394) | | maintainers; `gpt-6-astra` |
-Items 2, 3, 9 and 10 can start now; 4 starts when 2 lands (cards can be written now).
+Items 2, 3, 7a, 9 and 10 can start now; 4 starts when 2 lands (cards can be written now).
 
 ## 9. Claim discipline
 - Screen: "on these public lives, the scripted anchor reached the needed fact on x of y pairs"; never that a task is
@@ -203,7 +212,7 @@ the screen and round 2, and re-plan. A run gate refusal or an identity mismatch 
 | Departure | RING0 §15 (11 November) | three new live control arm names |
 | Departure | C-7 lever-mix shape | levers other than the primary one |
 | Departure | validity-1 RESULT | a cleared v2 replaced by a ranking-candidate v3 does not enter the follow-up |
-| Departure | RING0 §15 composition | round 2's ten-G1-life pack |
+| Departure | RING0 §15 composition | round 2's ten-G1-life pack, which the run gate accepts for control runs only (#539) |
 | Departure | ROADMAP "the same four rows" | three anchor rows in the follow-up |
 | Decision | #394, RING0 §14.7 | the follow-up runs exploratory; the full contract is a later item |
 
