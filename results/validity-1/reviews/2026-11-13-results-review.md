@@ -1,4 +1,4 @@
-# Adversarial review of the validity round 1 results page, 2026-11-14
+# Adversarial review of the validity round 1 results page, 2026-11-13
 
 Reviewer: `gpt-6-astra` at high effort, a model family other than the author's (`claude-opus-5-5`), run read-only on the results commit with the run trees, the packs, the operator records and the reader's diagnostics. This is the interim scrutiny PREREG-v0.5 keeps until the Scoring Veto Panel is filled; it is not the panel. The text under each pass is the reviewer's own, unedited.
 
