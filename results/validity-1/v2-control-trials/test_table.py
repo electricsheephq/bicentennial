@@ -607,6 +607,87 @@ def test_tasks_refuses_a_count_item_with_the_v1_table(tmp_path, capsys, packs):
         in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("item, table_ref", [("ITEMZQ01b", "drift-config-corrected-v2"),
+                                              ("ITEMZQ01a", "drift-config-hedged-v2")])
+def test_tasks_needs_one_corrected_and_one_hedged_table_per_config_pair(tmp_path, capsys, packs, item, table_ref):
+    sealed = packs / "pack" / "G1" / G1[0] / "7" / "sealed"
+    edit_json(sealed / "pack.json", lambda d: next(i for i in d["items"] if i["item_id"] == item).update(
+        decision_table_ref=table_ref))
+    code, _ = make_tasks(tmp_path, packs)
+    assert code == 3 and capsys.readouterr().out == ("REFUSED: a drift-config-v2 pair does not carry one corrected and"
+                                                     " one hedged table\n")
+
+
+# Review fixes on the reading script.
+def test_each_control_is_replayed_once(run, monkeypatch):
+    calls = []
+    monkeypatch.setattr(table, "recompute_blocks", lambda packs, control: calls.append(control) or block_hashes())
+    assert run()[0] == 0 and sorted(calls) == ["naive_rag", "oracle_evidence"]
+
+
+def test_check_7_refuses_a_duplicated_probe_record(run):
+    def duplicate(label, path):
+        if label == "O1":
+            edit_json(path / "oracle_evidence" / G1[0] / "B0" / "t2lite_probes.json", lambda d: d.append(d[0]))
+
+    assert "unexpected 0 duplicated 0 probe records 50" in next(
+        x for x in run()[1].splitlines() if x.startswith("check 7 O1"))
+    code, out = run(edit=duplicate)
+    line = next(x for x in out.splitlines() if x.startswith("check 7 O1"))
+    assert code == 3 and "unexpected 0 duplicated 1 probe records 51" in line and line.endswith("pass False")
+
+
+def test_round_end_counts_arms_incomplete_on_a_template(run):
+    def cached(label, path):
+        if label == "R2":
+            edit_json(path / "card.json", lambda d: d["floor"]["units"][f"{G1[0]}/B0"].update(cached=True))
+
+    late = (*(k for k in ORDER if k != "R2"), "R2")
+    code, out = run(edit=cached, order=late, slots={"R2": 9}, flags=("--reruns", "R2"), twins={"F2": {(COUNT, 0, 0): "B"}})
+    assert code == 5 and f"  {COUNT}: target items 5, each without a usable trial in 2 of 7 arms (F2 R2)" in out
+    assert "  drift-quote-v2: target items 10, each without a usable trial in 1 of 7 arms (R2)" in out.splitlines()
+
+
+def test_section_1_names_the_code(run):
+    _, out = run()
+    for name, path in table.CODE.items():
+        assert f"code {name} sha256 {sha256(path.read_bytes()).hexdigest()[:12]}" in out.splitlines()
+    assert not [x for x in out.splitlines() if x.startswith("code ") and "/" in x]
+
+
+def pack_refusal(tmp_path, packs, capsys, monkeypatch, change):
+    code, path = make_tasks(tmp_path, packs)
+    capsys.readouterr()
+    header = json.loads(path.read_bytes())["header"]
+    change(packs)
+    monkeypatch.setattr(table, "pack_tree_hash", lambda p: header["pack_hash"])
+    code = table.main(["--packs", str(packs), "--tasks", str(path), "--tasks-sha256",
+                       sha256(path.read_bytes()).hexdigest(), "--order", ",".join(ORDER),
+                       *(f"{k}={tmp_path / k}" for k in table.CORE)])
+    return code, capsys.readouterr().out
+
+
+def test_a_pack_breaking_tasks_rule_refuses_with_its_reason(tmp_path, packs, capsys, monkeypatch):
+    def extra_v1(packs):
+        sealed = packs / "pack" / "G2" / G2[0] / "7" / "sealed"
+        edit_json(sealed / "records.json", lambda d: d.append(dict(template_id="recall-count", template_version=1,
+                                                                   life=G2[0], branch="B0", item_id="ITEMZQx",
+                                                                   bundle_id=None)))
+        edit_json(sealed / "pack.json", lambda d: d["items"].append(dict(item_id="ITEMZQx",
+                                                                         decision_table_ref="recall-count-v1")))
+    assert pack_refusal(tmp_path, packs, capsys, monkeypatch, extra_v1) == (
+        3, "REFUSED: the pack breaks the frozen list's rule (tasks.py): the pack carries recall-count-v1, not the v2"
+           " template\n")
+
+
+def test_records_naming_two_lives_refuse(tmp_path, packs, capsys, monkeypatch):
+    def two_lives(packs):
+        edit_json(packs / "pack" / "G1" / G1[0] / "7" / "sealed" / "records.json",
+                  lambda d: next(r for r in d if r["item_id"] == "ITEMZQ0wa").update(life=G1[1]))
+    assert pack_refusal(tmp_path, packs, capsys, monkeypatch, two_lives) == (
+        3, "REFUSED: a sealed life's records do not name exactly one life\n")
+
+
 # 7. No ids, text or paths.
 def test_no_ids_text_or_paths(run, tmp_path):
     for kwargs in (dict(), dict(twins={"O1": {(COUNT, 1, 0): "B"}}, flags=("--after-reruns",),

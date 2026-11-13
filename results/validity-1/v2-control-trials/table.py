@@ -13,7 +13,9 @@ TASKS.json names; TASKS.json with another sha256, edition, pack hash, or rows th
 items of the pack; an inconsistent --attempts), or check 1, 2, 3 or 7, the run order, the card pins or the pack
 failing. Exit 4: check 4 or 5 open without --after-reruns. Exit 5: an arm named in --reruns fails check 1, 2 or 7
 again, or check 3 still fails with --after-reruns, so the round ends (§4): the checks and missing observations are
-printed, every template reads unresolved, and no score is opened.
+printed, every template reads unresolved, and no score is opened. Each arm is rerun at most once, whatever check
+failed: a rerun that fails check 1, 2 or 7 ends the round even when the arm was rerun for check 4 or 5 (§4.6, "after
+the one rerun").
 Check 4's reference identity is the most common served identity among the arms; on a tie, the tied identity served to
 the arm that ran earliest in --order. A drift disclosure, or none recorded, is a mismatch (M1 §11.15). Check 7 also
 needs each unit's own probe file to hold exactly that unit's records. A template is read on the repeats that are
@@ -36,8 +38,10 @@ from itertools import pairwise, product
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-_spec = importlib.util.spec_from_file_location(
-    "m1_table", HERE.parents[1] / "milestone-1" / "2026-11-11-separation-table" / "table.py")
+# The code that produced the output, printed in section 1: this script, tasks.py and Milestone 1's table.py.
+CODE = {"table.py": HERE / "table.py", "tasks.py": HERE / "tasks.py",
+        "Milestone 1 table.py": HERE.parents[1] / "milestone-1" / "2026-11-11-separation-table" / "table.py"}
+_spec = importlib.util.spec_from_file_location("m1_table", CODE["Milestone 1 table.py"])
 m1 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(m1)
 _spec = importlib.util.spec_from_file_location("validity_tasks", HERE / "tasks.py")
@@ -147,11 +151,12 @@ def load_pack(packs):
     for sealed in sorted(Path(packs).glob("pack/*/*/*/sealed")):
         records = json.loads((sealed / "records.json").read_text())
         life = {r["life"] for r in records}
-        assert len(life) == 1, "a sealed life's records name more than one life"
+        if len(life) != 1:
+            return None, "a sealed life's records do not name exactly one life"
         keys |= {(r["life"], r["branch"], r["item_id"]) for r in records}
         reports = json.loads((sealed / "naive_rag.json").read_text())["arm"]["reports"]
         out[life.pop()] = {r["item_id"]: r for r in reports}
-    return out, keys
+    return (out, keys), None
 
 
 def main(argv=None):
@@ -196,9 +201,14 @@ def main(argv=None):
                  for r in tasks["rows"])
     if absent:
         return refuse(f"{absent} target items of TASKS.json are absent from the pack")
-    rows, _ = frozen.target_rows(frozen.pack_records(args.packs))
+    rows, refusal = frozen.target_rows(frozen.pack_records(args.packs))
+    if refusal:
+        return refuse(f"the pack breaks the frozen list's rule (tasks.py): {refusal}")
     if rows != tasks["rows"]:
         return refuse("TASKS.json rows differ from the pack's own target items (tasks.py)")
+    pack, refusal = load_pack(args.packs)
+    if refusal:
+        return refuse(refusal)
     arms, missing = {}, {}
     for name in CORE:
         run = Path(given[name])
@@ -226,7 +236,7 @@ def main(argv=None):
             print("pending before any score:", " ".join(missing), "-", RERUN)
             return 4
         return 3
-    ctx = checks(args, load_pack(args.packs), tasks, arms, order, reruns, missing, tree, place)
+    ctx = checks(args, pack, tasks, arms, order, reruns, missing, tree, place)
     if ctx["invalid"]:
         # §4: a rerun failing check 1, 2 or 7 again, or check 3 still failing after the reruns, ends the round.
         again = sorted(ctx["invalid"] & set(reruns), key=CORE.index)
@@ -267,6 +277,8 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree, place):
     print("== 1. Header and identity")
     print("target items", len(targets), "bundles", len(bundles), "templates", " ".join(templates),
           "| tasks sha256", args.tasks_sha256.lower()[:12], "| pack_hash", tree[:12])
+    for name, path in CODE.items():
+        print(f"code {name} sha256 {sha256(path.read_bytes()).hexdigest()[:12]}")
     print("run order", ",".join(order), "| equals the declared order", tuple(order) == DECLARED_ORDER,
           "| reruns named", ",".join(reruns) or "none", "| --after-reruns given", args.after_reruns)
     for name, code in missing.items():
@@ -329,7 +341,9 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree, place):
             ok = rec.get("frame_sha256") is None and rec.get("block_sha256") == {}
             print(f"check 1 {name}: no blocks {rec.get('block_sha256') == {}} pass {ok}")
         else:
-            want = blocks.setdefault(rec["arm"], recompute_blocks(args.packs, rec["arm"]))
+            if rec["arm"] not in blocks:  # one replay of each pinned control
+                blocks[rec["arm"]] = recompute_blocks(args.packs, rec["arm"])
+            want = blocks[rec["arm"]]
             got = rec.get("block_sha256") or {}
             matched = sum(got.get(k) == v for k, v in want.items())
             frame = rec.get("frame_sha256") == frame_sha256()
@@ -386,22 +400,24 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree, place):
         cached = sum(u.get("cached") is not False for u in units.values()) + sum(
             disclosed.get(u, {}).get("cached") is not False for u in units)
         floor_file = read(arm["run"] / f"{arm['control']['arm']}.json") or {}
-        found, records, live, stopped, observed = 0, 0, 0, 0, set()
+        found, records, live, stopped, observed = 0, 0, 0, 0, Counter()
         for unit, probes in probe_files[name].items():
             found += probes is not None
             for record in probes or []:
                 records += 1
                 live += (record.get("live") or {}).get("served_by") == "live"
-                observed.add((*unit.split("/", 1), record.get("item_id")))
+                observed[(*unit.split("/", 1), record.get("item_id"))] += 1
             stopped += (floor_file.get(unit) or {}).get("stops") != {unit.replace("/", ""): None}
-        # Each unit's own probe file holds exactly that unit's records: one unit's probes never stand in for another's.
+        # Each unit's own probe file holds exactly that unit's records, each once: one unit's probes never stand in
+        # for another's, and no record is read twice.
+        duplicated = sum(n - 1 for n in observed.values())
         ok = (set(units) == expected_units and set(disclosed) == expected_units and cached == 0
               and found == len(expected_units) and records > 0 and live == records and stopped == 0
-              and observed == expected_keys)
+              and set(observed) == expected_keys and duplicated == 0)
         print(f"check 7 {name}: expected units {len(expected_units)} units listed {len(units)} (card) {len(disclosed)}"
               f" (disclosures) cached or unconfirmed {cached} probe files found {found} probe keys (life, branch,"
-              f" item) matching the pack's records {len(observed & expected_keys)} of {len(expected_keys)} unexpected"
-              f" {len(observed - expected_keys)} probe records {records} sent to the live reader {live} stopped units"
+              f" item) matching the pack's records {len(set(observed) & expected_keys)} of {len(expected_keys)}"
+              f" unexpected {len(set(observed) - expected_keys)} duplicated {duplicated} probe records {records} sent to the live reader {live} stopped units"
               f" {stopped} pass {ok}")
         if not ok:
             failed.setdefault(name, []).append(7)
@@ -438,7 +454,9 @@ def round_ends(ctx, again, after_reruns):
     print("missing observations: arms without usable trials", " ".join(gone))
     for t in ctx["templates"]:
         n = sum(len(b["keys"]) for b in ctx["members"][t])
-        print(f"  {t}: target items {n}, each without a usable trial in {len(gone)} of {len(CORE)} arms")
+        mine = list(CORE) if final3 else sorted(set(gone) | set(ctx["left"][t]), key=CORE.index)
+        print(f"  {t}: target items {n}, each without a usable trial in {len(mine)} of {len(CORE)} arms"
+              f" ({' '.join(mine)})")
     for t in ctx["templates"]:
         print(f"reading {t}: unresolved")
 

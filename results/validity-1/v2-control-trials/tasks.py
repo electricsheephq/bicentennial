@@ -8,8 +8,8 @@ hash as Milestone 1 computes it: bicentennial.packs.manifest.tree_sha256 of --pa
 branch, item_id), each with life, branch, item_id, template_ref, bundle_id (or null) and the item's own
 decision_table_ref (a count question carries its template ref, as compile.py gives every QA item). Refuses (exit 3)
 unless there are exactly 30 action tasks in 15 twin pairs (5 per action template, one pair per G1 life) and 5 count
-questions (one per G2 life), with no life both G1 and G2, and refuses any other version of the four templates or
-their decision tables. Prints counts and the file's sha256 only.
+questions (one per G2 life), with no life both G1 and G2 and each drift-config pair carrying one corrected and one
+hedged table, and refuses any other version of the four templates or their decision tables. Prints counts and the file's sha256 only.
 """
 
 import argparse
@@ -86,6 +86,10 @@ def target_rows(records):
             and set(per_life) == {(life, f"{t}-v{EDITION}") for life in g1 for t in ACTION}):
         return None, (f"action tasks {len(action)} in {len(pairs)} pairs over {len(g1)} G1 lives: not 30 tasks in 15"
                       " twin pairs, 5 per action template, one pair per G1 life")
+    tables = {b: sorted(r["decision_table_ref"] for r in action if r["bundle_id"] == b)
+              for _, ref, b in pairs if ref == f"drift-config-v{EDITION}"}
+    if any(v != sorted(TABLES["drift-config"]) for v in tables.values()):
+        return None, f"a drift-config-v{EDITION} pair does not carry one corrected and one hedged table"
     if not (len(count) == 5 and len(g2) == 5 and sorted(r["life"] for r in count) == sorted(g2)):
         return None, (f"count questions {len(count)} over {len(g2)} G2 lives: not 5 questions, one per G2 life")
     return rows, None
