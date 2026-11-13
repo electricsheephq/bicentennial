@@ -6,6 +6,7 @@ How each finding was used:
 - **The plan's four:** all applied before the declaration was written. The pack build and the run gate take the template edition. Completeness covers the count questions. Half points are kept. The count question is read for its format only, and [#512](https://github.com/electricsheephq/bicentennial/issues/512) tracks giving each life its own count.
 - **The declaration's eight:** all applied in the declaration.
 - **The third pass's one remaining point** (the identity tie-break) was applied before merge.
+- **The pull request's review bots** then raised five more points, all applied. The run commit is fixed before the draw; the outcome is named "cleared"; the replacement limit, the centring caveat and the scale are stated. The fourth pass checked those changes.
 
 ## First pass, on the repair plan
 
@@ -73,3 +74,7 @@ Q5: F3, F6.
 **New problems introduced:** none identified beyond the remaining F4 ambiguity.
 
 **Recommended next steps:** clarify F4’s tie-break in one phrase; no broader changes are needed for these findings.
+
+## Fourth pass, the check of the changes from the pull request's review bots
+
+no new problems
