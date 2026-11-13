@@ -186,3 +186,88 @@ def test_dry_run_reserves_life_directory(tmp_path, monkeypatch):
         t.t2_dry_run(t._tier_source("T2", lives=[ROWS[0]]), TEMPLATES, root=tmp_path)
     assert seen == ["reserved"]
     assert not life_dir.exists()
+
+
+def _fake_dry_run(monkeypatch, fails):
+    """Stub the build and caps so only the seed bookkeeping runs; `fails(seed)` decides each seed."""
+    tried = []
+
+    def fake(spec, row, templates, **kwargs):
+        tried.append((row["life"], row["seed"]))
+        if len(tried) > 50:
+            raise RuntimeError("unbounded replacement loop")
+        if fails(row["seed"]):
+            error = t.PlacementError("hostable")
+            error.item_id = "recall-value-v1"
+            raise error
+        compiled = SimpleNamespace(items=[], records=[])
+        return SimpleNamespace(twin=SimpleNamespace(compiled=compiled, b1=SimpleNamespace(close=lambda: None)))
+
+    monkeypatch.setattr(t, "t1_life", fake)
+    monkeypatch.setattr(t, "_check_t1", lambda *args: None)
+    monkeypatch.setattr(t, "_check_t2", lambda *args: None)
+    return tried
+
+
+def test_pool_consumed_in_order(tmp_path, monkeypatch):
+    big = 2 ** 63 - 1
+    tried = _fake_dry_run(monkeypatch, lambda seed: seed in (4, big, 101))
+    spec = t._tier_source("T2", lives=[ROWS[0], ROWS[5]])
+    frozen, table = t.t2_dry_run(spec, TEMPLATES, root=tmp_path, pool=[big, 9, 101, 102, 103])
+    # 9 is already the second life's design seed, so it is passed over; nothing unused is skipped.
+    assert tried == [("t2-g1-1", 4), ("t2-g1-1", big), ("t2-g1-1", 101), ("t2-g1-1", 102), ("t2-g2-1", 9)]
+    assert [r["seed"] for r in frozen["lives"]] == [102, 9]
+    assert [(r["seed"], r["replacement_seed"]) for r in frozen["replacements"]] == [(4, big), (big, 101), (101, 102)]
+    assert [r["result"] for r in table] == ["PlacementError"] * 3 + ["pass"] * 2
+    assert not any(tmp_path.iterdir())
+
+
+def test_pool_refuses_bad_seed_before_building(tmp_path, monkeypatch):
+    tried = _fake_dry_run(monkeypatch, lambda seed: False)
+    for bad in (-1, "15", True):
+        with pytest.raises(t.PlacementError, match="^composition$"):
+            t.t2_dry_run(t._tier_source("T2", lives=[ROWS[0]]), TEMPLATES, root=tmp_path, pool=[15, bad])
+    assert tried == []
+
+
+def test_pool_exhausted_carries_table(tmp_path, monkeypatch):
+    tried = _fake_dry_run(monkeypatch, lambda seed: seed != 9)
+    spec = t._tier_source("T2", lives=[ROWS[5], ROWS[0]])
+    with pytest.raises(t.PlacementError, match="^pool$") as exc:
+        t.t2_dry_run(spec, TEMPLATES, root=tmp_path, pool=[100, 9])
+    assert tried == [("t2-g2-1", 9), ("t2-g1-1", 4), ("t2-g1-1", 100)]
+    assert exc.value.__cause__.rule == "hostable"
+    assert [(r["life"], r["seed"], r["result"]) for r in exc.value.table] == [
+        ("t2-g2-1", 9, "pass"), ("t2-g1-1", 4, "PlacementError"), ("t2-g1-1", 100, "PlacementError")]
+    assert exc.value.replacements == [dict(life="t2-g1-1", seed=4, replacement_seed=100, rule="hostable",
+                                           item_id="recall-value-v1")]
+    assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("pool", [None, list(range(100, 120))])
+def test_terminal_errors_carry_table(tmp_path, monkeypatch, pool):
+    _fake_dry_run(monkeypatch, lambda seed: seed in (4, 9))
+    spec = t._tier_source("T2", lives=[ROWS[0], ROWS[5]])
+    with pytest.raises(t.PlacementError, match="^design_failures$") as exc:
+        t.t2_dry_run(spec, TEMPLATES, root=tmp_path / "design", pool=pool)
+    first = 14 if pool is None else 100
+    assert [(r["seed"], r["result"]) for r in exc.value.table] == [
+        (4, "PlacementError"), (first, "pass"), (9, "PlacementError")]
+    assert [r["replacement_seed"] for r in exc.value.replacements] == [first]
+
+    _fake_dry_run(monkeypatch, lambda seed: True)
+    with pytest.raises(t.PlacementError, match="^replacements$") as exc:
+        t.t2_dry_run(spec, TEMPLATES, root=tmp_path / "replacements", pool=pool)
+    assert len(exc.value.table) == t.MAX_REPLACEMENTS + 1
+    assert not any(r["placement"] for r in exc.value.table)
+    assert len(exc.value.replacements) == t.MAX_REPLACEMENTS
+    assert exc.value.replacements[0]["replacement_seed"] == first
+
+
+def test_63_bit_seeds_build(tmp_path):
+    big, drawn = 2 ** 63 - 1, 7_316_270_582_391_045_117
+    rows = [dict(ROWS[0], seed=big), dict(ROWS[5], seed=drawn)]
+    spec = t._tier_source("T2", lives=rows)
+    frozen, table = t.t2_dry_run(spec, TEMPLATES, root=tmp_path, pool=[])
+    assert frozen == spec
+    assert [(r["genre"], r["seed"], r["result"]) for r in table] == [("G1", big, "pass"), ("G2", drawn, "pass")]
