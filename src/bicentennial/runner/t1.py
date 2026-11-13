@@ -16,7 +16,7 @@ from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import PinMismatch, turn_wait_seconds
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items import c7
-from bicentennial.items.editions import BY_REF, C7_FILES
+from bicentennial.items.editions import BY_REF, C7_FILES, EDITIONS
 from bicentennial.items.protocol import CANARY
 from bicentennial.keyed import mint_id
 from bicentennial.packs.catalogue import c7_entries
@@ -323,20 +323,24 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
 
 
 def _check_c7(packed):
-    """Every pack record's template ref has one C-7 entry, across every edition's freeze, that its template rebuilds."""
-    freeze, cells = {}, c7.cells(REPO)
+    """Every pack record's template ref has one C-7 entry, across every edition's freeze, that its template rebuilds;
+    and one template edition holds every ref of every pack, so v1 and v2 of a template never meet in a run."""
+    freeze, cells, seen = {}, c7.cells(REPO), set()
     for path in sorted(C7_FILES.values()):
         for ref, frozen in c7_entries(REPO / path).items():
             if freeze.setdefault(ref, frozen)["entry_sha256"] != frozen["entry_sha256"]:
                 raise T1Refused("c7_changed")
     for pack in packed:
         refs = sorted({f"{r['template_id']}-v{r['template_version']}" for r in pack.records.values()})
+        seen.update(refs)
         for ref in refs:
             if ref not in freeze or ref not in BY_REF:
                 raise T1Refused("c7_missing")
             digest = c7.entry(BY_REF[ref], pack.genre.lower(), cells)["entry_sha256"]
             if digest != freeze[ref]["entry_sha256"] or digest != pack.manifest["pins"]["c7_entries"][ref]:
                 raise T1Refused("c7_changed")
+    if not any(seen <= {t.ref for templates in edition.values() for t in templates} for edition in EDITIONS.values()):
+        raise T1Refused("c7_edition")
 
 
 def check_install(ctx, sandbox):

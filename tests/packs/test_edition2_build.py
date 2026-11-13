@@ -148,6 +148,28 @@ def test_run_gate_refuses_an_unknown_ref(edition2):
     assert caught.value.code == "c7_missing"
 
 
+def test_run_gate_refuses_v1_and_v2_of_one_template_in_one_pack(edition2):
+    # Each ref has its own valid C-7 entry and pin; only the mix is wrong.
+    pack = next(p for p in edition2.packs.values() if p.genre == "G1")
+    record = next(r for r in pack.records.values() if r["template_id"] == "drift-quote")
+    v1 = dict(record, item_id=record["item_id"] + "-v1", template_version=1)
+    pins = dict(pack.manifest["pins"], c7_entries=dict(pack.manifest["pins"]["c7_entries"], **{
+        "drift-quote-v1": build.c7_entries(ROOT / C7_FILES[1])["drift-quote-v1"]["entry_sha256"]}))
+    mixed = replace(pack, records={**pack.records, v1["item_id"]: v1}, manifest=dict(pack.manifest, pins=pins))
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7((mixed,))
+    assert caught.value.code == "c7_edition"
+
+
+def test_run_gate_refuses_packs_from_two_editions(edition1, edition2):
+    g2 = next(p for p in edition1 if p.genre == "G2")
+    assert "recall-count-v1" in {ref(r) for r in g2.records.values()}
+    t1._check_c7((g2,))
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7((*(p for p in edition2.packs.values() if p.genre == "G1"), g2))
+    assert caught.value.code == "c7_edition"
+
+
 def test_run_gate_refuses_two_entries_for_one_ref(monkeypatch):
     real = t1.c7_entries
 

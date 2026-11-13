@@ -145,6 +145,7 @@ The table includes the shared T1 preparation vocabulary (including inherited T0/
 | `benchmark_commit` | Cannot read the benchmark commit. |
 | `benchmark_operator_forbidden` | Benchmark operator identity is forbidden. |
 | `c7_changed` | Template C-7 hash changed. |
+| `c7_edition` | The packs' templates are not all from one template edition. |
 | `c7_missing` | Template has no C-7 entry. |
 | `canary` | Canary body reached the live guard: INVALID. |
 | `catalogue_changed` | T0 catalogue hash changed. |
