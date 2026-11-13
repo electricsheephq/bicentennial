@@ -40,6 +40,19 @@ class LiveResponder:
         with self.lock:
             return dict(self.identities)
 
+    def send_phase(self, max_sends):
+        """Start a phase with its own cap: max_sends more sends than so far. Returns the sends so far."""
+        if type(max_sends) is not int or max_sends < 0:
+            raise ValueError("invalid responder configuration")
+        with self.lock:
+            self.max_sends = self.values["sends"] + max_sends
+            return self.values["sends"]
+
+    def _refused(self, d):
+        # The cap's refusal time, on the clock of t_sent_ms, so a stop record can order sends and refusals.
+        d["t_refused_ms"] = round(self.pacer.clock() * 1000)
+        return None, "live_spend_stop"
+
     def _diag(self, up, n):
         return dict(kind="try", try_=n, upstream=up.name if up else None, account=self.account, sent=False,
                     status=0, category=None, retry_wait_s=0, retry_after_s=None, pace_wait_ms=0, t_sent_ms=0,
@@ -68,6 +81,8 @@ class LiveResponder:
             served = "live_stopped" if self.state()["stopped"] else "live_spend_stop" if self.state()["spend_stopped"] else "live_no_upstream" if up is None else "live_unsupported"
             d = self._diag(up, 1)
             d["try"] = d.pop("try_")
+            if served == "live_spend_stop":
+                self._refused(d)
             return self._reply(call, served, [d])
         body = forward.wire_body(call)
         keys = ("max_output_tokens",) if call.wire == "responses" else ("max_completion_tokens", "max_tokens")
@@ -147,11 +162,11 @@ class LiveResponder:
             with self.lock:
                 if self.values["spend_stopped"] or (self.max_sends is not None and self.values["sends"] >= self.max_sends):
                     self.values["spend_stopped"] = True
-                    return None, "live_spend_stop"
+                    return self._refused(d)
                 rid = up.spend.reserve(len(data), cap, up.price)
                 if rid is None:
                     self.values["spend_stopped"] = True
-                    return None, "live_spend_stop"
+                    return self._refused(d)
             d["reserved"] = up.price.cost(len(data), cap)
             d["pace_wait_ms"] = self.pacer.acquire()
             if d["pace_wait_ms"] is None or self.state()["stopped"]:
@@ -170,7 +185,7 @@ class LiveResponder:
                     return None, "live_stopped"
                 if self.max_sends is not None and self.values["sends"] >= self.max_sends:
                     self.values["spend_stopped"] = True
-                    return None, "live_spend_stop"
+                    return self._refused(d)
                 self.values["sends"] += 1
             d.update(sent=True, sent_sha256=sha256(data).hexdigest(), t_sent_ms=round(self.pacer.clock() * 1000), effort_is_pin=(body.get("reasoning") or {}).get("effort") == up.effort if up.effort and up.wire == "responses" else None)
             t0 = self.pacer.clock()

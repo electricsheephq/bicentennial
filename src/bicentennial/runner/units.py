@@ -73,14 +73,16 @@ class UnitResult:
     timing: dict | None = None
     keep_ms: int = 0
     mono_ns: tuple[int, int] | None = None
+    # Each scored attempt's score-level Infra labels, as (attempt, labels); a stop record counts them.
+    infra_labels: tuple = ()
 
 
 class UnitRefusal(Exception):
     """Deliver every attempt to the caller before it handles the original refusal."""
 
-    def __init__(self, error, runs, timing, mono_ns=None):
+    def __init__(self, error, runs, timing, mono_ns=None, infra_labels=()):
         self.error, self.runs, self.timing = error, runs, timing
-        self.mono_ns = mono_ns
+        self.mono_ns, self.infra_labels = mono_ns, infra_labels
         super().__init__(str(error))
 
 
@@ -252,7 +254,7 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
     config = config or Arm.from_context(ctx, arm)
     key, arm = config.key, config.role
     ctx = _ArmContext(ctx, config)
-    start, runs = time.time_ns() // 1_000_000, []
+    start, runs, labels = time.time_ns() // 1_000_000, [], []
     mono_start = time.monotonic_ns()
 
     def timing():
@@ -266,14 +268,17 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
             options["probe_blocks"] = config.probe_blocks
         if config.diagnostics is not None:
             options["diagnostics"] = config.diagnostics
+        if options:
+            options["labels"] = labels
         result = _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops, **options)
     except Exception as error:
         with live.launch:
             live.stopped.set()
         row, mono_ns = timing()
-        raise UnitRefusal(error, tuple(replace(r, arm=key) for r in runs), row, mono_ns) from error
+        raise UnitRefusal(error, tuple(replace(r, arm=key) for r in runs), row, mono_ns, tuple(labels)) from error
     row, mono_ns = timing()
-    return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=row, mono_ns=mono_ns)
+    return replace(result, runs=tuple(replace(r, arm=key) for r in result.runs), timing=row, mono_ns=mono_ns,
+                   infra_labels=tuple(labels))
 
 
 def _score_run(ctx, pack, branch, arm, run, attempt, floor_stops=None):
@@ -334,7 +339,7 @@ def _finalise(pack, scores, probes):
 
 
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
-                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, diagnostics=None):
+                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, diagnostics=None, labels=None):
     from bicentennial.runner import t1
 
     measured, keep_ns = False, 0
@@ -378,6 +383,8 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 raise t1.T1Refused("canary")
             _check_stop(live)
             scores, excluded, probes = _score_run(ctx, pack, branch, arm, run, attempt, floor_stops)
+            if labels is not None:
+                labels.append((attempt, tuple(s.label for s in scores.values() if isinstance(s, Infra))))
             _write(out, "t2lite_probes.json", probes)
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:
@@ -522,11 +529,14 @@ class Collected:
     runs: tuple
     timings: tuple
     errors: tuple
+    labels: tuple = ()  # ((arm, life, branch), infra_labels) for each collected unit
 
-    def merge(self, runs, timings):
+    def merge(self, runs, timings, labels=None):
         """Retain all attempts before the caller maps the selected error to publication."""
         runs.extend(self.runs)
         timings.extend(self.timings)
+        if labels is not None:
+            labels.extend(self.labels)
         error = reduce_refusals(self.errors)
         if error is not None:
             raise error
@@ -622,9 +632,11 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
             for future in active:
                 future.cancel()
             raise
-    results, runs, timings, errors = {}, [], [], []
+    results, runs, timings, errors, labels = {}, [], [], [], []
     for i in sorted(completed):
         value = completed[i]
+        if isinstance(value, (UnitRefusal, UnitResult)):
+            labels.append((unit_list[i].identity, value.infra_labels))
         if isinstance(value, UnitRefusal):
             runs.extend(value.runs)
             timings.append(value.timing)
@@ -635,4 +647,4 @@ def schedule(ctx, unit_list, live, *, spec=T1_SPEC, roots=None, floor_stops=None
             results[unit_list[i].identity] = value
             runs.extend(value.runs)
             timings.append(value.timing)
-    return Collected(results, tuple(runs), tuple(timings), tuple(errors))
+    return Collected(results, tuple(runs), tuple(timings), tuple(errors), tuple(labels))

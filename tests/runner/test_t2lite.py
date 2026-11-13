@@ -72,6 +72,12 @@ class Stack:
     def state(self):
         return self.values.copy()
 
+    def send_phase(self, max_sends):
+        # T2's floor/system boundary (runner/live.py LiveStack.send_phase); this fake counts sends only if a test does.
+        assert not self.closed
+        self.phases = [*getattr(self, "phases", ()), max_sends]
+        return self.values.get("sends", 0)
+
     def served_identities(self):
         return self.identities.copy()
 

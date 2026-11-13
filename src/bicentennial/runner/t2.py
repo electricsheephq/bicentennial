@@ -29,6 +29,7 @@ from bicentennial.runner.diagnostics import refusal as diagnostics_refusal
 from bicentennial.runner.kept import KeptRefused, keep_failed
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
+from bicentennial.runner.stop_record import build as stop_record
 from bicentennial.runner.t2lite import (
     EFFORT,
     IDENTITY_TEXT,
@@ -129,9 +130,11 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
     out, home = Path(out), Path(login_home)
     start, runs, created, stack, login, account = int(time.time() * 1000), [], False, None, None, None
     mono_start = time.monotonic_ns()
-    units = []
+    units, labels = [], []
     needles, pending_cache, live, custody_rows = set(), [], None, []
     diag = None
+    # Sends at the floor/system phase boundary, and the identity check's tries, for the disclosure and stop record.
+    floor_sends, phase, identity_tries = None, "floor" if control is None else control, ()
     try:
         turn_wait_s = t1.validate_turn_wait(turn_wait_s)
         # Arguments and settings first: these refusals create no output, so the same command can run again.
@@ -212,6 +215,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     reply = live.respond(Call(role="identity_check", subrole="", wire="chat",
                         body={"messages": [{"role": "user", "content": IDENTITY_TEXT}]},
                         model=MODEL, cursor=None, run_key=ctx.run_id + ":identity"))
+                    identity_tries = tuple(d for d in reply.upstream if d.get("kind") == "try")
                     _check_stop(live)
                     ids = stack.served_identities()
                     observed = canon(ids).decode() if ids else "unobserved"
@@ -227,9 +231,22 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                             del floor[name]
                 floor_stops = {k: stop for entry0 in floor.values() for k, stop in entry0["stops"].items()}
                 todo = [u for u in queued if u.arm.role != "no_memory" or f"{u.pack.life}/{u.branch}" not in floor]
-                collected = schedule(ctx, todo, live, spec=T2_SPEC, roots=effective, floor_stops=floor_stops,
-                                     keep=keep_hook(ctx, {"system": out}, needles))
-                results = collected.merge(runs, units)
+                keep = keep_hook(ctx, {"system": out}, needles)
+                if control is None:
+                    # Floor first, then the system, each with its own max_sends: a floor can never use the system's
+                    # sends (#507). The identity check counts in the floor's phase.
+                    first = [u for u in todo if u.arm.role == "no_memory"]
+                    results = schedule(ctx, first, live, spec=T2_SPEC, roots=effective, floor_stops=floor_stops,
+                                       keep=keep).merge(runs, units, labels)
+                    # schedule's own keying of a completed floor's stop, so a system unit's relabel is as in one schedule.
+                    floor_stops.update({u.pack.life + u.branch: results[u.identity].stop for u in first
+                                        if u.identity in results})
+                    floor_sends, phase = stack.send_phase(max_sends), "system"
+                    todo = [u for u in todo if u.arm.role != "no_memory"]
+                else:
+                    results = {}
+                results.update(schedule(ctx, todo, live, spec=T2_SPEC, roots=effective, floor_stops=floor_stops,
+                                        keep=keep).merge(runs, units, labels))
                 ids = stack.served_identities()
                 identity = canon(ids).decode() if ids else "unobserved"
                 for unit in floors:
@@ -276,9 +293,12 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                         for (life, branch), texts in sorted((queued[0].arm.probe_blocks or {}).items())
                         for iid, text in sorted(texts.items())}))
             _write(out, "custody.json", custody_rows)
+            # Each arm's own live sends under its own max_sends; a control run is one phase, disclosed as before.
+            budget = {} if control is not None else dict(max_sends=max_sends, phase_sends=dict(floor=floor_sends,
+                system=stack.state().get("sends", 0) - floor_sends))
             _write(out, "disclosures.json", dict(honeypot_hits=honeypot_hits, turn_wait_s=str(turn_wait_s),
                 identity_check=identity_check, floor=provenance,
-                live=dict(stack.state(), holds=_holds(row for run in runs for row in run.records)), **{
+                live=dict(stack.state(), holds=_holds(row for run in runs for row in run.records), **budget), **{
                     key: sorted({i for r in runs if r.arm == arm for i in r.transforms})
                     for key, arm in ((("t2.transforms", "system"), ("no_memory.transforms", "no_memory"))
                                      if control is None else ((control + ".transforms", control),))}))
@@ -330,6 +350,12 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     # L1's custody rows say why: the drained log, and a Stop's own records.
                     files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE", turn_wait_s, units)),
                              "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
+                    # Where the sends went and why attempts failed (#507); a builder failure leaves it out.
+                    record = stop_record(runs=runs, labels=labels, stack=stack,
+                        max_sends=max_sends, cap=max_sends + (floor_sends or 0), phase=phase,
+                        identity_tries=identity_tries, code=code)
+                    if record is not None:
+                        files["attempts.json"] = record
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"
                     else:

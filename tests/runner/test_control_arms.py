@@ -39,8 +39,11 @@ TEXT_ARMS = ("naive_rag", "oracle_evidence")
 MEMORY_TOOLS = {"memory", "session_search", "fact_store", "fact_feedback"}
 
 
-def _digests(out):
-    """Every file a run writes, with only its wall-clock and monotonic timing fields zeroed."""
+def _digests(out, budget=None):
+    """Every file a run writes, with only its wall-clock and monotonic timing fields zeroed.
+
+    budget: a system run's send-budget disclosure (#507), removed from disclosures.json and checked here.
+    """
     result = {}
     for path in sorted(out.rglob("*")):
         if not path.is_file():
@@ -48,6 +51,8 @@ def _digests(out):
         data = path.read_bytes()
         if path.suffix == ".json":
             value = json.loads(data)
+            if budget is not None and path.name == "disclosures.json":
+                assert {k: value["live"].pop(k) for k in budget} == budget
             def zero(obj):
                 if isinstance(obj, dict):
                     return {k: 0 if k in TIMING else zero(v) for k, v in obj.items()}
@@ -96,7 +101,8 @@ def test_f_run_without_a_control_arm_keeps_base_bytes(t2_scenario):  # noqa: F81
     # existed, for every file, and a floor cache entry is still read and written as before.
     s = t2_scenario
     assert s.invoke(slots=1) == 0
-    assert _digests(s.out) == BASE_DIGESTS
+    # The fake stack counts no sends; the send-budget disclosure is the only addition (#507).
+    assert _digests(s.out, dict(max_sends=100, phase_sends=dict(floor=0, system=0))) == BASE_DIGESTS
 
 
 # ---- real T2 packs through the real life runner, the offline fake Hermes worker and a recording live route ----

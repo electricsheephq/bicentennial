@@ -42,6 +42,16 @@ class LiveStack(ResponsesBridge):
                 self._active -= 1
                 self._calls.notify_all()
 
+    def send_phase(self, max_sends):
+        """Give the next phase its own max_sends; only with no call in flight. Returns the sends so far."""
+        live = self.inner
+        while not hasattr(live, "send_phase"):
+            live = live.inner
+        with self._calls:
+            if self._active:
+                raise RuntimeError("send phase with a call in flight")
+            return live.send_phase(max_sends)
+
     def close(self):
         # The holder outlives every call in flight, credential handling included, so a late 401
         # can never write into the home of a stack built after this one.
