@@ -8,7 +8,7 @@ from bicentennial.runner.hermes_score import Infra
 
 EXPECTED = {'output/card.json': '181d7ba04f115f30134281b415e7f7d2c76999760e70ee0d4b95638f601abaff',
  'output/custody.json': '862063402d605db8ca03662a5134564b123daf6c3e75076646080c33136126a8',
- 'output/disclosures.json': '3ec1fb69416502140a9330d41f9e1d900adf72c3cf4c7f01372354d24a08b412',
+ 'output/disclosures.json': 'ff485e70a783d58ad4d7179aa78274607fd58ce9369410900b1d1acefb3b4d06',
  'output/no_memory.json': '724d5fe8423821d0ae9d2a41e6f28354c8ce7ae7532605ddfd5c8b815d8dd620',
  'output/no_memory/t1-g1/B0/t2lite_probes.json': '86bee9ba464cfa8ba1716480c22eb870aca710fcf321bcf815b01d27579a1f98',
  'output/no_memory/t1-g1/B1/t2lite_probes.json': '99d7b92d696c238e84eb2aa9765a41882b1339ef1b765dca5c5b9121684e8257',
