@@ -64,7 +64,7 @@ def control_key_sha256(pack, control):
     return json.loads((Path(pack.dir) / "sealed" / _CONTROLS[control][2]).read_bytes())["key_sha256"]
 
 
-def control_units(ctx, control, scratch, out):
+def control_units(ctx, control, scratch, out, diagnostics=None):
     """One probe-only unit per life and branch, in the floor's order; a text arm carries its blocks."""
     if control not in CONTROL_ARMS:
         raise ValueError("unknown control arm")
@@ -72,5 +72,7 @@ def control_units(ctx, control, scratch, out):
     if control != "no_memory":
         floor = replace(floor, key=control, probe_blocks={
             k: v for p in ctx.packs for k, v in probe_blocks(p, control).items()})
+    if diagnostics is not None:
+        floor = replace(floor, diagnostics=diagnostics)
     return tuple(Unit(floor, p, b, Path(scratch) / floor.key / p.life / b, Path(out) / floor.key / p.life / b)
                  for p in ctx.packs for b in ("B0", "B1"))

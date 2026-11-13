@@ -24,6 +24,8 @@ from bicentennial.runner.control_arm import (
     control_key_sha256,
     control_units,
 )
+from bicentennial.runner.diagnostics import Diagnostics
+from bicentennial.runner.diagnostics import refusal as diagnostics_refusal
 from bicentennial.runner.kept import KeptRefused, keep_failed
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
@@ -117,7 +119,7 @@ def _card(ctx, results, floor, identity, out, arm="system"):
 
 def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
            plugin_source=None, model_cache=None, cache=None, sandbox_slot=0,
-           entry=None, worker_argv=None, turn_wait_s=3.0, slots=None, control=None):
+           entry=None, worker_argv=None, turn_wait_s=3.0, slots=None, control=None, diagnostics=None):
     if slots is not None and (type(slots) is not int or slots < 1):
         raise ValueError("slots must be a positive integer")
     # control: run exactly one live control arm alone (runner/control_arm.py); it never uses the floor cache.
@@ -129,6 +131,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
     mono_start = time.monotonic_ns()
     units = []
     needles, pending_cache, live, custody_rows = set(), [], None, []
+    diag = None
     try:
         turn_wait_s = t1.validate_turn_wait(turn_wait_s)
         # Arguments and settings first: these refusals create no output, so the same command can run again.
@@ -148,6 +151,18 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
         if any(fixedroot.within(p, out) or fixedroot.within(out, p) for p in (
                 home, Path(packs_dir), *([Path(cache)] if cache else []))):
             raise t1.T1Refused("output_overlap")
+        # diagnostics: a control arm's reader trace in a new folder apart from every other path (runner/diagnostics.py).
+        reason = diagnostics_refusal(diagnostics, control, out, (
+            home, packs_dir, cache, hermes, plugin_source, model_cache))
+        if reason is not None:
+            raise t1.T1Refused(reason)
+        if diagnostics is not None:
+            diag = Diagnostics(diagnostics, home)
+            diag.control = control
+            reason = diag.create()
+            if reason is not None:
+                diag = None  # nothing of this run is in DIR, so it writes no manifest there
+                raise t1.T1Refused(reason)
         out.mkdir(parents=True)
         created = True
         if operator_excluded(entry if entry is not None else {"name": system}) and (home / ".bicentennial-operator").exists():
@@ -164,10 +179,12 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
         if effective > ctx.roots:
             raise ValueError("slots exceed admission")
         ctx = SimpleNamespace(**(vars(ctx) | {"run_id": "t2-" + uuid4().hex, "turn_wait_s": turn_wait_s}))
+        if diag is not None:
+            diag.commit = ctx.pins["benchmark_commit"]
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
             t1.check_install(ctx, scratch)
             queued = (make_units(ctx, [Arm.from_context(ctx, "system")], scratch, out) if control is None
-                      else control_units(ctx, control, scratch, out))
+                      else control_units(ctx, control, scratch, out, diag))
             floors = [u for u in queued if u.arm.role == "no_memory"]
             paths, keys, floor, provenance = {}, {}, {}, {}
             for unit in floors:
@@ -187,6 +204,8 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 base_url=os.environ[LIVE_ENV[2]], max_output_tokens=MAX_OUTPUT_TOKENS,
                 max_sends=max_sends, model=MODEL, effort=EFFORT)
             login, live = stack.inner.login, _Guard(stack)
+            if diag is not None:
+                diag.login = login
             identity_check = None
             try:
                 if floor:
@@ -331,3 +350,6 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
     finally:
         if account is not None:
             os.close(account)
+        if diag is not None:
+            # After the run's final needle update; it never changes the exit code or the run directory.
+            diag.finish(needles)
