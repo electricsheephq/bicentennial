@@ -188,15 +188,16 @@ def test_developer_docs_name_label_and_rule():
 
 
 def test_unreadable_counts_only_the_scored_attempt():
-    def run(arm, life_name, branch, attempt, labelled, cls=None):
+    def run(arm, life_name, branch, attempt, labelled, cls=None, audit="OK"):
         return life.LifeRun(arm, life_name, branch, attempt,
                             item_labels={"i": "unreadable_state"} if labelled else {},
-                            classes={"i": cls} if cls else {})
+                            classes={"i": cls} if cls else {}, audit={"status": audit})
 
     runs = [run("system", "L1", "B0", 0, True), run("system", "L1", "B0", 1, False),  # voided, then its redo
             run("system", "L1", "B1", 0, True),  # scored
             run("no_memory", "L1", "B0", 0, True), run("no_memory", "L1", "B0", 0, True),  # two repetitions
-            run("system", "L2", "B0", 0, True, ("INFRA_FAILURE", "x"))]  # classed, so not scored as unreadable
+            run("system", "L2", "B0", 0, True, ("INFRA_FAILURE", "x")),  # classed, so not scored as unreadable
+            run("system", "L3", "B0", 2, True, audit="INFRA_FAILURE")]  # a final attempt whose audit failed
     assert unreadable_counts(runs) == {"no_memory": 2, "system": 1}
     assert unreadable_counts([]) == {}
 
