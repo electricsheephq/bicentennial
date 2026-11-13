@@ -1,0 +1,143 @@
+== 1. Header and identity
+target items 35 bundles 20 templates drift-chain-fault-v2 drift-config-v2 drift-quote-v2 recall-count-v2 | tasks sha256 202c24ae6df5 | pack_hash 172b87bf9c60
+code table.py sha256 c68af2e3705b
+code tasks.py sha256 890cb98bd334
+code Milestone 1 table.py sha256 74c496e8468f
+run order F1,R1,O1,O2,R2,F2,O3 | equals the declared order True | reruns named none | --after-reruns given False
+run order verified
+row centres in the order the arms actually ran: (positions 1-7) F 7/2 (3.5) R 7/2 (3.5) O 7/2 (3.5); O3 at 7 (declared order: each centre 7/2)
+F1: tier T2 control no_memory model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T16:14:40+00:00 end 2026-11-13T16:29:34+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+R1: tier T2 control naive_rag model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T16:29:49+00:00 end 2026-11-13T16:59:48+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+O1: tier T2 control oracle_evidence model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T17:00:00+00:00 end 2026-11-13T17:22:22+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+O2: tier T2 control oracle_evidence model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T17:22:33+00:00 end 2026-11-13T17:41:30+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+R2: tier T2 control naive_rag model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T17:41:39+00:00 end 2026-11-13T18:02:26+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+F2: tier T2 control no_memory model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T18:02:37+00:00 end 2026-11-13T18:18:26+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+O3: tier T2 control oracle_evidence model gpt-6.1-sol effort medium pack_hash 172b87bf9c60 start 2026-11-13T18:18:35+00:00 end 2026-11-13T18:34:39+00:00 served_identity 6e0b2b52fc6f matches_reference True identity changed during the run no
+  pins {"benchmark_commit": "0dfff9c91099", "director_commit": "0dfff9c91099", "generator_commit": "0dfff9c91099", "harness_hash": "dbf03edef301", "route_table_hash": "0490592ab5b0", "scorer_commit": "0dfff9c91099", "system_hash": "dbf03edef301", "write_turn_package_hash": "cf5d8ed51482"}
+reference identity 6e0b2b52fc6f (most common; on a tie, the tied identity served to the earliest arm)
+one commit for every arm (card pins equal) True
+
+== 2. Checks before any score (§4)
+check 1 F1: no blocks True pass True
+check 1 F2: no blocks True pass True
+check 1 R1: frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 R2: frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 O1: frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 O2: frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 1 O3: frame_sha256 True blocks matched 85 of 85 mismatched 0 recorded but not recomputed 0 pass True
+check 2 R1: presence in the probe turn's first request equals the pack's scripted naive report on 35 of 35 target items pass True
+check 2 R2: presence in the probe turn's first request equals the pack's scripted naive report on 35 of 35 target items pass True
+check 2 O1: needed fact in the probe turn's first request on 35 of 35 target items pass True
+check 2 O2: needed fact in the probe turn's first request on 35 of 35 target items pass True
+check 2 O3: needed fact in the probe turn's first request on 35 of 35 target items pass True
+check 3 (memory off): the runner's own tests at the run commit 0dfff9c91099 : file names the run commit True, ends with exit 0 True; test_c_floor_bodies_and_memory_off {'PASSED': 1}; test_a_block_is_the_pinned_controls_text_in_the_probe_turn[naive_rag] {'PASSED': 1}; test_a_block_is_the_pinned_controls_text_in_the_probe_turn[oracle_evidence] {'PASSED': 1}; pass True
+check 4: see header; mismatched arms are not pooled and their trials count as unscored: 0
+check 5 F1: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 5 F2: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 5 R1: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 5 R2: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 5 O1: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 5 O2: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 5 O3: target items 35 scored 35 BLOCKED 0 missing 0 complete True
+check 7 F1: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 7 F2: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 7 R1: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 7 R2: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 7 O1: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 7 O2: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 7 O3: expected units 20 units listed 20 (card) 20 (disclosures) cached or unconfirmed 0 probe files found 20 probe keys (life, branch, item) matching the pack's records 85 of 85 unexpected 0 duplicated 0 probe records 85 sent to the live reader 85 stopped units 0 pass True
+check 6 drift-chain-fault-v2: repeats used F1 F2 R1 R2 O1 O2 O3; left out none
+check 6 drift-config-v2: repeats used F1 F2 R1 R2 O1 O2 O3; left out none
+check 6 drift-quote-v2: repeats used F1 F2 R1 R2 O1 O2 O3; left out none
+check 6 recall-count-v2: repeats used F1 F2 R1 R2 O1 O2 O3; left out none
+
+== 3. Scores by template (bundle scores +1000 +500 0 -500 -1000 milli, non-result; points = 100 x mean)
+-- F1
+  drift-chain-fault-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+  drift-config-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+  drift-quote-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+  recall-count-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+-- F2
+  drift-chain-fault-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+  drift-config-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+  drift-quote-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+  recall-count-v2: bundles 5 +1000 0 +500 0 0 5 -500 0 -1000 0 non_result 0 points 0 (0.0)
+-- R1
+  drift-chain-fault-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-config-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-quote-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  recall-count-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+-- R2
+  drift-chain-fault-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-config-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-quote-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  recall-count-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+-- O1
+  drift-chain-fault-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-config-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-quote-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  recall-count-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+-- O2
+  drift-chain-fault-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-config-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-quote-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  recall-count-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+-- O3
+  drift-chain-fault-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-config-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  drift-quote-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+  recall-count-v2: bundles 5 +1000 5 +500 0 0 0 -500 0 -1000 0 non_result 0 points 100 (100.0)
+-- F mean of the repeats used for each template
+  drift-chain-fault-v2: repeats ['F1', 'F2'] points 0 (0.0)
+  drift-config-v2: repeats ['F1', 'F2'] points 0 (0.0)
+  drift-quote-v2: repeats ['F1', 'F2'] points 0 (0.0)
+  recall-count-v2: repeats ['F1', 'F2'] points 0 (0.0)
+-- R mean of the repeats used for each template
+  drift-chain-fault-v2: repeats ['R1', 'R2'] points 100 (100.0)
+  drift-config-v2: repeats ['R1', 'R2'] points 100 (100.0)
+  drift-quote-v2: repeats ['R1', 'R2'] points 100 (100.0)
+  recall-count-v2: repeats ['R1', 'R2'] points 100 (100.0)
+-- O mean of the repeats used for each template
+  drift-chain-fault-v2: repeats ['O1', 'O2', 'O3'] points 100 (100.0)
+  drift-config-v2: repeats ['O1', 'O2', 'O3'] points 100 (100.0)
+  drift-quote-v2: repeats ['O1', 'O2', 'O3'] points 100 (100.0)
+  recall-count-v2: repeats ['O1', 'O2', 'O3'] points 100 (100.0)
+
+== 4. Readings (§5): f, r = means of F1,F2 and R1,R2; c = mean of O1,O2; exact points over each template's repeats used, each scoring every target item of the template
+-- drift-chain-fault-v2: bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 0 (0.0) r 100 (100.0) c 100 (100.0) c over O1,O2,O3 100 (100.0)
+  low (c < 75): on means no margin_bundles -5/4 (-1.2); each O trial alone: O1 no, O2 no, O3 no; disagreeing with the means 0
+  naive (near-solved by naive retrieval): on means applies margin_bundles 3/2 (1.5) combinations 12 agreeing on whether it applies 12 stable (printed only; never enters the reading)
+  floor (near-solved without memory): on means no margin_bundles -7/2 (-3.5) combinations 6 agreeing on whether it applies 6 stable (printed only; never enters the reading)
+  labelled near-solved by naive retrieval: a do-no-harm check, excluded from any claim that memory beats retrieval (M1 §6)
+  reading: cleared
+-- drift-config-v2: bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 0 (0.0) r 100 (100.0) c 100 (100.0) c over O1,O2,O3 100 (100.0)
+  low (c < 75): on means no margin_bundles -5/4 (-1.2); each O trial alone: O1 no, O2 no, O3 no; disagreeing with the means 0
+  naive (near-solved by naive retrieval): on means applies margin_bundles 3/2 (1.5) combinations 12 agreeing on whether it applies 12 stable (printed only; never enters the reading)
+  floor (near-solved without memory): on means no margin_bundles -7/2 (-3.5) combinations 6 agreeing on whether it applies 6 stable (printed only; never enters the reading)
+  labelled near-solved by naive retrieval: a do-no-harm check, excluded from any claim that memory beats retrieval (M1 §6)
+  reading: cleared
+-- drift-quote-v2: bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 0 (0.0) r 100 (100.0) c 100 (100.0) c over O1,O2,O3 100 (100.0)
+  low (c < 75): on means no margin_bundles -5/4 (-1.2); each O trial alone: O1 no, O2 no, O3 no; disagreeing with the means 0
+  naive (near-solved by naive retrieval): on means applies margin_bundles 3/2 (1.5) combinations 12 agreeing on whether it applies 12 stable (printed only; never enters the reading)
+  floor (near-solved without memory): on means no margin_bundles -7/2 (-3.5) combinations 6 agreeing on whether it applies 6 stable (printed only; never enters the reading)
+  labelled near-solved by naive retrieval: a do-no-harm check, excluded from any claim that memory beats retrieval (M1 §6)
+  reading: cleared
+-- recall-count-v2: bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 0 (0.0) r 100 (100.0) c 100 (100.0) c over O1,O2,O3 100 (100.0)
+  low (c < 75): on means no margin_bundles -5/4 (-1.2); each O trial alone: O1 no, O2 no, O3 no; disagreeing with the means 0
+  naive (near-solved by naive retrieval): on means applies margin_bundles 3/2 (1.5) combinations 12 agreeing on whether it applies 12 stable (printed only; never enters the reading)
+  floor (near-solved without memory): on means no margin_bundles -7/2 (-3.5) combinations 6 agreeing on whether it applies 6 stable (printed only; never enters the reading)
+  labelled near-solved by naive retrieval: a do-no-harm check, excluded from any claim that memory beats retrieval (M1 §6)
+  reading: format validated
+
+== 5. Oracle filter over O1, O2, O3 (an item passes with >= 2 trials at 1000; a bundle is kept when every item passes); trials unscored for no arm
+  drift-chain-fault-v2: bundles 5 kept 5 dropped 0 unresolved 0; items by (passes, unscored) {(3, 0): 10}
+  drift-config-v2: bundles 5 kept 5 dropped 0 unresolved 0; items by (passes, unscored) {(3, 0): 10}
+  drift-quote-v2: bundles 5 kept 5 dropped 0 unresolved 0; items by (passes, unscored) {(3, 0): 10}
+  recall-count-v2: bundles 5 kept 5 dropped 0 unresolved 0; items by (passes, unscored) {(3, 0): 5}
+FILTER.json written, sha256 6bfe2d8ed7d1
