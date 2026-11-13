@@ -1,0 +1,161 @@
+# Validity round 2 screening only; seeds 2001..2020, ordered spares from 2021.
+canary = "c168e5f8-3948-4553-8554-7aa162054723"
+tier = "T2"
+scale = "t2"
+window = 16384
+window_label = "provisional C-5"
+levers_label = "uncalibrated"
+evidence_by = 8
+replacements = []
+checkpoints = [5, 10]
+cold_restart = "every session start after the first"
+min_distance_sessions = 2
+early_sessions = 2
+min_early_bundles = 2
+qa_per_checkpoint = 6
+act_per_checkpoint = 2
+not_exercised = ["KEEP-FORGET", "KEEP-NEIGH", "TUE-EVENT"]
+
+[kill]
+session = 6
+turn = 1
+
+[swap]
+session = 8
+wiring_only = true
+from_alias = "bicentennial-main"
+to_alias = "bicentennial-swap"
+
+[compaction]
+min_sprints = 2
+
+[g1]
+deadline_at = [[[1, 1], [2, 1]], [[1, 2], [2, 2]]]
+
+[g2]
+pref_at = { seat-long = [[1, 1], [2, 1]], seat-short = [[1, 2], [2, 4]] }
+
+[[lives]]
+life = "screen-g1-1"
+genre = "G1"
+seed = 2001
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-2"
+genre = "G1"
+seed = 2002
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-3"
+genre = "G1"
+seed = 2003
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-4"
+genre = "G1"
+seed = 2004
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-5"
+genre = "G1"
+seed = 2005
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-6"
+genre = "G1"
+seed = 2006
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-7"
+genre = "G1"
+seed = 2007
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-8"
+genre = "G1"
+seed = 2008
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-9"
+genre = "G1"
+seed = 2009
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-10"
+genre = "G1"
+seed = 2010
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-11"
+genre = "G1"
+seed = 2011
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-12"
+genre = "G1"
+seed = 2012
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-13"
+genre = "G1"
+seed = 2013
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-14"
+genre = "G1"
+seed = 2014
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-15"
+genre = "G1"
+seed = 2015
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-16"
+genre = "G1"
+seed = 2016
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-17"
+genre = "G1"
+seed = 2017
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-18"
+genre = "G1"
+seed = 2018
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-19"
+genre = "G1"
+seed = 2019
+reads_session = 1
+
+[[lives]]
+life = "screen-g1-20"
+genre = "G1"
+seed = 2020
+reads_session = 1
+
+[selection]
+g1 = ["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"]
+g2 = ["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"]
+pinned = { drift-chain-fault = 10, drift-booking = 10 }
