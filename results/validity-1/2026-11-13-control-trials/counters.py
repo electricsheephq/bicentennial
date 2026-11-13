@@ -15,8 +15,9 @@ What each table answers:
 - act items (#505 and #506's drift templates): which decision predicate the reader's final repository state meets,
   read exactly as the scorer reads it (`items/checks/repo.py` repo_state_predicates: state[path][name] == value, any
   group whose checks all hold). For a state that meets no predicate, how it differs from the checked key and value.
-- drift-quote-v1: the same, split by the later statement's wording in the handed-over evidence ("It was said that"
-  or other).
+- drift-quote: the same, split by whether the reader's first message contains "It was said that" anywhere. That
+  message can carry retrieved or handed-over text other than the item's own later statement, so this is not a split
+  by the later statement's own wording.
 - QA items (#506's count question): why the raw final reply does or does not parse, step by step, mirroring
   `score/qa.py` parse_envelope; and whether the last reply ended in a tool call or a length stop.
 """
@@ -292,7 +293,11 @@ def main():
         items = {k: v for k, v in items.items() if k in keys}
     manifest = load_json(diag / "manifest.json")
     report = dict(manifest=dict(files=len(manifest["files"]), skips=Counter(s["reason"] for s in manifest["skips"]),
-                                failures=Counter(f["error"] for f in manifest["failures"]), rescan=manifest["rescan"]),
+                                failures=Counter(f["error"] for f in manifest["failures"]),
+                                # A non-clean rescan lists file paths (which carry item ids): report status and count only.
+                                rescan=manifest["rescan"] if manifest["rescan"] == "clean" else dict(
+                                    status="not clean", entries=len(manifest["rescan"])
+                                    if isinstance(manifest["rescan"], (list, dict)) else None)),
                   items=len(items), missing=[], target_rows_without_diagnostics=absent)
     act = defaultdict(Counter)
     quote = defaultdict(Counter)
