@@ -481,7 +481,7 @@ def test_tasks_list_counts_sorted_and_hash(tmp_path, packs, capsys):
     assert rows == sorted(rows, key=lambda r: (r["life"], r["branch"], r["item_id"])) and len(rows) == 35
     assert data["header"] == dict(commit="a" * 40, edition=2, spec_sha256=sha256(b"seed = 1").hexdigest(),
                                   draw_sha256=sha256(b"[1, 2]").hexdigest(), pack_hash=table.pack_tree_hash(packs))
-    assert {r["decision_table_ref"] for r in rows} == {None, "drift-chain-fault-v2", "drift-config-corrected-v2",
+    assert {r["decision_table_ref"] for r in rows} == {COUNT, "drift-chain-fault-v2", "drift-config-corrected-v2",
                                                        "drift-config-hedged-v2", "drift-quote-v2"}
     assert all((r["bundle_id"] is None) == (r["template_ref"] == COUNT) for r in rows)
     assert not [n for n in ("ITEMZQ", "BUNDLEZQ", "LIFEZQ", str(tmp_path)) if n in out]
@@ -507,6 +507,14 @@ def test_tasks_refuses_a_v1_decision_table(tmp_path, capsys, packs):
     edit_json(sealed / "pack.json", lambda d: d["items"][0].update(decision_table_ref="drift-chain-fault-v1"))
     code, _ = make_tasks(tmp_path, packs)
     assert code == 3 and "not a G1 twin with a v2 decision table" in capsys.readouterr().out
+
+
+def test_tasks_refuses_a_count_item_with_the_v1_table(tmp_path, capsys, packs):
+    sealed = packs / "pack" / "G2" / G2[0] / "7" / "sealed"
+    edit_json(sealed / "pack.json", lambda d: d["items"][0].update(decision_table_ref="recall-count-v1"))
+    code, _ = make_tasks(tmp_path, packs)
+    assert code == 3 and "REFUSED: a recall-count-v2 item is not a single G2 question on B0 with the v2 table" \
+        in capsys.readouterr().out
 
 
 # 7. No ids, text or paths.

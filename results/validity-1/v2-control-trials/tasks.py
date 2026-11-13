@@ -5,10 +5,10 @@ Lists the target items from the pack's own records (sealed/records.json, with ea
 sealed/pack.json): every item of a v2 template, action items on both branches and count questions as the pack keeps
 them. Writes canonical JSON (bicentennial.canon.canon) with a header (commit, edition, spec sha256, draw sha256, pack
 hash as Milestone 1 computes it: bicentennial.packs.manifest.tree_sha256 of --packs) and rows sorted by (life,
-branch, item_id), each with life, branch, item_id, template_ref, bundle_id (or null) and decision_table_ref (null for
-a count question, whose template has no decision table). Refuses (exit 3) unless there are exactly 30 action tasks in
+branch, item_id), each with life, branch, item_id, template_ref, bundle_id (or null) and the item's own
+decision_table_ref (a count question carries its template ref, as compile.py gives every QA item). Refuses (exit 3) unless there are exactly 30 action tasks in
 15 twin pairs (5 per action template, one pair per G1 life) and 5 count questions (one per G2 life), and refuses any
-other version of the four templates. Prints counts and the file's sha256 only.
+other version of the four templates or their decision tables. Prints counts and the file's sha256 only.
 """
 
 import argparse
@@ -24,7 +24,7 @@ from bicentennial.canon import canon
 ACTION = ("drift-chain-fault", "drift-config", "drift-quote")
 COUNT = "recall-count"
 TABLES = {"drift-chain-fault": {"drift-chain-fault-v2"}, "drift-quote": {"drift-quote-v2"},
-          "drift-config": {"drift-config-corrected-v2", "drift-config-hedged-v2"}}
+          "drift-config": {"drift-config-corrected-v2", "drift-config-hedged-v2"}, "recall-count": {"recall-count-v2"}}
 EDITION = 2
 
 
@@ -60,11 +60,12 @@ def target_rows(records):
             return None, f"the pack carries {ref}, not the v{EDITION} template"
         if item is None:
             return None, f"a {ref} record has no item in the pack"
-        table = item["decision_table_ref"] if tid in ACTION else None
+        table = item["decision_table_ref"]
         if tid in ACTION and (table not in TABLES[tid] or rec["bundle_id"] is None or genre != "G1"):
             return None, f"a {ref} item is not a G1 twin with a v{EDITION} decision table"
-        if tid == COUNT and (rec["bundle_id"] is not None or genre != "G2" or rec["branch"] != "B0"):
-            return None, f"a {ref} item is not a single G2 question on B0"
+        if tid == COUNT and (table not in TABLES[tid] or rec["bundle_id"] is not None or genre != "G2"
+                             or rec["branch"] != "B0"):
+            return None, f"a {ref} item is not a single G2 question on B0 with the v{EDITION} table"
         rows.append(dict(life=rec["life"], branch=rec["branch"], item_id=rec["item_id"], template_ref=ref,
                          bundle_id=rec["bundle_id"], decision_table_ref=table))
     rows.sort(key=lambda r: (r["life"], r["branch"], r["item_id"]))
