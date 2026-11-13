@@ -169,9 +169,12 @@ def test_unreadable_disclosure_counts_by_arm(tier, request, monkeypatch):
     original = units.run_life
 
     def labelled(**kw):
-        run = original(**kw)
-        return replace(run, item_labels={kw["items"][0]["item_id"]: "unreadable_state"}
-                       if kw["branch"] == "B0" else {})
+        # B0's labelled item has a reader result, so the real scorer would reach its act path; B1's has none, so it
+        # would be scored Infra("no_result") and is not counted. The fake scorer here ignores the result.
+        run, iid = original(**kw), kw["items"][0]["item_id"]
+        reader = SimpleNamespace(selected_option=None, competing_present=(), carry_over=False, in_context=True)
+        results = {**run.results, iid: reader} if kw["branch"] == "B0" else run.results
+        return replace(run, item_labels={iid: "unreadable_state"}, results=results)
 
     monkeypatch.setattr(units, "run_life", labelled)
     assert state.invoke() == 0
