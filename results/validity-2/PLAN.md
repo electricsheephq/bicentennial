@@ -140,9 +140,11 @@ fresh lives, so round 2 then targets Wake alone. Every screened card's results a
   publish (the pack is control-only, like validity-1's).
 
 ## 7. Step E: the fresh-seed follow-up (#394)
-- **Lives:** 24 from one draw (RING0 §15's Ring 1 composition: n = max(10, ceil(12/f)) with f = 5/10, G1 on odd
-  positions): 12 lives with scored actions. Two packs: A = lives 1-10 (T2's shape), B = lives 11-24, which keeps
-  each arm inside measured send ranges and the 1,000-send cap.
+- **Lives:** 30 from one draw, G1 on odd positions: 15 lives with scored actions, above the 12 that RING0 §15's Ring 1
+  composition requires (n = max(10, ceil(12/f)) with f = 5/10 gives 24). Three packs of T2's shape, five G1 and five
+  G2 lives each: A = lives 1-10, B = 11-20, C = 21-30. Every pack then passes the run gate's system-run composition
+  unchanged (#539 admits ten G1 lives for control runs only), and each arm stays inside measured send ranges and the
+  1,000-send cap. **Departure, flagged:** 30 lives instead of Ring 1's 24, so that no system-run gate changes.
 - **Edition 3:** per id the newest admitted version: `wake-loop-v1`, each Drift id at its ranking-candidate v3 or its
   cleared v2, `recall-count-v1` carried unread (D5), edition 1 elsewhere; its own C-7 file.
 - **Rows per pack:** F R O H H O R F O as in Milestone 1, then B, G and W once each. Hermes native is frozen before
@@ -194,7 +196,7 @@ Items 2, 3, 7a, 9 and 10 can start now; 4 starts when 2 lands (cards can be writ
 | Anchors, screen | 0 | minutes per report | $0 |
 | Oracle smoke | ~400 | ~25 min | $0 (subscription lane) |
 | Round 2, 13 arms | ~4,600-6,500 (G1 lives carry the action turns, so a G1-only pack may cost more per life; measured at the rehearsal) | ~3.5-7 h | $0 |
-| Follow-up, packs A and B, 12 arms each | ~11,000-12,500 | ~12-14 h over two or three sittings | $0 |
+| Follow-up, packs A, B and C, 12 arms each | ~13,800-15,700 | ~15-18 h over three or four sittings | $0 |
 Each arm's send cap is written in its declaration from measured figures with stated headroom (#507). Calendar
 estimate: anchors and screen 3-5 days; round 2 2-3 days; follow-up about a week; done in early December.
 
@@ -214,6 +216,7 @@ the screen and round 2, and re-plan. A run gate refusal or an identity mismatch 
 | Departure | validity-1 RESULT | a cleared v2 replaced by a ranking-candidate v3 does not enter the follow-up |
 | Departure | RING0 §15 composition | round 2's ten-G1-life pack, which the run gate accepts for control runs only (#539) |
 | Departure | ROADMAP "the same four rows" | three anchor rows in the follow-up |
+| Departure | RING0 §15 Ring 1 composition | the follow-up's 30 lives in three packs of T2's shape, instead of 24 |
 | Decision | #394, RING0 §14.7 | the follow-up runs exploratory; the full contract is a later item |
 
 ## 12. Rejected alternatives
@@ -221,7 +224,9 @@ the screen and round 2, and re-plan. A run gate refusal or an identity mismatch 
   reader first inside the expensive run.
 - Anchors in `controls/` now (moves the pin mid-milestone); a screen against naive retrieval alone at "3 of 10 tasks"
   (`drift-config` v1 would have passed it); new template ids (no free action slot); edits to pinned event writers
-  (a pin move inside a validity step); one 24-life pack (~900 sends an arm against a cap of 1,000).
+  (a pin move inside a validity step); one 24-life pack (~900 sends an arm against a cap of 1,000); 24 lives as a
+  T2-shaped pack plus a 14-life pack of seven G1 and seven G2 lives, which the run gate refuses for system runs
+  (`tier_composition`) and would need a system-run gate change.
 - The full Ring 1 contract now: its prerequisites are real work in parallel with the validity round, and with one or
   two ranking kinds it would mostly publish ties.
 - A dense-retrieval diagnostic in this step: deferred; the claim language names it untested instead.
