@@ -16,9 +16,10 @@ from bicentennial.gitenv import git_env
 from bicentennial.harness.hermes.adapter import PinMismatch, turn_wait_seconds
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.items import c7
+from bicentennial.items.editions import BY_REF, C7_FILES, EDITIONS
 from bicentennial.items.protocol import CANARY
 from bicentennial.keyed import mint_id
-from bicentennial.packs.catalogue import TEMPLATES_BY_GENRE, c7_entries
+from bicentennial.packs.catalogue import c7_entries
 from bicentennial.packs.install import verify
 from bicentennial.packs.manifest import PinnedArtifactChanged
 from bicentennial.packs.scoring import case_from_obj
@@ -303,16 +304,7 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if sorted(_json(Path(packs) / rel / "sealed/meta.json")["genre"] for rel in rels) != sorted(spec.composition):
         raise T1Refused("tier_composition")
     packed = tuple(_pack(Path(packs), rel) for rel in rels)
-    freeze, cells = c7_entries(REPO / "specs/ring0/c7-partial.json"), c7.cells(REPO)
-    for pack in packed:
-        templates = dict(sorted((t.ref, t) for t in TEMPLATES_BY_GENRE[pack.genre].values()))
-        refs = sorted({f"{r['template_id']}-v{r['template_version']}" for r in pack.records.values()})
-        for ref in refs:
-            if ref not in freeze:
-                raise T1Refused("c7_missing")
-            digest = c7.entry(templates[ref], pack.genre.lower(), cells)["entry_sha256"]
-            if digest != freeze[ref]["entry_sha256"] or digest != pack.manifest["pins"]["c7_entries"][ref]:
-                raise T1Refused("c7_changed")
+    _check_c7(packed)
     table = _routes(system)
 
     def current_lock():
@@ -328,6 +320,27 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
         SessionGate(lock), current_lock, mint_id(canon(["t1", lock_hash(lock), system]).decode(), 0),
         spec.context_roots(marker, admission), marker, hermes, plugin_source, worker_argv, table, model_cache, model_cache_sha256,
         properties, turn_wait_s)
+
+
+def _check_c7(packed):
+    """Every pack record's template ref has one C-7 entry, across every edition's freeze, that its template rebuilds;
+    and one template edition holds every ref of every pack, so v1 and v2 of a template never meet in a run."""
+    freeze, cells, seen = {}, c7.cells(REPO), set()
+    for path in sorted(C7_FILES.values()):
+        for ref, frozen in c7_entries(REPO / path).items():
+            if freeze.setdefault(ref, frozen)["entry_sha256"] != frozen["entry_sha256"]:
+                raise T1Refused("c7_changed")
+    for pack in packed:
+        refs = sorted({f"{r['template_id']}-v{r['template_version']}" for r in pack.records.values()})
+        seen.update(refs)
+        for ref in refs:
+            if ref not in freeze or ref not in BY_REF:
+                raise T1Refused("c7_missing")
+            digest = c7.entry(BY_REF[ref], pack.genre.lower(), cells)["entry_sha256"]
+            if digest != freeze[ref]["entry_sha256"] or digest != pack.manifest["pins"]["c7_entries"][ref]:
+                raise T1Refused("c7_changed")
+    if not any(seen <= {t.ref for templates in edition.values() for t in templates} for edition in EDITIONS.values()):
+        raise T1Refused("c7_edition")
 
 
 def check_install(ctx, sandbox):

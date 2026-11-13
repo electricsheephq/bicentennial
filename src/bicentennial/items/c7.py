@@ -1,10 +1,11 @@
 """The partial C-7 freeze: each v0.1 template's frozen entry, built from the template build.
 
-``python -m bicentennial.items.c7 REPO_ROOT`` prints ``specs/ring0/c7-partial.json``.
+``python -m bicentennial.items.c7 REPO_ROOT`` prints ``specs/ring0/c7-partial.json``;
+``--edition 2`` prints ``specs/ring0/c7-edition2.json`` (items/editions.py).
 """
 
+import argparse
 import dataclasses
-import importlib
 import inspect
 import json
 import re
@@ -13,6 +14,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from bicentennial.canon import sha256_canon
+from bicentennial.items.editions import EDITIONS
 from bicentennial.items.protocol import CANARY
 from bicentennial.items.templates.g1.common import PRIMARY_LEVER
 
@@ -67,16 +69,17 @@ def entry(template, genre, cell_rows) -> dict:
     return {**body, "entry_sha256": sha256_canon(body)}
 
 
-def freeze(root) -> dict:
-    """The whole freeze object for every template of every genre, keyed by template ref."""
+def freeze(root, edition=1) -> dict:
+    """The whole freeze object for every template of every genre in one edition, keyed by template ref."""
     cell_rows, entries = cells(root), {}
     for genre in GENRES:
-        for template in importlib.import_module(f"bicentennial.items.templates.{genre}").TEMPLATES:
+        for template in EDITIONS[edition][genre.upper()]:
             if template.ref in entries:
                 raise ValueError(f"duplicate template ref {template.ref}")
             entries[template.ref] = entry(template, genre, cell_rows)
     entries = dict(sorted(entries.items()))
-    return {"canary": CANARY, "slot": "C-7", "status": "partial, provisional (Ring 0 v0.1)",
+    status = "partial, provisional (Ring 0 v0.1)" + ("" if edition == 1 else f", template edition {edition}")
+    return {"canary": CANARY, "slot": "C-7", "status": status,
             "keyed_by": "template ref (template_id-vN)",
             "entry_hash": "sha256 of the canonical JSON (sorted keys, no spaces) of the entry without entry_sha256",
             "entries": entries, "file_sha256_of_entries": sha256_canon(entries)}
@@ -87,4 +90,8 @@ def dumps(obj) -> str:
 
 
 if __name__ == "__main__":
-    sys.stdout.write(dumps(freeze(sys.argv[1] if len(sys.argv) > 1 else ".")))
+    parser = argparse.ArgumentParser(prog="python -m bicentennial.items.c7")
+    parser.add_argument("root", nargs="?", default=".")
+    parser.add_argument("--edition", type=int, choices=(1, 2), default=1)
+    args = parser.parse_args()
+    sys.stdout.write(dumps(freeze(args.root, args.edition)))

@@ -37,6 +37,21 @@ def test_build_dispatch(ready, monkeypatch, capsys, tier):
     assert capsys.readouterr() == ("", "sqlite_version test-version\nsqlite_secure_delete_default 1\n")
 
 
+def test_build_hidden_spec_and_edition(ready, monkeypatch, capsys):
+    argv = ["build", "--tier", "T2", "--out", "parent", "--spec", "lives.toml", "--edition", "2"]
+    seen = []
+    monkeypatch.setattr(build, "build_tier", lambda *args, **kwargs: seen.append((args, kwargs)) or dict(
+        sqlite_version="test-version"))
+    monkeypatch.setattr(cli, "_secure_delete_default", lambda: 1)
+    assert cli.main(argv) == 0
+    (args, kwargs), = seen
+    assert args == ("T2", "parent") and (kwargs["spec_path"], kwargs["edition"]) == ("lives.toml", 2)
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        cli.main(["build", "--help"])
+    assert "--edition" not in capsys.readouterr().out
+
+
 def test_build_hash_matches_one_liner_with_existing_parent(ready, tmp_path, monkeypatch, capsys):
     root = build.REPO_ROOT
     catalogue = build.load_catalogue(root / "packs/catalogue-v0.toml",

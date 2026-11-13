@@ -290,6 +290,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `harness_artifact_mismatch` | Pack harness artifact differs from registry pin. |
 | `c7_missing` | Template has no C-7 entry. |
 | `c7_changed` | Template C-7 hash changed. |
+| `c7_edition` | The packs' templates are not all from one template edition. |
 | `baseline_missing` | T0 fault-free baseline pack/item missing. |
 | `catalogue_changed` | T0 catalogue hash changed. |
 | `visible_canary` | Canary found in agent-visible input. |

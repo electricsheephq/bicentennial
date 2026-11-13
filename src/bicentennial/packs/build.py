@@ -17,9 +17,13 @@ from bicentennial.controls.battery import check_distribution, check_pack
 from bicentennial.controls.cache import compute, pack_controls, write_entry
 from bicentennial.controls.common import ControlInput
 from bicentennial.genres.g2_assistant.envseed import probe_envseed
+from bicentennial.items.editions import BY_REF, C7_FILES, EDITIONS
 from bicentennial.items.protocol import CANARY
 from bicentennial.items.reader_keys import KINDS, life_keys
-from bicentennial.items.templates import g1, g2
+from bicentennial.items.templates import (
+    g1,  # noqa: F401 -- retained as a module re-export (build.g1)
+    g2,  # noqa: F401 -- retained as a module re-export (build.g2)
+)
 from bicentennial.items.templates.g1.common import option_roles, repo_checks, repo_state
 from bicentennial.keyed import mint_id
 from bicentennial.probe.scripted_reader import read
@@ -105,14 +109,19 @@ def _write(path, obj):
     path.write_bytes(canon(obj))
 
 
-def _templates(t, records, spec=None):
+def _templates(t, records, spec=None, *, edition=1):
+    """Each record's template, resolved by its ref within one edition; a ref outside the edition is refused."""
     items = {i["item_id"]: i for i in t.twin.compiled.items}
     assigned = []
     for tid in sorted({r["template_id"] for r in records}):
         points = {items[r["item_id"]]["probe_point"] for r in records if r["template_id"] == tid}
+        refs = {f"{tid}-v{r['template_version']}" for r in records if r["template_id"] == tid}
         if len(points) != 1:
             raise ValueError(tid)
-        assigned.append(replace(TEMPLATES_BY_GENRE[t.genre][tid], checkpoint=next(iter(points))))
+        template = BY_REF.get(next(iter(refs))) if len(refs) == 1 else None
+        if template is None or template not in EDITIONS[edition][t.genre]:  # templates compare by identity
+            raise PackRefused("edition")
+        assigned.append(replace(template, checkpoint=next(iter(points))))
     return repoint_templates(spec or {}, assigned)
 
 
@@ -130,14 +139,14 @@ def _needles(items, records, bundles, keys, worlds):
     return needles
 
 
-def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins):
+def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins, edition=1):
     compiled, schedule = t.twin.compiled, t.schedule
     records = sorted((r for r in compiled.records if r["bundle_id"] is not None or r["branch"] == "B0"),
                      key=lambda r: r["item_id"])
     ids = {r["item_id"] for r in records}
     items = sorted((i for i in compiled.items if i["item_id"] in ids), key=lambda i: i["item_id"])
     bundles = sorted(compiled.bundles, key=lambda b: b["bundle_id"])
-    templates = _templates(t, records, spec)
+    templates = _templates(t, records, spec, edition=edition)
     for template in templates:
         entry = entries.get(template.ref)
         if (entry is None or canon(entry["decision_tables"]) != canon(list(template.decision_tables))
@@ -299,9 +308,12 @@ def _build_pack(t, path, **kwargs):
     return manifest, cases
 
 
-def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None):
+def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_path=None, edition=1):
+    """Build one tier. T1 and T2 take a template edition (items/editions.py) and an optional life spec path."""
     if tier not in ("T0", "T1", "T2") or tier != "T0" and rows is not None:
         raise ValueError("tier")
+    if edition not in EDITIONS or tier == "T0" and (edition != 1 or spec_path is not None):
+        raise ValueError("edition")
     root, out = Path(root), Path(out)
     dest, staging, work = (out / name for name in (tier, tier + ".staging", tier + ".work"))
     if any(p.exists() or p.is_symlink() for p in (dest, staging, work)):
@@ -309,8 +321,8 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None):
     staging.mkdir(parents=True)
     lives = []
     try:
-        spec = load_tier(root / f"tiers/life_specs/{tier.lower()}.toml")
-        c7_path = root / "specs/ring0/c7-partial.json"
+        spec = load_tier(Path(spec_path) if spec_path is not None else root / f"tiers/life_specs/{tier.lower()}.toml")
+        c7_path = root / C7_FILES[edition]
         entries, catalogue = c7_entries(c7_path), None
         jobs = []
         if tier == "T0":
@@ -324,7 +336,7 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None):
                     jobs.append((rel, asdict(r), r))
         else:
             seed_manifest = seeds_manifest(spec)
-            lives = list(t1_lives(spec, {"G1": g1.TEMPLATES, "G2": g2.TEMPLATES}, root=work))
+            lives = list(t1_lives(spec, EDITIONS[edition], root=work))
             jobs = [(f"pack/{t.genre}/{t.life}/{t.seed}", dict(row), t)
                     for row, t in zip(spec["lives"], lives, strict=True)]
         common = dict(harness_pin=sha256_canon(harness_artifacts), c7_sha256=file_sha256(c7_path),
@@ -337,7 +349,7 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None):
             if tier == "T0":
                 lives.append(t)
             manifest, cases = _build_pack(t, staging / rel, tier=tier, rel=rel, row=row,
-                                           spec=spec, entries=entries, common_pins=common)
+                                           spec=spec, entries=entries, common_pins=common, edition=edition)
             version = manifest["pins"]["generator_version"]
             if not version or "+" in version or versions.get(t.genre, version) != version:
                 raise PackRefused("generator_version")
