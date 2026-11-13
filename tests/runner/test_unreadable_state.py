@@ -200,7 +200,8 @@ def test_unreadable_counts_only_the_scored_attempt():
             run("system", "L3", "B0", 2, True, audit="INFRA_FAILURE"),  # a final attempt whose audit failed
             run("system", "L4", "B0", 2, True, result=False)]  # no reader result: scored as Infra("no_result")
     assert unreadable_counts(runs) == {"no_memory": 2, "system": 1}
-    assert unreadable_counts(runs, keep={"other"}) == {"no_memory": 0, "system": 0}  # T2-lite --only
+    # T2-lite --only publishes only the kept system items, and the whole floor.
+    assert unreadable_counts(runs, keep={"other"}) == {"no_memory": 2, "system": 0}
     assert unreadable_counts([]) == {}
 
 

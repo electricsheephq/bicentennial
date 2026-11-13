@@ -24,7 +24,8 @@ def unreadable_counts(runs, keep=None):
     """Count, per arm, the items scored as unreadable_state: labelled items in the scored attempt of each unit that
     reach the scorer's act path, as runner/units.py _score_run and score_item route them: no cause class, an OK audit
     (a failed audit makes every unclassed item INFRA_FAILURE) and a reader result (a missing one is Infra). With keep
-    (T2-lite --only), only the kept items, which are the ones published. A unit's runs are contiguous and number their
+    (T2-lite --only), only the kept items of the system arm, which are the ones published; the floor's outcomes are
+    published whole, so its count is not filtered. A unit's runs are contiguous and number their
     attempts from 0, so a run is scored when the next run of its arm, life and branch starts another unit (attempt 0,
     as in a T2-lite repetition) or there is none. An attempt voided by a harness fault is not counted. An arm with no
     run here (a fully cached floor) has no key."""
@@ -35,7 +36,7 @@ def unreadable_counts(runs, keep=None):
         later = next((r for r in runs[n + 1:] if (r.arm, r.life, r.branch) == key), None)
         if (later is None or later.attempt == 0) and run.audit.get("status") == "OK":
             counts[run.arm] += sum(label == "unreadable_state" and not run.classes.get(iid, (None, None))[0]
-                                   and iid in run.results and (keep is None or iid in keep)
+                                   and iid in run.results and (keep is None or run.arm == "no_memory" or iid in keep)
                                    for iid, label in run.item_labels.items())
     return counts
 
