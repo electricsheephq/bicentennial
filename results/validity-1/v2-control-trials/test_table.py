@@ -86,7 +86,7 @@ def make_packs(root, edit=None):
 def make_tasks(tmp_path, packs, edit=None, name="TASKS.json"):
     out = tmp_path / name
     code = tasks.main(["--packs", str(packs), "--spec", str(write_file(tmp_path / "spec.toml", "seed = 1")),
-                       "--draw", str(write_file(tmp_path / "draw.json", "[1, 2]")), "--commit", "a" * 40,
+                       "--draw", str(write_file(tmp_path / "draw.json", "[1, 2]")), "--commit", "b" * 40,
                        "--edition", "2", "--out", str(out)])
     return code, out
 
@@ -147,12 +147,14 @@ def run(tmp_path, packs, monkeypatch, capsys):
     pack_hash = table.pack_tree_hash(packs)
 
     def go(specs=None, twins=None, edit=None, slots=None, flags=(), order=ORDER, check3=CHECK3_OK, identities=None,
-           tasks_sha=None, filter_out=None):
+           tasks_sha=None, filter_out=None, attempts=None):
         argv = ["--packs", str(packs), "--tasks", str(tasks_path), "--tasks-sha256",
                 tasks_sha or sha256(tasks_path.read_bytes()).hexdigest(), "--order", ",".join(order), *flags]
         if check3 is not None:
             (tmp_path / "check3.txt").write_text(check3)
             argv += ["--check3", str(tmp_path / "check3.txt")]
+        if attempts:
+            argv += ["--attempts", ",".join(attempts)]
         if filter_out:
             argv += ["--filter-out", str(filter_out)]
         for label in table.CORE:
@@ -235,24 +237,30 @@ def test_scores_twin_min_halves_and_c(run):
     assert code == 0 and f"  {COUNT}: bundles 5 +1000 0 +500 5 0 0 -500 0 -1000 0 non_result 0 points 50 (50.0)" in r1
     assert "  drift-config-v2: bundles 5 +1000 0 +500 0 0 4 -500 0 -1000 1 non_result 0 points -20 (-20.0)" in r1
     count = section(out, COUNT)
-    assert count[0] == f"-- {COUNT}: bundles on the common support 5 of 5 f 0 (0.0) r 50 (50.0) c 100 (100.0) c over" \
-                       " O1,O2,O3 100 (100.0)"
+    assert count[0] == f"-- {COUNT}: bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 0 (0.0) r 50 (50.0) c 100 (100.0)" \
+                       " c over O1,O2,O3 100 (100.0)"
     # c is O1 and O2 only; O3 enters c over three.
     quote = section(out, "drift-quote-v2")
     assert "f 0 (0.0) r -100 (-100.0) c 100 (100.0) c over O1,O2,O3 200/3 (66.7)" in quote[0]
-    assert "-- R mean of ['R1', 'R2'] on the common support" in three
-    assert "  drift-config-v2: bundles 5 points -10 (-10.0)" in three
+    assert "-- R mean of the repeats used for each template" in three
+    assert "  drift-config-v2: repeats ['R1', 'R2'] points -10 (-10.0)" in three
 
 
-def test_common_support_after_reruns(run):
-    # F2 has one chain twin BLOCKED: the template's support drops to 4 bundles and its reading is unresolved.
+def test_completeness_is_per_template(run):
+    # F2 left one chain twin unscored after its rerun: the chain template is read without F2 and is unresolved, while
+    # the other templates are read with F2.
     code, out = run(twins={"F2": {("drift-chain-fault-v2", 2, 0): "B"}}, specs={"F1": {"drift-chain-fault-v2":
-                                                                                   [0, 0, 1000, 0, 0]}},
+                                                                                   [0, 0, 1000, 0, 0]},
+                                                                            "F2": {"drift-config-v2": [1000] * 5}},
                     flags=("--after-reruns",))
-    chain = section(out, "drift-chain-fault-v2")
-    assert code == 0 and "bundles on the common support 4 of 5 f 0 (0.0)" in chain[0]
-    assert "check 6: bundles scored in every usable repeat (common support): {'drift-chain-fault-v2': '4 of 5'" in out
+    chain, config = section(out, "drift-chain-fault-v2"), section(out, "drift-config-v2")
+    assert code == 0 and "bundles 5 repeats used F1 R1 R2 O1 O2 O3 f 20 (20.0)" in chain[0]
+    assert "check 6 drift-chain-fault-v2: repeats used F1 R1 R2 O1 O2 O3; left out F2 (incomplete on this template)" \
+        in out.splitlines()
+    assert "  completeness: repeats left out F2 (incomplete on this template)" in chain
     assert reading_of(out, "drift-chain-fault-v2") == "unresolved"
+    assert "bundles 5 repeats used F1 F2 R1 R2 O1 O2 O3 f 50 (50.0)" in config[0]
+    assert "check 6 drift-config-v2: repeats used F1 F2 R1 R2 O1 O2 O3; left out none" in out.splitlines()
     assert reading_of(out, "drift-config-v2") == "cleared"
 
 
@@ -278,7 +286,7 @@ def test_readings_by_precedence(run):
     for specs in (o, lows):
         code, out = run(specs, twins=blocked, flags=("--after-reruns",))
         assert code == 0 and reading_of(out, COUNT) == "unresolved"
-        assert "bundles with an unscored item 1" in section(out, COUNT)[-2]
+        assert section(out, COUNT)[-2] == "  completeness: repeats left out O2 (incomplete on this template)"
     assert reading_of(out, "drift-quote-v2") == "low"
 
 
@@ -375,6 +383,34 @@ def test_checks_1_2_7_close_scores(run):
     assert code == 3 and "== 3." not in out and out.splitlines()[-1].startswith("CHECK 3 NOT SHOWN PASSING")
 
 
+def test_check_7_reads_each_units_own_probes(run):
+    def filed_under_b0(label, path):
+        if label == "O1":
+            unit = path / "oracle_evidence" / G1[0]
+            b0, b1 = (json.loads((unit / b / "t2lite_probes.json").read_text()) for b in ("B0", "B1"))
+            (unit / "B0" / "t2lite_probes.json").write_text(json.dumps(b0 + b1))
+            (unit / "B1" / "t2lite_probes.json").write_text("[]")
+
+    clean = next(x for x in run()[1].splitlines() if x.startswith("check 7 O1"))
+    assert "probe keys (life, branch, item) matching the pack's records 50 of 50 unexpected 0" in clean
+    code, out = run(edit=filed_under_b0)
+    line = next(x for x in out.splitlines() if x.startswith("check 7 O1"))
+    assert code == 3 and "probe files found 20" in line and "probe records 50 sent to the live reader 50" in line
+    assert "matching the pack's records 46 of 50 unexpected 4" in line and line.endswith("pass False")
+    assert out.splitlines()[-1] == "INVALID CONTROL ROW O1"
+
+
+def test_check_3_after_reruns_ends_the_round(run):
+    bad = CHECK3_OK.replace("exit 0", "exit 1")
+    code, out = run(check3=bad)
+    assert code == 3 and out.splitlines()[-1].endswith("no score is opened; rerun check 3 at the run commit")
+    code, out = run(check3=bad, flags=("--after-reruns",))
+    assert code == 5 and "ROUND ENDS: check 3 is not shown passing at the run commit after the reruns (§4)" in out
+    assert "missing observations: arms without usable trials F1 F2 R1 R2 O1 O2 O3" in out
+    assert [x for x in out.splitlines() if x.startswith("reading ")] == [f"reading {t}: unresolved" for t in TEMPLATES]
+    assert "== 3." not in out and "points" not in out
+
+
 def test_check_2_r_reads_the_target_items_against_the_scripted_report(run):
     def flip(label, path):
         if label == "R1":
@@ -415,17 +451,28 @@ def test_row_centres_in_the_order_the_arms_ran(run):
         return next(x for x in out.splitlines() if x.startswith("row centres"))
 
     code, out = run()
-    assert code == 0 and centres(out).endswith("F 7/2 (3.5) R 7/2 (3.5) O 7/2 (3.5); O3 at 7 (declared order: each"
-                                               " centre 7/2)")
+    assert code == 0 and centres(out).endswith("(positions 1-7) F 7/2 (3.5) R 7/2 (3.5) O 7/2 (3.5); O3 at 7"
+                                               " (declared order: each centre 7/2)")
     # O1's first attempt ran in its slot (3rd); its rerun ran last, the 8th arm: O's centre is (4 + 8) / 2 = 6.
     late = (*(k for k in ORDER if k != "O1"), "O1")
-    assert table.positions(late, ["O1"]) == dict(F1=1, R1=2, O2=4, R2=5, F2=6, O3=7, O1=8)
+    code, out = run(order=late, slots={"O1": 9}, flags=("--reruns", "O1"), attempts=(*ORDER, "O1.rerun"))
+    assert code == 0 and centres(out).endswith("(positions 1-8) F 7/2 (3.5) R 7/2 (3.5) O 6 (6.0); O3 at 7"
+                                               " (declared order: each centre 7/2)")
+    # Two reruns after O3: R1 is 8th and O3 9th.
+    two = ("F1", "O1", "O2", "R2", "F2", "R1", "O3")
+    code, out = run(order=two, slots={"R1": 9, "O3": 10}, flags=("--reruns", "R1,O3"),
+                    attempts=(*ORDER, "R1.rerun", "O3.rerun"))
+    assert code == 0 and centres(out).endswith("(positions 1-9) F 7/2 (3.5) R 13/2 (6.5) O 7/2 (3.5); O3 at 9"
+                                               " (declared order: each centre 7/2)")
+    # Reruns named and no --attempts: not computed, never guessed.
     code, out = run(order=late, slots={"O1": 9}, flags=("--reruns", "O1"))
-    assert code == 0 and "(positions 1-8," in centres(out)
-    assert centres(out).endswith("F 7/2 (3.5) R 7/2 (3.5) O 6 (6.0); O3 at 7 (declared order: each centre 7/2)")
-    # A rerun run straight after its own first attempt.
-    assert table.positions(("F1", "R1", "O1", "O2", "R2", "F2", "O3"), ["R1"]) == dict(
-        F1=1, R1=3, O1=4, O2=5, R2=6, F2=7, O3=8)
+    assert code == 0 and centres(out) == "row centres in the order the arms actually ran: not computed (pass --attempts)"
+    # An --attempts that does not fit: refused.
+    for attempts, reruns, order in (((*ORDER, "O1.rerun"), "O1", ORDER), ((*ORDER, "O1.rerun"), "O3", late),
+                                    (("O1.rerun", *ORDER), "O1", late), ((*ORDER, "O1.rerun", "X"), "O1", late),
+                                    (ORDER[:-1] + ("O1.rerun",), "O1", late)):
+        code, out = run(order=order, slots={"O1": 9}, flags=("--reruns", reruns), attempts=attempts)
+        assert code == 3 and out.startswith("REFUSED: --attempts") and "== 1." not in out
 
 
 # 5. Refusals.
@@ -447,6 +494,25 @@ def test_refusals(run, tmp_path):
     assert run(tasks_sha="0" * 64) == (3, "REFUSED: TASKS.json sha256 differs from --tasks-sha256\n")
     code, out = run(edit=other_pack)
     assert code == 3 and "PACK MISMATCH: F1 pack_hash eeeeeeeeeeee" in out and "== 3." not in out
+
+
+def test_run_commit_edition_and_the_frozen_list_both_ways(run, tmp_path):
+    def other_commit(label, path):
+        if label == "O2":
+            edit_json(path / "card.json", lambda d: d["pins"].update(benchmark_commit="d" * 40))
+
+    assert run(edit=other_commit) == (3, "REFUSED: O2 ran at another commit than TASKS.json names\n")
+    path = tmp_path / "TASKS.json"
+    whole = json.loads(path.read_bytes())
+    # A list missing one count question, posted with its own sha256: refused, so no check can go vacuous.
+    path.write_bytes(table.canon(dict(whole, rows=[r for r in whole["rows"] if r["item_id"] != "ITEMZQ2c"])))
+    assert run() == (3, "REFUSED: TASKS.json rows differ from the pack's own target items (tasks.py)\n")
+    path.write_bytes(table.canon(dict(whole, rows=[])))
+    assert run() == (3, "REFUSED: TASKS.json rows differ from the pack's own target items (tasks.py)\n")
+    path.write_bytes(table.canon(dict(whole, header=dict(whole["header"], edition=1))))
+    assert run() == (3, "REFUSED: TASKS.json edition is not 2\n")
+    path.write_bytes(table.canon(whole))
+    assert run()[0] == 0
 
 
 def test_tasks_pack_hash_and_absent_items_are_refused(tmp_path, packs, capsys, monkeypatch):
@@ -479,7 +545,7 @@ def test_tasks_list_counts_sorted_and_hash(tmp_path, packs, capsys):
                                    " 'drift-quote-v2': 10, 'recall-count-v2': 5}")
     rows = data["rows"]
     assert rows == sorted(rows, key=lambda r: (r["life"], r["branch"], r["item_id"])) and len(rows) == 35
-    assert data["header"] == dict(commit="a" * 40, edition=2, spec_sha256=sha256(b"seed = 1").hexdigest(),
+    assert data["header"] == dict(commit="b" * 40, edition=2, spec_sha256=sha256(b"seed = 1").hexdigest(),
                                   draw_sha256=sha256(b"[1, 2]").hexdigest(), pack_hash=table.pack_tree_hash(packs))
     assert {r["decision_table_ref"] for r in rows} == {COUNT, "drift-chain-fault-v2", "drift-config-corrected-v2",
                                                        "drift-config-hedged-v2", "drift-quote-v2"}
@@ -495,6 +561,7 @@ def test_tasks_list_counts_sorted_and_hash(tmp_path, packs, capsys):
      "the pack carries drift-quote-v1, not the v2 template"),
     (lambda r: r.update(template_id="recall-count", template_version=1, bundle_id=None)
      if r["item_id"] == "ITEMZQ0s" else None, "the pack carries recall-count-v1, not the v2 template"),
+    (lambda r: r.update(life=G1[0]) if r["life"] == G2[0] else None, "1 lives are both G1 and G2"),
 ])
 def test_tasks_refusals(tmp_path, capsys, edit, said):
     packs = make_packs(tmp_path / "other", edit=edit)

@@ -6,9 +6,10 @@ sealed/pack.json): every item of a v2 template, action items on both branches an
 them. Writes canonical JSON (bicentennial.canon.canon) with a header (commit, edition, spec sha256, draw sha256, pack
 hash as Milestone 1 computes it: bicentennial.packs.manifest.tree_sha256 of --packs) and rows sorted by (life,
 branch, item_id), each with life, branch, item_id, template_ref, bundle_id (or null) and the item's own
-decision_table_ref (a count question carries its template ref, as compile.py gives every QA item). Refuses (exit 3) unless there are exactly 30 action tasks in
-15 twin pairs (5 per action template, one pair per G1 life) and 5 count questions (one per G2 life), and refuses any
-other version of the four templates or their decision tables. Prints counts and the file's sha256 only.
+decision_table_ref (a count question carries its template ref, as compile.py gives every QA item). Refuses (exit 3)
+unless there are exactly 30 action tasks in 15 twin pairs (5 per action template, one pair per G1 life) and 5 count
+questions (one per G2 life), with no life both G1 and G2, and refuses any other version of the four templates or
+their decision tables. Prints counts and the file's sha256 only.
 """
 
 import argparse
@@ -71,6 +72,8 @@ def target_rows(records):
     rows.sort(key=lambda r: (r["life"], r["branch"], r["item_id"]))
     g1 = {rec["life"] for genre, rec, _ in records if genre == "G1"}
     g2 = {rec["life"] for genre, rec, _ in records if genre == "G2"}
+    if g1 & g2:
+        return None, f"{len(g1 & g2)} lives are both G1 and G2"
     action = [r for r in rows if r["bundle_id"] is not None]
     count = [r for r in rows if r["bundle_id"] is None]
     pairs = Counter((r["life"], r["template_ref"], r["bundle_id"]) for r in action)

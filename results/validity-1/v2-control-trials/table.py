@@ -2,18 +2,24 @@
 
 Usage: python table.py --packs PACKS_DIR --tasks TASKS.json --tasks-sha256 HEX --order F1,R1,O1,O2,R2,F2,O3
        F1=RUN_DIR F2=RUN_DIR R1=RUN_DIR R2=RUN_DIR O1=RUN_DIR O2=RUN_DIR O3=RUN_DIR
-       [--reruns LABELS] [--after-reruns] [--checks-only] [--check3 FILE] [--filter-out FILTER.json]
+       [--reruns LABELS] [--attempts LIST] [--after-reruns] [--checks-only] [--check3 FILE] [--filter-out PATH]
 Adapted from Milestone 1's table.py (imported by path; its checks, flag rules and twin filter rule are reused). Reads
 only the target items of TASKS.json (tasks.py), grouped by template ref: an action pair scores twin_min of its twins,
 a count question its own score_milli (halves kept). Prints, in order: 1 header and identity, with each row's centre
 (F, R, O1-O2) and O3's position in the order the arms actually ran (§3); 2 checks before any score (§4); 3 scores by
 template; 4 readings (§5); 5 the oracle filter (counts only; FILTER.json with --filter-out).
-Exit 3: a refusal (a run without control.json or with another row's control, TASKS sha256 or pack hash mismatch, a
-target item absent from the pack), or check 1, 2, 3 or 7, the run order, the card pins or the pack failing. Exit 4:
-check 4 or 5 open without --after-reruns. Exit 5: an arm named in --reruns fails check 1, 2 or 7 again, so the round
-ends (§4): the checks and missing observations are printed, every template reads unresolved, and no score is opened.
+Exit 3: a refusal (a run without control.json or with another row's control; a card at another commit than
+TASKS.json names; TASKS.json with another sha256, edition, pack hash, or rows that are not exactly tasks.py's target
+items of the pack; an inconsistent --attempts), or check 1, 2, 3 or 7, the run order, the card pins or the pack
+failing. Exit 4: check 4 or 5 open without --after-reruns. Exit 5: an arm named in --reruns fails check 1, 2 or 7
+again, or check 3 still fails with --after-reruns, so the round ends (§4): the checks and missing observations are
+printed, every template reads unresolved, and no score is opened.
 Check 4's reference identity is the most common served identity among the arms; on a tie, the tied identity served to
-the arm that ran earliest in --order. A drift disclosure, or none recorded, is a mismatch (M1 §11.15).
+the arm that ran earliest in --order. A drift disclosure, or none recorded, is a mismatch (M1 §11.15). Check 7 also
+needs each unit's own probe file to hold exactly that unit's records. A template is read on the repeats that are
+present, valid, identity-matched and score every target item of it (§4.6); any repeat left out makes it unresolved.
+Row centres (§3) come from --attempts, every attempt in the order it ran; with reruns and no --attempts they are not
+computed.
 Prints counts, labels, 12-character hash prefixes and pass/fail only: never task text, answers, control text, item
 or bundle ids, served identity values, or paths.
 """
@@ -93,27 +99,29 @@ def pts(arms, members):
     return Fraction(sum(bundle_score(a["outcomes"], b) for a in arms for b in members), len(arms) * len(members)) / 10
 
 
-def common(arms, members):
-    return [b for b in members if all(bundle_score(a["outcomes"], b) is not None for a in arms)] if arms else []
-
-
 def line(scores):
     n, got = Counter(scores), [s for s in scores if s is not None]
     return (f"bundles {len(scores)} " + " ".join(f"{v:+d} {n[v]}" if v else f"0 {n[0]}" for v in VALUES) + f" non_result {n[None]}"
             f" points {exact(Fraction(sum(got), len(got)) / 10 if got else None)}")
 
 
-def positions(order, reruns):
-    """{label: 1-based position of the attempt used, in the order the arms actually ran}. A rerun arm's first attempt
-    ran in its declared slot, before the next arm listed whose slot comes after it, and before its own rerun (§3)."""
-    seq, done = [], set()
-    for k in order:
-        for r in [r for r in DECLARED_ORDER if r in reruns and r not in done
-                  and DECLARED_ORDER.index(r) <= DECLARED_ORDER.index(k) - (k not in reruns)]:
-            seq.append(("first attempt", r))
-            done.add(r)
-        seq.append(("used", k))
-    return {k: n for n, (what, k) in enumerate(seq, 1) if what == "used"}
+def positions(attempts, order, reruns):
+    """({label: 1-based position of the attempt used}, None) from --attempts (every attempt in the order it ran, a
+    rerun written L.rerun), or (None, a refusal reason). With no reruns and no --attempts: the order's own positions;
+    with reruns and no --attempts: ({}, None), never a guess (§3)."""
+    if attempts is None:
+        return ({k: n for n, k in enumerate(order, 1)} if not reruns else {}), None
+    seq = attempts.split(",")
+    firsts = [a for a in seq if a in CORE]
+    again = [a.removesuffix(".rerun") for a in seq if a.endswith(".rerun")]
+    if (sorted(firsts) != sorted(CORE) or sorted(again) != sorted(reruns) or len(firsts) + len(again) != len(seq)
+            or any(seq.index(f"{r}.rerun") < seq.index(r) for r in again)):
+        return None, ("--attempts must list each of the seven labels once as a first attempt, each --reruns label once"
+                      " more as L.rerun after it, and nothing else")
+    last = {a.removesuffix(".rerun"): n for n, a in enumerate(seq, 1)}
+    if sorted(last, key=last.get) != order:
+        return None, "--attempts does not give the --order sequence (each label's last attempt)"
+    return last, None
 
 
 def reference_identity(arms, order):
@@ -133,14 +141,17 @@ def drift(arm):
 
 
 def load_pack(packs):
-    """{life: {item_id: naive report}} from the pack's scripted naive retrieval (check 2 R, check 7)."""
-    out = {}
+    """({life: {item_id: naive report}} from the pack's scripted naive retrieval (check 2 R), and every record's
+    (life, branch, item_id) in the pack's sealed/records.json (check 7))."""
+    out, keys = {}, set()
     for sealed in sorted(Path(packs).glob("pack/*/*/*/sealed")):
-        life = {r["life"] for r in json.loads((sealed / "records.json").read_text())}
+        records = json.loads((sealed / "records.json").read_text())
+        life = {r["life"] for r in records}
         assert len(life) == 1, "a sealed life's records name more than one life"
+        keys |= {(r["life"], r["branch"], r["item_id"]) for r in records}
         reports = json.loads((sealed / "naive_rag.json").read_text())["arm"]["reports"]
         out[life.pop()] = {r["item_id"]: r for r in reports}
-    return out
+    return out, keys
 
 
 def main(argv=None):
@@ -155,6 +166,7 @@ def main(argv=None):
     parser.add_argument("--checks-only", action="store_true", help="print sections 1 and 2 only")
     parser.add_argument("--check3", type=Path, help="verbose pytest output of CHECK3_TESTS run at the run commit")
     parser.add_argument("--filter-out", type=Path, help="write FILTER.json here when the scores are opened")
+    parser.add_argument("--attempts", help="every attempt in the order it ran, a rerun written L.rerun (§3 centres)")
     parser.add_argument("arms", nargs="+", metavar="LABEL=RUN_DIR")
     args = parser.parse_args(argv)
     given = dict(a.split("=", 1) for a in args.arms)
@@ -166,10 +178,15 @@ def main(argv=None):
     reruns = args.reruns.split(",") if args.reruns else []
     if len(set(reruns)) != len(reruns) or not set(reruns) <= set(CORE):
         parser.error("--reruns must list labels, each once")
-    # The frozen list (§3): its posted sha256, its pack, and every target item present in the pack.
+    place, refusal = positions(args.attempts, order, reruns)
+    if refusal:
+        return refuse(refusal)
+    # The frozen list (§3): its posted sha256, its edition and pack, and exactly the pack's own target items.
     tasks, refusal = load_tasks(args.tasks, args.tasks_sha256)
     if refusal:
         return refuse(refusal)
+    if tasks["header"]["edition"] != frozen.EDITION:
+        return refuse(f"TASKS.json edition is not {frozen.EDITION}")
     tree = pack_tree_hash(args.packs)
     if tasks["header"]["pack_hash"] != tree:
         return refuse("TASKS.json pack hash differs from the --packs tree hash")
@@ -179,6 +196,9 @@ def main(argv=None):
                  for r in tasks["rows"])
     if absent:
         return refuse(f"{absent} target items of TASKS.json are absent from the pack")
+    rows, _ = frozen.target_rows(frozen.pack_records(args.packs))
+    if rows != tasks["rows"]:
+        return refuse("TASKS.json rows differ from the pack's own target items (tasks.py)")
     arms, missing = {}, {}
     for name in CORE:
         run = Path(given[name])
@@ -193,6 +213,10 @@ def main(argv=None):
         arms[name] = dict(name=name, row=name[0], run=run, card=read(run / "card.json"), control=control,
                           outcomes=read(run / "outcomes.json"), units=read(run / "units.json") or {},
                           disclosures=read(run / "disclosures.json") or {})
+    # One commit for every arm (§3): anything run at another commit than the frozen list's voids the draw.
+    other = [k for k in arms if arms[k]["card"]["pins"].get("benchmark_commit") != tasks["header"]["commit"]]
+    if other:
+        return refuse(f"{','.join(other)} ran at another commit than TASKS.json names")
     if not arms:
         print("== 1. Header and identity")
         for name, code in missing.items():
@@ -202,10 +226,11 @@ def main(argv=None):
             print("pending before any score:", " ".join(missing), "-", RERUN)
             return 4
         return 3
-    ctx = checks(args, load_pack(args.packs), tasks, arms, order, reruns, missing, tree)
+    ctx = checks(args, load_pack(args.packs), tasks, arms, order, reruns, missing, tree, place)
     if ctx["invalid"]:
+        # §4: a rerun failing check 1, 2 or 7 again, or check 3 still failing after the reruns, ends the round.
         again = sorted(ctx["invalid"] & set(reruns), key=CORE.index)
-        if again:
+        if again or ("check 3" in ctx["invalid"] and args.after_reruns):
             round_ends(ctx, again)
             return 5
         if ctx["violation"]:
@@ -213,7 +238,7 @@ def main(argv=None):
         for what, text in (("card pins", "CARD PINS DIFFER between arms (see PIN MISMATCH above): not pooled"),
                            ("pack", "PACK DIFFERS from --packs for an arm (see PACK MISMATCH above): not pooled"),
                            ("check 3", "CHECK 3 NOT SHOWN PASSING at the run commit (see check 3 above): no score"
-                                       " is opened")):
+                                       " is opened; rerun check 3 at the run commit")):
             if what in ctx["invalid"]:
                 print(text)
         for name in sorted(ctx["invalid"] & set(CORE), key=CORE.index):
@@ -230,8 +255,9 @@ def main(argv=None):
     return 0
 
 
-def checks(args, pack, tasks, arms, order, reruns, missing, tree):
+def checks(args, pack, tasks, arms, order, reruns, missing, tree, place):
     """Sections 1 and 2; returns what sections 3-5 need. Missing repeats enter no check (§4.6)."""
+    pack, expected_keys = pack
     bundles = bundles_of(tasks["rows"])
     templates = sorted({b["template"] for b in bundles})
     targets = [k for b in bundles for k in b["keys"]]
@@ -260,11 +286,10 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree):
                                    if not (is_int(s) and is_int(e) and s <= e)), None) or next(
         (f"{b[0]} starts before {a[0]} ends" for a, b in pairwise(times) if b[1] < a[2]), None)
     print("run order verified" if violation is None else f"RUN ORDER VIOLATION: {violation}")
-    place = positions(order, reruns)
-    print(f"row centres in the order the arms actually ran (positions 1-{len(order) + len(reruns)}, each rerun arm's"
-          " first attempt in its own slot): " + " ".join(
-              f"{r} {exact(Fraction(sum(place[k] for k in names[:2]), 2))}" for r, names in ROWS.items())
-          + f"; O3 at {place['O3']} (declared order: each centre 7/2)")
+    print("row centres in the order the arms actually ran: " + (
+        f"(positions 1-{len(order) + len(reruns)}) " + " ".join(
+            f"{r} {exact(Fraction(sum(place[k] for k in names[:2]), 2))}" for r, names in ROWS.items())
+        + f"; O3 at {place['O3']} (declared order: each centre 7/2)" if place else "not computed (pass --attempts)"))
     if violation is not None:
         invalid.add("run order")
     ref = reference_identity(arms, order)
@@ -314,7 +339,6 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree):
         if not ok:
             failed.setdefault(name, []).append(1)
     expected_units = {f"{life}/{branch}" for life in pack for branch in ("B0", "B1")}
-    probed = {(life, i) for life in pack for i in pack[life]}
     probe_files = {name: {unit: read(arms[name]["run"] / arms[name]["control"]["arm"] / unit / "t2lite_probes.json")
                           for unit in sorted(expected_units)} for name in ran}
     # Check 2 reads the probe turn's first request, the one that carries the block (M1 §11.5), on the 35 targets.
@@ -362,41 +386,52 @@ def checks(args, pack, tasks, arms, order, reruns, missing, tree):
         cached = sum(u.get("cached") is not False for u in units.values()) + sum(
             disclosed.get(u, {}).get("cached") is not False for u in units)
         floor_file = read(arm["run"] / f"{arm['control']['arm']}.json") or {}
-        found, records, live, stopped, covered = 0, 0, 0, 0, set()
+        found, records, live, stopped, observed = 0, 0, 0, 0, set()
         for unit, probes in probe_files[name].items():
             found += probes is not None
             for record in probes or []:
                 records += 1
                 live += (record.get("live") or {}).get("served_by") == "live"
-                covered.add((unit.split("/", 1)[0], record.get("item_id")))
+                observed.add((*unit.split("/", 1), record.get("item_id")))
             stopped += (floor_file.get(unit) or {}).get("stops") != {unit.replace("/", ""): None}
-        covered &= probed
+        # Each unit's own probe file holds exactly that unit's records: one unit's probes never stand in for another's.
         ok = (set(units) == expected_units and set(disclosed) == expected_units and cached == 0
               and found == len(expected_units) and records > 0 and live == records and stopped == 0
-              and covered == probed)
+              and observed == expected_keys)
         print(f"check 7 {name}: expected units {len(expected_units)} units listed {len(units)} (card) {len(disclosed)}"
-              f" (disclosures) cached or unconfirmed {cached} probe files found {found} probed items covered"
-              f" {len(covered)} of {len(probed)} probe records {records} sent to the live reader {live} stopped units"
+              f" (disclosures) cached or unconfirmed {cached} probe files found {found} probe keys (life, branch,"
+              f" item) matching the pack's records {len(observed & expected_keys)} of {len(expected_keys)} unexpected"
+              f" {len(observed - expected_keys)} probe records {records} sent to the live reader {live} stopped units"
               f" {stopped} pass {ok}")
         if not ok:
             failed.setdefault(name, []).append(7)
     invalid |= set(failed)
-    used = {r: [arms[k] for k in names if k in arms and k not in invalid | mismatched] for r, names in ROWS.items()}
-    every = used["F"] + used["R"] + used["O"]
+    # §4.6, per template: a repeat is used for t only when it is present, valid, identity-matched and scores every
+    # target item of t (M1 §11.1 is not imported). Any repeat left out makes t unresolved.
     members = {t: [b for b in bundles if b["template"] == t] for t in templates}
-    support = {t: common(every, members[t]) for t in templates}
-    print("check 6: bundles scored in every usable repeat (common support):",
-          {t: f"{len(support[t])} of {len(members[t])}" for t in templates})
+    use, left = {}, {}
+    for t in templates:
+        keys = [k for b in members[t] for k in b["keys"]]
+        left[t] = {k: "missing" if k not in arms else "invalid" if k in invalid else "identity mismatch"
+                   if k in mismatched else "incomplete on this template" for k in CORE
+                   if k not in arms or k in invalid | mismatched
+                   or not all(is_int((arms[k]["outcomes"].get(x) or {}).get("score_milli")) for x in keys)}
+        use[t] = {r: [arms[k] for k in names if k not in left[t]] for r, names in ROWS.items()}
+        print(f"check 6 {t}: repeats used {' '.join(k for k in CORE if k not in left[t]) or 'none'}; left out "
+              + (", ".join(f"{k} ({why})" for k, why in left[t].items()) or "none"))
     return dict(args=args, arms=arms, bundles=bundles, templates=templates, members=members, targets=targets,
                 invalid=invalid, failed=failed, violation=violation, missing=missing, mismatched=mismatched,
-                incomplete=incomplete, used=used, support=support, tasks_sha256=args.tasks_sha256.lower())
+                incomplete=incomplete, use=use, left=left, tasks_sha256=args.tasks_sha256.lower())
 
 
 def round_ends(ctx, again):
-    """§4: a rerun failed check 1, 2 or 7 again. The checks are above; the missing observations, then no score."""
-    said = [f"{k} fails check {','.join(map(str, ctx['failed'][k]))} again after its rerun" for k in again]
+    """§4: a rerun failed check 1, 2 or 7 again, or check 3 still fails after the reruns. The checks are above; the
+    missing observations, then no score."""
+    said = [f"{k} fails check {','.join(map(str, ctx['failed'][k]))} again after its rerun" for k in again] + (
+        ["check 3 is not shown passing at the run commit after the reruns"] if "check 3" in ctx["invalid"] else [])
     print(f"\nROUND ENDS: {'; '.join(said)} (§4); no score is opened")
-    gone = sorted(set(ctx["failed"]) | set(ctx["missing"]) | ctx["mismatched"], key=CORE.index)
+    gone = list(CORE) if "check 3" in ctx["invalid"] else sorted(
+        set(ctx["failed"]) | set(ctx["missing"]) | ctx["mismatched"], key=CORE.index)
     print("missing observations: arms without usable trials", " ".join(gone))
     for t in ctx["templates"]:
         n = sum(len(b["keys"]) for b in ctx["members"][t])
@@ -407,12 +442,14 @@ def round_ends(ctx, again):
 
 def reading(ctx, t):
     """(lines, reading) for one template by §5's precedence: unresolved, unstable, low, cleared/format validated."""
-    used, members, support = ctx["used"], ctx["members"][t], ctx["support"][t]
+    used, members, left = ctx["use"][t], ctx["members"][t], ctx["left"][t]
+    support = members  # every repeat used scores every target item of t (§4.6)
     f, r = pts(used["F"], support), pts(used["R"], support)
     two_o = [a for a in used["O"] if a["name"] in ("O1", "O2")]
     c = pts(two_o, support) if len(two_o) == 2 else None
-    out = [f"-- {t}: bundles on the common support {len(support)} of {len(members)} f {exact(f)} r {exact(r)}"
-           f" c {exact(c)} c over O1,O2,O3 {exact(pts(used['O'], support))}"]
+    names = " ".join(a["name"] for row in used.values() for a in row) or "none"
+    out = [f"-- {t}: bundles {len(members)} repeats used {names} f {exact(f)} r {exact(r)} c {exact(c)}"
+           f" c over O1,O2,O3 {exact(pts(used['O'], support))}"]
     low = state("low", f, r, c)
     trials = [(a["name"], state("low", None, None, pts([a], support))) for a in used["O"]]
     disagree = [n for n, s in trials if (s == "applies") != (low == "applies")]
@@ -434,11 +471,9 @@ def reading(ctx, t):
     if labels:
         out.append(f"  labelled {' + '.join(labels)}: a do-no-harm check, excluded from any claim that memory beats"
                    " retrieval (M1 §6)")
-    gone = [k for k in CORE if k not in {a["name"] for row in used.values() for a in row}]
-    if gone or len(support) < len(members):
+    if left:
         result = "unresolved"
-        out.append(f"  completeness: repeats missing or mismatched {' '.join(gone) or 'none'}; bundles with an"
-                   f" unscored item {len(members) - len(support)}")
+        out.append("  completeness: repeats left out " + ", ".join(f"{k} ({why})" for k, why in left.items()))
     elif disagree:
         result = "unstable"
     elif low == "applies":
@@ -450,7 +485,7 @@ def reading(ctx, t):
 
 def scores(ctx):
     """Sections 3 and 4, printed only when every check passed and no rerun is pending."""
-    arms, used, templates, members = ctx["arms"], ctx["used"], ctx["templates"], ctx["members"]
+    arms, use, templates, members = ctx["arms"], ctx["use"], ctx["templates"], ctx["members"]
     print("\n== 3. Scores by template (bundle scores +1000 +500 0 -500 -1000 milli, non-result; points = 100 x mean)")
     for name in CORE:
         if name not in arms:
@@ -460,11 +495,11 @@ def scores(ctx):
         for t in templates:
             print(f"  {t}: {line([bundle_score(arms[name]['outcomes'], b) for b in members[t]])}")
     for row in ROWS:
-        print(f"-- {row} mean of {[a['name'] for a in used[row]]} on the common support")
+        print(f"-- {row} mean of the repeats used for each template")
         for t in templates:
-            print(f"  {t}: bundles {len(ctx['support'][t])} points {exact(pts(used[row], ctx['support'][t]))}")
-    print("\n== 4. Readings (§5): f, r = means of F1,F2 and R1,R2; c = mean of O1,O2; exact points on each template's"
-          " common support")
+            print(f"  {t}: repeats {[a['name'] for a in use[t][row]]} points {exact(pts(use[t][row], members[t]))}")
+    print("\n== 4. Readings (§5): f, r = means of F1,F2 and R1,R2; c = mean of O1,O2; exact points over each"
+          " template's repeats used, each scoring every target item of the template")
     for t in templates:
         lines, result = reading(ctx, t)
         print("\n".join(lines))
