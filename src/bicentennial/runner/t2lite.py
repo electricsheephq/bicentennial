@@ -403,7 +403,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "no_memory.json", floor)
             _write(out, "custody.json", custody_rows)
             _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits, "turn_wait_s": str(turn_wait_s),
-                "unreadable_state": unreadable_counts(runs),
+                "unreadable_state": unreadable_counts(runs, keep),
                 "identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})

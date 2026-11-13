@@ -188,8 +188,8 @@ def test_developer_docs_name_label_and_rule():
 
 
 def test_unreadable_counts_only_the_scored_attempt():
-    def run(arm, life_name, branch, attempt, labelled, cls=None, audit="OK"):
-        return life.LifeRun(arm, life_name, branch, attempt,
+    def run(arm, life_name, branch, attempt, labelled, cls=None, audit="OK", result=True):
+        return life.LifeRun(arm, life_name, branch, attempt, results={"i": object()} if result else {},
                             item_labels={"i": "unreadable_state"} if labelled else {},
                             classes={"i": cls} if cls else {}, audit={"status": audit})
 
@@ -197,8 +197,10 @@ def test_unreadable_counts_only_the_scored_attempt():
             run("system", "L1", "B1", 0, True),  # scored
             run("no_memory", "L1", "B0", 0, True), run("no_memory", "L1", "B0", 0, True),  # two repetitions
             run("system", "L2", "B0", 0, True, ("INFRA_FAILURE", "x")),  # classed, so not scored as unreadable
-            run("system", "L3", "B0", 2, True, audit="INFRA_FAILURE")]  # a final attempt whose audit failed
+            run("system", "L3", "B0", 2, True, audit="INFRA_FAILURE"),  # a final attempt whose audit failed
+            run("system", "L4", "B0", 2, True, result=False)]  # no reader result: scored as Infra("no_result")
     assert unreadable_counts(runs) == {"no_memory": 2, "system": 1}
+    assert unreadable_counts(runs, keep={"other"}) == {"no_memory": 0, "system": 0}  # T2-lite --only
     assert unreadable_counts([]) == {}
 
 
@@ -212,3 +214,53 @@ def test_diagnostics_skips_an_unreadable_state(tmp_path, monkeypatch):
     assert "L/B0/0/i1/act.json" not in puts and "L/B0/0/i1/workspace" in puts
     assert diag.skips == [dict(path="L/B0/0/i1/act.json", reason="unreadable state")]
     assert diag.failures == []
+
+
+def _wrapped(cause):
+    try:
+        try:
+            raise cause
+        except BaseException as error:
+            raise ValueError("missing or malformed repository file") from error
+    except ValueError as error:
+        return error
+
+
+@pytest.mark.parametrize("error, reader", [
+    (ValueError("invalid decisions entry"), True),
+    (_wrapped(UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")), True),
+    (_wrapped(FileNotFoundError(2, "gone")), True),
+    (_wrapped(IsADirectoryError(21, "a directory")), True),
+    (_wrapped(NotADirectoryError(20, "not a directory")), True),
+    (RecursionError("maximum recursion depth exceeded"), True),
+    (FileNotFoundError(2, "gone"), True),
+    (_wrapped(OSError(24, "Too many open files")), False),
+    (_wrapped(OSError(5, "Input/output error")), False),
+    (_wrapped(PermissionError(13, "Permission denied")), False),
+])
+def test_reader_made_separates_reader_edits_from_harness_faults(error, reader):
+    assert life.reader_made(error) is reader
+
+
+def test_reader_made_on_the_real_parser(tmp_path, monkeypatch):
+    from bicentennial.genres.g1_software.diffs import PATHS, read_state
+
+    first = tmp_path / sorted(PATHS.values())[0]
+    first.parent.mkdir(parents=True)
+    first.mkdir()  # a file replaced by a directory
+    with pytest.raises(ValueError) as caught:
+        read_state(tmp_path)
+    assert life.reader_made(caught.value)
+    first.rmdir()
+    first.write_text("a = " + "[" * 5000 + "]" * 5000 + "\n")  # nesting deep enough to exhaust the parser
+    with pytest.raises((ValueError, RecursionError)) as caught:
+        read_state(tmp_path)
+    assert life.reader_made(caught.value)
+
+    def exhausted(self, *args, **kwargs):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(type(first), "read_text", exhausted)
+    with pytest.raises(ValueError) as caught:
+        read_state(tmp_path)
+    assert not life.reader_made(caught.value)

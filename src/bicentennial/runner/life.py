@@ -167,6 +167,22 @@ class PluginWake:
         return tuple(json.loads(json.dumps(self._records)))
 
 
+READER_OS_ERRORS = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+
+
+def reader_made(error):
+    """Whether a read_state failure after a live probe comes from the reader's own edits.
+
+    read_state (genres/g1_software/diffs.py) raises malformed content as a plain ValueError and wraps OSError,
+    UnicodeError and TOMLDecodeError in ValueError, keeping the original as __cause__; tomllib raises RecursionError
+    on deeply nested arrays. The reader's: malformed content, bad UTF-8 or TOML, deep nesting, a deleted file, a file
+    replaced by a directory or a path through a file. Any other OS error (descriptor exhaustion, I/O, permission) is
+    the harness's, so it keeps the infrastructure class.
+    """
+    cause = error if isinstance(error, OSError) else error.__cause__
+    return not isinstance(cause, OSError) or isinstance(cause, READER_OS_ERRORS)
+
+
 def _cause(error):
     label = str(error) if isinstance(error, HarnessFailed) else type(error).__name__
     return dict(CAUSES).get(label, "INFRA_FAILURE"), label
@@ -529,8 +545,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             if genre == "G1":
                                 try:
                                     state = read_state(paths["workspace"])
-                                except (ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError):
-                                    if leg is None:
+                                except (ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError,
+                                        RecursionError) as error:
+                                    if leg is None or not reader_made(error):
                                         raise
                                     state = UNREADABLE
                                 for iid in probe.item_ids:
