@@ -12,19 +12,19 @@ Milestone 1's oracle row failed two kinds of task even with the needed evidence 
 | `drift-config` | "Bring it up to date" led the reader to change a setting that was only raised as a possibility (2 of 5). | The prompt says when to change the value and when to leave it. |
 | `drift-quote` | The rule that a value later reported or quoted does not replace the value that was set was never stated, and the reader took the quoted value on 6 of 6 with one wording. | The prompt states that rule. |
 
-The v1 templates stay frozen and unchanged, and every existing pack keeps its pins. A pack holds one version of each template: the validation pack has the four v2s and the other templates' unchanged v1s. **The count question can be validated for its answer format only:** its answer is 2 on every T2 life, so a no-memory answer of 2 with no citation would get full marks ([#512](https://github.com/electricsheephq/bicentennial/issues/512)). This round can say whether a right count now scores; it cannot admit the count question as a memory task.
+The v1 templates stay frozen and unchanged, and every existing pack keeps its pins. A pack holds one version of each template: the validation pack has the four v2s and the other templates' unchanged v1s. **The count question can be validated for its answer format only:** its answer is 2 on every T2 life, so a no-memory answer of 2 with no citation would get full marks ([#512](https://github.com/electricsheephq/bicentennial/issues/512)). This round can say whether a right count now scores; it cannot clear the count question as a memory task.
 
 ## 2. The lives
 - **One validation pack**, built with the v2 templates (template edition 2) in T2's exact shape: ten lives of ten sessions (five software-partner lives and five personal-assistant lives), two twin branches each, a kill at session 6 and a model-label swap at session 8. Only the seeds differ from the public T2 spec.
-- **Seeds.** Drawn once, after this declaration, the v2 templates and the roster script are merged: ten design seeds and sixteen ordered spares, each from `secrets.randbits(63)`, checked disjoint from every seed committed in the repository. Before the pack is built, the sha256 of the drawn list is posted on #505. A life whose seed fails the placement dry run takes the next spare, and the failure is recorded. If the dry run stops (a second design seed fails, or one life uses up its replacements), the draw is void. Its seed list, commitment and placement table up to the stop are kept and published with the results, and a new draw follows by the same rules, with its own commitment posted.
+- **Seeds.** Drawn once, at the run commit (§3), which is fixed before the draw: ten design seeds and sixteen ordered spares, each from `secrets.randbits(63)`, checked disjoint from every seed committed in the repository. Before the pack is built, the sha256 of the drawn list is posted on #505 together with the run commit's hash. A life whose design seed fails the placement dry run takes the next spares in order, at most eight (T2's replacement limit), and every failure is recorded. If the dry run stops (a second life's design seed fails, or one life fails a ninth time), the draw is void. Its seed list, commitment and placement table up to the stop are kept and published with the results, and a new draw follows by the same rules, with its own commitment posted.
 - **Hidden until the results.** The validation spec and its seeds stay out of the repository until the results are published; then the spec, the drawn list and the placement table are committed, and anyone can check them against the posted sha256.
 - **Control-only for good.** Only the three control rows below ever run on this pack, before and after the results. The results page lists every run made on its pack hash, and the reading script refuses a run without its control record.
 
 ## 3. What runs
 - **Reader:** the pinned reader model at its pinned effort, through the benchmark's own login, as in Milestone 1. Only the probe answer is live.
-- **One commit for every arm:** a main commit that contains this declaration, the v2 templates, the roster script and the reading script. The results page names it. The v2 templates change none of the four code pins (controls, reader, scoring code, scorer); the page prints them beside Milestone 1's.
+- **One commit for everything:** the run commit is a main commit that contains this declaration, the v2 templates, the roster script and the reading script, all merged before the draw. Its hash is posted with the draw's sha256 (§2), and the draw, the placement, the build, every arm and the reading run at exactly that commit; anything run at another commit voids the draw. The results page names it. The v2 templates change none of the four code pins (controls, reader, scoring code, scorer); the page prints them beside Milestone 1's.
 - **Rows:** F, no memory; R, the pinned naive-retrieval control (top five); O, the pinned oracle-evidence control. Each is defined, and its text placed, exactly as in Milestone 1 (its declaration §1).
-- **Seven arms, in this order:** F, R, O, O, R, F, O. The first six are mirrored, so the means of F, R and the first two O arms sit at the same centre of the order. The seventh is O's third trial. Each arm runs alone over the whole pack from a clean state, never reads a cached result, and keeps the reader's diagnostics privately.
+- **Seven arms, in this order:** F, R, O, O, R, F, O. The first six are mirrored, which mitigates order effects without removing them: in the declared order, the means of F, R and the first two O arms sit at the same centre. The seventh is O's third trial. A rerun runs after the arms already done and moves its row off that centre, so the page prints each row's actual centre beside the actual order. Each arm runs alone over the whole pack from a clean state, never reads a cached result, and keeps the reader's diagnostics privately.
 - **Target items:** every item of a v2 template: 30 action tasks (15 twin pairs: five each of `drift-chain-fault`, `drift-config` and `drift-quote`, one pair per software-partner life) and 5 count questions (one per personal-assistant life). The pack's other items run because the pack carries them; they are not read, published as results, or used to select anything.
 - **Frozen task list:** before the first arm, `TASKS.json` (canonical JSON) lists the commit, the template edition, the spec's sha256, the draw's sha256, the pack hash, and one row per target item: life, branch, item id, template ref, bundle id (or none) and decision table. Its sha256 is posted on #505 with the pack hash. No item leaves the list after that.
 
@@ -41,14 +41,14 @@ Milestone 1's checks (its §2) and its readings 4-9 (§11) apply, with the 35 ta
 If check 1, 2, 3 or 7 fails, the fault is fixed and the arm rerun before any score is opened. If the rerun fails one of these checks again, the round ends: no score is opened, the checks and the missing observations are published, and every template reads unresolved. A rerun keeps its label and runs after the arms already done; the page prints the order in which the arms actually ran.
 
 ## 5. How each template is read
-- **Scores** come from the unchanged scorer. An action pair scores the lower of its two twins' scores (+1 right, 0 no credit, −1 a confident false memory). A count question is its own bundle and scores `score_milli / 1000`, so the half points the scorer gives below asserted confidence are kept (+0.5 or −0.5). A template's points are 100 times its mean over its items on the common support; one pair or question is 20 points.
+- **Scores** come from the unchanged scorer. An action pair scores the lower of its two twins' scores (+1 right, 0 no credit, −1 a confident false memory). A count question is its own bundle and scores `score_milli / 1000`, so the half points the scorer gives below asserted confidence are kept (+0.5 or −0.5). A template's points are 100 times its mean over its items on the common support: raw penalised points from −100 to +100 (PREREG-v0.5 §7), the scale on which §9's 75 is set. One pair or question is 20 points.
 - **f, r, c:** f and r are the means of the two F and the two R arms; c is the mean of the first two O arms. O's third trial enters the stability check and the filter, and the page also prints c over all three.
 - **The low flag** applies when c < 75 (PREREG-v0.5 §9's oracle target, applied per template as in Milestone 1's §4). It is computed on the means and with each O trial alone.
 - **One reading per template,** the first of these that applies:
   1. **unresolved:** §4's completeness rule;
   2. **unstable:** the low flag with any one O trial alone disagrees with the flag on the means;
   3. **low:** the low flag applies;
-  4. **admitted**, or for the count question **format validated** (§1). An admitted action template may enter the fresh-seed follow-up ([#394](https://github.com/electricsheephq/bicentennial/issues/394)) with every other kind.
+  4. **cleared** for the fresh-seed follow-up ([#394](https://github.com/electricsheephq/bicentennial/issues/394)), which it then enters with every other kind; for the count question, **format validated** (§1). Like Milestone 1's "candidate", this clears a template for that follow-up only: it is not PREREG-v0.5 §4's cell admission, §5's Stage A census, or a validated ranking task.
 - **Near-solved flags,** as in Milestone 1's §4 (naive retrieval r ≥ f + 0.7 (c − f); no memory f ≥ 0.7 c; not interpreted when c ≤ f or c ≤ 0), are computed and printed for every template, with their stability over every combination of repeats as in Milestone 1. Unlike Milestone 1, only the low flag's stability enters the reading; the near-solved flags never do. A template they apply to is labelled as such, and Milestone 1's §6 governs its use: kept as a do-no-harm check and excluded from any claim that memory beats retrieval.
 - **The oracle filter** (PREREG-v0.5 §4, filter 3), over O's three trials: an item passes a trial when it scores 1000. A trial from an excluded arm (invalid, or identity-mismatched after its rerun) counts as unscored. An item passes the filter with two passing trials, fails when it could not reach two even if every unscored trial passed, and is unresolved otherwise. A bundle (a twin pair, or one count question) passes when every item passes, fails when any item fails, and is unresolved otherwise; only passing bundles are kept. `FILTER.json` is written after the trials and published with them.
 - **Disclosure counters,** read from the diagnostics after the scores are opened and never used as gates: chain entries written under the exact name; count answers the scorer could not read; on `drift-config`, changes on hedged twins and corrections left unapplied; on `drift-quote`, results by the wording of the later statement.
@@ -56,10 +56,10 @@ If check 1, 2, 3 or 7 fails, the fault is fixed and the arm rerun before any sco
 ## 6. What the result triggers
 | The reading says | Then |
 |---|---|
-| admitted | the template may enter the fresh-seed follow-up with every other kind; its kept bundles are published with the result |
+| cleared | the template enters the fresh-seed follow-up with every other kind; its kept bundles are published with the result |
 | low | its mechanism is measured again from this round's diagnostics before a v3, and the v3 is validated by these rules on a new draw |
 | unstable | one extension pack on a new draw, built, run and checked by these rules, then the pooled reading below |
-| unresolved | the missing observations are the result; the template is not admitted, and the cause is fixed before any new round |
+| unresolved | the missing observations are the result; the template is not cleared, and the cause is fixed before any new round |
 
 - **The pooled reading after an extension.** Only the templates read unstable are read again. Pooled repeat k (F1, F2, R1, R2, O1, O2, O3) is that arm's items on both packs together. f, r, c, the low flag and its stability are computed on the pooled repeats exactly as in §5, and §5's precedence gives the final reading, with "unstable" counting as low. A template whose items are unresolved on the extension pack reads unresolved. Each bundle keeps its own pack's three-trial filter. Templates that were not unstable keep their first reading, and their extension items are not read.
 
@@ -68,9 +68,9 @@ No real system runs on these lives, and nothing here rescores Milestone 1.
 ## 7. Predictions, written before the draw (points; one pair or question = 20)
 | Template | F | R | O (c) | Expected reading |
 |---|---|---|---|---|
-| `drift-chain-fault` v2 | −20 to 0 | −60 to 20 | 60 to 100 | admitted |
-| `drift-config` v2 | −20 to 0 | −40 to 20 | 60 to 100 | admitted |
-| `drift-quote` v2 | −20 to 0 | −60 to 20 | 40 to 100 | unsure: low is as likely as admitted |
+| `drift-chain-fault` v2 | −20 to 0 | −60 to 20 | 60 to 100 | cleared |
+| `drift-config` v2 | −20 to 0 | −40 to 20 | 60 to 100 | cleared |
+| `drift-quote` v2 | −20 to 0 | −60 to 20 | 40 to 100 | unsure: low is as likely as cleared |
 | `recall-count` v2 | 0 | 0 to 60 | 80 to 100 | format validated |
 
 ## 8. What was already seen when this was written
