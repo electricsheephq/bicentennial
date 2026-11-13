@@ -1,5 +1,6 @@
-"""Edition-2 T2 packs (#505, #506): built only from v2 pieces, and accepted by the unchanged run gate."""
+"""Edition-2 T2 packs (#505, #506): built from v2 pieces, with separate control and system admission."""
 
+import json
 from contextlib import closing
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -120,7 +121,8 @@ def test_edition2_pack(edition2):
 
 def test_run_gate_accepts_both_editions(edition1, edition2):
     t1._check_c7(edition1)
-    t1._check_c7(tuple(edition2.packs.values()))
+    t1._check_c7(edition1, control=True)
+    t1._check_c7(tuple(edition2.packs.values()), control=True)
     assert {ref(r) for p in edition1 for r in p.records.values()} & set(V1_OF.values())
 
 
@@ -183,3 +185,67 @@ def test_run_gate_refuses_two_entries_for_one_ref(monkeypatch):
     with pytest.raises(t1.T1Refused) as caught:
         t1._check_c7(())
     assert caught.value.code == "c7_changed"
+
+
+def test_system_run_refuses_unadmitted_v2(edition2):
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7(tuple(edition2.packs.values()), control=False)
+    assert caught.value.code == "template_not_admitted"
+
+
+def test_system_run_accepts_only_admitted_v2(edition2):
+    packs = tuple(replace(p, records={iid: r for iid, r in p.records.items()
+                                     if ref(r) != "recall-count-v2"})
+                  for p in edition2.packs.values())
+    t1._check_c7(packs, control=False)
+
+
+def admissions_with_count():
+    record = json.loads(t1.TEMPLATE_ADMISSIONS.read_bytes())
+    record["admitted"]["recall-count-v2"] = dict(
+        record["admitted"]["drift-quote-v2"],
+        entry_sha256=build.c7_entries(ROOT / C7_FILES[2])["recall-count-v2"]["entry_sha256"])
+    return record
+
+
+def test_system_run_accepts_all_v2_when_admitted(edition2, tmp_path, monkeypatch):
+    path = tmp_path / "admissions.json"
+    path.write_text(json.dumps(admissions_with_count()))
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", path)
+    t1._check_c7(tuple(edition2.packs.values()), control=False)
+
+
+@pytest.mark.parametrize("change", [dict(entry_sha256="f" * 64), dict(reading="format validated")])
+def test_system_run_refuses_wrong_admission(edition2, tmp_path, monkeypatch, change):
+    record = admissions_with_count()
+    record["admitted"]["drift-quote-v2"].update(change)
+    path = tmp_path / "admissions.json"
+    path.write_text(json.dumps(record))
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", path)
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7(tuple(edition2.packs.values()))
+    assert caught.value.code == "template_not_admitted"
+
+
+@pytest.mark.parametrize("content", [None, "{", "[]", "null", "{}", '{"admitted": []}',
+                                     '{"admitted": {"drift-quote-v2": null}}'])
+def test_admissions_missing_or_malformed(edition1, edition2, tmp_path, monkeypatch, content):
+    path = tmp_path / "admissions.json"
+    if content is not None:
+        path.write_text(content)
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", path)
+    reads, real = [], t1._json
+
+    def read(path):
+        reads.append(path)
+        return real(path)
+
+    monkeypatch.setattr(t1, "_json", read)
+    t1._check_c7(edition1, control=False)
+    t1._check_c7(edition1, control=True)
+    t1._check_c7(tuple(edition2.packs.values()), control=True)
+    assert path not in reads
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7(tuple(edition2.packs.values()), control=False)
+    assert caught.value.code == "template_not_admitted"
+    assert reads == [path]

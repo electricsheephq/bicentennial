@@ -243,6 +243,12 @@ Use the process exit as the gate ([RING0 §8, E3](../../specs/ring0/RING0.md#8-e
 
 INVALID exits 1, BLOCKED exits 2, and a known failure wins over a blocked entry. T0 evaluates each pack: honeypot read → INVALID; any FAIL invariant or SYSTEM_FAILURE item → FAIL; otherwise a BLOCKED run → BLOCKED; otherwise PASS. Across packs, exit 1 wins, then 2, then 0. Item scores below 1000 fail JUnit cases but do not gate T0 in v0.1. Those item failures are diagnostics.
 
+For non-control runs, template refs outside edition 1 also need an entry in
+`specs/ring0/template-admissions.json`. A maintainer adds an entry only after a validity
+reading clears that version; it records the `cleared` reading, frozen C-7 `entry_sha256`,
+validity round and result page. A format-validated version is not admitted. Control arms
+bypass this admission check; edition-1 runs do not read the file.
+
 Exit-3 codes and causes, including registry reasons above:
 
 | Code | Cause |
@@ -291,6 +297,7 @@ Exit-3 codes and causes, including registry reasons above:
 | `c7_missing` | Template has no C-7 entry. |
 | `c7_changed` | Template C-7 hash changed. |
 | `c7_edition` | The packs' templates are not all from one template edition. |
+| `template_not_admitted` | A non-control run carries a template ref outside edition 1 without a cleared admission for its frozen C-7 entry hash, or the admissions file is missing or malformed. |
 | `baseline_missing` | T0 fault-free baseline pack/item missing. |
 | `catalogue_changed` | T0 catalogue hash changed. |
 | `visible_canary` | Canary found in agent-visible input. |

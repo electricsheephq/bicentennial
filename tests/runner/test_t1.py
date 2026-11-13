@@ -1073,3 +1073,16 @@ def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp
     monkeypatch.setattr(t1, "run_life", drive)
     t1._unit(short, short.packs[0], "system", "B0", tmp_path, t1.Voids(), None)
     assert seen == [1.0]
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_preparation_passes_control_to_c7(installed, monkeypatch, control):
+    seen = []
+
+    def check(packed, *, control=False):
+        seen.append(control)
+        assert packed
+
+    monkeypatch.setattr(t1, "_check_c7", check)
+    prepare(installed, control=control)
+    assert seen == [control]
