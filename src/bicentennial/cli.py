@@ -177,6 +177,8 @@ def main(argv=None) -> int:
     # passed only when given, so the documented T2 command is unchanged.
     command.add_argument("--control", choices=("no_memory", "naive_rag", "oracle_evidence"),
                          default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    # Its reader trace, kept privately outside the run directory (runner/diagnostics.py); a control arm only.
+    command.add_argument("--diagnostics", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     command = commands.add_parser("report")
     for name in ("current", "previous", "out"):
         command.add_argument("--" + name, required=True)

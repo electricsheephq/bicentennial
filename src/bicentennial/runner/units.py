@@ -264,6 +264,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
         options = dict(spec=spec, keep=keep, unit=unit) if spec is not T1_SPEC or keep is not None else {}
         if config.probe_blocks is not None:
             options["probe_blocks"] = config.probe_blocks
+        if config.diagnostics is not None:
+            options["diagnostics"] = config.diagnostics
         result = _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops, **options)
     except Exception as error:
         with live.launch:
@@ -332,7 +334,7 @@ def _finalise(pack, scores, probes):
 
 
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
-                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None):
+                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, diagnostics=None):
     from bicentennial.runner import t1
 
     measured, keep_ns = False, 0
@@ -387,6 +389,9 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 keep_start = time.monotonic_ns()
                 keep(unit, run, kept_scores, excluded)
                 keep_ns += time.monotonic_ns() - keep_start
+            if diagnostics is not None:
+                # A live control arm only: its reader trace, kept outside the run before cleanup (runner/diagnostics.py).
+                diagnostics.keep(pack, branch, attempt, run, scores, probes)
         finally:
             run.cleanup()
         if attempt == 2 or not any(isinstance(s, Infra) for s in scores.values()):
@@ -453,6 +458,8 @@ class Arm:
     role: str = "system"
     # A live control arm's probe texts by (life, branch); such an arm runs as the floor does (runner/control_arm.py).
     probe_blocks: dict | None = field(default=None, compare=False)
+    # A live control arm's diagnostic trace writer (runner/diagnostics.py); it enters no key, hash or output.
+    diagnostics: object = field(default=None, compare=False, repr=False)
 
     def __post_init__(self):
         if not self.key or self.key in (".", "..") or "/" in self.key or "\\" in self.key:
@@ -461,6 +468,8 @@ class Arm:
             raise ValueError("invalid arm role")
         if self.probe_blocks is not None and self.key not in NO_MEMORY_KEYS[1:]:
             raise ValueError("only a text control arm carries probe blocks")
+        if self.diagnostics is not None and self.role != "no_memory":
+            raise ValueError("only a control arm carries diagnostics")
 
     @classmethod
     def from_context(cls, ctx, key="system"):
