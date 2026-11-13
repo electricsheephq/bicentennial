@@ -353,7 +353,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     # Where the sends went and why attempts failed (#507); a builder failure leaves it out.
                     record = stop_record(runs=runs, labels=labels, stack=stack,
                         max_sends=max_sends, cap=max_sends + (floor_sends or 0), phase=phase,
-                        identity_tries=identity_tries)
+                        identity_tries=identity_tries, code=code)
                     if record is not None:
                         files["attempts.json"] = record
                     if any(n in data for data in files.values() for n in needles):

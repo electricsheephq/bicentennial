@@ -23,11 +23,12 @@ def _sends(tries):
         last_sent_ms=max((d["t_sent_ms"] for d in sent if type(d.get("t_sent_ms")) is int), default=None))
 
 
-def build(*, runs, labels, stack, max_sends, cap, phase, identity_tries):
+def build(*, runs, labels, stack, max_sends, cap, phase, identity_tries, code=None):
     """Canonical attempts.json bytes, or None when anything fails: the refusal then stays as before.
 
     Counts and times only: no item id, answer, envelope, score, request hash or served model. The times are the
     live stack's own monotonic clock (one pacer per run), so they order sends across units and attempts.
+    cap_reached_in is named only for a spend_stop (at T2 the send cap is the only spend stop); otherwise it is null.
     """
     try:
         state = stack.state() if stack is not None else {}
@@ -47,7 +48,9 @@ def build(*, runs, labels, stack, max_sends, cap, phase, identity_tries):
         attributed = identity["sent"] + sum(a["sent"] for a in attempts)
         latest = max(((a["last_sent_ms"], n) for n, a in enumerate(attempts) if a["last_sent_ms"] is not None),
                      default=None)
-        if identity["last_sent_ms"] is not None and (latest is None or identity["last_sent_ms"] > latest[0]):
+        if code != "spend_stop":
+            reached = None
+        elif identity["last_sent_ms"] is not None and (latest is None or identity["last_sent_ms"] > latest[0]):
             reached = "identity_check"
         else:
             reached = None if latest is None else {k: attempts[latest[1]][k]

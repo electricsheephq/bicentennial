@@ -218,6 +218,20 @@ def test_builder_failure_leaves_the_refusal_as_before(t2_scenario, monkeypatch):
                              identity_tries=()) is None
 
 
+def test_cap_reached_in_only_on_a_spend_stop():
+    # A credential or live stop never reached the cap: the record must not name an attempt (#507 review).
+    from types import SimpleNamespace as N
+    tries = [dict(kind="try", sent=True, t_sent_ms=5)]
+    run = N(arm="system", life="t1-g1", branch="B0", attempt=0, classes={}, stopped=None, audit={"status": "OK"},
+            records=(dict(upstream=[dict(served_by="live", diagnostics=tries)]),))
+    stack = N(state=lambda: {"sends": 1})
+    named = dict(arm="system", life="t1-g1", branch="B0", attempt=0)
+    for code, expected in (("spend_stop", named), ("credential_stop", None), ("live_stop", None)):
+        record = json.loads(stop_record.build(runs=[run], labels=(), stack=stack, max_sends=100, cap=100,
+                                              phase="floor", identity_tries=(), code=code))
+        assert record["cap_reached_in"] == expected and record["totals"]["sends"] == 1
+
+
 def test_live_floor_stop_relabels_the_plugin_system_as_in_one_schedule(t2_scenario, monkeypatch):  # noqa: F811
     s = t2_scenario
     monkeypatch.setattr(units, "is_plugin", lambda name: True)
