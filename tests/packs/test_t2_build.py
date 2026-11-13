@@ -37,8 +37,8 @@ def built_t2(tmp_path_factory):
         compiled_templates.append([asdict(v) for v in templates])
         return original_twin(db, schedule, templates, **kwargs)
 
-    def capture_templates(life, records, spec=None):
-        assigned = original_templates(life, records, spec)
+    def capture_templates(life, records, spec=None, **kwargs):
+        assigned = original_templates(life, records, spec, **kwargs)
         packaged_templates.append([asdict(v) for v in assigned])
         return assigned
 

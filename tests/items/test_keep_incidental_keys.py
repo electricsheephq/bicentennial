@@ -116,7 +116,7 @@ def test_item1_other_template_keys_byte_identical_on_built_t0_and_t1(tmp_path, m
     original = build._prepare
     seen, changed, artifact_changes = {}, {}, {}
 
-    def audited(life, worlds, path, tier, rel, row, spec, entries, common_pins):
+    def audited(life, worlds, path, tier, rel, row, spec, entries, common_pins, **kwargs):
         before_worlds = {b: world_hash(db) for b, (db, _) in worlds.items()}
         current = life_keys(life.twin.compiled, life.schedule, worlds)
         # The former rule has no template-declared planted values; all other rules run verbatim.
@@ -152,8 +152,8 @@ def test_item1_other_template_keys_byte_identical_on_built_t0_and_t1(tmp_path, m
             patch.setattr(cache, "code_sha256", lambda files, **kw:
                           "1080557adb04b83a22f3638b969a382377536655ef713b86288c25ee87583131"
                           if tuple(files) == cache.CONTROL_FILES else code_sha256(files, **kw))
-            old_pack = original(life, worlds, baseline, tier, rel, row, spec, entries, common_pins)
-        new_pack = original(life, worlds, path, tier, rel, row, spec, entries, common_pins)
+            old_pack = original(life, worlds, baseline, tier, rel, row, spec, entries, common_pins, **kwargs)
+        new_pack = original(life, worlds, path, tier, rel, row, spec, entries, common_pins, **kwargs)
         old_files = {p.relative_to(baseline).as_posix(): p.read_bytes()
                      for p in baseline.rglob("*") if p.is_file()}
         new_files = {p.relative_to(path).as_posix(): p.read_bytes()

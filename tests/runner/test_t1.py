@@ -222,7 +222,7 @@ def test_pack_preflight(installed, monkeypatch, code):
 
         def missing(path):
             entries = real(path)
-            entries.pop(next(iter(prepare_refs(installed))))
+            entries.pop(next(iter(prepare_refs(installed))), None)  # the gate reads every edition's file
             return entries
 
         monkeypatch.setattr(t1, "c7_entries", missing)

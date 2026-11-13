@@ -70,12 +70,13 @@ def _secure_delete_default():
         db.close()
 
 
-def run_build(*, tier, out):
+def run_build(*, tier, out, **options):
     try:
         from bicentennial.packs.build import build_tier
         from bicentennial.systems.registry import REGISTRY, load
         secure_delete = _secure_delete_default()
-        result = build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]])
+        result = build_tier(tier, out, harness_artifacts=[load(REGISTRY / "hermes-native.toml")["artifact"]],
+                            **options)
         print(f"sqlite_version {result['sqlite_version']}", file=sys.stderr)
         print(f"sqlite_secure_delete_default {secure_delete}", file=sys.stderr)
     except FileExistsError:
@@ -186,6 +187,9 @@ def main(argv=None) -> int:
     command = commands.add_parser("build")
     command.add_argument("--tier", choices=("T0", "T1", "T2"), required=True)
     command.add_argument("--out", required=True)
+    # A developer build from another life spec or template edition (items/editions.py).
+    command.add_argument("--spec", dest="spec_path", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    command.add_argument("--edition", type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     command = commands.add_parser("pins")
     _selection(command)
     command.add_argument("--hermes")
