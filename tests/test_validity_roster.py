@@ -29,8 +29,19 @@ def draw_tree(tmp_path, monkeypatch):
     root.mkdir()
     (root / "seeds.txt").write_text("4 6101 7401\n")
     original = roster.collisions
-    monkeypatch.setattr(roster, "collisions", lambda seeds, root=root: original(seeds, root=root))
+    # draw passes its own root positionally; ignore every root a caller passes and scan only this repository.
+    monkeypatch.setattr(roster, "collisions", lambda seeds, *_, **__: original(seeds, root=root))
     return root
+
+
+def test_draw_scans_only_the_fixture_repository(tmp_path, monkeypatch, draw_tree):
+    unique = 2 ** 62 + 4242  # written only into the fixture repository
+    (draw_tree / "seeds.txt").write_text(f"{unique}\n")
+    drawn = iter([unique, *range(2 ** 62 + 1, 2 ** 62 + 26)])
+    monkeypatch.setattr(secrets, "randbits", lambda bits: next(drawn))
+    out = tmp_path / "DRAW.json"
+    assert roster.main(["draw", "--out", str(out)]) == 2
+    assert not out.exists()
 
 
 def _no_seed_printed(out, seeds):
