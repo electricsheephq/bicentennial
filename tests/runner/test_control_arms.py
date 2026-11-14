@@ -311,6 +311,8 @@ def test_probe_session_writes_the_arms_reader_config(arm_units, control):
             assert unit.configs, (life, branch, arm)
             for cfg in unit.configs:
                 assert_reader_config(cfg, control)
+                # The window control.json records for this arm is the one its reader's compaction runs at (#547).
+                assert cfg["compression"]["threshold_tokens"] == (control_arm.probe_window(control) or WINDOW)
 
 
 def scored_actions(pack, branch):
@@ -504,7 +506,11 @@ def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scena
         assert card["anchor"] == record["anchor"] == expected["anchor"]
     else:
         assert "anchor" not in card and "anchor" not in record
+    if control in ("grep", "recent_window"):
+        expected["reader_window"] = 2 * WINDOW
     assert record == expected
+    # The recorded window is the one every life's reader is configured with; the other arms record none (#547).
+    assert all(kw.get("probe_window") == record.get("reader_window") for kw in s.lives)
     # Each unit's life receives exactly its own blocks; the no_memory arm receives none.
     for kw in s.lives:
         pack = next(p for p in s.ctx.packs if p.life == kw["life_dir"].name)
