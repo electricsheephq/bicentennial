@@ -60,13 +60,19 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
             result["alive_threads"] = thread_names[history - 1]
         return result
 
+    reaped = []
+
     def kill():
+        if reaped:  # as the real cleanup: a reaped worker is not killed again, so it reports no second kill
+            return
+        reaped.append(True)
         a._worker_killed()  # this fixture's worker is live when killed
         if residue_checks is not None and not (root / "ipc.fifo").exists():
             os.mkfifo(root / "ipc.fifo")
 
     a._worker = SimpleNamespace(call=call, kill=kill)
     def spawn(*args):  # as the real _spawn_open: check first; only a clean end clears the flag
+        reaped.clear()  # a new worker
         if spawned is not None:
             spawned.append(a.after_kill)
         if residue_checks is not None:
