@@ -335,6 +335,7 @@ def test_closed_pipe_waits_for_the_exit_before_judging_the_kill(spawn_adapter, m
     a = spawn_adapter
     a.after_kill = False
     monkeypatch.setattr(adapter, "EOF_SETTLE_S", 10.0 if exits else 0.3)
+    monkeypatch.setattr(adapter, "_group_survivors", lambda pid: [])  # this synthetic worker never forks; no ps
     code = "import os,time; print('{\"ready\":true}', flush=True); os.close(1); "
     code += "time.sleep(0.5); os._exit(0)" if exits else "time.sleep(30)"
     worker = adapter._Worker([sys.executable, "-c", code], {}, tmp_path, tmp_path / "stderr",
