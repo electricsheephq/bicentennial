@@ -20,11 +20,11 @@ MISSING = object()
 
 
 def infrastructure_counts(runs):
-    """One stop event, or distinct item labels for a completed attempt; include every attempt."""
+    """One infrastructure stop event, otherwise distinct item labels; include every attempt."""
     counts = {arm: {} for arm in sorted({r.arm for r in runs})}
     for run in runs:
         labels = ([run.stopped[1]] if run.stopped and run.stopped[0] == "INFRA_FAILURE"
-                  else set(run.infra_item_labels) if run.stopped is None else ())
+                  else set(run.infra_item_labels))
         for label in labels:
             counts[run.arm][label] = counts[run.arm].get(label, 0) + 1
         if run.incidental_unknown_400:

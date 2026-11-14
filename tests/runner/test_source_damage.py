@@ -1,7 +1,9 @@
 """Source receipts and per-arm events through socket-free live unit fixtures."""
 
+import errno
 import json
 import os
+import shutil
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -11,8 +13,10 @@ from test_t2 import t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 from test_unreadable_state import harness, lives, unit, unit_sessions  # noqa: F401
 
+from bicentennial.audit.source_damage import SourceBaseline
 from bicentennial.harness.hermes import adapter
 from bicentennial.runner import life, t2, t2lite, units
+from bicentennial.runner.hermes_score import infrastructure_counts
 
 
 def seed_store(monkeypatch, malformed=False):
@@ -34,15 +38,34 @@ def seed_store(monkeypatch, malformed=False):
     monkeypatch.setattr(life, "_surface_bytes", seeded)
 
 
-@pytest.mark.parametrize("kind", ["database", "fifo", "root"])
+@pytest.mark.parametrize("kind", ["database", "fifo", "root", "symlink", "cross", "copy_fail"])
 def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, monkeypatch, kind):  # noqa: F811
     seed_store(monkeypatch)
     original, cleanup = adapter.HermesAdapter.run_session, life.LifeRun.cleanup
+    roots = []
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"credential-needle")
+    rename, copy = os.rename, shutil.copy2
+
+    def move(source, target):
+        if "source_damage" in Path(target).parts:
+            raise OSError(errno.EXDEV, "injected cross-device move")
+        return rename(source, target)
+
+    def copied(source, target, **kw):
+        if kind == "copy_fail":
+            raise PermissionError("injected copy failure")
+        return copy(source, target, **kw)
+
+    if kind in ("cross", "copy_fail"):
+        monkeypatch.setattr(os, "rename", move)
+        monkeypatch.setattr(shutil.move, "__defaults__", (copied,))
 
     def damage(self, index, **kw):
         result = original(self, index, **kw)
         if result.kind == "probe":
             root = self.paths["hermes_home"]
+            roots.append(root)
             if kind == "database":
                 (root / "test.db").write_bytes(b"SQLite format 3\x00" + b"broken" * 100)
                 (root / "test.db-wal").touch()
@@ -50,12 +73,14 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
                 os.mkfifo(root / "bad-entry")
             else:
                 root.rename(root.with_name("removed-by-system"))
-                root.write_bytes(b"system replaced root")
+                if kind == "symlink":
+                    root.symlink_to(os.path.relpath(outside, root.parent))
+                else:
+                    root.write_bytes(b"system replaced root")
         return result
 
     def release(run):
-        receipt, = run.source_receipts
-        canonical = Path(receipt["root"])
+        canonical = roots[0]
         assert canonical.is_dir()
         with sqlite3.connect((canonical / "test.db").as_uri() + "?mode=ro", uri=True) as con:
             assert con.execute("PRAGMA quick_check").fetchall() == [("ok",)]
@@ -69,12 +94,26 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
     assert run.stopped[:2] == ("SYSTEM_FAILURE", "invalid_store" if kind == "database" else "invalid_surface")
     assert not run.restore_failures
     assert all(row["infra_reruns"] == 0 for row in result.scores.values())
-    kept = Path(run.source_receipts[0]["kept"])
-    assert kept.lstat() and not run._root.exists()
-    if kind == "root":
-        assert kept.read_bytes() == b"system replaced root"
+    receipt, = run.source_receipts
+    assert not run._root.exists()
+    assert run.retention_failures == (["PermissionError"] if kind == "copy_fail" else [])
+    if kind in ("symlink", "fifo", "copy_fail"):
+        assert "kept" not in receipt
+        assert not list((tmp_path / "out/source_damage").glob("**/*")) or kind == "copy_fail"
+    else:
+        kept = tmp_path / "out" / receipt["kept"]
+        assert kept.is_file() and not kept.is_symlink()
+        if kind != "database":
+            assert kept.read_bytes() == b"system replaced root"
+    if kind == "symlink":
+        assert receipt["kind"] == "symlink" and receipt["link"] == os.path.relpath(outside, roots[0].parent)
+        t2lite._scan(tmp_path / "out", [b"credential-needle"])
     diagnostic = json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes())
     assert diagnostic["attempts"][0]["source_receipts"] == run.source_receipts
+    assert receipt["surface"] == "HERMES_HOME/."
+    assert receipt["path"] == ("test.db" if kind == "database" else "bad-entry" if kind == "fifo" else ".")
+    assert receipt["kind"] == (kind if kind in ("fifo", "symlink") else "file")
+    assert all(not Path(v).is_absolute() for v in receipt.values() if isinstance(v, str))
 
 
 @pytest.mark.parametrize("fault", ["copy", "checker", "baseline", "busy", "harness_path"])
@@ -192,3 +231,82 @@ def test_unit_diagnostics_keep_every_attempt(lives, unit_sessions, tmp_path, mon
         dict(attempt=0, stopped=["INFRA_FAILURE", "checkpoint_busy", 1], incidental_unknown_400=0,
              infra_item_labels=["checkpoint_busy"]),
         dict(attempt=1, stopped=None, incidental_unknown_400=1)])
+
+
+def test_counts_every_attempt():
+    def run(stopped, labels=(), incidental=0):
+        return life.LifeRun("system", "life", "B0", 0, stopped=stopped,
+                            infra_item_labels=labels, incidental_unknown_400=incidental)
+    assert infrastructure_counts([
+        run(("SYSTEM_FAILURE", "turn_timeout", 1), ("turn_timeout", "audit", "audit")),
+        run(("INFRA_FAILURE", "checkpoint_busy", 1), ("audit",)),
+        run(None, ("no_result", "no_result", "audit"), 2),
+        run(("SYSTEM_FAILURE", "invalid_surface", 1)),
+    ]) == {"system": {"turn_timeout": 1, "audit": 2, "checkpoint_busy": 1,
+                     "no_result": 1, "incidental_unknown_400": 2}}
+
+
+@pytest.mark.parametrize("arm,error", [("system", "fault"), ("system", "interrupt"), ("no_memory", "fault")])
+def test_damage_during_exception(lives, unit_sessions, tmp_path, monkeypatch, arm, error):  # noqa: F811
+    original, run, indices = adapter.HermesAdapter.run_session, units.run_life, []
+
+    def session(self, index, **kw):
+        result = original(self, index, **kw)
+        if not indices:
+            indices.append(index)
+            os.mkfifo(self.paths["hermes_home"] / "bad-entry")
+            raise KeyboardInterrupt() if error == "interrupt" else adapter.HarnessFailed("director_stopped")
+        return result
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    monkeypatch.setattr(units, "run_life", lambda **kw: run(**(kw | dict(arm=arm))))
+    if error == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            unit(lives["t1-g1", "B0"], tmp_path)
+        return
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    first = result.runs[0]
+    assert not first.restore_failures
+    if arm == "no_memory":
+        assert result.attempts == 2 and not first.source_receipts
+        assert first.stopped == ("INFRA_FAILURE", "director_stopped", indices[0])
+    else:
+        assert result.attempts == 1
+        assert first.stopped == ("SYSTEM_FAILURE", "invalid_surface", indices[0])
+        assert first.superseded_causes == ["director_stopped"]
+        diagnostic = json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes())
+        assert diagnostic["attempts"][0]["superseded_causes"] == ["director_stopped"]
+        assert infrastructure_counts(result.runs) == {"system": {}}
+
+
+@pytest.mark.parametrize("replacement", [b"", b"another format", "schema"])
+def test_non_damage_database_replacement(tmp_path, replacement):
+    path = tmp_path / "test.db"
+    if replacement != "schema":
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE t(x)")
+    baseline = SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, tmp_path)], [])
+    if replacement == "schema":
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE t(x)")
+            db.execute("PRAGMA writable_schema=ON")
+            db.execute("UPDATE sqlite_master SET sql='CREATE TABLE t(x BOGUS() )' WHERE name='t'")
+        with pytest.raises(sqlite3.DatabaseError, match="^malformed database schema"):
+            with sqlite3.connect(path) as db:
+                db.execute("PRAGMA quick_check")
+    else:
+        path.write_bytes(replacement)
+    assert baseline.receipt() is None
+
+
+def test_output_scan_does_not_follow_links(tmp_path):
+    target, out = tmp_path / "outside", tmp_path / "out"
+    target.write_bytes(b"credential-needle")
+    out.mkdir()
+    (out / "link").symlink_to(target)
+    t2lite._scan(out, [b"credential-needle"])
+    with pytest.raises(t2lite.t1.T1Refused, match="credential_scan"):
+        t2lite._scan(out, [os.fsencode(target)])  # link text itself is scanned
+    (out / "regular").write_bytes(target.read_bytes())
+    with pytest.raises(t2lite.t1.T1Refused, match="credential_scan"):
+        t2lite._scan(out, [b"credential-needle"])

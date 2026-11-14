@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import stat
 import sys
 import time
 import traceback
@@ -75,8 +76,11 @@ def _secrets(home, login=None):
 
 
 def _scan(out, needles):
-    if any(n in p.read_bytes() for p in out.rglob("*") if p.is_file() for n in needles):
-        raise t1.T1Refused("credential_scan")
+    for p in out.rglob("*"):
+        mode = p.lstat().st_mode
+        data = os.fsencode(os.readlink(p)) if stat.S_ISLNK(mode) else p.read_bytes() if stat.S_ISREG(mode) else b""
+        if any(n in data for n in needles):
+            raise t1.T1Refused("credential_scan")
 
 
 def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):

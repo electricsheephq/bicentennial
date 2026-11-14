@@ -1,5 +1,6 @@
 """Parent-held source observations; failed reads never establish system provenance."""
 
+import os
 import sqlite3
 import stat
 
@@ -12,6 +13,8 @@ def _file_rule(path):
     try:
         return "sqlite_valid" if db.execute("PRAGMA quick_check").fetchall() == [("ok",)] else "sqlite_malformed"
     except sqlite3.DatabaseError as error:
+        if str(error).startswith("malformed database schema"):
+            raise
         if getattr(error, "sqlite_errorcode", None) not in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
             raise
         return "sqlite_malformed"
@@ -36,28 +39,31 @@ def _scan(root):
 class SourceBaseline:
     def __init__(self, surfaces, excluded):
         self.excluded, self.roots = set(excluded), {}
-        for _, root in surfaces:
+        for surface, root in surfaces:
             try:
                 rows = _scan(root)
                 if not set(rows.values()) & {"not_a_directory", "unsupported_entry"}:
-                    self.roots[root] = rows
+                    self.roots[root] = (surface, rows)
             except Exception:
                 pass
 
     def receipt(self):
         try:
-            for root, before in self.roots.items():
+            for root, (surface, before) in self.roots.items():
                 for path, rule in _scan(root).items():
                     if path in self.excluded or path.name.startswith(".config.yaml."):
                         continue
-                    if rule == "file" and before.get(path) == "sqlite_valid":
-                        rule = "sqlite_malformed"
                     if rule not in ("not_a_directory", "unsupported_entry", "sqlite_malformed"):
                         continue
                     if rule == "sqlite_malformed" and before.get(path) not in (None, "sqlite_valid"):
                         continue
-                    return dict(path=str(path), root=str(root), rule=rule,
-                                label="invalid_store" if rule == "sqlite_malformed" else "invalid_surface")
+                    mode = path.lstat().st_mode
+                    kind = next((name for check, name in ((stat.S_ISREG, "file"), (stat.S_ISLNK, "symlink"),
+                        (stat.S_ISFIFO, "fifo"), (stat.S_ISSOCK, "socket")) if check(mode)), "other")
+                    return dict(_path=path, surface=f"{surface['root']}/{surface['relative']}",
+                        path=path.relative_to(root).as_posix(), rule=rule, kind=kind,
+                        **(dict(link=os.fsdecode(os.readlink(path))) if kind == "symlink" else {}),
+                        label="invalid_store" if rule == "sqlite_malformed" else "invalid_surface")
         except Exception:
             pass
         return None

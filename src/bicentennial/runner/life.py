@@ -98,6 +98,10 @@ TERMINAL_DISCLOSURE = ("T1 toolset includes terminal; scripted turns run only co
                        "a live model could reach the Hermes home")
 
 
+class SourceDamage(HarnessFailed):
+    """A parent-held receipt proves damage to a system source."""
+
+
 @dataclass(frozen=True)
 class LifeRun:
     arm: str
@@ -116,6 +120,8 @@ class LifeRun:
     infra_item_labels: tuple = ()
     source_receipts: list = field(default_factory=list)
     restore_failures: list = field(default_factory=list)
+    retention_failures: list = field(default_factory=list)
+    superseded_causes: list = field(default_factory=list)
     kill: tuple | None = None
     expected_call_ids: tuple = ()
     post_restart_requests: tuple = ()
@@ -528,26 +534,32 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             # Harness setup is complete. Observation errors must remain infrastructure, as must a baseline entry.
             act_state_baseline = _act_state_absent(root) if leg is not None and genre == "G1" else False
             act_state_created = False
-            baseline = SourceBaseline(surfaces, [paths["hermes_home"] / p for p in (
+            source_surfaces = surfaces if arm == "system" else []
+            baseline = SourceBaseline(source_surfaces, [paths["hermes_home"] / p for p in (
                 "config.yaml", "mem0.json", ".mem0.json.pending", ".env")] + [p / MARKER for _, p in surfaces])
             source_receipt = None
 
-            def check_sources():
+            def check_sources(exc_type=None, error=None, traceback=None):
                 nonlocal source_receipt
+                if exc_type is not None and not isinstance(error, Exception):
+                    return
                 source_receipt = source_receipt or session_baseline.receipt()
                 if source_receipt is not None:
                     if source_receipt not in evidence.source_receipts:
                         evidence.source_receipts.append(source_receipt)
                         try:
-                            path = Path(source_receipt["path"])
+                            path = source_receipt["_path"]
                             kept = root / f"invalid-source-{index}"
                             path.rename(kept)  # preserve the entry itself, without following it
-                            source_receipt["kept"] = str(kept)
+                            source_receipt["_kept"] = kept
                             if source_receipt["rule"] == "not_a_directory":
                                 path.mkdir()
-                        except Exception as error:
-                            evidence.restore_failures.append(type(error).__name__)
-                    raise HarnessFailed(source_receipt["label"])
+                        except Exception as restore_error:
+                            evidence.restore_failures.append(type(restore_error).__name__)
+                    if not isinstance(error, SourceDamage):
+                        if error is not None:
+                            evidence.superseded_causes.append(_cause(error)[1])
+                        raise SourceDamage(source_receipt["label"])
 
             adapter.check_sources = check_sources
             for session in script["sessions"]:
@@ -612,8 +624,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(swap_in(clone, canonical))
                         if probe:
-                            session_baseline = SourceBaseline(surfaces, baseline.excluded)
-                        stack.callback(check_sources)  # runs before any swap restores, including on exceptions
+                            session_baseline = SourceBaseline(source_surfaces, baseline.excluded)
+                        stack.push(check_sources)  # runs before any swap restores, including on exceptions
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
                         track_state = leg is not None and genre == "G1"
                         absent_before = _act_state_absent(root) if track_state else False
@@ -695,8 +707,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         except OSError:
                             pass
                     cause = ("SYSTEM_FAILURE", source_receipt["label"]) if source_receipt else _cause(error)
-                    if source_receipt and _cause(error) != cause:
-                        evidence.restore_failures.append(type(error).__name__)
+                    if source_receipt and not isinstance(error, SourceDamage):
+                        evidence.restore_failures.append(_cause(error)[1])
                     proven = cause[1] in ("act_state_collision", "worker_protocol", "invalid_store", "invalid_surface") and cause[0] == "SYSTEM_FAILURE"
                     try:
                         rows = _probe_rows(adapter.records(), attempt_id, index) if probe or proven else []
