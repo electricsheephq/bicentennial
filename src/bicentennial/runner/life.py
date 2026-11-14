@@ -532,7 +532,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 if leg is not None:
                     leg.check_session(previous_session)
                 previous_session = index
-                attempt_id = None
+                attempt_id, observed = None, None
                 try:
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
                     if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
@@ -588,10 +588,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
                         track_state = leg is not None and genre == "G1"
                         absent_before = _act_state_absent(root) if track_state else False
+                        observed = absent_before if track_state else None
                         result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)
                         if track_state:
                             act_state_created = (act_state_baseline and not _act_state_absent(root)
                                                  and (absent_before or act_state_created))
+                        observed = None  # up to date before the harness's own act read below
                         live_cut = False
                         sessions.append(result)
                         if not probe:
@@ -654,6 +656,15 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 except (SystemRefused, PinMismatch, LockMismatch, GateRefused, LiveCredentialStop):
                     raise
                 except Exception as error:
+                    if observed is not None:
+                        # The session failed between the observation and the update above; a later session may
+                        # still run (a probe code continues), so an entry it made stays the reader's. An
+                        # observation fault claims nothing and keeps this session's own failure.
+                        try:
+                            act_state_created = (act_state_baseline and not _act_state_absent(root)
+                                                 and (observed or act_state_created))
+                        except OSError:
+                            pass
                     cause = _cause(error)
                     rows = _probe_rows(adapter.records(), attempt_id, index) if probe else []
                     proven = cause[1] in ("act_state_collision", "worker_protocol") and cause[0] == "SYSTEM_FAILURE"
