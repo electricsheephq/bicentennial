@@ -1,5 +1,6 @@
 """Reader-made unreadable G1 workspaces are scored, with no socket or live model."""
 
+import errno
 import json
 import os
 import stat
@@ -7,6 +8,7 @@ import sys
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -85,6 +87,7 @@ def expected(case):
 def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions, tmp_path, monkeypatch, damage):
     case = lives["t1-g1", "B0"]
     clean = unit(case, tmp_path / "clean")
+    assert all("unreadable_paths" not in row for row in clean.probes)
     probe, visited = damage_probe(monkeypatch, case, damage)
     result = unit(case, tmp_path / "broken")
     assert result.attempts == 1 and result.stop is None
@@ -92,6 +95,9 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
     run, = result.runs
     assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
     assert {p["item_id"] for p in result.probes if p.get("label") == "unreadable_state"} == set(probe.item_ids)
+    reason = "missing" if damage == "deleted" else "malformed"
+    assert all(row["unreadable_paths"] == [["docs/decisions.md", reason]]
+               for row in result.probes if row.get("label") == "unreadable_state")
     for iid, row in result.scores.items():
         assert not isinstance(row, Infra)
         assert row["infra_reruns"] == 0
@@ -104,6 +110,95 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
             assert row["score_milli"] == row["worst_case_milli"] == scored.score_milli <= 0
         else:
             assert row == clean.scores[iid]
+
+
+@pytest.mark.parametrize("damage,reason", [("file_mode", "permission"), ("dir_mode", "permission"),
+    ("root_mode", "permission"), ("link", "symlink_loop"), ("dir_link", "symlink_loop"), ("fifo", "not_regular")])
+def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, monkeypatch, damage, reason):
+    case, locked, guards, released = lives["t1-g1", "B0"], [], [], []
+    done, attempted, fifos = Event(), Event(), []
+    read = Path.read_bytes
+
+    def guarded_read(path):
+        if path in fifos and stat.S_ISFIFO(path.lstat().st_mode):
+            attempted.set()
+        return read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+
+    def break_input(workspace):
+        path = workspace / "docs/decisions.md"
+        if damage.endswith("mode"):
+            path = workspace if damage == "root_mode" else workspace / "config" if damage == "dir_mode" else path
+            locked.append(path)
+            path.chmod(0)
+        else:
+            if damage == "dir_link":
+                path.unlink()
+                path = path.parent
+                path.rmdir()
+            else:
+                path.unlink()
+            if damage in ("link", "dir_link"):
+                path.symlink_to(path.name)
+            else:
+                os.mkfifo(path)
+                fifos.append(path)
+
+                def release_regression():
+                    if not done.wait(3) and attempted.is_set():
+                        # RDWR never waits for a peer; it releases a regressed blocking read_bytes.
+                        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+                        released.append(True)
+                        os.close(fd)
+
+                thread = Thread(target=release_regression)
+                thread.start()
+                guards.append(thread)
+
+    probe, _ = damage_probe(monkeypatch, case, break_input)
+    try:
+        result = unit(case, tmp_path)
+        assert result.attempts == 1 and result.stop is None  # base reruns permission/loop faults
+        run, = result.runs
+        failed = sorted(p for p in PATHS.values() if damage == "root_mode" or
+                        (p.startswith("config/") if damage == "dir_mode" else
+                         p.startswith("docs/") if damage == "dir_link" else p == "docs/decisions.md"))
+        assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
+        for iid in probe.item_ids:
+            assert set(run.act[iid]) == set(PATHS.values()) - set(failed)
+            assert run.unreadable_paths[iid] == tuple((p, reason) for p in failed)
+        assert all(row["unreadable_paths"] == [[p, reason] for p in failed]
+                   for row in result.probes if row["item_id"] in probe.item_ids)
+        assert not released  # base opens the FIFO and needs the guard to finish
+        assert not attempted.is_set()
+    finally:
+        done.set()
+        for thread in guards:
+            thread.join()
+        for path in locked:
+            if path.exists():
+                path.chmod(0o700 if path.is_dir() else 0o600)
+
+
+@pytest.mark.parametrize("fault", ["permission", "loop"])
+def test_live_unchanged_raw_read_fault_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    read, armed, failed = Path.read_bytes, [], []
+    damage_probe(monkeypatch, lives["t1-g1", "B0"], lambda workspace: armed.append(workspace))
+
+    def read_bytes(path):
+        if armed and path == armed[-1] / "docs/decisions.md" and not failed:
+            failed.append(path)
+            raise PermissionError("injected raw read fault") if fault == "permission" else OSError(errno.ELOOP, "loop")
+        return read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 2
+    first, redo = result.runs
+    assert first.stopped[:2] == ("INFRA_FAILURE", "PermissionError" if fault == "permission" else "OSError")
+    assert redo.stopped is None and not first.item_labels and not redo.item_labels
+    assert all(row["infra_reruns"] == 1 for row in result.scores.values())
 
 
 def test_live_harness_read_fault_still_reruns(lives, unit_sessions, tmp_path, monkeypatch):
