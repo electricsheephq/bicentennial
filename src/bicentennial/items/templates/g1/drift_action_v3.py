@@ -14,8 +14,8 @@ class DriftActionV3(DriftAction):
     @property
     def lever_mix(self):
         return dict(super().lever_mix, departure=(
-            "validity round 2 (results/validity-2/PLAN.md §4): varies lever 1, no cue in the prompt, "
-            "instead of the cell's primary lever (chain_depth)"))
+            "validity round 2 (results/validity-2/PLAN.md §4): varies levers 1 and 4, no cue in the prompt and the "
+            "decision rule restated in other words, instead of the cell's primary lever (chain_depth)"))
 
     def instances(self, db, schedule):
         i, = super().instances(db, schedule)
