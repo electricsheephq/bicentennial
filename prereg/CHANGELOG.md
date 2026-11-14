@@ -3,8 +3,8 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 erratum, 2026-11-14: score a reader's permission change, link loop or non-regular input as partial state, and record failed input reads (#564, #526)
-- **Partial state:** live G1 action inputs hidden by removed owner permissions, new link loops or replacement FIFOs, devices or sockets are omitted and scored once as `unreadable_state`, never rerun. Special inputs are never opened; links to regular files are read as usual. Permission and loop faults without the reader's change stay infrastructure, as do scratch-copy and parser OS faults.
-- **Evidence and scope:** labelled probe rows add `unreadable_paths`, listing failed inputs and their reasons. Removed permissions on the discarded clone are repaired after the failed reads are recorded. Scripted probes, clean-run bytes, scoring rules and all four code pins stay unchanged.
+- **Partial state:** live G1 action inputs hidden by removed owner permissions, by a new link to a target the reader cannot read or a new link loop, or by replacement FIFOs, devices or sockets are omitted and scored once as `unreadable_state`, never rerun. Special inputs are never opened; links to regular files are read as usual. Permission and loop faults without the reader's change stay infrastructure, as do scratch-copy and parser OS faults.
+- **Evidence and scope:** labelled probe rows add `unreadable_paths`, listing failed inputs and their reasons. Removed permissions on the discarded clone are repaired after the failed reads are recorded; if the reader locked any other directory of its clone, cleanup unlocks it, never following a link, only when the clone's removal fails, so a clean run's cleanup is unchanged. Scripted probes, clean-run bytes, scoring rules and all four code pins stay unchanged.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Ring 0 erratum, 2026-11-14: score proven source damage once and disclose infrastructure events (#557, #526)
