@@ -248,7 +248,9 @@ For non-control runs, template refs outside edition 1 also need an entry in
 reading clears that version; it records the `cleared` reading, frozen C-7 `entry_sha256`,
 validity round and result page, and the reading's `scope` and `labels` as that page states
 them. Validity round 1 cleared its three versions for the fresh-seed follow-up (#394) only,
-labelled "near-solved by naive retrieval": a result on those versions states both. The gate
+labelled "near-solved by naive retrieval": a result on those versions states both. Validity
+round 2 read its three v3 versions as ranking candidates and admitted them for the same
+follow-up, labelled "ranking candidate". The gate
 checks only the reading and the hash. A format-validated version is not admitted. Control
 arms bypass this admission check; edition-1 runs do not read the file. Template edition 3,
 validity round 2's candidate edition (`results/validity-2/PLAN.md` §5 and §6), carries
