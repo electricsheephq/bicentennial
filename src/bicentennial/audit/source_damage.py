@@ -19,6 +19,19 @@ def _sidecars_regular(path):
     return True
 
 
+def keep_sidecars(path, kept):
+    """Move a database's regular -journal, -wal and -shm files beside its kept copy, yielding each suffix moved."""
+    for suffix in SIDECARS:
+        sidecar = path.with_name(path.name + suffix)
+        try:
+            if not stat.S_ISREG(sidecar.lstat().st_mode):
+                continue
+        except FileNotFoundError:
+            continue
+        sidecar.rename(kept.with_name(kept.name + suffix))
+        yield suffix
+
+
 def _file_rule(path):
     with path.open("rb") as stream:
         if stream.read(16) != b"SQLite format 3\x00":
@@ -73,7 +86,8 @@ class SourceBaseline:
                 pass
 
     def receipt(self, after_kill=False):
-        """The first proven damage, or None. After a harness kill, a FIFO or socket is a killed process's residue."""
+        """The first proven damage, or None. After a harness kill, a FIFO or socket is a killed process's residue,
+        whether it replaced a root or lies inside one."""
         try:
             for root, (surface, before) in self.roots.items():
                 for path, rule in _scan(root).items():
@@ -86,7 +100,7 @@ class SourceBaseline:
                     mode = path.lstat().st_mode
                     kind = next((name for check, name in ((stat.S_ISREG, "file"), (stat.S_ISLNK, "symlink"),
                         (stat.S_ISFIFO, "fifo"), (stat.S_ISSOCK, "socket")) if check(mode)), "other")
-                    if after_kill and rule == "unsupported_entry" and kind in ("fifo", "socket"):
+                    if after_kill and kind in ("fifo", "socket"):
                         continue  # judged again once the system's worker ends by itself
                     return dict(_path=path, surface=f"{surface['root']}/{surface['relative']}",
                         **_text("path", path.relative_to(root).as_posix()), rule=rule, kind=kind,

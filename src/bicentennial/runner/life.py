@@ -2,7 +2,6 @@
 
 import json
 import shutil
-import stat
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -20,7 +19,7 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
-from bicentennial.audit.source_damage import SIDECARS, SourceBaseline
+from bicentennial.audit.source_damage import SourceBaseline, keep_sidecars
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_listing
@@ -558,14 +557,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 path.mkdir()
                             if source_receipt["rule"] == "sqlite_malformed":
                                 # Its -journal, -wal and -shm go with it: the journal and WAL may hold the damage read.
-                                for suffix in SIDECARS:
-                                    sidecar = path.with_name(path.name + suffix)
-                                    try:
-                                        if not stat.S_ISREG(sidecar.lstat().st_mode):
-                                            continue
-                                    except FileNotFoundError:
-                                        continue
-                                    sidecar.rename(kept.with_name(kept.name + suffix))
+                                for suffix in keep_sidecars(path, kept):
                                     source_receipt.setdefault("_sidecars", []).append(suffix)
                         except Exception as restore_error:
                             evidence.restore_failures.append(type(restore_error).__name__)

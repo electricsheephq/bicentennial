@@ -388,6 +388,51 @@ def test_kill_residue_is_not_charged(tmp_path, monkeypatch):
     assert baseline.receipt(after_kill=True)["rule"] == "sqlite_malformed"  # a kill cannot leave this
 
 
+@pytest.mark.parametrize("kind", ["fifo", "socket"])
+def test_root_replaced_by_kill_residue(tmp_path, monkeypatch, kind):
+    root = tmp_path / "s"
+    root.mkdir()
+    baseline = surface(root)
+    root.rmdir()
+    if kind == "fifo":
+        os.mkfifo(root)
+    else:
+        monkeypatch.chdir(tmp_path)  # a short relative name, within the socket path limit
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind("s")
+    assert baseline.receipt(after_kill=True) is None  # judged as the same entry inside the root would be
+    receipt = baseline.receipt()
+    assert (receipt["rule"], receipt["kind"], receipt["label"]) == ("not_a_directory", kind, "invalid_surface")
+
+
+def test_earlier_infrastructure_voids_a_damaged_attempt(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    """Damage never causes a rerun, but an infrastructure item earlier in the same attempt voids that attempt.
+
+    The contract records an infrastructure item only after two reruns (score/classes.py), and a rerun replays the
+    whole unit, as for every system failure; the voided attempt's receipt stays in the unit diagnostics."""
+    original = units.run_life
+    receipt = dict(surface="HERMES_HOME/.", path="state.db", rule="sqlite_malformed", kind="file",
+                   label="invalid_store")
+
+    def run(**kw):
+        found = original(**kw)
+        if kw["attempt"] == 0:
+            first, *rest = [i["item_id"] for i in kw["items"]]
+            return replace(found, stopped=("SYSTEM_FAILURE", "invalid_store", 1), source_receipts=[dict(receipt)],
+                classes={first: ("INFRA_FAILURE", "shadow_error"),
+                         **{iid: ("SYSTEM_FAILURE", "invalid_store") for iid in rest}})
+        return found
+
+    monkeypatch.setattr(units, "run_life", run)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 2 and result.stop is None
+    assert all(scored["failure_class"] != "SYSTEM_FAILURE" for scored in result.scores.values())
+    assert json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes()) == dict(attempts=[
+        dict(attempt=0, stopped=["SYSTEM_FAILURE", "invalid_store", 1], incidental_unknown_400=0,
+             infra_item_labels=["shadow_error"], source_receipts=[receipt]),
+        dict(attempt=1, stopped=None, incidental_unknown_400=0)])
+
+
 def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
     original, fired = adapter.HermesAdapter.run_session, []
 
