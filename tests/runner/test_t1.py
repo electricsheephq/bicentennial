@@ -238,7 +238,7 @@ def test_control_only_unlisted_and_verified_order(installed, tmp_path, monkeypat
 def test_shipped_control_only_pack_matches_round1_result():
     digest = "172b87bf9c60ed79c1b56fbccb0f8caba64f931124581c6d46f6838e55fc59b5"
     record = json.loads(t1.CONTROL_ONLY_PACKS.read_bytes())
-    assert record["control_only"] == control_only_record(digest)["control_only"]
+    assert record["control_only"][digest] == control_only_record(digest)["control_only"][digest]
     page = (t1.REPO / record["control_only"][digest]["result"]).read_text()
     assert f"**Validation pack** hash `{digest}`" in page
 
