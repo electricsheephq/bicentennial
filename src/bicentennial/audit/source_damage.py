@@ -147,7 +147,7 @@ class SourceBaseline:
                         (stat.S_ISFIFO, "fifo"), (stat.S_ISSOCK, "socket"),
                         (stat.S_ISDIR, "directory")) if check(mode)), "other")
                     if after_kill and kind in ("fifo", "socket"):
-                        continue  # judged again once the system's worker ends by itself
+                        continue  # judged again at the first check after the next clean end
                     return dict(_path=path, surface=f"{surface['root']}/{surface['relative']}",
                         **_text("path", path.relative_to(root).as_posix()), rule=rule, kind=kind,
                         **(_text("link", os.readlink(path)) if kind == "symlink" else {}),
