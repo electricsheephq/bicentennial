@@ -2,7 +2,6 @@
 
 import importlib
 import json
-import subprocess
 import sys
 import time
 from contextlib import closing
@@ -179,10 +178,14 @@ def test_command_shapes_and_safe_stdout(fixture, tmp_path, capsys):
     assert card['header']['variant_texts'] == TEXTS['drift-config-K1']
     assert all(len(data['header'][k]) == n for k, n in (('spec_sha256', 64), ('base_commit', 40)))
     assert len(card['header']['module_sha256']) == 64
-    tasks = tmp_path / 'split.json'
-    tasks.write_bytes(canon(dict(rows=[dict(item_id=variant['items'][0]['item_id'])])))
-    with pytest.raises(ValueError, match='splits a pair'):
-        command.evaluate(out / 'drift-config-K1/0/T2', CANDIDATES['drift-config-K1'][0], tasks)
+    split = canon(dict(rows=[dict(item_id=variant['items'][0]['item_id'])]))
+    # A supplied selection is read as given, including one at the path a run without a
+    # selection writes to: it is refused, never overwritten.
+    for tasks in (tmp_path / 'split.json', out / 'drift-config-K1/0/tasks.json'):
+        tasks.write_bytes(split)
+        with pytest.raises(ValueError, match='splits a pair'):
+            command.evaluate(out / 'drift-config-K1/0/T2', CANDIDATES['drift-config-K1'][0], tasks)
+        assert tasks.read_bytes() == split
     registries_unchanged()
 
 
@@ -209,18 +212,20 @@ def test_registry_import_stays_isolated():
     registries_unchanged()
 
 
+# The public T2 packs as `main` builds them at 99fdadc, from a clean tree with no screening
+# code. Edition 1's is also the pack hash of the published 2026-11-04 live-arm result.
+PUBLIC_T2_HASHES = {
+    1: '15141b194ab8abf389af2bfdbb4fd81e4d511fca14c54508d613fbe156628c04',
+    2: '3e58b80124568d1fd275e608a17b2c145531b2619d1d2155ee32aed71c23658d',
+}
+
+
 def test_public_t2_hashes_equal_base(tmp_path):
-    # Existing public build fixtures have no fixed hash constants. Compare the base
-    # builder itself, without changing any checkout or importing another tree.
-    source = subprocess.check_output(['git', 'show', 'HEAD:src/bicentennial/packs/build.py'], cwd=ROOT, text=True)
-    original = dict(__name__='bicentennial.packs._base534', __package__='bicentennial.packs',
-                    __file__=str(ROOT / 'src/bicentennial/packs/build.py'))
-    exec(compile(source, original['__file__'], 'exec'), original)
-    for edition in (1, 2):
-        before = original['build_tier']('T2', tmp_path / f'base-{edition}', edition=edition, harness_artifacts=[load(REGISTRY / 'hermes-native.toml')['artifact']])
-        after = build.build_tier('T2', tmp_path / f'current-{edition}', edition=edition, harness_artifacts=[load(REGISTRY / 'hermes-native.toml')['artifact']])
-        assert before['pack_hash'] == after['pack_hash']
-        print(f"edition {edition} public T2 hash={after['pack_hash']}")
+    artifact = load(REGISTRY / 'hermes-native.toml')['artifact']
+    for edition, expected in PUBLIC_T2_HASHES.items():
+        built = build.build_tier('T2', tmp_path / f'edition-{edition}', edition=edition,
+                                 harness_artifacts=[artifact])
+        assert built['pack_hash'] == expected, f'edition {edition}'
 
 
 def test_gate_on_synthetic_rows_only():

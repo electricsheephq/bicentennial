@@ -34,12 +34,14 @@ def evaluate(root, template, tasks=None):
     paths = sorted(Path(root).rglob("sealed/pack.json"))
     ids = {r["item_id"] for p in paths for r in anchors.load(p.parent / "records.json")
            if (r["template_id"], r["template_version"]) == (template.template_id, template.version)}
-    selection = Path(root).parent / "tasks.json"
-    selection.write_bytes(canon(dict(rows=[dict(item_id=i) for i in sorted(ids)])))
-    selected = ids if tasks is None else {r["item_id"] for r in anchors.load(Path(tasks))["rows"]}
+    if tasks is None:
+        # Only a run without a selection writes one; a supplied file is never touched.
+        tasks = Path(root).parent / "tasks.json"
+        tasks.write_bytes(canon(dict(rows=[dict(item_id=i) for i in sorted(ids)])))
+    selected = {r["item_id"] for r in anchors.load(Path(tasks))["rows"]}
     if not selected or not selected <= ids:
         raise ValueError("tasks must select candidate items")
-    report = anchors.screen(root, tasks or selection)
+    report = anchors.screen(root, tasks)
     rows = {r["item_id"]: r for r in report["items"]}
     values = {n: [p["anchors"][n]["score_milli"] for p in report["pairs"]]
               for n in ("naive_rag", *anchors.ANCHORS)}
