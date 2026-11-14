@@ -29,8 +29,10 @@ from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.genres.g1_software.diffs import (
     EMPTY_TREE_HASH,
+    PATHS,
     end_boundary,
     read_state,
+    render,
     start_boundary,
 )
 from bicentennial.genres.g1_software.repo import materialize, workspace_hash
@@ -50,7 +52,6 @@ from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
-from bicentennial.runner.hermes_score import UNREADABLE
 from bicentennial.runner.lock import LockMismatch
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
@@ -168,6 +169,7 @@ class PluginWake:
 
 
 READER_OS_ERRORS = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+STATE_READ_ERRORS = (ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError, RecursionError)
 
 
 def reader_made(error):
@@ -181,6 +183,40 @@ def reader_made(error):
     """
     cause = error if isinstance(error, OSError) else error.__cause__
     return not isinstance(cause, OSError) or isinstance(cause, READER_OS_ERRORS)
+
+
+def _read_action_state(workspace, scratch):
+    """Read each live action file with the pinned parser; omit only reader-made failures."""
+    state, unreadable = {}, False
+    empty = render({p: {} for p in PATHS.values()})
+    # One fixed scratch folder inside the life's fresh root: tempfile's random names are outside this module's
+    # firewall (tests/runner/test_life_fake.py). A leftover folder can only come from a failed cleanup and raises.
+    root = Path(scratch) / "act-state"
+    root.mkdir()
+    try:
+        for p, data in empty.items():
+            (root / p).parent.mkdir(parents=True, exist_ok=True)
+            (root / p).write_bytes(data)
+        for p in sorted(empty):
+            try:
+                raw = (workspace / p).read_bytes()
+            except STATE_READ_ERRORS as error:
+                if not reader_made(error):
+                    raise
+                unreadable = True
+                continue
+            # Scratch writes are harness operations, outside the reader-error boundary.
+            (root / p).write_bytes(raw)
+            try:
+                state[p] = read_state(root)[p]
+            except STATE_READ_ERRORS as error:
+                if not reader_made(error):
+                    raise
+                unreadable = True
+            (root / p).write_bytes(empty[p])
+    finally:
+        shutil.rmtree(root)
+    return state, unreadable
 
 
 def _cause(error):
@@ -543,16 +579,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             if genre == "G2":  # the probe's server may still be writing its session_end
                                 wiring.wait_end(index, END_WAIT_S)
                             if genre == "G1":
-                                try:
-                                    state = read_state(paths["workspace"])
-                                except (ValueError, FileNotFoundError, IsADirectoryError, NotADirectoryError,
-                                        RecursionError) as error:
-                                    if leg is None or not reader_made(error):
-                                        raise
-                                    state = UNREADABLE
+                                if leg is None:
+                                    state, unreadable = read_state(paths["workspace"]), False
+                                else:
+                                    state, unreadable = _read_action_state(paths["workspace"], root)
                                 for iid in probe.item_ids:
                                     evidence.act[iid] = state
-                                    if state is UNREADABLE:
+                                    if unreadable:
                                         evidence.item_labels[iid] = "unreadable_state"
                             else:
                                 for iid in probe.item_ids:
