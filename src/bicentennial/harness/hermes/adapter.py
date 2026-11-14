@@ -397,6 +397,8 @@ class HermesAdapter:
         finally:
             self._held = None
         m = _now()
+        if getattr(self, "check_sources", None) is not None:
+            self.check_sources()
         from bicentennial.systems.hermes_plugin import checkpoint_sqlite
         roots = {"HERMES_HOME": self.paths["hermes_home"], "SANDBOX_HOME": self.paths["home"]}
         checkpoint_sqlite(roots[s["root"]] / s["relative"] for s in self.entry["surfaces"])
@@ -426,6 +428,8 @@ class HermesAdapter:
 
     def _spawn_open(self, reason, sid, t) -> tuple[str, int, bool]:
         """before_spawn, a niced worker, then open: a new session (sid None) or a resume by id."""
+        if getattr(self, "check_sources", None) is not None:
+            self.check_sources()
         wiped = self.before_spawn is not None and self.before_spawn(reason) is True  # S10's hook reports a wipe
         self._wiped |= wiped
         sid = None if wiped else sid

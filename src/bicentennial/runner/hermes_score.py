@@ -19,6 +19,20 @@ from bicentennial.systems.registry import SystemRefused
 MISSING = object()
 
 
+def infrastructure_counts(runs):
+    """One stop event, or distinct item labels for a completed attempt; include every attempt."""
+    counts = {arm: {} for arm in sorted({r.arm for r in runs})}
+    for run in runs:
+        labels = ([run.stopped[1]] if run.stopped and run.stopped[0] == "INFRA_FAILURE"
+                  else set(run.infra_item_labels) if run.stopped is None else ())
+        for label in labels:
+            counts[run.arm][label] = counts[run.arm].get(label, 0) + 1
+        if run.incidental_unknown_400:
+            counts[run.arm]["incidental_unknown_400"] = (
+                counts[run.arm].get("incidental_unknown_400", 0) + run.incidental_unknown_400)
+    return counts
+
+
 def unreadable_counts(runs, keep=None):
     """Count, per arm, the items scored as unreadable_state: labelled items in the scored attempt of each unit that
     reach the scorer's act path, as runner/units.py _score_run and score_item route them: no cause class, an OK audit

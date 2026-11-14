@@ -389,11 +389,14 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 raise t1.T1Refused("canary")
             _check_stop(live)
             scores, excluded, probes = _score_run(ctx, pack, branch, arm, run, attempt, floor_stops)
+            run = replace(run, infra_item_labels=tuple(sorted({s.label for s in scores.values() if isinstance(s, Infra)})))
+            runs[-1] = run
             if labels is not None:
                 labels.append((attempt, tuple(s.label for s in scores.values() if isinstance(s, Infra))))
             _write(out, "t2lite_probes.json", probes)
             _write(out, "unit_diagnostics.json", dict(attempts=[dict(attempt=r.attempt, stopped=r.stopped,
-                incidental_unknown_400=r.incidental_unknown_400) for r in runs]))
+                incidental_unknown_400=r.incidental_unknown_400, infra_item_labels=r.infra_item_labels,
+                source_receipts=r.source_receipts, restore_failures=r.restore_failures) for r in runs]))
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:
                 measured = _floor_measured(pack, branch, run, probes, scores)

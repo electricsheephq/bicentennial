@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from bicentennial.audit.effects import hermes as hermes_effects
+from bicentennial.audit.source_damage import SourceBaseline
 from bicentennial.audit.readback import (
     audit,
     failures,
@@ -89,7 +90,7 @@ PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "engine_inactive", "end_failed", "exit_timeout",
-    "turn_timeout", "end_timeout", "act_state_collision", "worker_protocol")) + tuple(
+    "turn_timeout", "end_timeout", "act_state_collision", "worker_protocol", "invalid_store", "invalid_surface")) + tuple(
     (label, "INFRA_FAILURE") for label in (
         "director_stopped", "director_inflight", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
         "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy", "admission_deadline"))
@@ -112,6 +113,9 @@ class LifeRun:
     act: dict = field(default_factory=dict)
     item_labels: dict = field(default_factory=dict)
     incidental_unknown_400: int = 0
+    infra_item_labels: tuple = ()
+    source_receipts: list = field(default_factory=list)
+    restore_failures: list = field(default_factory=list)
     kill: tuple | None = None
     expected_call_ids: tuple = ()
     post_restart_requests: tuple = ()
@@ -524,6 +528,28 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             # Harness setup is complete. Observation errors must remain infrastructure, as must a baseline entry.
             act_state_baseline = _act_state_absent(root) if leg is not None and genre == "G1" else False
             act_state_created = False
+            baseline = SourceBaseline(surfaces, [paths["hermes_home"] / p for p in (
+                "config.yaml", "mem0.json", ".mem0.json.pending", ".env")] + [p / MARKER for _, p in surfaces])
+            source_receipt = None
+
+            def check_sources():
+                nonlocal source_receipt
+                source_receipt = source_receipt or baseline.receipt()
+                if source_receipt is not None:
+                    if source_receipt not in evidence.source_receipts:
+                        evidence.source_receipts.append(source_receipt)
+                        if source_receipt["rule"] == "not_a_directory":
+                            try:
+                                path = Path(source_receipt["path"])
+                                kept = root / f"invalid-surface-{index}"
+                                path.rename(kept)  # preserve the entry itself, without following it
+                                source_receipt["kept"] = str(kept)
+                                path.mkdir()
+                            except Exception as error:
+                                evidence.restore_failures.append(type(error).__name__)
+                    raise HarnessFailed(source_receipt["label"])
+
+            adapter.check_sources = check_sources
             for session in script["sessions"]:
                 index, probe = session["index"], probes.get(session["index"])
                 if repro is not None and (probe is None or repro.item_id not in probe.item_ids):
@@ -585,6 +611,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(swap_in(clone, canonical))
+                        stack.callback(check_sources)  # runs before any swap restores, including on exceptions
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
                         track_state = leg is not None and genre == "G1"
                         absent_before = _act_state_absent(root) if track_state else False
@@ -654,9 +681,11 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 except (SystemRefused, PinMismatch, LockMismatch, GateRefused, LiveCredentialStop):
                     raise
                 except Exception as error:
-                    cause = _cause(error)
+                    cause = ("SYSTEM_FAILURE", source_receipt["label"]) if source_receipt else _cause(error)
+                    if source_receipt and _cause(error) != cause:
+                        evidence.restore_failures.append(type(error).__name__)
                     rows = _probe_rows(adapter.records(), attempt_id, index) if probe else []
-                    proven = cause[1] in ("act_state_collision", "worker_protocol") and cause[0] == "SYSTEM_FAILURE"
+                    proven = cause[1] in ("act_state_collision", "worker_protocol", "invalid_store", "invalid_surface") and cause[0] == "SYSTEM_FAILURE"
                     if proven:
                         evidence = replace(evidence, incidental_unknown_400=evidence.incidental_unknown_400 + sum(
                             r.get("role") == "unknown" and r.get("status") == 400 for r in rows))
