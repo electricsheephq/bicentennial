@@ -233,11 +233,12 @@ def test_act_state_entry_from_a_failed_session_stays_the_readers(lives, unit_ses
     assert result.attempts == 3  # the earlier session's own code redoes the unit, so the third attempt is scored
     run = result.runs[-1]
     assert all(run.classes[iid] == ("INFRA_FAILURE", "unknown_400") for iid in prior.item_ids)
-    if fault:
-        assert run.stopped[0] == "INFRA_FAILURE"
+    if fault:  # the fault stays in the failing session: the life continues and the act read finds the entry
+        assert run.stopped == ("INFRA_FAILURE", "FileExistsError", probe.index)
     else:
         assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
-    assert all(result.scores[iid]["failure_class"] == ("INFRA_FAILURE" if fault else "SYSTEM_FAILURE")
+    # An infrastructure failure on the third attempt is scored BLOCKED (score/classes.py).
+    assert all(result.scores[iid]["failure_class"] == ("BLOCKED" if fault else "SYSTEM_FAILURE")
                for iid in probe.item_ids)
 
 
