@@ -62,7 +62,7 @@ def read_input(workspace, path, baseline, repairs):
                 return data, None
         if stat.S_ISDIR(mode):
             return None, "directory"
-        # A FIFO, device or socket where the input was a file or nothing is never opened for reading.
+        # A FIFO, device or socket where the input was a file or nothing is never read (and opened only without blocking).
         if baseline.get(path, {}).get("kind") in (None, "file") and not _behind_baseline_link(path, baseline):
             return None, "not_regular"
         raise OSError(errno.EINVAL, "non-regular input the probe listing did not show as new")
