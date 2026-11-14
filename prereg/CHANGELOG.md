@@ -2,6 +2,10 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 erratum, 2026-11-14: score two system-caused harness failures once (#526)
+- **System failures:** a live G1 reader that creates the previously absent `act-state` entry is scored once as `SYSTEM_FAILURE` with cause `act_state_collision`, and a system plug-in worker's malformed or wrongly shaped reply after ready is scored once with cause `worker_protocol`; control and floor workers are unchanged.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-14: score the repository files that parse when one is unreadable (#537)
 - **T2 and T2-lite, live G1 actions:** amending #524 below, after a live probe the runner reads each of the four repository files separately through the pinned parser. The action state contains the files that parse; only an unreadable file's predicates read False. Disqualifiers, admissible states and benign extras on readable files count as usual (PREREG-v0.5 §3). A stale write on a readable file can therefore score FAIL_MEMORY, −1, even when another file is unreadable; if all files are unreadable, the changed state still matches neither and scores FAIL_TASK, 0.
 - **Accounting and evidence:** the item keeps its `unreadable_state` label and the same per-arm disclosure count and coverage accounting. Diagnostics write the partial state as `act.json` and keep the workspace. Any harness-made file error stays infrastructure, as do workspace roots replaced by files or symbolic links (#526).

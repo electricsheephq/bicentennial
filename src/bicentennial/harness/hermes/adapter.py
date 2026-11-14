@@ -120,9 +120,29 @@ def verify_pin(checkout, pin) -> str:
                           capture_output=True, text=True, check=True, env=env).stdout.strip()
 
 
+def _session_reply(out, phase):
+    """The fields consumed by the session adapter; an explicit failed op may omit its success fields."""
+    if not isinstance(out, dict) or type(out.get("ok")) is not bool:
+        return False
+    for key in ("alive_threads", "active_memory_providers"):
+        if key in out and (not isinstance(out[key], list) or not all(isinstance(n, str) for n in out[key])):
+            return False
+    engine = out.get("active_context_engine")
+    if engine is not None and not isinstance(engine, str):
+        return False
+    if not out["ok"]:
+        return True
+    if phase == "open":
+        return isinstance(out.get("session_id"), str) and type(out.get("history")) is int
+    if phase == "turn":
+        return isinstance(out.get("final"), str) and type(out.get("history")) is int
+    return phase == "end"
+
+
 class _Worker:
-    def __init__(self, argv, env, cwd, log, egress=None):
+    def __init__(self, argv, env, cwd, log, egress=None, system_plugin=False):
         self._buffer, self._reaped, self.egress = b"", False, egress
+        self._ready, self._system_plugin = False, system_plugin
         self._cleanup_lock = Lock()
         own = os.getpriority(os.PRIO_PROCESS, 0)  # nice -n adds: only the gap to 19 (guard.py 86-91)
         prefix = ["nice", "-n", str(19 - own)] + (["taskpolicy", "-b"] if sys.platform == "darwin" else [])
@@ -138,6 +158,7 @@ class _Worker:
             self.t_import_ms = ready.get("t_import_ms")
             if not ready.get("ready"):
                 raise HarnessFailed("worker_start")
+            self._ready = True
         except BaseException:
             self.kill()
             raise
@@ -175,7 +196,16 @@ class _Worker:
             line, self._buffer = self._buffer.split(b"\n", 1)
         except OSError:
             return None
-        return json.loads(line) if line else None
+        attributed = self._ready and self._system_plugin
+        try:
+            out = json.loads(line) if line or attributed else None
+        except (ValueError, RecursionError) as error:
+            if attributed:
+                raise HarnessFailed("worker_protocol") from error
+            raise
+        if attributed and not _session_reply(out, phase):
+            raise HarnessFailed("worker_protocol")
+        return out
 
     def kill(self, *, clean=False):
         with self._cleanup_lock:
@@ -412,7 +442,8 @@ class HermesAdapter:
         t0 = _now()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
-                               self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress)
+                               self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress,
+                               bool(self.plugin is not None or self.context_engine is not None or self.plugins_enabled))
         self.pids.append(self._worker.proc.pid)  # recorded before the check, as the memory host does
         assert_niced(self.pids[-1])
         t["spawn"].append(_ms(t0))

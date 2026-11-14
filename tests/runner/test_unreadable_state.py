@@ -1,7 +1,12 @@
 """Reader-made unreadable G1 workspaces are scored, with no socket or live model."""
 
 import json
+import os
+import stat
+import sys
+from contextlib import nullcontext
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -119,6 +124,113 @@ def test_live_harness_read_fault_still_reruns(lives, unit_sessions, tmp_path, mo
     assert not first.item_labels and not redo.item_labels
     assert redo.stopped is None
     assert all(row["infra_reruns"] == 1 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("kind", ["directory", "file", "symlink"])
+def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, monkeypatch, kind):
+    case = lives["t1-g1", "B0"]
+    entries = []
+
+    def collide(workspace):
+        # workspace = <attempt>/B0/run/workspace; the fixed scratch folder is beside run.
+        path = workspace.parent.parent / "act-state"
+        if kind == "directory":
+            path.mkdir()
+            (path / "sentinel").write_text("reader entry")
+        elif kind == "file":
+            path.write_text("reader entry")
+        else:
+            path.symlink_to("missing-reader-target")
+        entries.append((path, path.lstat().st_ino))
+
+    probe, _ = damage_probe(monkeypatch, case, collide)
+    # The production unit releases its entire attempt after scoring; keep this test's evidence to inspect it.
+    monkeypatch.setattr(life.LifeRun, "cleanup", lambda self: None)
+    result = unit(case, tmp_path)
+    assert result.attempts == 1
+    run, = result.runs
+    assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
+    attempt_id = next(r["attempt_id"] for r in run.records if (r.get("cursor") or {}).get("session") == probe.index)
+    assert life._probe_code(run.records, attempt_id, probe_live=True) is None
+    for iid in probe.item_ids:
+        assert run.classes[iid] == ("SYSTEM_FAILURE", "act_state_collision")
+        assert result.scores[iid]["failure_class"] == "SYSTEM_FAILURE"
+        assert result.scores[iid]["infra_reruns"] == 0
+    assert all(run.classes[iid] == ("SYSTEM_FAILURE", "act_state_collision")
+               for iid in run.classes if iid not in run.results)
+    (path, inode), = entries
+    assert path.lstat().st_ino == inode
+    if kind == "directory":
+        assert stat.S_ISDIR(path.lstat().st_mode)
+        assert (path / "sentinel").read_text() == "reader entry"
+    elif kind == "file":
+        assert path.read_text() == "reader entry"
+    else:
+        assert stat.S_ISLNK(path.lstat().st_mode) and os.readlink(path) == "missing-reader-target"
+
+
+def test_act_state_present_before_reader_still_reruns(lives, unit_sessions, tmp_path, monkeypatch):
+    case, entries = lives["t1-g1", "B0"], []
+    original = adapter.HermesAdapter.__init__
+
+    def construct(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        if not entries:
+            path = self.paths["root"].parent / "act-state"
+            path.mkdir()
+            entries.append((path, path.lstat().st_ino))
+
+    monkeypatch.setattr(adapter.HermesAdapter, "__init__", construct)
+    monkeypatch.setattr(life.LifeRun, "cleanup", lambda self: None)
+    result = unit(case, tmp_path)
+    assert result.attempts == 2
+    first, redo = result.runs
+    assert first.stopped[:2] == ("INFRA_FAILURE", "FileExistsError")
+    assert redo.stopped is None
+    assert entries[0][0].lstat().st_ino == entries[0][1]
+    assert all(row["infra_reruns"] == 1 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("plugin,phase,attempts,label", [
+    (True, "open", 1, "worker_protocol"),
+    (True, "startup", 3, "JSONDecodeError"),
+    (False, "open", 3, "JSONDecodeError"),
+])
+def test_worker_protocol_life_class_and_reruns(lives, tmp_path, monkeypatch, plugin, phase, attempts, label):
+    helpers.HELPERS["offline_life_adapter"](monkeypatch)
+    init, popen = adapter.HermesAdapter.__init__, adapter.subprocess.Popen
+    fake = Path(__file__).parents[1] / "harness/fake_line_worker.py"
+
+    def construct(self, *args, **kwargs):
+        # A fake configured provider, selected before spawning, with the real configuration and worker path.
+        kwargs["plugin"] = "holographic" if plugin else None
+        kwargs["worker_argv"] = [sys.executable, str(fake), phase, "not-json"]
+        init(self, *args, **kwargs)
+        self.egress.add = self.egress.discard = lambda *args: None
+
+    def spawn(argv, *args, **kwargs):
+        if argv[0] == "nice" and str(fake) in argv:
+            argv = argv[argv.index(sys.executable):]
+        return popen(argv, *args, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "__init__", construct)
+    monkeypatch.setattr(adapter.subprocess, "Popen", spawn)
+    monkeypatch.setattr(adapter.HermesAdapter, "_gate", lambda *args: None)
+    # The offline sampler has no sampler thread or fork lock; the real session still starts its director.
+    original_start = adapter.HermesAdapter.run_session
+
+    def session(self, *args, **kwargs):
+        self.egress.forking = nullcontext()
+        return original_start(self, *args, **kwargs)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == attempts
+    cls = "SYSTEM_FAILURE" if attempts == 1 else "INFRA_FAILURE"
+    assert [run.stopped[:2] for run in result.runs] == [(cls, label)] * attempts
+    assert all(set(run.classes.values()) == {(cls, label)} for run in result.runs)
+    if attempts == 1:
+        assert all(row["failure_class"] == cls and row["infra_reruns"] == 0 for row in result.scores.values())
 
 
 @pytest.mark.parametrize("damage", ["blank", "deleted"])

@@ -89,7 +89,7 @@ PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "engine_inactive", "end_failed", "exit_timeout",
-    "turn_timeout", "end_timeout")) + tuple(
+    "turn_timeout", "end_timeout", "act_state_collision", "worker_protocol")) + tuple(
     (label, "INFRA_FAILURE") for label in (
         "director_stopped", "director_inflight", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
         "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy", "admission_deadline"))
@@ -185,14 +185,19 @@ def reader_made(error):
     return not isinstance(cause, OSError) or isinstance(cause, READER_OS_ERRORS)
 
 
-def _read_action_state(workspace, scratch):
+def _read_action_state(workspace, scratch, *, absent_before=False):
     """Read each live action file with the pinned parser; omit only reader-made failures."""
     state, unreadable = {}, False
     empty = render({p: {} for p in PATHS.values()})
     # One fixed scratch folder inside the life's fresh root: tempfile's random names are outside this module's
-    # firewall (tests/runner/test_life_fake.py). A leftover folder can only come from a failed cleanup and raises.
+    # firewall (tests/runner/test_life_fake.py). Only an entry made during this reader session is attributed to it.
     root = Path(scratch) / "act-state"
-    root.mkdir()
+    try:
+        root.mkdir()
+    except FileExistsError as error:
+        if absent_before:
+            raise HarnessFailed("act_state_collision") from error
+        raise
     try:
         for p, data in empty.items():
             (root / p).parent.mkdir(parents=True, exist_ok=True)
@@ -563,6 +568,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(swap_in(clone, canonical))
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
+                        act_state_absent = False
+                        if leg is not None and genre == "G1" and probe and by_id[probe.item_ids[0]]["stage"] == "act":
+                            try:
+                                (root / "act-state").lstat()
+                            except FileNotFoundError:
+                                act_state_absent = True
                         result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)
                         live_cut = False
                         sessions.append(result)
@@ -582,7 +593,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 if leg is None:
                                     state, unreadable = read_state(paths["workspace"]), False
                                 else:
-                                    state, unreadable = _read_action_state(paths["workspace"], root)
+                                    state, unreadable = _read_action_state(paths["workspace"], root,
+                                                                         absent_before=act_state_absent)
                                 for iid in probe.item_ids:
                                     evidence.act[iid] = state
                                     if unreadable:
