@@ -170,8 +170,12 @@ def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, mo
     attempt_id = next(r["attempt_id"] for r in run.records if (r.get("cursor") or {}).get("session") == probe.index)
     assert life._probe_code(run.records, attempt_id, probe_live=True) == ("unknown_400" if incidental else None)
     assert run.incidental_unknown_400 == int(incidental)
-    assert json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes()) == dict(attempts=[dict(
-        attempt=0, stopped=list(run.stopped), incidental_unknown_400=int(incidental))])
+    diagnostics = tmp_path / "out/unit_diagnostics.json"
+    if incidental:
+        assert json.loads(diagnostics.read_bytes()) == dict(attempts=[dict(
+            attempt=0, stopped=list(run.stopped), incidental_unknown_400=1)])
+    else:  # a unit with no incidental row writes no diagnostics file, so its output bytes are unchanged
+        assert not diagnostics.exists()
     for iid in probe.item_ids:
         assert run.classes[iid] == ("SYSTEM_FAILURE", "act_state_collision")
         assert result.scores[iid]["failure_class"] == "SYSTEM_FAILURE"

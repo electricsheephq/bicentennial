@@ -4,7 +4,7 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 
 ## Ring 0 erratum, 2026-11-14: bind failed opens, act-state entries and probe codes to their source (#556, #526)
 - **System failures:** after ready, a configured system plug-in's failed open must carry the real worker's shape: null `session_id` and `history`, and `alive_threads` as a list of strings. A bare `{"ok": false}` is `worker_protocol`. A live G1 reader's `act-state` entry made in an earlier session is `act_state_collision` when the harness observed the path absent before the first system session. Both score once, never rerun, and collision entries are kept.
-- **Probe scope and evidence:** probe codes use only the current attempt and session; unknown cursors keep their infrastructure handling. An incidental code cannot replace a proven `worker_protocol` or `act_state_collision`; unit diagnostics count incidental `unknown_400` rows, with per-arm counts deferred.
+- **Probe scope and evidence:** probe codes use only the current attempt and session; unknown cursors keep their infrastructure handling. An incidental code cannot replace a proven `worker_protocol` or `act_state_collision`; a unit's diagnostics count the incidental `unknown_400` rows of a failing probe session, and are written only for a unit with one, so other runs keep their output bytes; per-arm counts are deferred.
 - **Limits:** a failed open forged with the complete real shape, a standalone `unknown_400`, an entry present at the baseline, and harness cleanup or observation faults stay infrastructure and redo the unit. Turn and end replies keep their existing rules. No code pin or published result changes.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
