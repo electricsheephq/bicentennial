@@ -6,7 +6,10 @@ import os
 import shutil
 import socket
 import sqlite3
+import subprocess
+import sys
 import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -373,6 +376,7 @@ def test_special_sidecar_is_not_opened(tmp_path):
             worker.join(10)
     receipt, = found
     assert (receipt["path"], receipt["kind"]) == ("test.db-journal", "fifo")
+    assert (receipt["label"], receipt["rule"]) == ("invalid_store", "sqlite_sidecar")
 
 
 def test_kill_residue_is_not_charged(tmp_path, monkeypatch):
@@ -433,14 +437,18 @@ def test_earlier_infrastructure_voids_a_damaged_attempt(lives, unit_sessions, tm
         dict(attempt=1, stopped=None, incidental_unknown_400=0)])
 
 
-def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize("residue", ["fifo", "missing"])
+def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, residue):  # noqa: F811
     original, fired = adapter.HermesAdapter.run_session, []
 
     def stalled(self, index, **kw):
         result = original(self, index, **kw)
         if not fired:
             fired.append(True)
-            os.mkfifo(self.paths["hermes_home"] / "ipc.fifo")  # left by the worker the harness now kills
+            if residue == "missing":
+                self.paths["hermes_home"].rename(self.paths["hermes_home"].with_name("killed-mid-replace"))
+            else:
+                os.mkfifo(self.paths["hermes_home"] / "ipc.fifo")  # left by the worker the harness now kills
             self.after_kill = True  # as a spawn with no clean end leaves it (tests/harness/test_turn_wait.py)
             raise adapter.HarnessFailed("drain_timeout")
         return result
@@ -464,3 +472,178 @@ def test_without_source_checks_no_source_is_watched(lives, unit_sessions, tmp_pa
     monkeypatch.setattr(units, "run_life", lambda **kw: run(**{k: v for k, v in kw.items() if k != "source_checks"}))
     unit(lives["t1-g1", "B0"], tmp_path)
     assert built and not any(built)
+
+
+@pytest.mark.parametrize("when", ["baseline", "check"])
+@pytest.mark.parametrize("fault,damage", [("file", "same"), ("file", "other"), ("directory", "root"),
+                                         ("file", None), ("directory", None)])
+def test_read_fault_is_local(tmp_path, fault, damage, when):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    entry = a / "unreadable"
+    entry.mkdir() if fault == "directory" else entry.write_bytes(b"ordinary file")
+    if when == "baseline":
+        entry.chmod(0)
+    try:
+        baseline = SourceBaseline([({"root": "HERMES_HOME", "relative": name}, root)
+                                   for name, root in (("a", a), ("b", b))], [])
+        entry.chmod(0)
+        assert a in baseline.roots  # an unreadable baseline must not disqualify the surface
+        assert baseline.receipt() is None  # the read fault itself never charges
+        if damage == "root":
+            b.rmdir()
+            b.write_bytes(b"replaced")
+        elif damage:
+            os.mkfifo((a if damage == "same" else b) / "bad")
+        receipt = baseline.receipt()
+        if damage:
+            assert receipt["rule"] == ("not_a_directory" if damage == "root" else "unsupported_entry")
+        else:
+            assert receipt is None
+    finally:
+        entry.chmod(0o700 if fault == "directory" else 0o600)
+
+
+def test_symlink_sidecar_is_store_damage_without_open(tmp_path, monkeypatch):
+    valid_db(tmp_path / "test.db")
+    baseline = surface(tmp_path)
+    (tmp_path / "test.db-wal").symlink_to("absent")
+    monkeypatch.setattr(sqlite3, "connect", lambda *a, **kw: pytest.fail("opened database with odd sidecar"))
+    receipt = baseline.receipt()
+    assert (receipt["label"], receipt["rule"], receipt["path"], receipt["kind"]) == (
+        "invalid_store", "sqlite_sidecar", "test.db-wal", "symlink")
+
+
+def test_hot_journal_is_read_only_and_hides_no_damage(tmp_path):
+    path = tmp_path / "test.db"
+    valid_db(path)
+    baseline = surface(tmp_path)
+    subprocess.run([sys.executable, "-c", """
+import os, sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute('PRAGMA cache_size=5')
+con.execute('BEGIN IMMEDIATE')
+for _ in range(100):
+    con.execute('INSERT INTO t VALUES (zeroblob(4096))')
+os._exit(0)
+""", str(path)], check=True)
+    journal = path.with_name("test.db-journal")
+    before = path.read_bytes(), journal.read_bytes()
+    assert before[1][:8] == bytes.fromhex("d9d505f920a163d7")  # genuinely hot, not an empty journal
+    assert baseline.receipt() is None
+    assert (path.read_bytes(), journal.read_bytes()) == before
+    os.mkfifo(tmp_path / "z-bad")
+    assert baseline.receipt()["rule"] == "unsupported_entry"  # hot journal cannot hide other damage
+    assert (path.read_bytes(), journal.read_bytes()) == before
+
+
+@pytest.mark.parametrize("probe", [False, True])
+def test_deleted_root_scores_once(lives, unit_sessions, tmp_path, monkeypatch, probe):  # noqa: F811
+    if probe:
+        seed_store(monkeypatch)
+    original, cleanup, roots = adapter.HermesAdapter.run_session, life.LifeRun.cleanup, []
+
+    def session(self, index, **kw):
+        result = original(self, index, **kw)
+        if not roots and (result.kind == "probe") == probe:
+            root = self.paths["hermes_home"]
+            roots.append(root)
+            root.rename(root.with_name("deleted-by-system"))
+        return result
+
+    def release(run):
+        root, = roots
+        assert root.is_dir()
+        if probe:
+            assert (root / "test.db").is_file()  # the parked original returned
+        else:
+            assert list(root.iterdir()) == []  # repaired before later harness steps
+        cleanup(run)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    monkeypatch.setattr(life.LifeRun, "cleanup", release)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 1
+    run, = result.runs
+    assert run.stopped[:2] == ("SYSTEM_FAILURE", "invalid_surface")
+    receipt, = run.source_receipts
+    assert (receipt["rule"], receipt["path"], receipt["kind"]) == ("missing_root", ".", "absent")
+    assert "kept" not in receipt and not run.restore_failures
+    assert all(row["infra_reruns"] == 0 for row in result.scores.values())
+    assert any(row["failure_class"] == "SYSTEM_FAILURE" for row in result.scores.values())
+
+
+def test_failed_swap_restore_records_before_later_check(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    swap, records, failed = life.swap_in, adapter.HermesAdapter.records, []
+
+    @contextmanager
+    def broken(clone, canonical):
+        with swap(clone, canonical):
+            yield
+        if not failed and canonical.name == "hermes-home":
+            canonical.rename(canonical.with_name("removed-by-restore"))
+            failed.append(canonical)
+            raise OSError("injected restore failure")
+
+    def rows(self):
+        if failed and failed[0] == self.paths["hermes_home"]:
+            self.check_sources()  # after the failed restore has left ExitStack; before session classification
+        return records(self)
+
+    monkeypatch.setattr(life, "swap_in", broken)
+    monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert failed
+    assert result.attempts == 2
+    first, final = result.runs
+    assert first.restore_failures == ["OSError"]  # without a receipt, still recorded immediately
+    assert not first.source_receipts and first.stopped[:2] == ("INFRA_FAILURE", "OSError")
+    assert final.stopped is None
+
+
+@pytest.mark.parametrize("cover", ["kill", "journal", "restore"])
+def test_missing_root_harness_cover_expires(tmp_path, cover):
+    root = tmp_path / "s"
+    root.mkdir()
+    baseline = surface(root)
+    root.rmdir()
+    journal = root.with_name(".s.swap.json")
+    if cover == "journal":
+        journal.write_text("unrecovered swap")
+    assert baseline.receipt(after_kill=cover == "kill", restore_failures=["OSError"] if cover == "restore" else []) is None
+    if cover == "journal":
+        assert baseline.receipt(live_swaps={root})["rule"] == "missing_root"
+        journal.unlink()
+    assert baseline.receipt()["rule"] == "missing_root"  # judged again after a clean end
+
+
+@pytest.mark.parametrize("fault", ["listing", "entry", "root"])
+def test_unknown_baseline_never_becomes_absence(tmp_path, monkeypatch, fault):
+    root = tmp_path / "s"
+    root.mkdir()
+    hidden = root / "hidden"
+    hidden.mkdir()
+    valid_db(hidden / "bad.db")
+    (hidden / "bad.db").write_bytes(b"SQLite format 3\x00" + b"broken" * 100)
+    os.mkfifo(root / "old-fifo")
+    target = hidden if fault == "listing" else root / "old-fifo" if fault == "entry" else root
+    # Remove the visible pre-existing FIFO from listing/root cases: otherwise it disqualifies the baseline.
+    if fault != "entry":
+        (root / "old-fifo").unlink()
+    method = "iterdir" if fault == "listing" else "lstat"
+    original = getattr(Path, method)
+    def failed(path, *args, **kw):
+        if path == target:
+            raise PermissionError("injected baseline observation fault")
+        return original(path, *args, **kw)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, method, failed)
+        baseline = surface(root)
+    assert baseline.receipt() is None  # unchanged, pre-existing damage is not a new system action
+    os.mkfifo(root / "z-new")
+    receipt = baseline.receipt()
+    if fault == "root":
+        assert receipt is None  # no directory proof for this root
+    else:
+        assert receipt["path"] == "z-new"  # unknown baseline coverage hides nothing outside it
