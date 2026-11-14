@@ -59,7 +59,7 @@ screened.
        prompts say to copy the name exactly as written in the conversation.
      - The binding check is the live oracle smoke ([#535](https://github.com/electricsheephq/bicentennial/issues/535)):
        a finalist that a reader with the evidence still fails is dropped there.
-     - Round 2's declaration will carry this departure.
+     - Round 2's declaration will carry this departure, and the plan's table of departures lists it (PLAN §11).
 2. **One build per card.** All cards of one template claim the same version and table ids, and some share a source
    file. Building them together would collide (the judge's conflicts 1 to 3). So:
    - each card is screened in its own build, as the only v3 of its template, with its class in its own source file;
@@ -72,10 +72,49 @@ screened.
    - **`drift-config` K2 and K5** move the correction earlier in the schedule, in edition 3 only. The judge would allow
      that only if the existing placement demonstrably fails, that is, if at least 8 of the 20 screening lives have
      their first long sprint in session 2. The committed screening roster has 7 (below). The judge also found that K2's
-     account of the window used the wrong event order.
+     account of the window used the wrong event order. Round 2's own risk from the same placement is ruling 10.
    - **`drift-quote` K2:** the judge's fix needs new wording, and K3 already tests the same lever with the exclusions
      spelled out.
    - **`drift-chain-fault` K2:** a reader handed the evidence cannot check "non-beta", so the oracle row is at risk.
+
+5. **A sweep prompt scores one entry, by design.** `drift-quote` K3 asks for every firmly decided settings entry and
+   `drift-chain-fault` K3 for every milestone, but each act table scores one entry: `lock timeout` and
+   `general release`, the entry whose memory the item tests. The sweep is how the prompt avoids naming the entry; it is
+   the cue, not the measure. Scoring the other entries would make one item's score depend on facts that other items
+   fork, so a pair would no longer test one memory. Extra entries are neither rewarded nor penalized, and a missing
+   unscored entry costs nothing. A pass shows that the scored entry is right, not that the sweep was complete, and
+   round 2's results will say so for these cards.
+6. **`drift-chain-fault` K1 is screened as a backup only.** Its prompt names the milestone by its relation, "after the
+   beta", and the gold evidence never mentions the beta. The judge failed K2 ("our non-beta milestone") for a premise
+   of the same kind. K1 passed with the risk rated moderate, but the difference is one of degree. So K1 can be the
+   `drift-chain-fault` finalist only if K3 does not pass the screen; if it is, the live oracle smoke is its check.
+7. **Ties between finalists of one template,** decided before any report. The plan orders finalists by the primary
+   lever, then by the lowest best-anchor score (§4). Remaining ties go to the card with fewer prompt and paraphrase
+   tokens that occur in the evidence, then to the card with the lower stated risk to the oracle row, then to the lower
+   K-number.
+8. **`drift-config` K3 gains "Never add entries."** It now ends the prompt and each paraphrase, marked in
+   [CARDS.md](CARDS.md#drift-config-k3). As drafted, K3 asked for a check of the whole file without forbidding
+   additions. A system that remembers `lock timeout`'s decision, which was never committed, could then add it, and on
+   the hedged twin any change scores FAIL_TASK, 0. That penalty would fall on good memory, and neither the scripted
+   screen nor the oracle smoke could see it, because the oracle is never handed `lock timeout`. K4 already carries the
+   same sentence. The change comes before any screen; the screen's vocabulary counts check that no evidence token
+   enters.
+9. **Prompts at the same checkpoint never meet.** The judge's conflict 6 (and its sixth fact to verify) asked whether
+   `drift-config` K4's "Never add entries" and `drift-quote` K3's "adding any entry this file lacks" could reach one
+   system together at checkpoint 5. They cannot. Each act item is compiled into its own probe session
+   (`director/compiler/hermes.py`), and each probe session runs on fresh copies of the workspace and of every memory
+   surface, which are put back when it ends (`runner/life.py`). So neither prompt, nor anything a system does in
+   answer, reaches the other probe.
+10. **Round 2's risk on `drift-config` is accepted.** Every screened `drift-config` card keeps edition 1's placement.
+    On the screening set the recent window will score about 35, at the gate. On round 2's ten fresh lives it scores
+    about 10 points per life whose first long sprint is in session 2. The ranking rule needs the best anchor at or
+    below 35, so four or more such lives would stop `drift-config` from ranking: a chance of about 22% (k ~ Bin(10, 1/4),
+    P(k >= 4) = 0.224). The gate is not loosened if that happens (PLAN §10). K2 and K5 stay unscreened: their earlier
+    correction changes edition 3's world for every card (the judge's conflict 4), which would make the other screens
+    incomparable. The earlier placement is the first `drift-config` item for the next round.
+11. **The card cap counts screened cards.** The plan allows at most eight cards (§4); its purpose is to limit how many
+    candidates are tried against the screening set. Eleven were drafted and seven are screened. The four others are
+    printed, never built or read, so they cannot affect the screen. PLAN §11 records this reading.
 
 ## What the owner saw before choosing
 

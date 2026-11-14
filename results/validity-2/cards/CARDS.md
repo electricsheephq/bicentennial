@@ -1,6 +1,6 @@
 # Validity round 2: the seven screened candidate cards
 
-Published before any candidate report. Each card is printed as its designer wrote it; the only addition is the owner's fix to `drift-config` K4's token audit, marked. How the cards were made and chosen, and what was seen before, is in [README.md](README.md). The four cards that are not screened are in [NOT-SCREENED.md](NOT-SCREENED.md); the judge's full scores are in [JUDGE.md](JUDGE.md).
+Published before any candidate report. Each card is printed as its designer wrote it. The owner's additions are marked: a fix to `drift-config` K4's token audit, one sentence added to `drift-config` K3's prompt and paraphrases (in bold, before any screen), and owner's notes at the end of five cards. How the cards were made and chosen, and what was seen before, is in [README.md](README.md). The four cards that are not screened are in [NOT-SCREENED.md](NOT-SCREENED.md); the judge's full scores are in [JUDGE.md](JUDGE.md).
 
 - `drift-config`: [K1](#drift-config-k1), [K3](#drift-config-k3), [K4](#drift-config-k4)
 - `drift-quote`: [K1](#drift-quote-k1), [K3](#drift-quote-k3)
@@ -110,6 +110,8 @@ Recent window: the probe is at checkpoint 5 (_assign_checkpoints, targeted.py:29
 
 *Designer's confidence, a belief and not a bar:* 55.
 
+**Owner's note (arithmetic):** under k ~ Bin(20, 1/4), the range 10 to 40 (k = 2 to 8) covers about 93%, not 90%. On the screening set n2 is now known: 7, so the window scores 35 there ([README.md](README.md)).
+
 <a id="drift-config-k3"></a>
 
 ## `drift-config` K3: drift-config v3: the file, not the entry; v2's decision rule reworded so it shares no word with the evidence (prompt only)
@@ -120,13 +122,13 @@ Recent window: the probe is at checkpoint 5 (_assign_checkpoints, targeted.py:29
 
 **Prompt.**
 
-> Check config/settings.toml. If an entry was firmly corrected after it was committed, set its corrected content; if new content was only raised as a possibility, or only quoted or reported, leave such an entry unchanged.
+> Check config/settings.toml. If an entry was firmly corrected after it was committed, set its corrected content; if new content was only raised as a possibility, or only quoted or reported, leave such an entry unchanged. **Never add entries.**
 
 **Paraphrases.**
 
-1. Review every entry in config/settings.toml. Where an entry was firmly corrected after being committed, write its corrected content. Where an entry only had new content floated as a possibility, or quoted or reported, keep it as it stands.
-2. Look over config/settings.toml entry by entry: an entry firmly corrected since it was committed gets its corrected content; an entry whose new content was only raised as a possibility, or only quoted or reported, stays unchanged.
-3. Apply to config/settings.toml only firm corrections made after an entry was committed, writing each corrected content; an entry whose new content was only raised as a possibility, or only quoted or reported, keeps its current content.
+1. Review every entry in config/settings.toml. Where an entry was firmly corrected after being committed, write its corrected content. Where an entry only had new content floated as a possibility, or quoted or reported, keep it as it stands. **Never add entries.**
+2. Look over config/settings.toml entry by entry: an entry firmly corrected since it was committed gets its corrected content; an entry whose new content was only raised as a possibility, or only quoted or reported, stays unchanged. **Never add entries.**
+3. Apply to config/settings.toml only firm corrections made after an entry was committed, writing each corrected content; an entry whose new content was only raised as a possibility, or only quoted or reported, keeps its current content. **Never add entries.**
 
 **Mechanism.**
 
@@ -164,6 +166,10 @@ Options, tables and twin are v2's, and the battery never reads the prompt (contr
 What it measures: without a cue, recalling which settings entry got a firm correction that was never committed, and its value, across 3+ sessions and cold restarts. Lexical retrieval gets no hook. Ambiguity a real system faces and the oracle does not: the file can also hold batch_size and flush_timeout_ms. batch_size's correction is committed at its own instant (g1 world.py:260-262; COMMIT_LAG_S = 0), so it is not pending; its later hedge, and flush_timeout_ms's later quote, are excluded by the rule's 'only raised as a possibility, or only quoted or reported'. So with full memory B0 has exactly one change and B1 none. The remaining real-system risk is adding lock timeout, which is not asked for and would fail the B1 refrain. Sprint placement: T2's first sprint is uniform over {2,3,4,5}; a tally over 3,000 synthetic schedules gave 730/735/741/794 (scale.py:61-70). In the ~25% of lives with the first sprint in session 2, about 32 chunks of 620-663 estimated tokens are cut round-robin over the session's turns (session_cut.py:118-138). About 7.7k of chunk tokens sit at turns 4-5 and 0-3.9k more at turn 3 after the correction, plus small sessions 3-5 (estimated <= 1.5k, unmeasured). That is about 8.7-13.1k, under W, so the window holds the (2,3) correction or hedge and gets the pair right. The original at (1,3) is out of view, but it is not needed. In sprint-3/4/5 lives the sprint (>= 20,480 tokens) lies between the evidence and the probe, so the window misses. Session-2 sprints: none on the public lives; expected 5 of 20 on the screening set; risk to round 2's 10 fresh lives: P(window > 35) is about 22%. A fix exists (setting-fix slot (2,1), edition-aware) but needs new placement machinery; under B8 it is not proposed unless the screen shows the window above 35.
 
 *Designer's confidence, a belief and not a bar:* 60.
+
+**Owner's fix (review, B6), 14 November, before any report:** the bold sentence ends the prompt and every paraphrase; as drafted, each text stopped before it. Without it, a system that remembers `lock timeout`'s decision, which was never committed, could add that entry. On the hedged twin the gold is to refrain and no changed state is admissible (`drift-config-hedged-v2`), so any added entry scores FAIL_TASK, 0, and the pair loses its credit. That penalty would fall on good memory. `drift-config` K4 already closes the same hole with the same sentence. Token audit, from K4's: `never` occurs outside the evidence only (a negate phrase used by commitment cancellations); `add` and `entries` occur in no G1 event. No token of the evidence enters any text.
+
+**Owner's note (arithmetic):** under k ~ Bin(20, 1/4), the range 10 to 40 (k = 2 to 8) covers about 93.5%, not 80%; the 80% range is 15 to 35 (k = 3 to 7, 80.7%). The chance that k >= 8 is about 10% (10.2%), as stated. On the screening set n2 is now known: 7.
 
 <a id="drift-config-k4"></a>
 
@@ -459,6 +465,8 @@ The config and quote probes share checkpoint 5 but each starts from its own stat
 
 *Designer's confidence, a belief and not a bar:* 60.
 
+**Owner's note (scope):** only the `lock timeout` entry is scored. A pass shows that entry is right; it does not show that the other entries were written ([README.md](README.md), ruling 5).
+
 <a id="drift-chain-fault-k1"></a>
 
 ## `drift-chain-fault` K1: drift-chain-fault v3: 'the milestone after the beta', exact line form, name from the conversation
@@ -542,6 +550,8 @@ Battery: every POLICY ≤ 0.
 Recent window: the checkpoint is pinned at 10 and the second sprint always falls between the evidence and the probe. Lives whose first sprint is session 2 make no difference.
 
 *Designer's confidence, a belief and not a bar:* 55.
+
+**Owner's ruling (oracle safety):** screened as a backup only. Its subject relation, 'after the beta', is not in the gold evidence: the same kind of premise the judge failed for K2. It can be the finalist only if K3 does not pass the screen ([README.md](README.md), ruling 6).
 
 <a id="drift-chain-fault-k3"></a>
 
@@ -630,3 +640,5 @@ WHAT IT MEASURES: carrying the current value of each tracked item through a corr
 The separation measured is against lexical retrieval only. Dense retrieval on 'milestone target' is untested (PLAN §9).
 
 *Designer's confidence, a belief and not a bar:* 55.
+
+**Owner's note (scope):** only the `general release` line is scored. 'A real system must enumerate beta release and general release from memory' describes the honest reading of the prompt; a pass shows the scored line is right, not that the list is complete ([README.md](README.md), ruling 5).
