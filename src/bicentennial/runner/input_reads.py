@@ -6,6 +6,32 @@ import stat
 from pathlib import Path
 
 
+def workspace_replacement(workspace):
+    """Name an existing non-directory root without following it; observation faults propagate."""
+    try:
+        mode = workspace.lstat().st_mode
+    except FileNotFoundError:
+        return None  # no entry to move; individual inputs retain their missing reason
+    if stat.S_ISDIR(mode):
+        return None
+    return "symlink" if stat.S_ISLNK(mode) else "file" if stat.S_ISREG(mode) else "other"
+
+
+def move_workspace_replacement(workspace, folder, receipts, session):
+    """Move only the reader's root entry aside so the existing swap can restore the original."""
+    kind = workspace_replacement(workspace)
+    if kind is None:
+        return
+    receipt = dict(session=session, kind=kind)
+    if kind == "symlink":
+        receipt["target"] = os.readlink(workspace)
+    target = folder / "workspace-replaced"
+    if os.path.lexists(target):
+        raise FileExistsError("workspace replacement parking is occupied")
+    workspace.rename(target)
+    receipts.append(receipt)
+
+
 def _parts(workspace, path):
     """Inspect lexical parts, stopping before traversal through any link."""
     current = workspace
