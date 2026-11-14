@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-14: control-only validation packs refuse non-control runs (#529)
+- **Run gate:** a non-control run (T1, T2 or T2-lite) on a pack whose hash is listed in `specs/ring0/control-only-packs.json` is refused with `control_only_pack`, whatever `specs/ring0/template-admissions.json` says; a missing or malformed list refuses every non-control run. Control runs do not read the list. Validity round 1's pack (`results/validity-1/DECLARATION.md` §2) is the first entry; round 2's pack joins before its results publish.
+- **Scope and pins:** no code pin moves, and no published card or score changes.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-14: score two system-caused harness failures once (#526, #546)
 - **System failures:** a live G1 reader that creates the previously absent `act-state` entry is scored once as `SYSTEM_FAILURE` with cause `act_state_collision`, and a system plug-in worker's malformed or wrongly shaped reply after ready is scored once with cause `worker_protocol`; control and floor workers are unchanged.
 No PREREG version change; PREREG-v0.5 remains frozen.

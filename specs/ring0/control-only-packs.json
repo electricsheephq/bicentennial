@@ -1,0 +1,10 @@
+{
+  "about": "Pack hashes that a validity round declared control-only. A non-control run on a listed pack is refused (control_only_pack), whatever the admissions say; control runs do not read this file.",
+  "control_only": {
+    "172b87bf9c60ed79c1b56fbccb0f8caba64f931124581c6d46f6838e55fc59b5": {
+      "round": "validity-1",
+      "declaration": "results/validity-1/DECLARATION.md §2",
+      "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
+    }
+  }
+}

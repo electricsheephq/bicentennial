@@ -54,6 +54,7 @@ GATED_ARMS = ("system", "wiped")
 RELABEL = ("end_timeout", "final_mismatch", "resume_failed", "turn_timeout")
 REPO = Path(__file__).resolve().parents[3]
 TEMPLATE_ADMISSIONS = REPO / "specs/ring0/template-admissions.json"
+CONTROL_ONLY_PACKS = REPO / "specs/ring0/control-only-packs.json"
 
 
 class T1Refused(RuntimeError):
@@ -154,6 +155,24 @@ class T1Run:
 
 def _json(path):
     return json.loads(path.read_bytes())
+
+
+def _check_control_only(pack_hash):
+    try:
+        record = _json(CONTROL_ONLY_PACKS)
+        listed = record["control_only"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise T1Refused("control_only_pack") from None
+    if not isinstance(listed, dict) or any(
+        len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
+        or not isinstance(entry, dict)
+        or any(not isinstance(entry.get(field), str) or not entry[field].strip()
+               for field in ("round", "declaration", "result"))
+        for digest, entry in listed.items()
+    ):
+        raise T1Refused("control_only_pack")
+    if pack_hash in listed:
+        raise T1Refused("control_only_pack")
 
 
 def _routes(name):
@@ -297,6 +316,8 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if recipe(entry).dependency_lock is None:
         properties = worker_properties(entry, hermes, REPO, "t1", T1Refused, worker_argv)
     index = verify(packs, pack_hash=pack_hash)
+    if not control:
+        _check_control_only(pack_hash)
     if index["tier"] != spec.pack_tier:
         raise T1Refused("tier")
     if index["harness_artifacts"] != [harness_pin]:
