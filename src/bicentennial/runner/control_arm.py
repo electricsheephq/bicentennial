@@ -5,6 +5,7 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
+from bicentennial.anchors import WINDOW
 from bicentennial.anchors.report import ANCHORS, header
 from bicentennial.api.adapters.oracle_evidence import OracleEvidence
 from bicentennial.contracts.items import reader_view
@@ -26,6 +27,10 @@ FRAME_SHA256 = sha256(FRAME.encode()).hexdigest()
 
 def block(text):
     return FRAME.format(text)
+
+
+def probe_window(control):
+    return 2 * WINDOW if control in ("grep", "recent_window") else None
 
 
 def with_blocks(script, probes, blocks):
@@ -81,7 +86,7 @@ def control_units(ctx, control, scratch, out, diagnostics=None):
         raise ValueError("unknown control arm")
     floor = Arm.from_context(ctx, "no_memory")
     if control != "no_memory":
-        floor = replace(floor, key=control, probe_blocks={
+        floor = replace(floor, key=control, probe_window=probe_window(control), probe_blocks={
             k: v for p in ctx.packs for k, v in probe_blocks(p, control).items()})
     if diagnostics is not None:
         floor = replace(floor, diagnostics=diagnostics)

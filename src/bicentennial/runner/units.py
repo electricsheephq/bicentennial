@@ -266,6 +266,8 @@ def _unit(ctx, pack, branch, arm, scratch, live, out, floor_stops=None, *, slot=
         options = dict(spec=spec, keep=keep, unit=unit) if spec is not T1_SPEC or keep is not None else {}
         if config.probe_blocks is not None:
             options["probe_blocks"] = config.probe_blocks
+        if config.probe_window is not None:
+            options["probe_window"] = config.probe_window
         if config.diagnostics is not None:
             options["diagnostics"] = config.diagnostics
         if options:
@@ -339,7 +341,8 @@ def _finalise(pack, scores, probes):
 
 
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
-                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, diagnostics=None, labels=None):
+                   spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, probe_window=None,
+                   diagnostics=None, labels=None):
     from bicentennial.runner import t1
 
     measured, keep_ns = False, 0
@@ -357,7 +360,8 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 pre_probe_attribution=spec.pre_probe_attribution and arm != "no_memory",
                 extra_env=resolve_worker_env(ctx.entry, ctx.model_cache) if arm != "no_memory" else None,
                 # A live control arm only: the pinned control's text for each probe item (runner/control_arm.py).
-                **({} if probe_blocks is None else {"probe_blocks": probe_blocks[pack.life, branch]}))
+                **({} if probe_blocks is None else {"probe_blocks": probe_blocks[pack.life, branch]}),
+                **({} if probe_window is None else {"probe_window": probe_window}))
         except LiveCredentialStop as error:
             ledger = scratch / str(attempt) / branch / "run/ledger"
             rows = _rows(ledger)
@@ -465,6 +469,7 @@ class Arm:
     role: str = "system"
     # A live control arm's probe texts by (life, branch); such an arm runs as the floor does (runner/control_arm.py).
     probe_blocks: dict | None = field(default=None, compare=False)
+    probe_window: int | None = None
     # A live control arm's diagnostic trace writer (runner/diagnostics.py); it enters no key, hash or output.
     diagnostics: object = field(default=None, compare=False, repr=False)
 
@@ -475,6 +480,8 @@ class Arm:
             raise ValueError("invalid arm role")
         if self.probe_blocks is not None and self.key not in NO_MEMORY_KEYS[1:]:
             raise ValueError("only a text control arm carries probe blocks")
+        if self.probe_window is not None and self.probe_blocks is None:
+            raise ValueError("probe window requires probe blocks")
         if self.diagnostics is not None and self.role != "no_memory":
             raise ValueError("only a control arm carries diagnostics")
 

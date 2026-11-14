@@ -13,6 +13,7 @@ from test_t2 import read, t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 
 from bicentennial import cli
+from bicentennial.anchors import WINDOW
 from bicentennial.anchors import run as run_anchor
 from bicentennial.anchors.report import ANCHORS, header
 from bicentennial.audit.readback import life_ids
@@ -24,12 +25,17 @@ from bicentennial.director.compiler.hermes import compile_script
 from bicentennial.director.responder import Reply
 from bicentennial.director.roles import HERMES_MEMORY_FENCE
 from bicentennial.harness.hermes import adapter
+from bicentennial.harness.hermes.config import (
+    HERMES_TOOLSETS,
+    hermes_config,
+    write_config,
+)
 from bicentennial.ledger import apply_masks
 from bicentennial.packs import build
 from bicentennial.packs.scoring import control_input, make_score
 from bicentennial.probe.scripted_reader import UNKNOWN
 from bicentennial.runner import control_arm, t1, t2, units
-from bicentennial.runner.life import STEP_S
+from bicentennial.runner.life import STEP_S, run_life
 from bicentennial.runner.units import T2_SPEC
 from bicentennial.systems.registry import REGISTRY, load
 from bicentennial.world.db import open_world
@@ -40,6 +46,50 @@ HELPERS = runpy.run_path(str(Path(__file__).with_name("test_life_fake.py")))
 drive = HELPERS["drive"]
 TEXT_ARMS = ("naive_rag", "oracle_evidence", *ANCHORS)
 MEMORY_TOOLS = {"memory", "session_search", "fact_store", "fact_feedback"}
+# Whole canonical reader config captured at 833a82e: port 1, default alias, no memory, no MCP.
+READER_CONFIG_833A82E = "7cdae910ab8916e1338c4171648c9f3bc7cf9eef15739eb42cee68fdd2d746b8"
+
+
+def assert_reader_config(cfg, control):
+    # Freeze the complete base config, then compare the complete written config, including G2's MCP transport.
+    baseline = hermes_config(1, "bicentennial-main", memory=False, toolsets=HERMES_TOOLSETS, scripted=True)
+    assert sha256(canon(baseline)).hexdigest() == READER_CONFIG_833A82E
+    port = int(cfg["model"]["base_url"].split(":")[2].split("/")[0])
+    expected = hermes_config(port, cfg["model"]["default"], memory=False,
+        toolsets=HERMES_TOOLSETS + (("envserver",) if "mcp_servers" in cfg else ()),
+        mcp_servers=cfg.get("mcp_servers"), scripted=True)
+    if control in ("grep", "recent_window"):
+        expected["compression"]["threshold_tokens"] = 2 * WINDOW
+        expected["model"]["context_length"] = expected["auxiliary"]["compression"]["context_length"] = 8 * WINDOW
+    assert canon(cfg) == canon(expected)
+
+
+@pytest.mark.parametrize("control", control_arm.CONTROL_ARMS)
+def test_written_reader_config_without_sockets(tmp_path, monkeypatch, control):
+    pack = SimpleNamespace(life="synthetic-life")
+    ctx = SimpleNamespace(entry={}, plugin_source=None, model_cache=None, worker_argv=None, packs=[pack])
+    monkeypatch.setattr(control_arm, "probe_blocks", lambda pack, control: {
+        (pack.life, b): {"synthetic-item": "synthetic block"} for b in ("B0", "B1")})
+    queued = control_arm.control_units(ctx, control, tmp_path / "scratch", tmp_path / "out")
+    for unit in queued:
+        assert unit.arm.probe_window == (2 * WINDOW if control in ("grep", "recent_window") else None)
+        cfg = hermes_config(1, "bicentennial-main", memory=False, toolsets=HERMES_TOOLSETS,
+                            scripted=True, window=unit.arm.probe_window)
+        assert_reader_config(json.loads(write_config(tmp_path, cfg).read_bytes()), control)
+
+
+@pytest.mark.parametrize("arm", ("system", "wiped", "no_memory"))
+def test_probe_window_without_blocks_refuses_before_io(arm):
+    with pytest.raises(ValueError, match="probe window requires probe blocks"):
+        run_life(arm=arm, entry={}, life_dir=None, branch="B0", items=[], records=[], keys={}, scratch=None,
+                 run="synthetic", attempt=0, gate=None, current_lock=None, voids=None, harness_pin={},
+                 probe_window=2 * WINDOW)
+
+
+@pytest.mark.parametrize("control", control_arm.CONTROL_ARMS)
+def test_arm_probe_window_requires_blocks(control):
+    with pytest.raises(ValueError, match="probe window requires probe blocks"):
+        units.Arm(control, {}, role="no_memory", probe_window=2 * WINDOW)
 
 # Raw bytes captured on 87e4d9a, before anchor live arms; no timing normalization.
 LEGACY_BYTES = {
@@ -209,16 +259,27 @@ def run_unit(pack, branch, control, scratch):
     case = dict(t=SimpleNamespace(out_dir=pack.life_dir, life=pack.life), branch=branch, items=pack.items[branch],
                 records=pack.records_b[branch], keys=pack.keys, cases=pack.cases, timeline=timeline)
     live = Recorder()
-    result = drive(case, scratch, arm="no_memory", live=live, probe_mode=T2_SPEC.probe_mode, visible=pack.visible,
-                   honeypot_token=pack.meta["honeypot_token"],
-                   **({} if blocks is None else {"probe_blocks": blocks}))
+    configs = []
+
+    def record_config(home, cfg):
+        path = write_config(home, cfg)
+        configs.append(json.loads(path.read_bytes()))
+        return path
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(adapter, "write_config", record_config)
+        result = drive(case, scratch, arm="no_memory", live=live, probe_mode=T2_SPEC.probe_mode, visible=pack.visible,
+                       honeypot_token=pack.meta["honeypot_token"],
+                       **({} if blocks is None else {"probe_blocks": blocks}),
+                       **({} if control_arm.probe_window(control) is None else {
+                           "probe_window": control_arm.probe_window(control)}))
     probes = {r["item_id"]: r for r in json.loads((result._root / "t2lite_probes.json").read_bytes())}
     turns = {(s["index"], t["n"]): t["user"] for s in compiled.script["sessions"] for t in s["turns"]}
     items = {(p.index, n): iid for p in compiled.probes for n, iid in enumerate(p.item_ids, 1)}
     bodies = [(items[c.cursor["session"], c.cursor["turn"]], turns[c.cursor["session"], c.cursor["turn"]],
                apply_masks(c.body, result.run_values)) for c in live.calls]
     unit = SimpleNamespace(result=result, probes=probes, bodies=bodies, blocks=blocks, audit=result.audit,
-                           stopped=result.stopped, classes=dict(result.classes))
+                           stopped=result.stopped, classes=dict(result.classes), configs=configs)
     result.cleanup()
     return unit
 
@@ -241,6 +302,15 @@ def arm_units(t2_packs, tmp_path_factory):
                 for control in ("no_memory", *TEXT_ARMS):
                     runs[pack.life, branch, control] = run_unit(pack, branch, control, base / "unit")
     return runs
+
+
+@pytest.mark.parametrize("control", ["grep", "recent_window", "no_memory", "naive_rag", "oracle_evidence", "bm25"])
+def test_probe_session_writes_the_arms_reader_config(arm_units, control):
+    for (life, branch, arm), unit in arm_units.items():
+        if arm == control:
+            assert unit.configs, (life, branch, arm)
+            for cfg in unit.configs:
+                assert_reader_config(cfg, control)
 
 
 def scored_actions(pack, branch):
@@ -429,6 +499,7 @@ def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scena
         assert kw["arm"] == "no_memory" and kw["probe_mode"] == "per_item"
         assert kw.get("probe_blocks") == (None if control == "no_memory" else {
             i["item_id"]: synthetic_text(pack, kw["branch"], i["item_id"]) for i in kw["items"]})
+        assert kw.get("probe_window") == (2 * WINDOW if control in ("grep", "recent_window") else None)
 
 
 @pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
@@ -444,7 +515,7 @@ def test_c_runner_hands_each_arm_the_floors_life_inputs(control_scenario, contro
     def same(kw):
         # The live stack and run id are per run; the scratch path names the arm (runner/units.py make_units).
         return {k: v for k, v in kw.items() if k not in (
-            "live", "run", "voids", "scratch", "probe_blocks", "gate", "current_lock")}
+            "live", "run", "voids", "scratch", "probe_blocks", "probe_window", "gate", "current_lock")}
 
     for unit, kw in arm.items():
         assert same(kw) == same(floor[unit])
@@ -454,6 +525,7 @@ def test_c_runner_hands_each_arm_the_floors_life_inputs(control_scenario, contro
         assert type(kw["voids"]) is type(floor[unit]["voids"])
         assert kw["scratch"].parts[-4:] == (control, *floor[unit]["scratch"].parts[-3:])
         assert ("probe_blocks" in kw) == (control != "no_memory")
+        assert ("probe_window" in kw) == (control in ("grep", "recent_window"))
 
 
 @pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])

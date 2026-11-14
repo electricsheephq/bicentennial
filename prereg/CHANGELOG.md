@@ -2,8 +2,8 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
-## Ring 0 contract change, 2026-11-14: three anchor arms (#532, §15)
-- **RING0 §15:** for validity round 2 (`results/validity-2/PLAN.md` §3), `bicentennial t2 --control` also accepts `bm25`, `grep` and `recent_window`. Each uses its scripted anchor's defaults, without oracle evidence, in the same probe-only, memory-off live path and frame as naive retrieval. The anchors live outside the controls pin; their name, version, spec sha256 and code sha256 from `anchors.report.header()` are recorded in `control.json`'s `anchor` field, and each life's `control_key_sha256` is null because no sealed anchor entry exists. The three existing arms' records and cards are unchanged.
+## Ring 0 contract change, 2026-11-14: three anchor arms (#532, #543, §15)
+- **RING0 §15:** for validity round 2 (`results/validity-2/PLAN.md` §3), `bicentennial t2 --control` also accepts `bm25`, `grep` and `recent_window`. Each uses its scripted anchor's defaults, without oracle evidence, in the same probe-only, memory-off live path and frame as naive retrieval. The anchors live outside the controls pin; their name, version, spec sha256 and code sha256 from `anchors.report.header()` are recorded in `control.json`'s `anchor` field, and each life's `control_key_sha256` is null because no sealed anchor entry exists. The three existing arms' records and cards are unchanged. The `grep` and `recent_window` arms run the reader with compaction at twice W (W = 16,384 estimated tokens), so their block and the reader's fixed overhead fit; the other arms keep 16,384, as in round 1.
 - **Scope:** like the other live control rows, these rows enter no Ring 0 gate, bar or calibration target. No pin moves.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
