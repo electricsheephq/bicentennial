@@ -131,6 +131,43 @@ def test_a_control_arms_card_names_the_arm(arm):
         validate("card_t2", dict(card, control="hermes-native"))
 
 
+@pytest.mark.parametrize("arm", ["bm25", "grep", "recent_window"])
+def test_anchor_definition_is_optional_and_validated(arm):
+    anchor = dict(name=arm, version=1, spec_sha256="a" * 64, code_sha256="b" * 64)
+    card = cards.build_t2_card(**inputs(), control=arm, anchor=anchor)
+    assert card["anchor"] == anchor
+    assert validate("card_t2", card) is None
+    assert canon(cards.build_t2_card(**inputs(), control=arm, anchor=None)) == canon(
+        cards.build_t2_card(**inputs(), control=arm))
+    card["anchor"]["version"] = 2
+    assert anchor["version"] == 1
+
+
+@pytest.mark.parametrize("control", [None, "grep", "no_memory"])
+def test_anchor_requires_matching_control(control):
+    anchor = dict(name="bm25", version=1, spec_sha256="a" * 64, code_sha256="b" * 64)
+    with pytest.raises(ValueError, match="^t2_card:anchor_control$"):
+        cards.build_t2_card(**inputs(), control=control, anchor=anchor)
+
+
+@pytest.mark.parametrize("control", [None, "no_memory", "naive_rag", "oracle_evidence"])
+def test_no_anchor_preserves_card_bytes(control):
+    assert "anchor" not in cards.build_t2_card(**inputs(), control=control, anchor=None)
+    assert canon(cards.build_t2_card(**inputs(), control=control, anchor=None)) == canon(
+        cards.build_t2_card(**inputs(), control=control))
+
+
+@pytest.mark.parametrize("change", [dict(extra="unexpected"), dict(spec_sha256="bad"),
+                                   dict(code_sha256="bad"), dict(name="unknown"),
+                                   dict(version=0), dict(version="1")])
+def test_schema_refuses_invalid_anchor(change):
+    card = cards.build_t2_card(**inputs(), control="bm25")
+    card["anchor"] = dict(name="bm25", version=1, spec_sha256="a" * 64, code_sha256="b" * 64)
+    card["anchor"].update(change)
+    with pytest.raises(ValueError, match="anchor"):
+        validate("card_t2", card)
+
+
 def test_item_2_gate_verdict_refused():
     card = dict(complete_card(), gate_verdict=None)
     with pytest.raises(ValueError, match="^t2_card:gate_verdict$"):

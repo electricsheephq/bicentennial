@@ -22,7 +22,7 @@ from bicentennial.contracts.run import validate
 from bicentennial.controls import common, naive_rag, oracle_evidence
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.hermes import compile_script
-from bicentennial.director.responder import Reply
+from bicentennial.director.responder import Call, Reply
 from bicentennial.director.roles import HERMES_MEMORY_FENCE
 from bicentennial.harness.hermes import adapter
 from bicentennial.harness.hermes.config import (
@@ -453,9 +453,18 @@ def control_scenario(t2_scenario, monkeypatch):  # noqa: F811
 
 
 @pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
-def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scenario, control):
+def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scenario, monkeypatch, control):
     s = control_scenario
+    metadata_reads = []
+
+    def snapshot():
+        assert not s.stacks
+        metadata_reads.append(control)
+        return header()
+
+    monkeypatch.setattr(control_arm, "header", snapshot)
     assert s.invoke(control=control) == 0
+    assert metadata_reads == ([control] if control in ANCHORS else [])
     out = s.out
     names = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
     assert {"card.json", "outcomes.json", control + ".json", "control.json", "units.json", "receipt.json",
@@ -492,6 +501,9 @@ def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scena
         definition = header()["anchors"][control]
         expected["anchor"] = dict(name=control, **{k: definition[k] for k in (
             "version", "spec_sha256", "code_sha256")})
+        assert card["anchor"] == record["anchor"] == expected["anchor"]
+    else:
+        assert "anchor" not in card and "anchor" not in record
     assert record == expected
     # Each unit's life receives exactly its own blocks; the no_memory arm receives none.
     for kw in s.lives:
@@ -500,6 +512,28 @@ def test_outputs_use_the_floors_shapes_with_the_arm_and_its_hashes(control_scena
         assert kw.get("probe_blocks") == (None if control == "no_memory" else {
             i["item_id"]: synthetic_text(pack, kw["branch"], i["item_id"]) for i in kw["items"]})
         assert kw.get("probe_window") == (2 * WINDOW if control in ("grep", "recent_window") else None)
+
+
+@pytest.mark.parametrize("control", ANCHORS)
+def test_missing_anchor_spec_refuses_before_any_send_without_sockets(control_scenario, monkeypatch, control):
+    s, reads = control_scenario, []
+
+    def missing():
+        reads.append(control)
+        raise FileNotFoundError("synthetic missing anchor spec")
+
+    def sent(ctx, queued, live, **kw):
+        # Regression probe: a late metadata read reaches this in-process fake reader, never a socket.
+        live.respond(Call("probe_main", "", "chat", {"messages": []}, t2.MODEL, None, "synthetic"))
+        raise RuntimeError("synthetic stop after first request")
+
+    monkeypatch.setattr(control_arm, "header", missing)
+    monkeypatch.setattr(t2, "schedule", sent)
+    assert s.invoke(control=control) == 70
+    assert not [call for stack in s.stacks for call in stack.calls]
+    assert not s.stacks
+    assert reads == [control]
+    assert read(s.out, "refusal.json") == {"code": "tool_failure"}
 
 
 @pytest.mark.parametrize("control", ["no_memory", *TEXT_ARMS])
