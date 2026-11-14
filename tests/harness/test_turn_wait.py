@@ -14,11 +14,14 @@ FAULTS = {n: [dict(kind=k)] for k, n in (("kill", 2), ("restart", 3), ("compacti
 
 
 def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), compact_drains=(), upgrades=None,
-                 baseline=None, thread_names=None, observed=None):
+                 baseline=None, thread_names=None, observed=None, spawned=None, stopped_after=None, made=None):
     """compact_turns: turns that record a compaction request; compact_drains: short drains (by drain call number)
-    during which one is recorded. upgrades collects each short drain's upgrade() answer."""
+    during which one is recorded. upgrades collects each short drain's upgrade() answer. spawned collects the kill
+    flag at each spawn; stopped_after stops the director from that turn; made receives the adapter."""
     root.mkdir()
     a = object.__new__(adapter.HermesAdapter)
+    if made is not None:
+        made.append(a)
     a._receipt_sessions, a.background_threads, a._baseline_threads = {}, [], baseline
     a.clock = SimpleNamespace(step_s=60)
     turns = [dict(n=n, user=str(n), assistant="done") for n in range(1, 6)]
@@ -29,9 +32,11 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
     a.entry, a.volatile, a.active_memory_providers = {"surfaces": []}, [], []
     a.entrypoint, a.before_shutdown, a._fired = "test-double", None, set()
     a.director = SimpleNamespace(ctx=SimpleNamespace(cursor=0), route={"alias": "scripted"}, start_session=lambda *args: None,
-        control=lambda: dict(stopped=False, write_failures=0, inflight=0), summariser_requests=0)
+        control=lambda: dict(stopped=stopped_after is not None and history >= stopped_after, write_failures=0,
+                             inflight=0), summariser_requests=0)
     a.egress = SimpleNamespace(forking=nullcontext())
-    a._gate, a._end, a.records = lambda readings: None, lambda: (), lambda: []
+    a._gate, a.records = lambda readings: None, lambda: []
+    a._end = lambda: setattr(a, "after_kill", False) or ()  # the real end clears the flag (test_end_clears_kill_flag)
     history = 0
 
     def call(**kw):
@@ -47,7 +52,8 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
         return result
 
     a._worker = SimpleNamespace(call=call, kill=lambda: None)
-    a._spawn_open = lambda *args: ("session", history, False)
+    a._spawn_open = lambda *args: (spawned is None or spawned.append(getattr(a, "after_kill", False)),
+                                   ("session", history, False))[1]
     drains = []
 
     def drain(*args, upgrade=None):
@@ -180,3 +186,25 @@ def test_turn_wait_never_exceeds_session_end(tmp_path, monkeypatch):
     monkeypatch.setattr(adapter, "DRAIN_QUIET_S", 0.75)
     drains, _ = fake_session(tmp_path / "bounded", 1.0)
     assert drains == [()] * 6
+
+
+def test_harness_kills_mark_the_next_source_check(tmp_path):
+    # audit/source_damage.py: a FIFO or socket after a harness kill is a killed process's residue.
+    seen = []
+    fake_session(tmp_path / "faults", 1.0, spawned=seen)
+    assert seen == [False, True, False]  # session start, after the kill at turn 2, after the clean restart at turn 3
+    made = []
+    with pytest.raises(adapter.HarnessFailed, match="^director_stopped$"):
+        fake_session(tmp_path / "stopped", 1.0, faults={}, stopped_after=1, made=made)
+    assert made[0].after_kill is True  # the failure path killed the worker
+
+
+def test_end_and_held_kill_set_the_kill_flag():
+    a = object.__new__(adapter.HermesAdapter)
+    a.after_kill, a._worker = True, SimpleNamespace(call=lambda **kw: {"ok": True}, kill=lambda clean=False: None)
+    a._end()
+    assert a.after_kill is False  # the worker ended by itself
+    a._held, a._fired = (1, 2), set()
+    with pytest.raises(adapter.HarnessKilled):
+        a._on_hold({"session": 1, "turn": 2})
+    assert a.after_kill is True

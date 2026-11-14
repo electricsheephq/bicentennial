@@ -389,17 +389,33 @@ def test_kill_residue_is_not_charged(tmp_path, monkeypatch):
 
 
 def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
-    drain, fired = adapter.HermesAdapter._drain, []
+    original, fired = adapter.HermesAdapter.run_session, []
 
-    def stalled(self, *args, **kw):
+    def stalled(self, index, **kw):
+        result = original(self, index, **kw)
         if not fired:
             fired.append(True)
             os.mkfifo(self.paths["hermes_home"] / "ipc.fifo")  # left by the worker the harness now kills
+            self.after_kill = True  # as the adapter's failure path does (tests/harness/test_turn_wait.py)
             raise adapter.HarnessFailed("drain_timeout")
-        return drain(self, *args, **kw)
+        return result
 
-    monkeypatch.setattr(adapter.HermesAdapter, "_drain", stalled)
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", stalled)
     result = unit(lives["t1-g1", "B0"], tmp_path)
     assert result.attempts == 2
     first = result.runs[0]
     assert first.stopped[:2] == ("INFRA_FAILURE", "drain_timeout") and not first.source_receipts
+
+
+def test_without_source_checks_no_source_is_watched(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    # T1's call leaves run_life's default, which watches no source: T1 keeps no evidence (runner/t1.py).
+    built, run, real = [], units.run_life, life.SourceBaseline
+
+    def record(surfaces, excluded):
+        built.append(list(surfaces))
+        return real(surfaces, excluded)
+
+    monkeypatch.setattr(life, "SourceBaseline", record)
+    monkeypatch.setattr(units, "run_life", lambda **kw: run(**{k: v for k, v in kw.items() if k != "source_checks"}))
+    unit(lives["t1-g1", "B0"], tmp_path)
+    assert built and not any(built)
