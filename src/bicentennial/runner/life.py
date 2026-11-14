@@ -369,7 +369,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
              live=None, live_model=None, turn_wait_s=1.0, probe_mode="ring0", keep_pre_probe=False,
              pre_probe_attribution=False, cases=None, repro=None, stop_after_target=False,
-             probe_blocks=None) -> LifeRun:
+             probe_blocks=None, probe_window=None) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -384,6 +384,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
     if probe_blocks is not None and (arm != "no_memory" or live is None):
         # A live control arm (runner/control_arm.py) is the live floor with a pinned control's text in each probe turn.
         raise ValueError("probe blocks need the live no-memory arm")
+    if probe_window is not None and probe_blocks is None:
+        raise ValueError("probe window requires probe blocks")
     if live is not None and cases is None:
         # The live leg scores act items as the scorer does, from the pack's sealed cases.
         raise ValueError("live probes need the pack's cases")
@@ -451,7 +453,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             toolsets=HERMES_TOOLSETS, env_server=wiring, turn_wait_s=turn_wait_s)
         halted = None
         try:
-            adapter = (no_memory_cell(**common) if arm == "no_memory" else HermesAdapter(entry,
+            adapter = (no_memory_cell(**common, **({} if probe_window is None else {"window": probe_window}))
+                if arm == "no_memory" else HermesAdapter(entry,
                 plugin=recipe(entry).provider, context_engine=recipe(entry).engine,
                 plugins_enabled=(plugin_dir(entry),) if recipe(entry).enabled else (),
                 extra_env=extra_env, before_spawn=hook, **common))

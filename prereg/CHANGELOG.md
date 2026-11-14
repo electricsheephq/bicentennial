@@ -2,8 +2,14 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
-## Ring 0 erratum, 2026-11-14: score two system-caused harness failures once (#526)
+## Ring 0 erratum, 2026-11-14: score two system-caused harness failures once (#526, #546)
 - **System failures:** a live G1 reader that creates the previously absent `act-state` entry is scored once as `SYSTEM_FAILURE` with cause `act_state_collision`, and a system plug-in worker's malformed or wrongly shaped reply after ready is scored once with cause `worker_protocol`; control and floor workers are unchanged.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
+## Ring 0 contract change, 2026-11-14: three anchor arms (#532, #543, §15)
+- **RING0 §15:** for validity round 2 (`results/validity-2/PLAN.md` §3), `bicentennial t2 --control` also accepts `bm25`, `grep` and `recent_window`. Each uses its scripted anchor's defaults, without oracle evidence, in the same probe-only, memory-off live path and frame as naive retrieval. The anchors live outside the controls pin; their name, version, spec sha256 and code sha256 from `anchors.report.header()` are recorded in `control.json`'s `anchor` field, and each life's `control_key_sha256` is null because no sealed anchor entry exists. The three existing arms' records and cards are unchanged. The `grep` and `recent_window` arms run the reader with compaction at twice W (W = 16,384 estimated tokens), so their block and the reader's fixed overhead fit; the other arms keep 16,384, as in round 1.
+- **Anchor scope and cards:** the offline, scripted, API-mode anchor specs also cover the Hermes reader in T2's frame for these live rows, with their files, versions and round-2 spec hashes unchanged, and each anchor arm's card adds an `anchor` field (name, version, spec and code hashes) from the same metadata as `control.json`, computed once before any live send.
+- **Scope:** like the other live control rows, these rows enter no Ring 0 gate, bar or calibration target. No pin moves.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
 ## Ring 0 erratum, 2026-11-14: score the repository files that parse when one is unreadable (#537)

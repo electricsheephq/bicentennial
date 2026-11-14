@@ -103,13 +103,16 @@ def validate_t2_card(card) -> None:
 
 def build_t2_card(*, system, pack_hash, seed_hash, pins, model, effort, served_identity,
                   aa_prime, items, counts, answer_contract_sha256, not_scored_live,
-                  seed_source, groups, floor, controls_broken, control=None) -> dict:
+                  seed_source, groups, floor, controls_broken, control=None, anchor=None) -> dict:
     """Return fresh canonical JSON data, sorting items without mutating caller fields.
 
     Counts, fixed groups, exclusions and floor provenance are supplied by the caller.
     Repro pointers describe retained copies; store bytes and session ids are not inputs.
     A live control arm's card names the arm in `control`; a system card has no such field.
+    Anchor arms also name their pre-run definition in `anchor`.
     """
+    if anchor is not None and (control is None or anchor.get("name") != control):
+        raise ValueError("t2_card:anchor_control")
     labels = {name: prop["enum"][0]
               for name, prop in _schema()["properties"]["labels"]["properties"].items()}
     card = dict(tier="T2", system=system, pack_hash=pack_hash, seed_hash=seed_hash,
@@ -121,5 +124,7 @@ def build_t2_card(*, system, pack_hash, seed_hash, pins, model, effort, served_i
                 floor=floor, controls_broken=controls_broken)
     if control is not None:
         card["control"] = control
+    if anchor is not None:
+        card["anchor"] = anchor
     validate_t2_card(card)
     return json.loads(canon(card))
