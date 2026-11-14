@@ -245,7 +245,8 @@ INVALID exits 1, BLOCKED exits 2, and a known failure wins over a blocked entry.
 
 For non-control runs, template refs outside edition 1 also need an entry in
 `specs/ring0/template-admissions.json`. A maintainer adds an entry only after a validity
-reading clears that version; it records the `cleared` reading, frozen C-7 `entry_sha256`,
+reading clears that version; it records the `cleared` reading (the token the gate checks for
+every reading its round admits, a ranking candidate included), frozen C-7 `entry_sha256`,
 validity round and result page, and the reading's `scope` and `labels` as that page states
 them. Validity round 1 cleared its three versions for the fresh-seed follow-up (#394) only,
 labelled "near-solved by naive retrieval": a result on those versions states both. Validity
