@@ -218,6 +218,8 @@ the screen and round 2, and re-plan. A run gate refusal or an identity mismatch 
 | Departure | ROADMAP "the same four rows" | three anchor rows in the follow-up |
 | Departure | RING0 §15 Ring 1 composition | the follow-up's 30 lives in three packs of T2's shape, instead of 24 |
 | Decision | #394, RING0 §14.7 | the follow-up runs exploratory; the full contract is a later item |
+| Departure | §4 rule for a candidate | the screened cards drop round 1's exact entry name, or keep one word of it; the live oracle smoke is the check (added with the cards, 14 November; cards README ruling 1) |
+| Decision | §4 card cap | "at most eight cards" counts screened cards: eleven drafted, seven screened, four printed and never built (added with the cards, 14 November; cards README ruling 11) |
 
 ## 12. Rejected alternatives
 - The follow-up now on round 1's templates: edition 2 cannot carry a system run, and the anchors would meet a live
