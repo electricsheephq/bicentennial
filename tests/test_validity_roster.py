@@ -476,12 +476,14 @@ def test_round2_uses_the_real_edition3(tmp_path, monkeypatch, capsys):
     from bicentennial.items.editions import EDITIONS
 
     draw, design, spares = _draw(tmp_path)
-    tried = _stub(monkeypatch, lambda seed: False)
-    fake, seen = t.t1_life, []
+    _stub(monkeypatch, lambda seed: False)  # keeps its check stubs; its fake expects the edition-1 stand-in
+    tried, seen = [], []
 
     def record(spec, row, templates, **kwargs):
+        tried.append(row["seed"])
         seen.append(templates)
-        return fake(spec, row, templates, **kwargs)
+        compiled = SimpleNamespace(items=[], records=[])
+        return SimpleNamespace(twin=SimpleNamespace(compiled=compiled, b1=SimpleNamespace(close=lambda: None)))
 
     monkeypatch.setattr(t, "t1_life", record)
     assert roster.place(draw, tmp_path / "work", tmp_path / "SPEC.toml", tmp_path / "TABLE.json", round_=2) == 0
