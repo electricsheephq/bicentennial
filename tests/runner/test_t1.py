@@ -1184,6 +1184,19 @@ def test_turn_wait_outside_lock_and_attempt_identity(installed, monkeypatch, tmp
     assert seen == [1.0]
 
 
+def test_t1_does_not_check_sources(installed, monkeypatch, tmp_path):
+    # T1 keeps no source evidence, so it charges no source damage (runner/life.py source_checks).
+    ctx, seen = prepare(installed), []
+
+    def drive(**kw):
+        seen.append(kw)
+        return LifeRun(kw["arm"], ctx.packs[0].life, kw["branch"], kw["attempt"],
+            classes={i["item_id"]: ("SYSTEM_FAILURE", "turn_failed") for i in kw["items"]})
+    monkeypatch.setattr(t1, "run_life", drive)
+    t1._unit(ctx, ctx.packs[0], "system", "B0", tmp_path, t1.Voids(), None)
+    assert [kw.get("source_checks", False) for kw in seen] == [False]
+
+
 @pytest.mark.parametrize("control", [False, True])
 def test_preparation_passes_control_to_c7(installed, monkeypatch, control):
     seen = []

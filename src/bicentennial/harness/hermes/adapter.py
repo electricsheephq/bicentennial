@@ -285,6 +285,7 @@ class HermesAdapter:
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
+        self.after_kill = False  # whether the harness killed the last worker (audit/source_damage.py)
         self.end_threads = None
         self._receipt_sessions = {}
         self.background_threads = []
@@ -355,7 +356,11 @@ class HermesAdapter:
                         continue  # compaction is observed, not forced; a swap acts through the route
                     if held and not killed:
                         raise HarnessFailed("held_kill_missed")
-                    self._worker.kill() if f["kind"] == "kill" else self._end()  # restart: a clean end
+                    if f["kind"] == "kill":
+                        self._worker.kill()
+                        self.after_kill = True  # its residue is not the system's until it ends by itself
+                    else:
+                        self._end()  # restart: a clean end
                     t0, mode = _now(), "clean" if f["kind"] == "restart" else self.kill_mode
                     m = _now()
                     self._gate(gate)
@@ -384,6 +389,7 @@ class HermesAdapter:
         except BaseException as error:
             if self._worker is not None:
                 self._worker.kill()
+                self.after_kill = True
             if isinstance(error, HarnessFailed) and str(error) in (
                     "turn_timeout", "end_timeout", "exit_timeout") and failures is not None:
                 c = d.control()
@@ -474,6 +480,7 @@ class HermesAdapter:
         except subprocess.TimeoutExpired:
             self._worker.kill()
             raise HarnessFailed("exit_timeout") from None
+        self.after_kill = False  # the worker ended by itself
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
@@ -506,6 +513,7 @@ class HermesAdapter:
         if key is not None and key == self._held and key not in self._fired:
             self._fired.add(key)
             self._worker.kill()
+            self.after_kill = True
             raise HarnessKilled(f"held kill at {key}")
 
     def records(self) -> list[dict]:

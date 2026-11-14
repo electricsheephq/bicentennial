@@ -4,7 +4,9 @@ import errno
 import json
 import os
 import shutil
+import socket
 import sqlite3
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from test_t2lite import live_settings, scenario  # noqa: F401
 from test_unreadable_state import harness, lives, unit, unit_sessions  # noqa: F401
 
 from bicentennial.audit.source_damage import SourceBaseline
+from bicentennial.canon import canon
 from bicentennial.harness.hermes import adapter
 from bicentennial.runner import life, t2, t2lite, units
 from bicentennial.runner.hermes_score import infrastructure_counts
@@ -38,7 +41,7 @@ def seed_store(monkeypatch, malformed=False):
     monkeypatch.setattr(life, "_surface_bytes", seeded)
 
 
-@pytest.mark.parametrize("kind", ["database", "fifo", "root", "symlink", "cross", "copy_fail"])
+@pytest.mark.parametrize("kind", ["database", "fifo", "root", "symlink", "link_bytes", "cross", "copy_fail"])
 def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, monkeypatch, kind):  # noqa: F811
     seed_store(monkeypatch)
     original, cleanup = adapter.HermesAdapter.run_session, life.LifeRun.cleanup
@@ -76,6 +79,8 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
                 root.rename(root.with_name("removed-by-system"))
                 if kind == "symlink":
                     root.symlink_to(os.path.relpath(outside, root.parent))
+                elif kind == "link_bytes":
+                    os.symlink(b"missing-\xff", os.fsencode(root))  # link text that is not UTF-8
                 else:
                     root.write_bytes(b"system replaced root")
         return result
@@ -98,7 +103,7 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
     receipt, = run.source_receipts
     assert not run._root.exists()
     assert run.retention_failures == (["PermissionError"] if kind == "copy_fail" else [])
-    if kind in ("symlink", "fifo", "copy_fail"):
+    if kind in ("symlink", "link_bytes", "fifo", "copy_fail"):
         assert "kept" not in receipt
         assert not [p for p in (tmp_path / "out/source_damage").glob("**/*") if not p.is_dir()]
     else:
@@ -106,15 +111,21 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
         assert kept.is_file() and not kept.is_symlink()
         if kind != "database":
             assert kept.read_bytes() == b"system replaced root"
+        else:  # its WAL goes beside it, under the name SQLite looks for
+            assert receipt["kept_sidecars"] == [receipt["kept"] + "-wal"]
+            assert (tmp_path / "out" / receipt["kept_sidecars"][0]).is_file()
     if kind == "symlink":
         assert receipt["kind"] == "symlink" and receipt["link"] == os.path.relpath(outside, roots[0].parent)
         t2lite._scan(tmp_path / "out", [b"credential-needle"])
+    if kind == "link_bytes":
+        assert receipt["link"] == "missing-\\xff" and receipt["link_hex"] == b"missing-\xff".hex()
     diagnostic = json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes())
     assert diagnostic["attempts"][0]["source_receipts"] == run.source_receipts
     assert receipt["surface"] == "HERMES_HOME/."
     assert receipt["path"] == ("test.db" if kind == "database" else "bad-entry" if kind == "fifo" else ".")
-    assert receipt["kind"] == (kind if kind in ("fifo", "symlink") else "file")
-    assert all(not Path(v).is_absolute() for v in receipt.values() if isinstance(v, str))
+    assert receipt["kind"] == (kind if kind in ("fifo", "symlink") else "symlink" if kind == "link_bytes" else "file")
+    assert all(not Path(v).is_absolute() for v in receipt.values() for v in (v if isinstance(v, list) else [v])
+               if isinstance(v, str))
 
 
 @pytest.mark.parametrize("fault", ["copy", "checker", "baseline", "busy", "harness_path"])
@@ -311,3 +322,84 @@ def test_output_scan_does_not_follow_links(tmp_path):
     (out / "regular").write_bytes(target.read_bytes())
     with pytest.raises(t2lite.t1.T1Refused, match="credential_scan"):
         t2lite._scan(out, [b"credential-needle"])
+
+
+def surface(path):
+    return SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, path)], [])
+
+
+def valid_db(path):
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE t(x)")
+    db.commit()
+    db.close()
+
+
+def test_receipt_names_that_are_not_utf8(tmp_path):
+    baseline = surface(tmp_path)
+    try:
+        os.mkfifo(os.fsencode(tmp_path) + b"/bad-\xff")
+    except OSError as error:
+        if error.errno != errno.EILSEQ:
+            raise
+        pytest.skip("this filesystem refuses names that are not UTF-8")
+    receipt = baseline.receipt()
+    assert receipt["path"] == "bad-\\xff" and receipt["path_hex"] == b"bad-\xff".hex()
+    canon({k: v for k, v in receipt.items() if not k.startswith("_")})  # writes as UTF-8 JSON
+
+
+def test_harness_temp_name_gives_no_cover(tmp_path):
+    # The harness writes its config through a regular temporary file, which no rule charges.
+    baseline = surface(tmp_path)
+    os.mkfifo(tmp_path / ".config.yaml.bad")
+    receipt = baseline.receipt()
+    assert (receipt["path"], receipt["kind"]) == (".config.yaml.bad", "fifo")
+
+
+def test_special_sidecar_is_not_opened(tmp_path):
+    valid_db(tmp_path / "test.db")
+    baseline = surface(tmp_path)
+    journal = tmp_path / "test.db-journal"
+    os.mkfifo(journal)
+    found = []
+    worker = threading.Thread(target=lambda: found.append(baseline.receipt()), daemon=True)
+    worker.start()
+    worker.join(10)
+    try:
+        assert not worker.is_alive(), "the checker opened the database through its FIFO journal"
+    finally:
+        if worker.is_alive():  # release the blocked open so the thread can end
+            os.close(os.open(journal, os.O_WRONLY | os.O_NONBLOCK))
+            worker.join(10)
+    receipt, = found
+    assert (receipt["path"], receipt["kind"]) == ("test.db-journal", "fifo")
+
+
+def test_kill_residue_is_not_charged(tmp_path, monkeypatch):
+    valid_db(tmp_path / "test.db")
+    baseline = surface(tmp_path)
+    os.mkfifo(tmp_path / "ipc.fifo")
+    monkeypatch.chdir(tmp_path)  # a short relative name, within the socket path limit
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind("ipc.sock")
+    assert baseline.receipt(after_kill=True) is None
+    assert baseline.receipt()["path"] == "ipc.fifo"
+    (tmp_path / "test.db").write_bytes(b"SQLite format 3\x00" + b"broken" * 100)
+    assert baseline.receipt(after_kill=True)["rule"] == "sqlite_malformed"  # a kill cannot leave this
+
+
+def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    drain, fired = adapter.HermesAdapter._drain, []
+
+    def stalled(self, *args, **kw):
+        if not fired:
+            fired.append(True)
+            os.mkfifo(self.paths["hermes_home"] / "ipc.fifo")  # left by the worker the harness now kills
+            raise adapter.HarnessFailed("drain_timeout")
+        return drain(self, *args, **kw)
+
+    monkeypatch.setattr(adapter.HermesAdapter, "_drain", stalled)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 2
+    first = result.runs[0]
+    assert first.stopped[:2] == ("INFRA_FAILURE", "drain_timeout") and not first.source_receipts

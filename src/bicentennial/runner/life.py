@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import stat
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -19,7 +20,7 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
-from bicentennial.audit.source_damage import SourceBaseline
+from bicentennial.audit.source_damage import SIDECARS, SourceBaseline
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_listing
@@ -391,7 +392,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
              worker_argv=None, visible=None, honeypot_token=None, schedule=None, extra_env=None,
              live=None, live_model=None, turn_wait_s=1.0, probe_mode="ring0", keep_pre_probe=False,
              pre_probe_attribution=False, cases=None, repro=None, stop_after_target=False,
-             probe_blocks=None, probe_window=None) -> LifeRun:
+             probe_blocks=None, probe_window=None, source_checks=False) -> LifeRun:
     """Run in script list order, restoring every canonical surface after each probe."""
     if arm not in ARMS or branch not in ("B0", "B1"):
         raise ValueError("invalid arm or branch")
@@ -534,7 +535,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             # Harness setup is complete. Observation errors must remain infrastructure, as must a baseline entry.
             act_state_baseline = _act_state_absent(root) if leg is not None and genre == "G1" else False
             act_state_created = False
-            source_surfaces = surfaces if arm == "system" else []
+            # Only callers that keep the evidence (runner/units.py) check sources; T1 does not yet.
+            source_surfaces = surfaces if arm == "system" and source_checks else []
             baseline = SourceBaseline(source_surfaces, [paths["hermes_home"] / p for p in (
                 "config.yaml", "mem0.json", ".mem0.json.pending", ".env")] + [p / MARKER for _, p in surfaces])
             source_receipt = None
@@ -543,7 +545,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 nonlocal source_receipt
                 if exc_type is not None and not isinstance(error, Exception):
                     return
-                source_receipt = source_receipt or session_baseline.receipt()
+                source_receipt = source_receipt or session_baseline.receipt(getattr(adapter, "after_kill", False))
                 if source_receipt is not None:
                     if source_receipt not in evidence.source_receipts:
                         evidence.source_receipts.append(source_receipt)
@@ -554,6 +556,17 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             source_receipt["_kept"] = kept
                             if source_receipt["rule"] == "not_a_directory":
                                 path.mkdir()
+                            if source_receipt["rule"] == "sqlite_malformed":
+                                # The journal and WAL beside it may hold the damage the check read.
+                                for suffix in SIDECARS:
+                                    sidecar = path.with_name(path.name + suffix)
+                                    try:
+                                        if not stat.S_ISREG(sidecar.lstat().st_mode):
+                                            continue
+                                    except FileNotFoundError:
+                                        continue
+                                    sidecar.rename(kept.with_name(kept.name + suffix))
+                                    source_receipt.setdefault("_sidecars", []).append(suffix)
                         except Exception as restore_error:
                             evidence.restore_failures.append(type(restore_error).__name__)
                     if not isinstance(error, SourceDamage):

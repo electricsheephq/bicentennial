@@ -344,6 +344,24 @@ def _finalise(pack, scores, probes):
             row["selected_option"] = probe["shadow"]["selected_option"]
 
 
+def _publish(kept, target, out, failures):
+    """Moves one kept regular file into the output; a failed move leaves no partial copy."""
+    try:
+        if not stat.S_ISREG(kept.lstat().st_mode):
+            raise ValueError("retained source is not a regular file")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(kept, target)
+    except Exception as error:
+        failures.append(type(error).__name__)
+        if kept.is_symlink() or kept.exists():  # a failed move leaves the source: drop a partial copy
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return None
+    return target.relative_to(out).as_posix()
+
+
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
                    spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, probe_window=None,
                    diagnostics=None, labels=None):
@@ -352,7 +370,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
     measured, keep_ns = False, 0
     for attempt in range(3):
         try:
-            run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
+            run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch, source_checks=True,
                 items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys, cases=pack.cases,
                 scratch=scratch / str(attempt), run=ctx.run_id, attempt=attempt, gate=ctx.gate,
                 current_lock=ctx.current_lock, voids=Voids(), harness_pin=ctx.harness_pin,
@@ -398,23 +416,16 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             _write(out, "t2lite_probes.json", probes)
             for n, receipt in enumerate(run.source_receipts):
                 receipt.pop("_path", None)
-                kept = receipt.pop("_kept", None)
+                kept, sidecars = receipt.pop("_kept", None), receipt.pop("_sidecars", ())
                 if kept is not None and receipt["kind"] == "file":
                     target = out / "source_damage" / str(attempt) / str(n)
-                    try:
-                        if not stat.S_ISREG(kept.lstat().st_mode):
-                            raise ValueError("retained source is not a regular file")
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(kept, target)
-                    except Exception as error:
-                        run.retention_failures.append(type(error).__name__)
-                        if kept.is_symlink() or kept.exists():  # a failed move leaves the source: drop a partial copy
-                            try:
-                                target.unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                    else:
-                        receipt["kept"] = target.relative_to(out).as_posix()
+                    if (published := _publish(kept, target, out, run.retention_failures)) is not None:
+                        receipt["kept"] = published
+                        # A database's journal and WAL go beside it, under the names SQLite looks for.
+                        found = [_publish(kept.with_name(kept.name + s), target.with_name(target.name + s), out,
+                                          run.retention_failures) for s in sidecars]
+                        if any(found):
+                            receipt["kept_sidecars"] = [p for p in found if p is not None]
             # Only a unit with something to record writes it, so every other run keeps its output bytes.
             if any(r.incidental_unknown_400 or r.stopped and r.stopped[0] == "INFRA_FAILURE"
                    or r.source_receipts or r.restore_failures
