@@ -95,7 +95,9 @@ def prepared(tier, tmp_path, monkeypatch, system="mem0-oss", worker_argv=None):
             pack_hash="0" * 64, hermes=tmp_path, plugin_source=tmp_path,
             host_overrides={"worker_argv": worker_argv})[6].get("run_properties", ())
     monkeypatch.setattr(t1, "_pack", pack)
-    monkeypatch.setattr(t1, "_json", lambda path: {"genre": path.parts[-3]})
+    real_json = t1._json  # the control-only list is a real gate (#529): it keeps the real reader
+    monkeypatch.setattr(t1, "_json", lambda path: real_json(path) if path == t1.CONTROL_ONLY_PACKS
+                        else {"genre": path.parts[-3]})
     monkeypatch.setattr(t1, "c7_entries", lambda *a: {})
     monkeypatch.setattr(t1.c7, "cells", lambda *a: {})
     monkeypatch.setattr(t1, "_boundaries", lambda *a: {})

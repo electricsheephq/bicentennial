@@ -122,6 +122,115 @@ def prepare(installed, **kwargs):
         packs=installed.root, pack_hash=installed.digest, worker_argv=installed.worker) | kwargs))
 
 
+def control_only_record(digest):
+    return {"control_only": {digest: dict(round="validity-1",
+        declaration="results/validity-1/DECLARATION.md §2",
+        result="results/validity-1/2026-11-13-control-trials/RESULT.md")}}
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_control_only_pack_overrides_all_admissions(installed, tmp_path, monkeypatch, control):
+    path = tmp_path / "control-only.json"
+    path.write_text(json.dumps(control_only_record(installed.digest)))
+    monkeypatch.setattr(t1, "CONTROL_ONLY_PACKS", path)
+    admissions = tmp_path / "admissions.json"
+    frozen = {ref: entry for file in t1.C7_FILES.values()
+              for ref, entry in t1.c7_entries(t1.REPO / file).items()}
+    admissions.write_text(json.dumps({"admitted": {
+        ref: dict(reading="cleared", entry_sha256=entry["entry_sha256"])
+        for ref, entry in frozen.items()}}))
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", admissions)
+    if control:
+        assert prepare(installed, control=True).pack_hash == installed.digest
+    else:
+        with pytest.raises(t1.T1Refused) as caught:
+            prepare(installed)
+        assert caught.value.code == "control_only_pack"
+
+
+@pytest.mark.parametrize("content", [None, "{", "[]", "null", "{}", '{"control_only": []}',
+    json.dumps(control_only_record("A" * 64)), json.dumps(control_only_record("a" * 63)),
+    *[json.dumps({"control_only": {"a" * 64: entry}}) for entry in
+      (None, [], {}, dict(declaration="d", result="r"), dict(round="", declaration="d", result="r"),
+       dict(round=1, declaration="d", result="r"), dict(round="r", declaration="", result="r"),
+       dict(round="r", declaration="d", result=""))],
+    pytest.param("[" * 10**6 + "]" * 10**6, id="nested-1e6")])
+def test_control_only_missing_or_malformed(installed, tmp_path, monkeypatch, content):
+    path = tmp_path / "control-only.json"
+    if content is not None:
+        path.write_text(content)
+    monkeypatch.setattr(t1, "CONTROL_ONLY_PACKS", path)
+    reads, real = [], t1._json
+
+    def read(target):
+        if target == path:
+            reads.append(target)
+        return real(target)
+
+    monkeypatch.setattr(t1, "_json", read)
+    assert prepare(installed, control=True).pack_hash == installed.digest
+    assert reads == []
+    with pytest.raises(t1.T1Refused) as caught:
+        prepare(installed)
+    assert caught.value.code == "control_only_pack"
+    assert reads == [path]
+
+
+@pytest.mark.parametrize("error", [PermissionError("test unreadable list"), RecursionError("test nesting too deep")])
+def test_control_only_unreadable(installed, tmp_path, monkeypatch, error):
+    path = tmp_path / "control-only.json"
+    monkeypatch.setattr(t1, "CONTROL_ONLY_PACKS", path)
+    real = t1._json
+
+    def read(target):
+        if target == path:
+            raise error
+        return real(target)
+
+    monkeypatch.setattr(t1, "_json", read)
+    assert prepare(installed, control=True).pack_hash == installed.digest
+    with pytest.raises(t1.T1Refused) as caught:
+        prepare(installed)
+    assert caught.value.code == "control_only_pack"
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_control_only_unlisted_and_verified_order(installed, tmp_path, monkeypatch, control):
+    path = tmp_path / "control-only.json"
+    path.write_text(json.dumps(control_only_record("a" * 64)))
+    monkeypatch.setattr(t1, "CONTROL_ONLY_PACKS", path)
+    events, verify, read, c7 = [], t1.verify, t1._json, t1._check_c7
+
+    def verified(packs, *, pack_hash):
+        assert packs == installed.root and pack_hash == installed.digest
+        index = verify(packs, pack_hash=pack_hash)
+        events.append("verified")
+        return index
+
+    def loaded(target):
+        if target == path:
+            events.append("list")
+        return read(target)
+
+    def checked(packed, *, control):
+        events.append("c7")
+        return c7(packed, control=control)
+
+    monkeypatch.setattr(t1, "verify", verified)
+    monkeypatch.setattr(t1, "_json", loaded)
+    monkeypatch.setattr(t1, "_check_c7", checked)
+    assert prepare(installed, control=control).pack_hash == installed.digest
+    assert events == (["verified", "c7"] if control else ["verified", "list", "c7"])
+
+
+def test_shipped_control_only_pack_matches_round1_result():
+    digest = "172b87bf9c60ed79c1b56fbccb0f8caba64f931124581c6d46f6838e55fc59b5"
+    record = json.loads(t1.CONTROL_ONLY_PACKS.read_bytes())
+    assert record["control_only"] == control_only_record(digest)["control_only"]
+    page = (t1.REPO / record["control_only"][digest]["result"]).read_text()
+    assert f"**Validation pack** hash `{digest}`" in page
+
+
 def test_fixture_and_pins(installed):
     ctx = prepare(installed)
     required = json.loads((SCHEMAS / "card_ring0.schema.json").read_bytes())["properties"]["pins"]["required"]
