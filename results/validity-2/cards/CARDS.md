@@ -1,6 +1,6 @@
 # Validity round 2: the seven screened candidate cards
 
-Published before any candidate report. Each card is printed as its designer wrote it. The owner's additions are marked: a fix to `drift-config` K4's token audit, one sentence added to `drift-config` K3's prompt and paraphrases (in bold, before any screen), and owner's notes at the end of five cards. How the cards were made and chosen, and what was seen before, is in [README.md](README.md). The four cards that are not screened are in [NOT-SCREENED.md](NOT-SCREENED.md); the judge's full scores are in [JUDGE.md](JUDGE.md).
+Published before any candidate report. Each card is printed as its designer wrote it. The owner's additions are marked: a fix to `drift-config` K4's token audit, one sentence added to `drift-config` K3's prompt and paraphrases (in bold, before any screen), and owner's notes at the end of five cards. The anchor identities the predictions were made against are in [README.md](README.md#anchor-identities). How the cards were made and chosen, and what was seen before, is in [README.md](README.md). The four cards that are not screened are in [NOT-SCREENED.md](NOT-SCREENED.md); the judge's full scores are in [JUDGE.md](JUDGE.md).
 
 - `drift-config`: [K1](#drift-config-k1), [K3](#drift-config-k3), [K4](#drift-config-k4)
 - `drift-quote`: [K1](#drift-quote-k1), [K3](#drift-quote-k3)

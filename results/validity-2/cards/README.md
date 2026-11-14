@@ -116,6 +116,20 @@ screened.
     candidates are tried against the screening set. Eleven were drafted and seven are screened. The four others are
     printed, never built or read, so they cannot affect the screen. PLAN §11 records this reading.
 
+## Anchor identities
+
+Every card's predictions were made against these anchors at `5064cf6`, as the plan requires (PLAN §3: every report and
+card records each anchor's spec and code hashes, the code hash covering the anchor's import closure). No file in those
+closures, and no anchor spec, has changed on `main` since. Each screen report's header records the same fields, so a
+report made with a different anchor shows a different hash.
+
+| Anchor | Spec | Spec SHA-256 | Code SHA-256 (import closure) |
+|---|---|---|---|
+| BM25 | `specs/controls/bm25.md` | `62de7820d62bbda5df3f5c50f2aa8c1dbdca59f6f756fa5ca180874bbae63574` | `5dff62d794c247167ad404236a74679578596c774c84fff53727aa576fe5562c` |
+| Grep | `specs/controls/grep.md` | `273740596c007cf226ad649412983e5f9994247e6941d99330a14f82fe088621` | `9c10ef8f09c7ab4d2cc1bd16e3df008159c4696aeb4a74acdde15a786c52a418` |
+| Recent window | `specs/controls/recent_window.md` | `e2fb3d12076536a65b4a586c46985ee273638fb7acf51740caee236e867acbfc` | `ff2a157c591050b8f521ce1f2d32cd98027bb75f1f7c9698e35c76492188747c` |
+| Naive retrieval (a pinned control) | `specs/controls/naive_rag.md` | `f25e32ec9ee7b97dffdc733b6c6a04dd251807bbdeadcf23651b305c84041759` | `b97757225775942d92506723514038e5b014f2717df5714951d8e985b62df09b` |
+
 ## What the owner saw before choosing
 
 **Disclosure.** Before reading the cards, the owner read edition 1's anchor report on the 20-life screening set, built
