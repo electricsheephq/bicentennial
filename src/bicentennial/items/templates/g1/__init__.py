@@ -56,3 +56,6 @@ G1_MUTANT_ROLES = {t["table_id"]: {"stale": tuple(r for r in ("other", "update",
                                   "planted": ("lure",) if any(d["predicate"] == "changed:lure"
                                                             for d in t["disqualifiers"]) else ()}
                    for template in (*TEMPLATES, *TEMPLATES_V2) for t in template.decision_tables}
+# Screening v3 tables reuse v2 contents and roles, independently of candidate code.
+G1_MUTANT_ROLES.update({tid.removesuffix("-v2") + "-v3": roles for tid, roles in
+                       tuple(G1_MUTANT_ROLES.items()) if tid.endswith("-v2")})

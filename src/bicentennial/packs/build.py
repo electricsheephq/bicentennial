@@ -109,7 +109,7 @@ def _write(path, obj):
     path.write_bytes(canon(obj))
 
 
-def _templates(t, records, spec=None, *, edition=1):
+def _templates(t, records, spec=None, *, edition=1, roster=None):
     """Each record's template, resolved by its ref within one edition; a ref outside the edition is refused."""
     items = {i["item_id"]: i for i in t.twin.compiled.items}
     assigned = []
@@ -118,8 +118,10 @@ def _templates(t, records, spec=None, *, edition=1):
         refs = {f"{tid}-v{r['template_version']}" for r in records if r["template_id"] == tid}
         if len(points) != 1:
             raise ValueError(tid)
-        template = BY_REF.get(next(iter(refs))) if len(refs) == 1 else None
-        if template is None or template not in EDITIONS[edition][t.genre]:  # templates compare by identity
+        allowed = (roster or EDITIONS[edition])[t.genre]
+        by_ref = BY_REF if roster is None else {t.ref: t for t in allowed}
+        template = by_ref.get(next(iter(refs))) if len(refs) == 1 else None
+        if template is None or template not in allowed:  # templates compare by identity
             raise PackRefused("edition")
         assigned.append(replace(template, checkpoint=next(iter(points))))
     return repoint_templates(spec or {}, assigned)
@@ -139,14 +141,14 @@ def _needles(items, records, bundles, keys, worlds):
     return needles
 
 
-def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins, edition=1):
+def _prepare(t, worlds, path, tier, rel, row, spec, entries, common_pins, edition=1, roster=None):
     compiled, schedule = t.twin.compiled, t.schedule
     records = sorted((r for r in compiled.records if r["bundle_id"] is not None or r["branch"] == "B0"),
                      key=lambda r: r["item_id"])
     ids = {r["item_id"] for r in records}
     items = sorted((i for i in compiled.items if i["item_id"] in ids), key=lambda i: i["item_id"])
     bundles = sorted(compiled.bundles, key=lambda b: b["bundle_id"])
-    templates = _templates(t, records, spec, edition=edition)
+    templates = _templates(t, records, spec, edition=edition, roster=roster)
     for template in templates:
         entry = entries.get(template.ref)
         if (entry is None or canon(entry["decision_tables"]) != canon(list(template.decision_tables))
@@ -283,6 +285,7 @@ def _normalise_sqlite_headers(root):
 
 
 def _build_pack(t, path, **kwargs):
+    screening = kwargs.pop("screening", None)
     t.twin.b1.close()
     with ExitStack() as stack:
         worlds = {b: (stack.enter_context(closing(open_world(t.out_dir / f"world.{b}.db", readonly=True))), cut)
@@ -304,17 +307,28 @@ def _build_pack(t, path, **kwargs):
                     path=kwargs["rel"], labels=labels(kwargs["tier"]), honeypot="visible/answer_key.json",
                     visible=[p for p in sorted(files) if p.startswith("visible/")],
                     sealed=[p for p in sorted(files) if p.startswith("sealed/")], files=files, pins=pins)
+    if screening is not None:
+        manifest["screening_only"] = screening
     _write(path / "manifest.json", manifest)
     return manifest, cases
 
 
-def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_path=None, edition=1):
+def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_path=None, edition=1,
+               screening=None):
     """Build one tier. T1 and T2 take a template edition (items/editions.py) and an optional life spec path."""
     if tier not in ("T0", "T1", "T2") or tier != "T0" and rows is not None:
         raise ValueError("tier")
     if edition not in EDITIONS or tier == "T0" and (edition != 1 or spec_path is not None):
         raise ValueError("edition")
     root, out = Path(root), Path(out)
+    roster, marking = None, None
+    if screening is not None:
+        from bicentennial.screen.candidates import roster as candidate_roster
+        if tier != "T2" or out.resolve().is_relative_to((REPO_ROOT / "packs").resolve()):
+            raise ValueError("screening output")
+        roster = candidate_roster(*screening)
+        edition = 2
+        marking = dict(card=screening[0], variant=screening[1])
     dest, staging, work = (out / name for name in (tier, tier + ".staging", tier + ".work"))
     if any(p.exists() or p.is_symlink() for p in (dest, staging, work)):
         raise FileExistsError(tier)
@@ -326,6 +340,10 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_
             raise PackRefused("tier")
         c7_path = root / C7_FILES[edition]
         entries, catalogue = c7_entries(c7_path), None
+        if screening is not None:
+            from bicentennial.items.c7 import cells, entry
+            candidate = next(t for t in roster["G1"] if t.version == 3)
+            entries[candidate.ref] = entry(candidate, "g1", cells(root))
         jobs = []
         if tier == "T0":
             cp = root / "packs/catalogue-v0.toml"
@@ -338,11 +356,13 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_
                     jobs.append((rel, asdict(r), r))
         else:
             seed_manifest = seeds_manifest(spec)
-            lives = list(t1_lives(spec, EDITIONS[edition], root=work))
+            lives = list(t1_lives(spec, roster or EDITIONS[edition], root=work))
             jobs = [(f"pack/{t.genre}/{t.life}/{t.seed}", dict(row), t)
                     for row, t in zip(spec["lives"], lives, strict=True)]
         common = dict(harness_pin=sha256_canon(harness_artifacts), c7_sha256=file_sha256(c7_path),
                       seed_hash=sha256_canon(seed_manifest))
+        if screening is not None:
+            common["c7_sha256"] = sha256_canon(entries)
         if catalogue:
             common["catalogue_sha256"] = file_sha256(cp)
         packs, all_cases, histories, versions, pins = {}, [], {}, {}, None
@@ -351,7 +371,8 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_
             if tier == "T0":
                 lives.append(t)
             manifest, cases = _build_pack(t, staging / rel, tier=tier, rel=rel, row=row,
-                                           spec=spec, entries=entries, common_pins=common, edition=edition)
+                                           spec=spec, entries=entries, common_pins=common, edition=edition,
+                                           **(dict(roster=roster, screening=marking) if screening is not None else {}))
             version = manifest["pins"]["generator_version"]
             if not version or "+" in version or versions.get(t.genre, version) != version:
                 raise PackRefused("generator_version")
@@ -378,6 +399,8 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_
                 skipped=[dict(id=r.id, gate=r.gate) for r in catalogue.rows if r.gate is not None])
         else:
             index["not_exercised"] = sorted(spec["not_exercised"])
+        if screening is not None:
+            index["screening_only"] = marking
         _write(staging / "index.json", index)
         shutil.rmtree(work)
         staging.rename(dest)
