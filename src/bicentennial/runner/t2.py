@@ -21,6 +21,7 @@ from bicentennial.runner.arm_time import calculate_arm_times, units_json_inputs
 from bicentennial.runner.control_arm import (
     CONTROL_ARMS,
     FRAME_SHA256,
+    anchor_metadata,
     control_key_sha256,
     control_units,
 )
@@ -92,7 +93,7 @@ def keep_hook(ctx, roots, needles):
     return keep
 
 
-def _card(ctx, results, floor, identity, out, arm="system"):
+def _card(ctx, results, floor, identity, out, arm="system", anchor=None):
     # A control arm keeps no copies (only a system arm has a store to keep).
     index = _read(out / "kept", "index.json") if arm == "system" else []
     pointers = {(r["life"], r["branch"], r["item_id"]): r["kept"] for r in index if r["kept"]}
@@ -116,7 +117,7 @@ def _card(ctx, results, floor, identity, out, arm="system"):
         not_scored_live=unscored, seed_source={"kind": "public"},
         groups=[list(g) for g in sorted({(r["cell_id"], r["stage"]) for r in items})], floor=floor,
         controls_broken=[dict(stage=s, track=t) for s, t in sorted(broken)],
-        control=None if arm == "system" else arm)
+        control=None if arm == "system" else arm, **({} if anchor is None else dict(anchor=anchor)))
 
 
 def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=None,
@@ -187,6 +188,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
             diag.commit = ctx.pins["benchmark_commit"]
         with fixedroot.lease(sandbox_slot, t1.T1Refused) as scratch:
             t1.check_install(ctx, scratch)
+            control_metadata = anchor_metadata(control) if control is not None else {}
             queued = (make_units(ctx, [Arm.from_context(ctx, "system")], scratch, out) if control is None
                       else control_units(ctx, control, scratch, out, diag))
             floors = [u for u in queued if u.arm.role == "no_memory"]
@@ -265,7 +267,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                         pending_cache.append((paths[name], entry0))
                 floor_block = dict(served_identity=identity, units={name: dict(cache_key=keys[name],
                     cached=provenance[name]["cached"]) for name in keys})
-                card = _card(ctx, results, floor_block, identity, out, main)
+                card = _card(ctx, results, floor_block, identity, out, main, **control_metadata)
                 outcomes = {}
                 for unit in queued:
                     if unit.arm.key == main:
@@ -292,7 +294,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     control_key_sha256={p.life: control_key_sha256(p, control) for p in ctx.packs},
                     block_sha256={f"{life}/{branch}/{iid}": sha256(text.encode()).hexdigest()
                         for (life, branch), texts in sorted((queued[0].arm.probe_blocks or {}).items())
-                        for iid, text in sorted(texts.items())}))
+                        for iid, text in sorted(texts.items())}, **control_metadata))
             _write(out, "custody.json", custody_rows)
             # Each arm's own live sends under its own max_sends; a control run is one phase, disclosed as before.
             budget = {} if control is not None else dict(max_sends=max_sends, phase_sends=dict(floor=floor_sends,
