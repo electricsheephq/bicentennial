@@ -285,7 +285,7 @@ class HermesAdapter:
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
-        self.after_kill = False  # whether the harness killed the last worker (audit/source_damage.py)
+        self.after_kill = False  # True from a spawn until that worker ends by itself (audit/source_damage.py)
         self.end_threads = None
         self._receipt_sessions = {}
         self.background_threads = []
@@ -356,11 +356,7 @@ class HermesAdapter:
                         continue  # compaction is observed, not forced; a swap acts through the route
                     if held and not killed:
                         raise HarnessFailed("held_kill_missed")
-                    if f["kind"] == "kill":
-                        self._worker.kill()
-                        self.after_kill = True  # its residue is not the system's until it ends by itself
-                    else:
-                        self._end()  # restart: a clean end
+                    self._worker.kill() if f["kind"] == "kill" else self._end()  # restart: a clean end
                     t0, mode = _now(), "clean" if f["kind"] == "restart" else self.kill_mode
                     m = _now()
                     self._gate(gate)
@@ -389,7 +385,6 @@ class HermesAdapter:
         except BaseException as error:
             if self._worker is not None:
                 self._worker.kill()
-                self.after_kill = True
             if isinstance(error, HarnessFailed) and str(error) in (
                     "turn_timeout", "end_timeout", "exit_timeout") and failures is not None:
                 c = d.control()
@@ -452,6 +447,7 @@ class HermesAdapter:
                                                             scripted=self.scripted))
         t0 = _now()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
+        self.after_kill = True  # until this worker ends by itself, a check may see a killed process's residue
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress,
                                bool(self.plugin is not None or self.context_engine is not None or self.plugins_enabled))
@@ -513,7 +509,6 @@ class HermesAdapter:
         if key is not None and key == self._held and key not in self._fired:
             self._fired.add(key)
             self._worker.kill()
-            self.after_kill = True
             raise HarnessKilled(f"held kill at {key}")
 
     def records(self) -> list[dict]:

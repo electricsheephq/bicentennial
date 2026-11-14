@@ -52,8 +52,13 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
         return result
 
     a._worker = SimpleNamespace(call=call, kill=lambda: None)
-    a._spawn_open = lambda *args: (spawned is None or spawned.append(getattr(a, "after_kill", False)),
-                                   ("session", history, False))[1]
+    def spawn(*args):  # as the real _spawn_open: the check reads the flag, then the spawn sets it
+        if spawned is not None:
+            spawned.append(getattr(a, "after_kill", False))
+        a.after_kill = True
+        return "session", history, False
+
+    a._spawn_open = spawn
     drains = []
 
     def drain(*args, upgrade=None):
@@ -196,15 +201,29 @@ def test_harness_kills_mark_the_next_source_check(tmp_path):
     made = []
     with pytest.raises(adapter.HarnessFailed, match="^director_stopped$"):
         fake_session(tmp_path / "stopped", 1.0, faults={}, stopped_after=1, made=made)
-    assert made[0].after_kill is True  # the failure path killed the worker
+    assert made[0].after_kill is True  # the failure path killed the worker before any clean end
 
 
-def test_end_and_held_kill_set_the_kill_flag():
+def test_spawn_sets_and_clean_end_clears_the_kill_flag(monkeypatch, tmp_path):
     a = object.__new__(adapter.HermesAdapter)
     a.after_kill, a._worker = True, SimpleNamespace(call=lambda **kw: {"ok": True}, kill=lambda clean=False: None)
     a._end()
     assert a.after_kill is False  # the worker ended by itself
-    a._held, a._fired = (1, 2), set()
-    with pytest.raises(adapter.HarnessKilled):
-        a._on_hold({"session": 1, "turn": 2})
+
+    def failed_start(*args, **kw):  # a first worker the harness kills during startup is never assigned
+        raise adapter.HarnessFailed("startup_timeout")
+
+    monkeypatch.setattr(adapter, "_Worker", failed_start)
+    a.check_sources, a.before_spawn, a.env_server, a._wiped = None, None, None, False
+    a.paths = dict(hermes_home=tmp_path, workspace=tmp_path, logs=tmp_path, home=tmp_path, root=tmp_path)
+    monkeypatch.setattr(adapter, "validate_paths", lambda paths: None)
+    monkeypatch.setattr(adapter, "write_config", lambda *args, **kw: None)
+    monkeypatch.setattr(adapter, "hermes_config", lambda *args, **kw: {})
+    monkeypatch.setattr(adapter, "worker_env", lambda *args: {})
+    a.server, a.clock, a.checkout, a.extra_env = SimpleNamespace(port=0), SimpleNamespace(path=tmp_path), None, None
+    a._alias, a.plugin, a.plugin_config, a.memory, a.toolsets = "scripted", None, None, None, ()
+    a.window, a.context_engine, a.plugins_enabled, a.scripted, a.argv, a.pids, a.egress = (
+        None, None, False, True, [], [], None)
+    with pytest.raises(adapter.HarnessFailed, match="^startup_timeout$"):
+        a._spawn_open("session_start", None, {"spawn": []})
     assert a.after_kill is True
