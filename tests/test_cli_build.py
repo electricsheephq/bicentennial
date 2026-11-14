@@ -37,15 +37,17 @@ def test_build_dispatch(ready, monkeypatch, capsys, tier):
     assert capsys.readouterr() == ("", "sqlite_version test-version\nsqlite_secure_delete_default 1\n")
 
 
-def test_build_hidden_spec_and_edition(ready, monkeypatch, capsys):
-    argv = ["build", "--tier", "T2", "--out", "parent", "--spec", "lives.toml", "--edition", "2"]
+@pytest.mark.parametrize("tier", ["T1", "T2"])
+@pytest.mark.parametrize("edition", [2, 3])
+def test_build_hidden_spec_and_edition(ready, monkeypatch, capsys, tier, edition):
+    argv = ["build", "--tier", tier, "--out", "parent", "--spec", "lives.toml", "--edition", str(edition)]
     seen = []
     monkeypatch.setattr(build, "build_tier", lambda *args, **kwargs: seen.append((args, kwargs)) or dict(
         sqlite_version="test-version"))
     monkeypatch.setattr(cli, "_secure_delete_default", lambda: 1)
     assert cli.main(argv) == 0
     (args, kwargs), = seen
-    assert args == ("T2", "parent") and (kwargs["spec_path"], kwargs["edition"]) == ("lives.toml", 2)
+    assert args == (tier, "parent") and (kwargs["spec_path"], kwargs["edition"]) == ("lives.toml", edition)
     capsys.readouterr()
     with pytest.raises(SystemExit):
         cli.main(["build", "--help"])

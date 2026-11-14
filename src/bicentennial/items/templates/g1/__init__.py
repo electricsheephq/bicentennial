@@ -1,16 +1,19 @@
-"""Version-one G1 catalogue and version two of three templates; target variants use dataclasses.replace."""
+"""Version-one G1 catalogue and versions two and three of three templates; targets use dataclasses.replace."""
 
 from .common import G1Template, option_roles, repo_checks, table
 from .drift_action import DriftAction, DriftQuote
 from .drift_action_v2 import DriftActionV2, DriftQuoteV2
+from .drift_action_v3 import DriftActionV3, DriftQuoteV3
 from .drift_chain import DriftChain
 from .drift_chain_v2 import DriftChainV2
+from .drift_chain_v3 import DriftChainV3
 from .recall_value import RecallValue
 from .tuesday_trigger import TuesdayTrigger
 from .wake_open_loop import WakeLoop
 
-__all__ = ["TEMPLATES", "TEMPLATES_V2", "G1_MUTANT_ROLES", "G1Template", "DriftAction", "DriftActionV2",
-           "DriftQuote", "DriftQuoteV2", "DriftChain", "DriftChainV2", "RecallValue", "TuesdayTrigger", "WakeLoop",
+__all__ = ["TEMPLATES", "TEMPLATES_V2", "TEMPLATES_V3", "G1_MUTANT_ROLES", "G1Template", "DriftAction", "DriftActionV2",
+           "DriftActionV3", "DriftQuote", "DriftQuoteV2", "DriftQuoteV3", "DriftChain", "DriftChainV2", "DriftChainV3",
+           "RecallValue", "TuesdayTrigger", "WakeLoop",
            "option_roles", "repo_checks"]
 
 
@@ -51,11 +54,18 @@ TEMPLATES_V2 = (
     _template(DriftQuoteV2, "drift-quote", "DRIFT-CUR", "verbatim retention", version=2, tables=(
         _table("drift-quote-v2", ("holds:current",), ("changed:other",)),)),
 )
+# Round 2's three K3 finalists (#534): the screened prompts and v2's tables under v3 ids.
+TEMPLATES_V3 = (
+    _template(DriftChainV3, "drift-chain-fault", "DRIFT-CUR", "verbatim retention", chain_id="deadline-1", fault=True,
+              version=3, tables=(_table("drift-chain-fault-v3", ("holds:current",), ("changed:other",)),)),
+    _template(DriftActionV3, "drift-config", "DRIFT-CUR", "extraction and consolidation", twin="trigger", version=3,
+              tables=(_table("drift-config-corrected-v3", ("holds:update",)),
+                      _table("drift-config-hedged-v3", wrong=("changed:update",), gold="refrain"))),
+    _template(DriftQuoteV3, "drift-quote", "DRIFT-CUR", "verbatim retention", version=3, tables=(
+        _table("drift-quote-v3", ("holds:current",), ("changed:other",)),)),
+)
 G1_MUTANT_ROLES = {t["table_id"]: {"stale": tuple(r for r in ("other", "update", "book")
                                                if f"changed:{r}" in [d["predicate"] for d in t["disqualifiers"]]),
                                   "planted": ("lure",) if any(d["predicate"] == "changed:lure"
                                                             for d in t["disqualifiers"]) else ()}
-                   for template in (*TEMPLATES, *TEMPLATES_V2) for t in template.decision_tables}
-# Screening v3 tables reuse v2 contents and roles, independently of candidate code.
-G1_MUTANT_ROLES.update({tid.removesuffix("-v2") + "-v3": roles for tid, roles in
-                       tuple(G1_MUTANT_ROLES.items()) if tid.endswith("-v2")})
+                   for template in (*TEMPLATES, *TEMPLATES_V2, *TEMPLATES_V3) for t in template.decision_tables}
