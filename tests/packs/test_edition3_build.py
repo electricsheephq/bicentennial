@@ -1,5 +1,7 @@
-"""Edition 3 builds the three exact finalists; only control runs may use its packs."""
+"""Edition 3 builds the three exact finalists. Round 2 admitted them, so system runs may use its packs too; round 2's
+own validation pack stays control-only (#529)."""
 
+import json
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
@@ -93,7 +95,23 @@ def test_v3_prompts_on_first_public_g1_life_equal_variant_zero(edition3):
     assert seen == SWAPPED
 
 
-def test_run_gate_accepts_control_and_refuses_system(edition3):
+def test_run_gate_accepts_edition3_once_admitted(edition3):
+    packed = tuple(edition3.packs.values())
+    t1._check_c7(packed, control=True)
+    t1._check_c7(packed, control=False)
+
+
+@pytest.mark.parametrize("ref", ["drift-chain-fault-v3", "drift-config-v3", "drift-quote-v3"])
+@pytest.mark.parametrize("change", ["removed", "entry", "reading"])
+def test_run_gate_refuses_a_system_run_without_each_v3_admission(edition3, tmp_path, monkeypatch, ref, change):
+    record = json.loads(t1.TEMPLATE_ADMISSIONS.read_bytes())
+    if change == "removed":
+        del record["admitted"][ref]
+    else:
+        record["admitted"][ref].update({"entry": {"entry_sha256": "f" * 64}, "reading": {"reading": "format validated"}}[change])
+    path = tmp_path / "admissions.json"
+    path.write_text(json.dumps(record))
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", path)
     packed = tuple(edition3.packs.values())
     t1._check_c7(packed, control=True)
     with pytest.raises(t1.T1Refused) as caught:
@@ -143,6 +161,4 @@ def test_t1_builds_edition3(tmp_path):
     assert {ref(r) for p in packed for r in p.records.values() if r["template_id"] in SWAPPED} == {
         f"{tid}-v3" for tid in SWAPPED}
     t1._check_c7(packed, control=True)
-    with pytest.raises(t1.T1Refused) as caught:
-        t1._check_c7(packed)
-    assert caught.value.code == "template_not_admitted"
+    t1._check_c7(packed)  # admitted by round 2 (template-admissions.json)
