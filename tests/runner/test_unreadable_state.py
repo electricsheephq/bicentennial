@@ -113,7 +113,8 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
 
 
 @pytest.mark.parametrize("damage,reason", [("file_mode", "permission"), ("dir_mode", "permission"),
-    ("root_mode", "permission"), ("link", "symlink_loop"), ("dir_link", "symlink_loop"), ("fifo", "not_regular")])
+    ("root_mode", "permission"), ("link", "symlink_loop"), ("dir_link", "symlink_loop"), ("fifo", "not_regular"),
+    ("link_locked", "symlink_target")])
 def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, monkeypatch, damage, reason):
     case, locked, guards, released = lives["t1-g1", "B0"], [], [], []
     done, attempted, fifos = Event(), Event(), []
@@ -132,6 +133,14 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
             path = workspace if damage == "root_mode" else workspace / "config" if damage == "dir_mode" else path
             locked.append(path)
             path.chmod(0)
+        elif damage == "link_locked":  # a new link into a folder the reader locked, outside the workspace
+            target = tmp_path / "locked-target"
+            target.mkdir()
+            (target / "decisions.md").write_text("# Decisions\n")
+            target.chmod(0)
+            locked.append(target)
+            path.unlink()
+            path.symlink_to(target / "decisions.md")
         else:
             if damage == "dir_link":
                 path.unlink()
@@ -179,6 +188,29 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
         for path in locked:
             if path.exists():
                 path.chmod(0o700 if path.is_dir() else 0o600)
+
+
+def test_live_locked_directory_off_the_input_paths_still_cleans_up(lives, unit_sessions, tmp_path, monkeypatch):
+    case, locked = lives["t1-g1", "B0"], []
+
+    def lock_extra(workspace):
+        extra = workspace / "extra" / "locked"
+        extra.mkdir(parents=True)
+        (extra / "kept.txt").write_text("a file the reader keeps")
+        extra.chmod(0)
+        locked.append(extra)
+
+    damage_probe(monkeypatch, case, lock_extra)
+    try:
+        result = unit(case, tmp_path)  # base: the attempt's cleanup raises PermissionError on the locked folder
+        assert result.attempts == 1 and result.stop is None
+        run, = result.runs
+        assert not run.item_labels and not run.unreadable_paths
+        assert run._root is not None and not run._root.exists()
+    finally:
+        for path in locked:
+            if path.exists():
+                path.chmod(0o700)
 
 
 @pytest.mark.parametrize("fault", ["permission", "loop"])

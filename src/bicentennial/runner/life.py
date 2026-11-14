@@ -54,7 +54,7 @@ from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
-from bicentennial.runner.input_reads import read_input, repair_permissions
+from bicentennial.runner.input_reads import read_input, repair_permissions, unlock_tree
 from bicentennial.runner.lock import LockMismatch
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
@@ -151,7 +151,11 @@ class LifeRun:
     def cleanup(self):
         """Release this attempt after its evidence has been scored."""
         if self._root is not None and self._root.exists():
-            shutil.rmtree(self._root)
+            try:
+                shutil.rmtree(self._root)
+            except PermissionError:  # a live reader locked a directory of its probe clone
+                unlock_tree(self._root)
+                shutil.rmtree(self._root)
 
 
 class PluginWake:
@@ -246,8 +250,10 @@ def _read_action_state(workspace, scratch, listing, *, absent_before=False):
                 failed.append((p, _unreadable_reason(error)))
             (root / p).write_bytes(empty[p])
     finally:
-        repair_permissions(workspace, repairs)
-        shutil.rmtree(root)
+        try:
+            repair_permissions(workspace, repairs)
+        finally:
+            shutil.rmtree(root)
     return state, bool(failed), tuple(sorted(failed))
 
 
