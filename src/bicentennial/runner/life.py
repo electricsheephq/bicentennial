@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from bicentennial.audit.effects import hermes as hermes_effects
-from bicentennial.audit.source_damage import SourceBaseline
 from bicentennial.audit.readback import (
     audit,
     failures,
@@ -20,6 +19,7 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
+from bicentennial.audit.source_damage import SourceBaseline
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_listing
@@ -534,19 +534,19 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
 
             def check_sources():
                 nonlocal source_receipt
-                source_receipt = source_receipt or baseline.receipt()
+                source_receipt = source_receipt or session_baseline.receipt()
                 if source_receipt is not None:
                     if source_receipt not in evidence.source_receipts:
                         evidence.source_receipts.append(source_receipt)
-                        if source_receipt["rule"] == "not_a_directory":
-                            try:
-                                path = Path(source_receipt["path"])
-                                kept = root / f"invalid-surface-{index}"
-                                path.rename(kept)  # preserve the entry itself, without following it
-                                source_receipt["kept"] = str(kept)
+                        try:
+                            path = Path(source_receipt["path"])
+                            kept = root / f"invalid-source-{index}"
+                            path.rename(kept)  # preserve the entry itself, without following it
+                            source_receipt["kept"] = str(kept)
+                            if source_receipt["rule"] == "not_a_directory":
                                 path.mkdir()
-                            except Exception as error:
-                                evidence.restore_failures.append(type(error).__name__)
+                        except Exception as error:
+                            evidence.restore_failures.append(type(error).__name__)
                     raise HarnessFailed(source_receipt["label"])
 
             adapter.check_sources = check_sources
@@ -558,7 +558,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 if leg is not None:
                     leg.check_session(previous_session)
                 previous_session = index
-                attempt_id = None
+                attempt_id, session_baseline = None, baseline
                 try:
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
                     if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
@@ -611,6 +611,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(swap_in(clone, canonical))
+                        if probe:
+                            session_baseline = SourceBaseline(surfaces, baseline.excluded)
                         stack.callback(check_sources)  # runs before any swap restores, including on exceptions
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
                         track_state = leg is not None and genre == "G1"
@@ -684,12 +686,17 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     cause = ("SYSTEM_FAILURE", source_receipt["label"]) if source_receipt else _cause(error)
                     if source_receipt and _cause(error) != cause:
                         evidence.restore_failures.append(type(error).__name__)
-                    rows = _probe_rows(adapter.records(), attempt_id, index) if probe else []
                     proven = cause[1] in ("act_state_collision", "worker_protocol", "invalid_store", "invalid_surface") and cause[0] == "SYSTEM_FAILURE"
+                    try:
+                        rows = _probe_rows(adapter.records(), attempt_id, index) if probe or proven else []
+                    except (OSError, ValueError):
+                        if not proven:
+                            raise
+                        rows = []
                     if proven:
                         evidence = replace(evidence, incidental_unknown_400=evidence.incidental_unknown_400 + sum(
                             r.get("role") == "unknown" and r.get("status") == 400 for r in rows))
-                    code = _probe_code(rows, attempt_id, session=index, probe_live=leg is not None) if not proven else None
+                    code = _probe_code(rows, attempt_id, session=index, probe_live=leg is not None) if probe and not proven else None
                     if code:
                         cause = ("INFRA_FAILURE", code)
                     stopped = (*cause, index)

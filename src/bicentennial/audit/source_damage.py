@@ -2,45 +2,34 @@
 
 import sqlite3
 import stat
-from pathlib import Path
-
-HEADER = b"SQLite format 3\x00"
 
 
-def _database(path):
+def _file_rule(path):
     with path.open("rb") as stream:
-        header = stream.read(16) == HEADER
-    if not header:
-        return False, False
+        if stream.read(16) != b"SQLite format 3\x00":
+            return "file"
+    db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     try:
-        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
-            valid = db.execute("PRAGMA quick_check").fetchall() == [("ok",)]
+        return "sqlite_valid" if db.execute("PRAGMA quick_check").fetchall() == [("ok",)] else "sqlite_malformed"
     except sqlite3.DatabaseError as error:
         if getattr(error, "sqlite_errorcode", None) not in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
             raise
-        valid = False
+        return "sqlite_malformed"
     finally:
-        if "db" in locals():
-            db.close()
-    return True, valid
+        db.close()
 
 
 def _scan(root):
     if not stat.S_ISDIR(root.lstat().st_mode):
         return {root: "not_a_directory"}
     rows = {root: "directory"}
-    def visit(directory):
-        for path in sorted(directory.iterdir()):
-            mode = path.lstat().st_mode
-            if stat.S_ISDIR(mode):
-                rows[path] = "directory"
-                visit(path)
-            elif stat.S_ISREG(mode):
-                header, valid = _database(path)
-                rows[path] = ("sqlite_valid" if valid else "sqlite_malformed") if header else "file"
-            else:
-                rows[path] = "link" if stat.S_ISLNK(mode) else "unsupported_entry"
-    visit(root)
+    for path in sorted(root.iterdir()):
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            rows.update(_scan(path))
+        else:
+            rows[path] = (_file_rule(path) if stat.S_ISREG(mode) else
+                          "link" if stat.S_ISLNK(mode) else "unsupported_entry")
     return rows
 
 

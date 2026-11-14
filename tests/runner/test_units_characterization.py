@@ -18,6 +18,10 @@ def _digests(root):
         if not path.is_file():
             continue
         data = path.read_bytes()
+        if path.name == "disclosures.json":
+            disclosure = json.loads(data)
+            disclosure.pop("infrastructure_events")  # additive #557 key; all prior bytes stay pinned below
+            data = canon(disclosure)
         if path.name == "receipt.json":
             receipt = json.loads(data)
             # Only these fields vary on this fake stack. Keep all other volatile fields,

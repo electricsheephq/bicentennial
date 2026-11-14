@@ -394,12 +394,22 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             if labels is not None:
                 labels.append((attempt, tuple(s.label for s in scores.values() if isinstance(s, Infra))))
             _write(out, "t2lite_probes.json", probes)
+            for n, receipt in enumerate(run.source_receipts):
+                if "kept" in receipt:
+                    target = out / "source_damage" / str(attempt) / str(n)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        Path(receipt["kept"]).rename(target)
+                        receipt["kept"] = str(target)
+                    except OSError as error:
+                        run.restore_failures.append(type(error).__name__)
             # Only a unit with something to record writes it, so every other run keeps its output bytes.
-            if any(r.incidental_unknown_400 or r.infra_item_labels or r.source_receipts or r.restore_failures
+            if any(r.incidental_unknown_400 or r.stopped and r.stopped[0] == "INFRA_FAILURE"
+                   or r.source_receipts or r.restore_failures
                    for r in runs):
                 _write(out, "unit_diagnostics.json", dict(attempts=[dict(attempt=r.attempt, stopped=r.stopped,
-                    incidental_unknown_400=r.incidental_unknown_400, infra_item_labels=r.infra_item_labels,
-                    source_receipts=r.source_receipts, restore_failures=r.restore_failures) for r in runs]))
+                    incidental_unknown_400=r.incidental_unknown_400, **{k: getattr(r, k) for k in (
+                        "infra_item_labels", "source_receipts", "restore_failures") if getattr(r, k)}) for r in runs]))
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:
                 measured = _floor_measured(pack, branch, run, probes, scores)
