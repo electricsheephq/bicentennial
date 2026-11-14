@@ -324,3 +324,148 @@ def test_spec_check_raising_leaves_no_spec(tmp_path, monkeypatch, capsys):
     assert roster.place(draw, tmp_path / "work", spec_out, table_out, templates=TEMPLATES) == 0
     assert t.load_tier(spec_out)["tier"] == "T2" and table_out.exists()
     _no_seed_printed(capsys.readouterr().out, json.loads(draw.read_bytes())["design"])
+
+
+def _stub_round2(monkeypatch, fails):
+    tried = _stub(monkeypatch, fails)
+    fake = t.t1_life
+
+    def only_g1(spec, row, templates, **kwargs):
+        assert row["genre"] == "G1"
+        assert templates is TEMPLATES["G1"]
+        return fake(spec, row, templates, **kwargs)
+
+    monkeypatch.setattr(t, "t1_life", only_g1)
+    return tried
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_round2_spec_round_trips(tmp_path, monkeypatch, capsys, replace):
+    from bicentennial.runner.units import T2_SPEC
+
+    draw, design, spares = _draw(tmp_path)
+    tried = _stub_round2(monkeypatch, lambda seed: replace and seed in (design[3], spares[0]))
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    assert roster.place(draw, tmp_path / "work", spec_out, table_out, round_=2, templates=TEMPLATES) == 0
+    first = next(row for row in PUBLIC if row["genre"] == "G1")
+    lives = [dict(first, life=f"t2-g1-{n}", seed=seed) for n, seed in enumerate(design, 1)]
+    replacements = []
+    if replace:
+        lives[3]["seed"] = spares[1]
+        replacements = [
+            dict(life="t2-g1-4", seed=design[3], replacement_seed=spares[0], rule="hostable",
+                 item_id="drift-quote-v2"),
+            dict(life="t2-g1-4", seed=spares[0], replacement_seed=spares[1], rule="hostable",
+                 item_id="drift-quote-v2")]
+    assert tried == ([*design[:4], spares[0], spares[1], *design[4:]] if replace else design)
+    expected = t._tier_source("T2", lives=lives, replacements=replacements)
+    assert t.load_tier(spec_out) == tomllib.loads(spec_out.read_text()) == expected
+    assert len(lives) == len({row["life"] for row in lives}) == 10
+    assert all(row["genre"] == "G1" for row in lives)
+    assert any(sorted(row["genre"] for row in lives) == sorted(composition)
+               for composition in T2_SPEC.control_compositions)
+    table = json.loads(table_out.read_bytes())
+    assert table_out.read_bytes() == canon(table) + b"\n"
+    assert [row["seed"] for row in table] == tried
+    assert [row["result"] for row in table] == (
+        ["pass"] * 3 + ["PlacementError"] * 2 + ["pass"] * 7 if replace else ["pass"] * 10)
+    draw_sha = hashlib.sha256(draw.read_bytes()).hexdigest()
+    assert spec_out.read_text().splitlines()[0] == (
+        f"# Validity round 2 validation spec, placed from draw sha256 {draw_sha}.")
+    printed = capsys.readouterr().out
+    assert printed.splitlines() == [
+        f"draw_sha256 {draw_sha}", f"spec_sha256 {hashlib.sha256(spec_out.read_bytes()).hexdigest()}",
+        f"table_sha256 {hashlib.sha256(table_out.read_bytes()).hexdigest()}",
+        f"lives 10 replacements {len(replacements)} table_rows {len(tried)}"]
+    _no_seed_printed(printed, [*design, *spares])
+
+
+def test_round2_void_receipt(tmp_path, monkeypatch, capsys):
+    draw, design, spares = _draw(tmp_path)
+    _stub_round2(monkeypatch, lambda seed: seed in (design[1], design[6]))
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    assert roster.place(draw, tmp_path / "work", spec_out, table_out, round_=2, templates=TEMPLATES) == 1
+    assert not spec_out.exists()
+    receipt = json.loads(table_out.read_bytes())
+    assert table_out.read_bytes() == canon(receipt) + b"\n"
+    draw_sha = hashlib.sha256(draw.read_bytes()).hexdigest()
+    assert {k: receipt[k] for k in ("void", "rule", "draw_sha256")} == dict(
+        void=True, rule="design_failures", draw_sha256=draw_sha)
+    assert [(r["seed"], r["result"]) for r in receipt["table"]] == [
+        (design[0], "pass"), (design[1], "PlacementError"), (spares[0], "pass"),
+        *((s, "pass") for s in design[2:6]), (design[6], "PlacementError")]
+    assert receipt["replacements"] == [dict(life="t2-g1-2", seed=design[1], replacement_seed=spares[0],
+                                            rule="hostable", item_id="drift-quote-v2")]
+    printed = capsys.readouterr().out
+    assert printed.splitlines() == [
+        "void design_failures", f"draw_sha256 {draw_sha}",
+        f"receipt_sha256 {hashlib.sha256(table_out.read_bytes()).hexdigest()}",
+        "table_rows 8 replacements 1"]
+    _no_seed_printed(printed, [*design, *spares])
+
+
+def test_round_cli_and_default(tmp_path, monkeypatch, capsys):
+    from bicentennial.items import editions
+
+    draw, design, spares = _draw(tmp_path)
+    monkeypatch.setitem(editions.EDITIONS, 2, TEMPLATES)
+    monkeypatch.setitem(editions.EDITIONS, 3, TEMPLATES)
+    _stub_round2(monkeypatch, lambda seed: False)
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    args = ["place", "--draw", str(draw), "--work", str(tmp_path / "work"),
+            "--spec-out", str(spec_out), "--table-out", str(table_out)]
+    assert roster.main([*args, "--round", "2"]) == 0
+    assert [row["genre"] for row in t.load_tier(spec_out)["lives"]] == ["G1"] * 10
+    with pytest.raises(SystemExit) as caught:
+        roster.main([*args, "--round", "3"])
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert "argument --round: invalid choice:" in captured.err
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+    _stub(monkeypatch, lambda seed: False)
+    default = tmp_path / "default.toml"
+    explicit = tmp_path / "explicit.toml"
+    assert roster.main([*args, "--spec-out", str(default), "--table-out", str(tmp_path / "default.json")]) == 0
+    assert roster.main([*args, "--round", "1", "--spec-out", str(explicit),
+                        "--table-out", str(tmp_path / "explicit.json")]) == 0
+    assert default.read_bytes() == explicit.read_bytes()
+    assert (tmp_path / "default.json").read_bytes() == (tmp_path / "explicit.json").read_bytes()
+    assert t.load_tier(default) == t._tier_source(
+        "T2", lives=[dict(row, seed=seed) for row, seed in zip(PUBLIC, design, strict=True)])
+    _no_seed_printed(capsys.readouterr().out, [*design, *spares])
+
+
+def test_round2_uses_edition3(tmp_path, monkeypatch, capsys):
+    from bicentennial.items import editions
+
+    draw, design, spares = _draw(tmp_path)
+    monkeypatch.setitem(editions.EDITIONS, 2, {})
+    monkeypatch.setitem(editions.EDITIONS, 3, TEMPLATES)
+    tried = _stub_round2(monkeypatch, lambda seed: False)
+    assert roster.place(draw, tmp_path / "work", tmp_path / "SPEC.toml", tmp_path / "TABLE.json", round_=2) == 0
+    assert tried == design
+    _no_seed_printed(capsys.readouterr().out, [*design, *spares])
+
+
+@pytest.mark.parametrize("has_g1", [False, True])
+def test_round2_uses_first_public_g1_or_refuses(tmp_path, monkeypatch, capsys, has_g1):
+    draw, design, spares = _draw(tmp_path)
+    root = tmp_path / "repo"
+    source = root / "tiers/life_specs/t2.toml"
+    source.parent.mkdir(parents=True)
+    rows = [PUBLIC[-1], PUBLIC[1]] if has_g1 else PUBLIC[5:]
+    source.write_text(roster.toml_text(t._tier_source("T2", lives=rows), "test public roster"))
+    tried = _stub_round2(monkeypatch, lambda seed: False)
+    spec_out, table_out = tmp_path / "SPEC.toml", tmp_path / "TABLE.json"
+    if has_g1:
+        assert roster.place(draw, tmp_path / "work", spec_out, table_out,
+                            round_=2, templates=TEMPLATES, root=root) == 0
+        assert t.load_tier(spec_out)["lives"] == [
+            dict(PUBLIC[1], life=f"t2-g1-{n}", seed=seed) for n, seed in enumerate(design, 1)]
+        assert tried == design
+    else:
+        with pytest.raises(roster.Refused, match="G1"):
+            roster.place(draw, tmp_path / "work", spec_out, table_out, round_=2, templates=TEMPLATES, root=root)
+        assert tried == [] and not spec_out.exists() and not table_out.exists()
+        assert not (tmp_path / "work").exists()
+    _no_seed_printed(capsys.readouterr().out, [*design, *spares])

@@ -1,5 +1,8 @@
 """Draw the validity round's seeds and place its lives from the draw (validity-1 declaration §2).
 
+Rounds 1 and 2 follow results/validity-1/DECLARATION.md §2 and results/validity-2/DECLARATION.md §2,
+respectively.
+
 `draw` writes ten design seeds and sixteen ordered spares and prints only the file's sha256 (the
 commitment) and the counts. `place` freezes the validation spec from that draw, or writes a void
 receipt when the dry run stops. Neither prints a seed.
@@ -109,7 +112,7 @@ def _read_draw(path):
     return data, hashlib.sha256(raw).hexdigest()
 
 
-def place(draw_path, work, spec_out, table_out, *, templates=None, root=ROOT):
+def place(draw_path, work, spec_out, table_out, *, round_=1, templates=None, root=ROOT):
     if Path(spec_out).resolve() == Path(table_out).resolve():
         raise Refused("--spec-out and --table-out are the same path")
     for path in (spec_out, table_out):
@@ -121,11 +124,17 @@ def place(draw_path, work, spec_out, table_out, *, templates=None, root=ROOT):
     if templates is None:  # the edition map lands in a sibling PR; import it only when placing for real
         from bicentennial.items.editions import EDITIONS
 
-        templates = EDITIONS[2]
+        templates = EDITIONS[3 if round_ == 2 else 2]
     rows = targeted.load_tier(root / "tiers/life_specs/t2.toml")["lives"]
-    if len(rows) != DESIGN:
-        raise Refused("public T2 roster is not ten lives")
-    rows = [dict(row, seed=seed) for row, seed in zip(rows, data["design"], strict=True)]
+    if round_ == 2:
+        first = next((row for row in rows if row["genre"] == "G1"), None)
+        if first is None:
+            raise Refused("public T2 roster has no G1 row")
+        rows = [dict(first, life=f"t2-g1-{n}", seed=seed) for n, seed in enumerate(data["design"], 1)]
+    else:
+        if len(rows) != DESIGN:
+            raise Refused("public T2 roster is not ten lives")
+        rows = [dict(row, seed=seed) for row, seed in zip(rows, data["design"], strict=True)]
     try:
         spec, table = targeted.t2_dry_run(targeted._tier_source("T2", lives=rows), templates,
                                           root=work, pool=data["spares"])
@@ -140,7 +149,7 @@ def place(draw_path, work, spec_out, table_out, *, templates=None, root=ROOT):
         print(f"receipt_sha256 {digest}")
         print(f"table_rows {len(error.table)} replacements {len(error.replacements)}")
         return 1
-    text = toml_text(spec, f"Validity round 1 validation spec, placed from draw sha256 {draw_sha}.")
+    text = toml_text(spec, f"Validity round {round_} validation spec, placed from draw sha256 {draw_sha}.")
     if tomllib.loads(text) != spec:
         raise ValueError("spec TOML does not round-trip")
     spec_sha = _write_new(spec_out, text.encode("utf-8"))
@@ -170,6 +179,7 @@ def main(argv=None):
     drawing = sub.add_parser("draw")
     drawing.add_argument("--out", required=True, type=Path)
     placing = sub.add_parser("place")
+    placing.add_argument("--round", type=int, choices=(1, 2), default=1)
     placing.add_argument("--draw", required=True, type=Path)
     placing.add_argument("--work", required=True, type=Path)
     placing.add_argument("--spec-out", required=True, type=Path)
@@ -178,7 +188,7 @@ def main(argv=None):
     try:
         if args.command == "draw":
             return draw(args.out)
-        return place(args.draw, args.work, args.spec_out, args.table_out)
+        return place(args.draw, args.work, args.spec_out, args.table_out, round_=args.round)
     except (Refused, FileExistsError) as error:
         print(f"refused: {error}", file=sys.stderr)
         return 2
