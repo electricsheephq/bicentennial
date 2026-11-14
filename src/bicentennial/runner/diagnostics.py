@@ -5,7 +5,8 @@ keeps, per item, under DIR/<life>/<branch>/<attempt>/<item_id>/:
 
 - trajectory.json: every probe_main ledger row of the item's probe session, each with a `bodies` field holding its
   decoded req/resp blobs and each upstream entry's;
-- act.json and workspace/<path>: for an act item, the state the scorer read (a skip when none was parsed, or when the reader left it unreadable) and the
+- act.json and workspace/<path>: for an act item, the state the scorer read (partial when labelled unreadable_state,
+  a skip when none was parsed) and the
   post-action workspace clone's files, bounded by MAX_FILE_BYTES and MAX_ENTRIES and without git metadata;
 - final.txt: for a QA item, the raw final reply text, when there is one;
 - score.json and probe.json: the attempt's score row and probe row.
@@ -29,7 +30,6 @@ from uuid import uuid4
 
 from bicentennial.canon import canon
 from bicentennial.ledger import BlobStore, Guard
-from bicentennial.runner.hermes_score import UNREADABLE
 from bicentennial.runner.kept import _needle_forms, plain_item_id
 from bicentennial.runner.t2lite import _secrets
 from bicentennial.sandbox import fixedroot
@@ -179,9 +179,7 @@ class Diagnostics:
         self._put(f"{rel}/trajectory.json", trajectory)
         if item.get("stage") == "act":
             # The workspace is kept even when no state was parsed: a read_state failure is a case to explain.
-            if run.act.get(iid) is UNREADABLE:
-                self._skip(f"{rel}/act.json", "unreadable state")  # the workspace below shows what the reader left
-            elif iid in run.act:
+            if run.item_labels.get(iid) == "unreadable_state" or iid in run.act:
                 self._put(f"{rel}/act.json", lambda: canon(run.act[iid]))
             else:
                 self._skip(f"{rel}/act.json", "no parsed state")

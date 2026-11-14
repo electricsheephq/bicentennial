@@ -48,6 +48,7 @@ class TierSpec:
     probe_mode: str = "ring0"
     keep_pre_probe: bool = False
     pre_probe_attribution: bool = False
+    control_compositions: tuple[tuple[str, ...], ...] = ()
 
 
 def _t1_roots(marker, admission):
@@ -56,7 +57,8 @@ def _t1_roots(marker, admission):
 
 T1_SPEC = TierSpec("T1", ("G1", "G2"), 2, _t1_roots)
 T2_SPEC = TierSpec("T2", ("G1",) * 5 + ("G2",) * 5, 8,
-                   lambda marker, admission: admission.max_roots, "longest", 4, "per_item", True, True)
+                   lambda marker, admission: admission.max_roots, "longest", 4, "per_item", True, True,
+                   control_compositions=(("G1",) * 10,))
 
 # Only T2 raises these (T1 and T2-lite always admit a root); T2's guide, written with its runner, documents them.
 T2_ONLY_REFUSALS = frozenset({"roots_below_min"})

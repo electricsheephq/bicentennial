@@ -302,7 +302,10 @@ def prepare(*, system, packs, pack_hash, hermes=None, plugin_source=None, entry=
     if index["harness_artifacts"] != [harness_pin]:
         raise T1Refused("harness_artifact_mismatch")
     rels = sorted(index["packs"])
-    if sorted(_json(Path(packs) / rel / "sealed/meta.json")["genre"] for rel in rels) != sorted(spec.composition):
+    genres = sorted(_json(Path(packs) / rel / "sealed/meta.json")["genre"] for rel in rels)
+    if genres != sorted(spec.composition) and not (
+        control and any(genres == sorted(composition) for composition in spec.control_compositions)
+    ):
         raise T1Refused("tier_composition")
     packed = tuple(_pack(Path(packs), rel) for rel in rels)
     _check_c7(packed, control=control)
