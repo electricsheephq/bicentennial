@@ -52,6 +52,7 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
         if a._held:
             with pytest.raises(adapter.HarnessKilled):
                 a._on_hold(dict(session=a._held[0], turn=a._held[1]))
+            assert reaped and a.after_kill is True  # the held kill itself killed the live worker and reported it
             return None
         history += 1
         a.director.summariser_requests += history in compact_turns
