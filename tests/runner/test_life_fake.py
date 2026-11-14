@@ -836,6 +836,14 @@ def test_probe_code_uses_attempt_for_unknown_cursor():
                               "now") == "error_plantoolmissing"
 
 
+@pytest.mark.parametrize("cursor,expected", [(None, "unknown_400"), (dict(session=None), "unknown_400"),
+    (dict(session=3, turn=1), "unknown_400"), (dict(session=2, turn=1), None)])
+def test_probe_code_binds_reused_attempt_to_session(cursor, expected):
+    row = dict(attempt_id="now", cursor=cursor, role="unknown", status=400)
+    assert runner._probe_code([row], "now", session=3, probe_live=True) == expected
+    assert runner._probe_code([row], "other", session=3, probe_live=True) is None
+
+
 def test_cleanup_is_attempt_local_and_idempotent(tmp_path):
     root, sibling = tmp_path / "attempt", tmp_path / "sibling"
     root.mkdir()

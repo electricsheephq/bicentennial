@@ -392,6 +392,10 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             if labels is not None:
                 labels.append((attempt, tuple(s.label for s in scores.values() if isinstance(s, Infra))))
             _write(out, "t2lite_probes.json", probes)
+            # Only a unit with an incidental unknown_400 row writes it, so every other run keeps its output bytes.
+            if any(r.incidental_unknown_400 for r in runs):
+                _write(out, "unit_diagnostics.json", dict(attempts=[dict(attempt=r.attempt, stopped=r.stopped,
+                    incidental_unknown_400=r.incidental_unknown_400) for r in runs]))
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:
                 measured = _floor_measured(pack, branch, run, probes, scores)

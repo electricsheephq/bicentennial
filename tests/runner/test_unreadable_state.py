@@ -40,13 +40,13 @@ def act_probe(case):
     return next(p for p in case["compiled"].probes if items[p.item_ids[0]]["stage"] == "act")
 
 
-def damage_probe(monkeypatch, case, damage):
+def damage_probe(monkeypatch, case, damage, *, session_index=None):
     probe, original, visited = act_probe(case), adapter.HermesAdapter.run_session, []
 
     def session(self, index, **kw):
         result = original(self, index, **kw)
         visited.append(index)
-        if index == probe.index:
+        if index == (probe.index if session_index is None else session_index):
             if callable(damage):
                 damage(self.paths["workspace"])
                 return result
@@ -127,7 +127,9 @@ def test_live_harness_read_fault_still_reruns(lives, unit_sessions, tmp_path, mo
 
 
 @pytest.mark.parametrize("kind", ["directory", "file", "symlink"])
-def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, monkeypatch, kind):
+@pytest.mark.parametrize("earlier", [False, True])
+@pytest.mark.parametrize("incidental", [False, True])
+def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, monkeypatch, kind, earlier, incidental):
     case = lives["t1-g1", "B0"]
     entries = []
 
@@ -143,7 +145,22 @@ def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, mo
             path.symlink_to("missing-reader-target")
         entries.append((path, path.lstat().st_ino))
 
-    probe, _ = damage_probe(monkeypatch, case, collide)
+    probe = act_probe(case)
+    prior = next(p.index for p in case["compiled"].probes if p.index < probe.index)
+    damage_probe(monkeypatch, case, collide, session_index=prior if earlier else probe.index)
+    records = adapter.HermesAdapter.records
+
+    def rows(self):
+        found = records(self)
+        current = next((r for r in reversed(found) if (r.get("cursor") or {}).get("session") == probe.index), None)
+        if incidental and current:
+            row = dict(current, seq=max(r["seq"] for r in found) + 1, cursor=None, role="unknown", status=400,
+                subrole="", served="refused_unknown", served_by="scripted", upstream=[])
+            validate("ledger-record", row)
+            return [*found, row]
+        return found
+
+    monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
     # The production unit releases its entire attempt after scoring; keep this test's evidence to inspect it.
     monkeypatch.setattr(life.LifeRun, "cleanup", lambda self: None)
     result = unit(case, tmp_path)
@@ -151,7 +168,14 @@ def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, mo
     run, = result.runs
     assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
     attempt_id = next(r["attempt_id"] for r in run.records if (r.get("cursor") or {}).get("session") == probe.index)
-    assert life._probe_code(run.records, attempt_id, probe_live=True) is None
+    assert life._probe_code(run.records, attempt_id, probe_live=True) == ("unknown_400" if incidental else None)
+    assert run.incidental_unknown_400 == int(incidental)
+    diagnostics = tmp_path / "out/unit_diagnostics.json"
+    if incidental:
+        assert json.loads(diagnostics.read_bytes()) == dict(attempts=[dict(
+            attempt=0, stopped=list(run.stopped), incidental_unknown_400=1)])
+    else:  # a unit with no incidental row writes no diagnostics file, so its output bytes are unchanged
+        assert not diagnostics.exists()
     for iid in probe.item_ids:
         assert run.classes[iid] == ("SYSTEM_FAILURE", "act_state_collision")
         assert result.scores[iid]["failure_class"] == "SYSTEM_FAILURE"
@@ -167,6 +191,55 @@ def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, mo
         assert path.read_text() == "reader entry"
     else:
         assert stat.S_ISLNK(path.lstat().st_mode) and os.readlink(path) == "missing-reader-target"
+
+
+@pytest.mark.parametrize("fault", [False, True])
+def test_act_state_entry_from_a_failed_session_stays_the_readers(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    """A QA session makes the entry, then fails with a probe code and the life continues: the act session's collision
+    is still the reader's. An observation fault at that failure claims nothing and keeps the session's own code."""
+    case = lives["t1-g1", "B0"]
+    probe = act_probe(case)
+    prior = next(p for p in case["compiled"].probes if p.index < probe.index)
+    original, records, absent = adapter.HermesAdapter.run_session, adapter.HermesAdapter.records, life._act_state_absent
+    failing = []
+
+    def session(self, index, **kw):
+        result = original(self, index, **kw)
+        if index == prior.index:
+            (self.paths["workspace"].parent.parent / "act-state").mkdir()
+            failing.append(fault)
+            raise adapter.HarnessFailed("turn_failed")
+        return result
+
+    def observe(root):
+        if failing and failing.pop():
+            raise PermissionError("injected observation fault")
+        return absent(root)
+
+    def rows(self):
+        found = records(self)
+        current = next((r for r in reversed(found) if (r.get("cursor") or {}).get("session") == prior.index), None)
+        if current is None:
+            return found
+        row = dict(current, seq=max(r["seq"] for r in found) + 1, role="unknown", status=400, subrole="",
+            served="refused_unknown", served_by="scripted", upstream=[], cursor=dict(session=prior.index, turn=1))
+        validate("ledger-record", row)
+        return [*found, row]
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
+    monkeypatch.setattr(life, "_act_state_absent", observe)
+    result = unit(case, tmp_path)
+    assert result.attempts == 3  # the earlier session's own code redoes the unit, so the third attempt is scored
+    run = result.runs[-1]
+    assert all(run.classes[iid] == ("INFRA_FAILURE", "unknown_400") for iid in prior.item_ids)
+    if fault:  # the fault stays in the failing session: the life continues and the act read finds the entry
+        assert run.stopped == ("INFRA_FAILURE", "FileExistsError", probe.index)
+    else:
+        assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
+    # An infrastructure failure on the third attempt is scored BLOCKED (score/classes.py).
+    assert all(result.scores[iid]["failure_class"] == ("BLOCKED" if fault else "SYSTEM_FAILURE")
+               for iid in probe.item_ids)
 
 
 def test_act_state_present_before_reader_still_reruns(lives, unit_sessions, tmp_path, monkeypatch):
@@ -191,12 +264,58 @@ def test_act_state_present_before_reader_still_reruns(lives, unit_sessions, tmp_
     assert all(row["infra_reruns"] == 1 for row in result.scores.values())
 
 
-@pytest.mark.parametrize("plugin,phase,attempts,label", [
-    (True, "open", 1, "worker_protocol"),
-    (True, "startup", 3, "JSONDecodeError"),
-    (False, "open", 3, "JSONDecodeError"),
+@pytest.mark.parametrize("fault", ["cleanup", "observation"])
+def test_act_state_harness_fault_still_reruns(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    original = life.shutil.rmtree if fault == "cleanup" else Path.lstat
+    failed = []
+
+    def fail(path, *args, **kwargs):
+        if Path(path).name == "act-state" and not failed:
+            failed.append(path)
+            raise PermissionError("synthetic harness fault")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(life.shutil if fault == "cleanup" else Path,
+                        "rmtree" if fault == "cleanup" else "lstat", fail)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 2
+    assert result.runs[0].stopped[:2] == ("INFRA_FAILURE", "PermissionError")
+    assert result.runs[1].stopped is None
+    assert all(row["infra_reruns"] == 1 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_unknown_probe_row_session_and_redo(lives, unit_sessions, tmp_path, monkeypatch, foreign):
+    records = adapter.HermesAdapter.records
+
+    def rows(self):
+        found = records(self)
+        current = next((r for r in reversed(found) if r.get("role") == "probe_main"), None)
+        if current and self.paths["root"].parents[1].name == "0":
+            row = dict(current, seq=max(r["seq"] for r in found) + 1, role="unknown", status=400,
+                subrole="", served="refused_unknown", served_by="scripted", upstream=[],
+                cursor=dict(session=current["cursor"]["session"] + 1, turn=1) if foreign else None)
+            validate("ledger-record", row)
+            return [*found, row]
+        return found
+
+    monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == (1 if foreign else 2)
+    assert all(row["infra_reruns"] == (0 if foreign else 1) for row in result.scores.values())
+    assert all(run.incidental_unknown_400 == 0 for run in result.runs)
+    if not foreign:
+        assert ("INFRA_FAILURE", "unknown_400") in result.runs[0].classes.values()
+
+
+@pytest.mark.parametrize("plugin,phase,reply,attempts,label", [
+    (True, "open", "not-json", 1, "worker_protocol"),
+    (True, "open", '{"ok": false}', 1, "worker_protocol"),
+    (True, "open", '{"ok": false, "session_id": null, "history": null, "alive_threads": []}', 3, "open_failed"),
+    (True, "startup", "not-json", 3, "JSONDecodeError"),
+    (False, "open", "not-json", 3, "JSONDecodeError"),
 ])
-def test_worker_protocol_life_class_and_reruns(lives, tmp_path, monkeypatch, plugin, phase, attempts, label):
+def test_worker_protocol_life_class_and_reruns(lives, tmp_path, monkeypatch, plugin, phase, reply, attempts, label):
     helpers.HELPERS["offline_life_adapter"](monkeypatch)
     init, popen = adapter.HermesAdapter.__init__, adapter.subprocess.Popen
     fake = Path(__file__).parents[1] / "harness/fake_line_worker.py"
@@ -204,7 +323,7 @@ def test_worker_protocol_life_class_and_reruns(lives, tmp_path, monkeypatch, plu
     def construct(self, *args, **kwargs):
         # A fake configured provider, selected before spawning, with the real configuration and worker path.
         kwargs["plugin"] = "holographic" if plugin else None
-        kwargs["worker_argv"] = [sys.executable, str(fake), phase, "not-json"]
+        kwargs["worker_argv"] = [sys.executable, str(fake), phase, reply]
         init(self, *args, **kwargs)
         self.egress.add = self.egress.discard = lambda *args: None
 
