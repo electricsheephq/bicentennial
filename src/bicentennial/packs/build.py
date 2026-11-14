@@ -336,6 +336,8 @@ def build_tier(tier, out, *, harness_artifacts, root=REPO_ROOT, rows=None, spec_
     lives = []
     try:
         spec = load_tier(Path(spec_path) if spec_path is not None else root / f"tiers/life_specs/{tier.lower()}.toml")
+        if spec["tier"] != tier:
+            raise PackRefused("tier")
         c7_path = root / C7_FILES[edition]
         entries, catalogue = c7_entries(c7_path), None
         if screening is not None:
