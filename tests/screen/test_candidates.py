@@ -136,7 +136,7 @@ def test_isolation(fixture):
 
 
 @pytest.mark.parametrize('control', [False, True])
-def test_prepare_refuses_screening_as_c7_missing(fixture, tmp_path, monkeypatch, control):
+def test_prepare_refuses_screening_as_c7_changed(fixture, tmp_path, monkeypatch, control):
     digest = install(fixture.out / 'candidate/T2', tmp_path / 'installed')
     entry = load(REGISTRY / 'hermes-native.toml')
     entry['artifact']['sha256'] = '1' * 64
@@ -144,7 +144,8 @@ def test_prepare_refuses_screening_as_c7_missing(fixture, tmp_path, monkeypatch,
     monkeypatch.setattr(t1, 'read_marker', lambda: Marker(0, False, 'fixture'))
     monkeypatch.setattr(t1, 'worker_properties', lambda *a: ())
     try:
-        with pytest.raises(t1.T1Refused, match='^c7_missing$'):
+        # The v3 ref now exists, but screening entries are not the registered entry.
+        with pytest.raises(t1.T1Refused, match='^c7_changed$'):
             t1.prepare(system='hermes-native', entry=entry, worker_argv=['fixture'],
                        packs=tmp_path / 'installed', pack_hash=digest, control=control,
                        spec=replace(T2_SPEC, composition=('G1',)))

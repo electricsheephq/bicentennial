@@ -250,11 +250,15 @@ validity round and result page, and the reading's `scope` and `labels` as that p
 them. Validity round 1 cleared its three versions for the fresh-seed follow-up (#394) only,
 labelled "near-solved by naive retrieval": a result on those versions states both. The gate
 checks only the reading and the hash. A format-validated version is not admitted. Control
-arms bypass this admission check; edition-1 runs do not read the file. A validation pack
-that its round declares control-only is listed by hash in `specs/ring0/control-only-packs.json`,
-with its round, declaration section and result page; a non-control run on a listed pack is
-refused (`control_only_pack`) whatever the admissions say. Each round's pack joins the list
-before its results publish.
+arms bypass this admission check; edition-1 runs do not read the file. Template edition 3,
+validity round 2's candidate edition (`results/validity-2/PLAN.md` §5 and §6), carries
+version 3 of `drift-chain-fault`, `drift-config` and `drift-quote`, the round's finalists;
+none is admitted, so only control runs can use it. A validation pack that its round declares
+control-only is listed by hash in `specs/ring0/control-only-packs.json`, with its round,
+declaration section and result page; a non-control run on a listed pack is refused
+(`control_only_pack`) whatever the admissions say. The gate does not check which control arm
+runs on a listed pack: each round's declaration names its rows, and its run script and result
+page keep that promise. Each round's pack joins the list before its results publish.
 
 Exit-3 codes and causes, including registry reasons above:
 
