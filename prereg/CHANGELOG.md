@@ -4,6 +4,7 @@ Every change to the pre-registration after a freeze makes a new version, recorde
 
 ## Labels, 2026-11-14: the v2 and v3 G1 templates keep the provisional lever-mix label (#522)
 - **Kept:** version 2 of `drift-chain-fault`, `drift-config` and `drift-quote` (#519, edition 2) and their version 3 (edition 3, validity round 2's finalists, #534) keep the v1 lever-mix label, "provisional pending PREREG-v0.5" (`lever_mix.template.label` in their C-7 entries, from `LEVER_MIX_LABEL` in `items/templates/g1/common.py`). Validity round 1's declaration (§1) limits each v2 to its prompt and the id of its decision table, so changing the label would have changed the v2 entries and edition 2's pack pins. Each v3 entry adds one field, `departure`, which records the levers the version varies instead of the cell's primary lever, as `results/validity-2/PLAN.md` §4 requires: lever 1 (no cue in the prompt) on all three, and on `drift-config` also lever 4 (the decision rule restated in other words), as its card lists. Read the label as "provisional, not pre-registered"; it keeps this wording until a recorded relabel.
+- **Replaces:** the release condition of the 2026-11-01 and 2026-11-02 Labels entries below ("until a (G1) template's next version"). The v2 and v3 entries carry the label, the lever-mix values ("uncalibrated (v0.2)") and the G1 lever-mix rungs unchanged, and all three keep their wording until a recorded relabel.
 - **Scope:** no edition-1 or edition-2 entry, pack or code pin moves.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
