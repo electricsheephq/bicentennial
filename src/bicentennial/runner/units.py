@@ -406,9 +406,15 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                             raise ValueError("retained source is not a regular file")
                         target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.move(kept, target)
-                        receipt["kept"] = target.relative_to(out).as_posix()
                     except Exception as error:
                         run.retention_failures.append(type(error).__name__)
+                        if kept.is_symlink() or kept.exists():  # a failed move leaves the source: drop a partial copy
+                            try:
+                                target.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    else:
+                        receipt["kept"] = target.relative_to(out).as_posix()
             # Only a unit with something to record writes it, so every other run keeps its output bytes.
             if any(r.incidental_unknown_400 or r.stopped and r.stopped[0] == "INFRA_FAILURE"
                    or r.source_receipts or r.restore_failures

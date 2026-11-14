@@ -54,6 +54,7 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
 
     def copied(source, target, **kw):
         if kind == "copy_fail":
+            Path(target).write_bytes(b"partial")  # a copy that fails partway
             raise PermissionError("injected copy failure")
         return copy(source, target, **kw)
 
@@ -99,7 +100,7 @@ def test_source_damage_scores_once_and_restores(lives, unit_sessions, tmp_path, 
     assert run.retention_failures == (["PermissionError"] if kind == "copy_fail" else [])
     if kind in ("symlink", "fifo", "copy_fail"):
         assert "kept" not in receipt
-        assert not list((tmp_path / "out/source_damage").glob("**/*")) or kind == "copy_fail"
+        assert not [p for p in (tmp_path / "out/source_damage").glob("**/*") if not p.is_dir()]
     else:
         kept = tmp_path / "out" / receipt["kept"]
         assert kept.is_file() and not kept.is_symlink()
