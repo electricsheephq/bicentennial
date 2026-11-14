@@ -1,6 +1,8 @@
 """Shared unit execution and tier admission policy."""
 
 import json
+import shutil
+import stat
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
@@ -342,6 +344,24 @@ def _finalise(pack, scores, probes):
             row["selected_option"] = probe["shadow"]["selected_option"]
 
 
+def _publish(kept, target, out, failures):
+    """Moves one kept regular file into the output; a failed move leaves no partial copy."""
+    try:
+        if not stat.S_ISREG(kept.lstat().st_mode):
+            raise ValueError("retained source is not a regular file")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(kept, target)
+    except Exception as error:
+        failures.append(type(error).__name__)
+        if kept.is_symlink() or kept.exists():  # a failed move leaves the source: drop a partial copy
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return None
+    return target.relative_to(out).as_posix()
+
+
 def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops=None, *,
                    spec=T1_SPEC, keep=None, unit=None, probe_blocks=None, probe_window=None,
                    diagnostics=None, labels=None):
@@ -350,7 +370,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
     measured, keep_ns = False, 0
     for attempt in range(3):
         try:
-            run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch,
+            run = run_life(arm=arm, entry=ctx.entry, life_dir=pack.life_dir, branch=branch, source_checks=True,
                 items=pack.items[branch], records=pack.records_b[branch], keys=pack.keys, cases=pack.cases,
                 scratch=scratch / str(attempt), run=ctx.run_id, attempt=attempt, gate=ctx.gate,
                 current_lock=ctx.current_lock, voids=Voids(), harness_pin=ctx.harness_pin,
@@ -389,13 +409,31 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                 raise t1.T1Refused("canary")
             _check_stop(live)
             scores, excluded, probes = _score_run(ctx, pack, branch, arm, run, attempt, floor_stops)
+            run = replace(run, infra_item_labels=tuple(sorted({s.label for s in scores.values() if isinstance(s, Infra)})))
+            runs[-1] = run
             if labels is not None:
                 labels.append((attempt, tuple(s.label for s in scores.values() if isinstance(s, Infra))))
             _write(out, "t2lite_probes.json", probes)
-            # Only a unit with an incidental unknown_400 row writes it, so every other run keeps its output bytes.
-            if any(r.incidental_unknown_400 for r in runs):
+            for n, receipt in enumerate(run.source_receipts):
+                receipt.pop("_path", None)
+                kept, sidecars = receipt.pop("_kept", None), receipt.pop("_sidecars", ())
+                if kept is not None and receipt["kind"] == "file":
+                    target = out / "source_damage" / str(attempt) / str(n)
+                    if (published := _publish(kept, target, out, run.retention_failures)) is not None:
+                        receipt["kept"] = published
+                        # A database's journal and WAL go beside it, under the names SQLite looks for.
+                        found = [_publish(kept.with_name(kept.name + s), target.with_name(target.name + s), out,
+                                          run.retention_failures) for s in sidecars]
+                        if any(found):
+                            receipt["kept_sidecars"] = [p for p in found if p is not None]
+            # Only a unit with something to record writes it, so every other run keeps its output bytes.
+            if any(r.incidental_unknown_400 or r.stopped and r.stopped[0] == "INFRA_FAILURE"
+                   or r.source_receipts or r.restore_failures
+                   for r in runs):
                 _write(out, "unit_diagnostics.json", dict(attempts=[dict(attempt=r.attempt, stopped=r.stopped,
-                    incidental_unknown_400=r.incidental_unknown_400) for r in runs]))
+                    incidental_unknown_400=r.incidental_unknown_400, **{k: getattr(r, k) for k in (
+                        "infra_item_labels", "source_receipts", "restore_failures", "retention_failures",
+                        "superseded_causes") if getattr(r, k)}) for r in runs]))
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:
                 measured = _floor_measured(pack, branch, run, probes, scores)

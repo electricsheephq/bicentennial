@@ -27,7 +27,7 @@ from bicentennial.runner.control_arm import (
 )
 from bicentennial.runner.diagnostics import Diagnostics
 from bicentennial.runner.diagnostics import refusal as diagnostics_refusal
-from bicentennial.runner.hermes_score import unreadable_counts
+from bicentennial.runner.hermes_score import infrastructure_counts, unreadable_counts
 from bicentennial.runner.kept import KeptRefused, keep_failed
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
@@ -303,6 +303,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                 system=stack.state().get("sends", 0) - floor_sends))
             _write(out, "disclosures.json", dict(honeypot_hits=honeypot_hits, turn_wait_s=str(turn_wait_s),
                 unreadable_state=unreadable_counts(runs),
+                infrastructure_events=infrastructure_counts(runs),
                 identity_check=identity_check, floor=provenance,
                 live=dict(stack.state(), holds=_holds(row for run in runs for row in run.records), **budget), **{
                     key: sorted({i for r in runs if r.arm == arm for i in r.transforms})

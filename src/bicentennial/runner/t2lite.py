@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import stat
 import sys
 import time
 import traceback
@@ -31,7 +32,7 @@ from bicentennial.report.t2lite_flips import (
 )
 from bicentennial.runner import t1
 from bicentennial.runner.hermes_score import identity0 as identity0
-from bicentennial.runner.hermes_score import unreadable_counts
+from bicentennial.runner.hermes_score import infrastructure_counts, unreadable_counts
 from bicentennial.runner.live import build_live_stack
 from bicentennial.runner.probe_live import LiveCredentialStop
 from bicentennial.runner.units import (
@@ -75,8 +76,11 @@ def _secrets(home, login=None):
 
 
 def _scan(out, needles):
-    if any(n in p.read_bytes() for p in out.rglob("*") if p.is_file() for n in needles):
-        raise t1.T1Refused("credential_scan")
+    for p in out.rglob("*"):
+        mode = p.lstat().st_mode
+        data = os.fsencode(os.readlink(p)) if stat.S_ISLNK(mode) else p.read_bytes() if stat.S_ISREG(mode) else b""
+        if any(n in data for n in needles):
+            raise t1.T1Refused("credential_scan")
 
 
 def _card(ctx, rows, *, identity="unobserved", cached=False, prime=False):
@@ -404,6 +408,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
             _write(out, "custody.json", custody_rows)
             _write(out, "disclosures.json", {"honeypot_hits": honeypot_hits, "turn_wait_s": str(turn_wait_s),
                 "unreadable_state": unreadable_counts(runs, keep),
+                "infrastructure_events": infrastructure_counts(runs),
                 "identity_check": identity_check, "live": dict(stack.state(),
                 holds=_holds(row for run in runs for row in run.records)), **{
                 key: sorted({i for r in runs if r.arm == arm for i in r.transforms})

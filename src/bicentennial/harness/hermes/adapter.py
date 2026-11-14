@@ -285,6 +285,7 @@ class HermesAdapter:
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
+        self.after_kill = False  # True from a spawn until that worker ends by itself (audit/source_damage.py)
         self.end_threads = None
         self._receipt_sessions = {}
         self.background_threads = []
@@ -397,6 +398,8 @@ class HermesAdapter:
         finally:
             self._held = None
         m = _now()
+        if getattr(self, "check_sources", None) is not None:
+            self.check_sources()
         from bicentennial.systems.hermes_plugin import checkpoint_sqlite
         roots = {"HERMES_HOME": self.paths["hermes_home"], "SANDBOX_HOME": self.paths["home"]}
         checkpoint_sqlite(roots[s["root"]] / s["relative"] for s in self.entry["surfaces"])
@@ -426,6 +429,8 @@ class HermesAdapter:
 
     def _spawn_open(self, reason, sid, t) -> tuple[str, int, bool]:
         """before_spawn, a niced worker, then open: a new session (sid None) or a resume by id."""
+        if getattr(self, "check_sources", None) is not None:
+            self.check_sources()
         wiped = self.before_spawn is not None and self.before_spawn(reason) is True  # S10's hook reports a wipe
         self._wiped |= wiped
         sid = None if wiped else sid
@@ -442,6 +447,7 @@ class HermesAdapter:
                                                             scripted=self.scripted))
         t0 = _now()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
+        self.after_kill = True  # until this worker ends by itself, a check may see a killed process's residue
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress,
                                bool(self.plugin is not None or self.context_engine is not None or self.plugins_enabled))
@@ -470,6 +476,7 @@ class HermesAdapter:
         except subprocess.TimeoutExpired:
             self._worker.kill()
             raise HarnessFailed("exit_timeout") from None
+        self.after_kill = False  # the worker ended by itself
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None

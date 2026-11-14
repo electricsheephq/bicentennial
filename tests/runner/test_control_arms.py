@@ -129,6 +129,8 @@ def _digests(out, budget=None):
         data = path.read_bytes()
         if path.suffix == ".json":
             value = json.loads(data)
+            if path.name == "disclosures.json":
+                value.pop("infrastructure_events")  # additive #557 key, checked by the disclosure tests
             if budget is not None and path.name == "disclosures.json":
                 assert {k: value["live"].pop(k) for k in budget} == budget
                 assert value.pop("unreadable_state") == {"system": 0, "no_memory": 0}
