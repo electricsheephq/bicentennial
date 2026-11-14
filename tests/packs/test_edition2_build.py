@@ -278,3 +278,25 @@ def test_admissions_missing_or_malformed(edition1, edition2, tmp_path, monkeypat
         t1._check_c7(tuple(edition2.packs.values()), control=False)
     assert caught.value.code == "template_not_admitted"
     assert reads == [path]
+
+
+def test_admissions_recursion_error_refuses(edition1, edition2, tmp_path, monkeypatch):
+    # An injected RecursionError pins the admissions mapping on any host, whatever its stack size.
+    path = tmp_path / "admissions.json"
+    monkeypatch.setattr(t1, "TEMPLATE_ADMISSIONS", path)
+    reads, real = [], t1._json
+
+    def read(target):
+        reads.append(target)
+        if target == path:
+            raise RecursionError("test nesting too deep")
+        return real(target)
+
+    monkeypatch.setattr(t1, "_json", read)
+    t1._check_c7(edition1, control=False)
+    t1._check_c7(tuple(edition2.packs.values()), control=True)
+    assert path not in reads
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_c7(tuple(edition2.packs.values()), control=False)
+    assert caught.value.code == "template_not_admitted"
+    assert reads == [path]
