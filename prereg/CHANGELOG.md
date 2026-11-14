@@ -2,6 +2,11 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
+## Ring 0 contract change, 2026-11-14: control-only T2 composition (#539, §15)
+- **RING0 §15:** for validity round 2 (`results/validity-2/PLAN.md` D6), a control run (`--control`) also accepts a T2 pack of ten G1 lives. A system run still requires five G1 and five G2 lives.
+- **Scope and pins:** control rows enter no Ring 0 gate, bar or calibration target. No code pin moves.
+No PREREG version change; PREREG-v0.5 remains frozen.
+
 ## Ring 0 erratum, 2026-11-13: a repository the reader leaves unreadable is scored, not rerun (#524)
 - **T2 and T2-lite, live G1 actions:** after a live probe, when the reader's own edits leave a repository file unreadable (malformed content, bad UTF-8 or TOML, deep nesting, a deleted file, a file replaced by a directory, or a path through a file), the item is scored as a changed state that matches neither the admissible nor the disqualifying predicates (FAIL_TASK, 0). It carries the label `unreadable_state`, and `disclosures.json` counts such items per arm. Before this change such a unit was classed as infrastructure, run again and, if it failed again, BLOCKED. Other operating-system errors (permissions, descriptors, I/O) stay infrastructure, as does a workspace root the reader replaces with a file or a symbolic link (#526).
 - **Accounting:** these items now count as scored, toward coverage, and no longer toward the infrastructure exclusion (PREREG §7, DESIGN §12a). Known limit: while one file is unreadable every predicate reads False, so a disqualifier on another file that still parses is masked, and a stale write there scores 0, not −1. #537 scores the files that parse, before the next scored live run.
