@@ -557,7 +557,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             if source_receipt["rule"] == "not_a_directory":
                                 path.mkdir()
                             if source_receipt["rule"] == "sqlite_malformed":
-                                # The journal and WAL beside it may hold the damage the check read.
+                                # Its -journal, -wal and -shm go with it: the journal and WAL may hold the damage read.
                                 for suffix in SIDECARS:
                                     sidecar = path.with_name(path.name + suffix)
                                     try:

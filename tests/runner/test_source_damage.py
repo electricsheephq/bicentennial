@@ -396,7 +396,7 @@ def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, 
         if not fired:
             fired.append(True)
             os.mkfifo(self.paths["hermes_home"] / "ipc.fifo")  # left by the worker the harness now kills
-            self.after_kill = True  # as the adapter's failure path does (tests/harness/test_turn_wait.py)
+            self.after_kill = True  # as a spawn with no clean end leaves it (tests/harness/test_turn_wait.py)
             raise adapter.HarnessFailed("drain_timeout")
         return result
 
