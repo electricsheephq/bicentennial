@@ -172,3 +172,23 @@ def test_infrastructure_disclosure_all_attempts(tier, control, request, monkeypa
     counts = runner._read(state.out, "disclosures.json")["infrastructure_events"]
     assert counts == {arm: {"checkpoint_busy": 4, "incidental_unknown_400": 4}
                       for arm in ([control] if control else ["no_memory", "system"])}
+
+
+def test_unit_diagnostics_keep_every_attempt(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    """A voided attempt keeps its record beside the scored one (part 1's review: the list is cumulative)."""
+    original = units.run_life
+
+    def run(**kw):
+        found = original(**kw)
+        if kw["attempt"] == 0:
+            return replace(found, stopped=("INFRA_FAILURE", "checkpoint_busy", 1),
+                classes={i["item_id"]: ("INFRA_FAILURE", "checkpoint_busy") for i in kw["items"]})
+        return replace(found, incidental_unknown_400=1)
+
+    monkeypatch.setattr(units, "run_life", run)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 2
+    assert json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes()) == dict(attempts=[
+        dict(attempt=0, stopped=["INFRA_FAILURE", "checkpoint_busy", 1], incidental_unknown_400=0,
+             infra_item_labels=["checkpoint_busy"]),
+        dict(attempt=1, stopped=None, incidental_unknown_400=1)])
