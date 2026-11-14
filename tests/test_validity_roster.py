@@ -469,3 +469,24 @@ def test_round2_uses_first_public_g1_or_refuses(tmp_path, monkeypatch, capsys, h
         assert tried == [] and not spec_out.exists() and not table_out.exists()
         assert not (tmp_path / "work").exists()
     _no_seed_printed(capsys.readouterr().out, [*design, *spares])
+
+
+def test_round2_uses_the_real_edition3(tmp_path, monkeypatch, capsys):
+    """Round 2 reads edition 3 from the real registry (#551), with no stand-in for EDITIONS."""
+    from bicentennial.items.editions import EDITIONS
+
+    draw, design, spares = _draw(tmp_path)
+    tried = _stub(monkeypatch, lambda seed: False)
+    fake, seen = t.t1_life, []
+
+    def record(spec, row, templates, **kwargs):
+        seen.append(templates)
+        return fake(spec, row, templates, **kwargs)
+
+    monkeypatch.setattr(t, "t1_life", record)
+    assert roster.place(draw, tmp_path / "work", tmp_path / "SPEC.toml", tmp_path / "TABLE.json", round_=2) == 0
+    assert tried == design and len(seen) == 10
+    assert all(templates is EDITIONS[3]["G1"] for templates in seen)
+    refs = {f"{x.template_id}-v{x.version}" for x in EDITIONS[3]["G1"]}
+    assert {"drift-chain-fault-v3", "drift-config-v3", "drift-quote-v3", "wake-loop-v1"} <= refs
+    _no_seed_printed(capsys.readouterr().out, [*design, *spares])
