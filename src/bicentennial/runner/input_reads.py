@@ -26,25 +26,55 @@ def _new_link(workspace, path, baseline):
                in (None, "file", "dir") for entry, mode in _parts(workspace, path))
 
 
+def _behind_baseline_link(path, baseline):
+    """Whether a parent of the path was a link in the probe listing, which then recorded nothing below it."""
+    parts = path.split("/")
+    return any(baseline.get("/".join(parts[:i]), {}).get("kind") == "symlink" for i in range(1, len(parts)))
+
+
+def _read_regular(target):
+    """Read target through one descriptor: its bytes and mode, or None and the mode if it is not a regular file.
+
+    O_NONBLOCK lets the open of a FIFO return at once (it changes nothing for a regular file), and the opened
+    descriptor's own mode decides, so an entry replaced after the first stat is never read.
+    """
+    fd = os.open(target, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            return None, mode
+        chunks = []
+        while chunk := os.read(fd, 1 << 20):
+            chunks.append(chunk)
+        return b"".join(chunks), mode
+    finally:
+        os.close(fd)
+
+
 def read_input(workspace, path, baseline, repairs):
     """Return raw bytes or an attributed reason; leave all other faults to the harness."""
     target = workspace / path
     try:
         mode = target.stat().st_mode
+        if stat.S_ISREG(mode):
+            data, mode = _read_regular(target)
+            if data is not None:
+                return data, None
         if stat.S_ISDIR(mode):
             return None, "directory"
-        if not stat.S_ISREG(mode):
-            if baseline.get(path, {}).get("kind") in (None, "file"):
-                return None, "not_regular"
-            raise OSError(errno.EINVAL, "non-regular baseline input")
-        return target.read_bytes(), None
+        # A FIFO, device or socket where the input was a file or nothing is never opened for reading.
+        if baseline.get(path, {}).get("kind") in (None, "file") and not _behind_baseline_link(path, baseline):
+            return None, "not_regular"
+        raise OSError(errno.EINVAL, "non-regular input the probe listing did not show as new")
     except FileNotFoundError:
         return None, "missing"
     except IsADirectoryError:
         return None, "directory"
     except NotADirectoryError:
         return None, "not_a_directory"
-    except PermissionError:
+    except PermissionError as error:
+        if error.errno != errno.EACCES:  # EPERM and the rest: a sandbox or the system refused, not a mode
+            raise
         changed = []
         for entry, mode in _parts(workspace, path):
             old = baseline.get(entry.relative_to(workspace).as_posix(), {}) if entry != workspace else {
@@ -72,7 +102,9 @@ def repair_permissions(workspace, repairs):
         if not parts or parts[-1][0] != entry or stat.S_ISLNK(parts[-1][1]):
             continue
         mode = parts[-1][1]
-        # lstat just showed a file or a directory, not a link; chmod's follow_symlinks=False is not portable.
+        # lstat just showed a file or a directory, not a link; chmod's follow_symlinks=False is not portable. A link
+        # swapped in after that lstat would need a process that outlived the worker's killed process group, and the
+        # change only adds owner bits to an entry the harness's own user owns (#564's review: an accepted tradeoff).
         os.chmod(entry, stat.S_IMODE(mode) | (0o700 if stat.S_ISDIR(mode) else 0o400))
 
 

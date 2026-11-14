@@ -20,7 +20,7 @@ from bicentennial.contracts.run import validate
 from bicentennial.genres.g1_software.diffs import PATHS, read_state, render
 from bicentennial.harness.hermes import adapter
 from bicentennial.items.checks.repo import RepoCheck, repo_state_predicates
-from bicentennial.runner import life, t2, t2lite, units
+from bicentennial.runner import input_reads, life, t2, t2lite, units
 from bicentennial.runner.diagnostics import Diagnostics
 from bicentennial.runner.hermes_score import (
     MISSING,
@@ -117,15 +117,7 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
     ("link_locked", "symlink_target")])
 def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, monkeypatch, damage, reason):
     case, locked, guards, released = lives["t1-g1", "B0"], [], [], []
-    done, attempted, fifos = Event(), Event(), []
-    read = Path.read_bytes
-
-    def guarded_read(path):
-        if path in fifos and stat.S_ISFIFO(path.lstat().st_mode):
-            attempted.set()
-        return read(path)
-
-    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+    done = Event()
 
     def break_input(workspace):
         path = workspace / "docs/decisions.md"
@@ -152,12 +144,15 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
                 path.symlink_to(path.name)
             else:
                 os.mkfifo(path)
-                fifos.append(path)
 
                 def release_regression():
-                    if not done.wait(3) and attempted.is_set():
-                        # RDWR never waits for a peer; it releases a regressed blocking read_bytes.
-                        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+                    # While anything holds the FIFO open for reading, a non-blocking writer's open succeeds (with no
+                    # reader it fails with ENXIO); closing that writer ends a regressed blocking open or read.
+                    while not done.wait(0.05):
+                        try:
+                            fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+                        except OSError:
+                            continue
                         released.append(True)
                         os.close(fd)
 
@@ -177,10 +172,10 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
         for iid in probe.item_ids:
             assert set(run.act[iid]) == set(PATHS.values()) - set(failed)
             assert run.unreadable_paths[iid] == tuple((p, reason) for p in failed)
+        assert {row["item_id"] for row in result.probes if "unreadable_paths" in row} == set(probe.item_ids)
         assert all(row["unreadable_paths"] == [[p, reason] for p in failed]
                    for row in result.probes if row["item_id"] in probe.item_ids)
         assert not released  # base opens the FIFO and needs the guard to finish
-        assert not attempted.is_set()
     finally:
         done.set()
         for thread in guards:
@@ -213,25 +208,73 @@ def test_live_locked_directory_off_the_input_paths_still_cleans_up(lives, unit_s
                 path.chmod(0o700)
 
 
-@pytest.mark.parametrize("fault", ["permission", "loop"])
+@pytest.mark.parametrize("fault", ["permission", "loop", "eperm_link"])
 def test_live_unchanged_raw_read_fault_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, fault):
-    read, armed, failed = Path.read_bytes, [], []
-    damage_probe(monkeypatch, lives["t1-g1", "B0"], lambda workspace: armed.append(workspace))
+    read, armed, failed = input_reads._read_regular, [], []
 
-    def read_bytes(path):
-        if armed and path == armed[-1] / "docs/decisions.md" and not failed:
-            failed.append(path)
-            raise PermissionError("injected raw read fault") if fault == "permission" else OSError(errno.ELOOP, "loop")
-        return read(path)
+    def arm(workspace):
+        armed.append(workspace)
+        if fault == "eperm_link":  # a harmless new link: its target is a readable copy of the input
+            path = workspace / "docs/decisions.md"
+            copy = tmp_path / f"decisions-{len(armed)}.md"
+            copy.write_bytes(path.read_bytes())
+            path.unlink()
+            path.symlink_to(copy)
 
-    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    damage_probe(monkeypatch, lives["t1-g1", "B0"], arm)
+
+    def read_regular(target):
+        if armed and target == armed[-1] / "docs/decisions.md" and not failed:
+            failed.append(target)
+            if fault == "loop":
+                raise OSError(errno.ELOOP, "loop")
+            # EPERM is a sandbox's or the system's refusal, not a mode the reader removed (#564's review)
+            raise PermissionError(errno.EPERM if fault == "eperm_link" else errno.EACCES, "injected raw read fault")
+        return read(target)
+
+    monkeypatch.setattr(input_reads, "_read_regular", read_regular)
     result = unit(lives["t1-g1", "B0"], tmp_path)
     assert result.attempts == 2
     first, redo = result.runs
-    assert first.stopped[:2] == ("INFRA_FAILURE", "PermissionError" if fault == "permission" else "OSError")
+    assert first.stopped[:2] == ("INFRA_FAILURE", "OSError" if fault == "loop" else "PermissionError")
     assert redo.stopped is None and not first.item_labels and not redo.item_labels
     assert all(row["infra_reruns"] == 1 for row in result.scores.values())
 
+
+
+def test_input_behind_a_baseline_link_is_never_charged(tmp_path):
+    # The probe listing records a link's target, not what lies behind it: a FIFO there was not shown to be new.
+    workspace, outside = tmp_path / "w", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    os.mkfifo(outside / "decisions.md")
+    (workspace / "docs").symlink_to(outside)
+    baseline = {"docs": {"kind": "symlink", "target": str(outside)}}
+    with pytest.raises(OSError) as caught:
+        input_reads.read_input(workspace, "docs/decisions.md", baseline, set())
+    assert caught.value.errno == errno.EINVAL
+    # The same FIFO where the listing had the file itself is the reader's replacement.
+    (workspace / "docs").unlink()
+    (workspace / "docs").mkdir()
+    os.mkfifo(workspace / "docs/decisions.md")
+    assert input_reads.read_input(workspace, "docs/decisions.md", {"docs/decisions.md": {"kind": "file", "mode": 0o644}},
+                                  set()) == (None, "not_regular")
+
+
+def test_read_regular_never_blocks_on_or_reads_a_fifo(tmp_path):
+    # The race backstop: an input replaced by a FIFO after the first stat is opened without blocking and never read.
+    path, result = tmp_path / "decisions.md", []
+    os.mkfifo(path)
+    thread = Thread(target=lambda: result.append(input_reads._read_regular(path)))
+    thread.start()
+    thread.join(5)
+    blocked = thread.is_alive()
+    if blocked:  # release a regressed blocking open before failing
+        os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+        thread.join()
+    assert not blocked
+    (data, mode), = result
+    assert data is None and stat.S_ISFIFO(mode)
 
 def test_live_harness_read_fault_still_reruns(lives, unit_sessions, tmp_path, monkeypatch):
     case = lives["t1-g1", "B0"]
