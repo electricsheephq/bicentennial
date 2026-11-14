@@ -144,13 +144,18 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
                 path.symlink_to(path.name)
             else:
                 os.mkfifo(path)
+                # A second name for this FIFO that nothing else touches: the harness later moves the clone aside and
+                # restores the original file at the input's path (#564's review).
+                handle = tmp_path / "fifo-handle"
+                os.link(path, handle)
 
                 def release_regression():
-                    # While anything holds the FIFO open for reading, a non-blocking writer's open succeeds (with no
-                    # reader it fails with ENXIO); closing that writer ends a regressed blocking open or read.
+                    # While anything holds the FIFO open for reading, through any name, a non-blocking writer's open
+                    # succeeds (with no reader it fails with ENXIO); closing that writer ends a regressed blocking open
+                    # or read.
                     while not done.wait(0.05):
                         try:
-                            fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+                            fd = os.open(handle, os.O_WRONLY | os.O_NONBLOCK)
                         except OSError:
                             continue
                         released.append(True)
