@@ -1,7 +1,8 @@
 """The partial C-7 freeze: each v0.1 template's frozen entry, built from the template build.
 
 ``python -m bicentennial.items.c7 REPO_ROOT`` prints ``specs/ring0/c7-partial.json``;
-``--edition 2`` prints ``specs/ring0/c7-edition2.json`` (items/editions.py).
+``--edition 2`` prints ``specs/ring0/c7-edition2.json``;
+``--edition 3`` prints ``specs/ring0/c7-edition3.json`` (items/editions.py).
 """
 
 import argparse
@@ -92,6 +93,6 @@ def dumps(obj) -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="python -m bicentennial.items.c7")
     parser.add_argument("root", nargs="?", default=".")
-    parser.add_argument("--edition", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--edition", type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
     sys.stdout.write(dumps(freeze(args.root, args.edition)))

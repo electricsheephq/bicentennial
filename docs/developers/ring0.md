@@ -250,7 +250,9 @@ validity round and result page, and the reading's `scope` and `labels` as that p
 them. Validity round 1 cleared its three versions for the fresh-seed follow-up (#394) only,
 labelled "near-solved by naive retrieval": a result on those versions states both. The gate
 checks only the reading and the hash. A format-validated version is not admitted. Control
-arms bypass this admission check; edition-1 runs do not read the file. The gate does not
+arms bypass this admission check; edition-1 runs do not read the file. Template edition 3, validity round 2's candidate edition
+(`results/validity-2/PLAN.md` §5 and §6), carries version 3 of `drift-chain-fault`, `drift-config` and
+`drift-quote`, the round's finalists; none is admitted, so only control runs can use it. The gate does not
 check pack hashes: a validation pack stays control-only by its declaration, and an admission
 that would cover every template such a pack carries waits for the pack check in #529.
 
