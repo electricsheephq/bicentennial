@@ -153,8 +153,12 @@ def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, mo
     def rows(self):
         found = records(self)
         current = next((r for r in reversed(found) if (r.get("cursor") or {}).get("session") == probe.index), None)
-        return [*found, dict(attempt_id=current["attempt_id"], cursor=None, role="unknown", status=400)] \
-            if incidental and current else found
+        if incidental and current:
+            row = dict(current, seq=max(r["seq"] for r in found) + 1, cursor=None, role="unknown", status=400,
+                subrole="", served="refused_unknown", served_by="scripted", upstream=[])
+            validate("ledger-record", row)
+            return [*found, row]
+        return found
 
     monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
     # The production unit releases its entire attempt after scoring; keep this test's evidence to inspect it.
@@ -235,8 +239,11 @@ def test_unknown_probe_row_session_and_redo(lives, unit_sessions, tmp_path, monk
         found = records(self)
         current = next((r for r in reversed(found) if r.get("role") == "probe_main"), None)
         if current and self.paths["root"].parents[1].name == "0":
-            return [*found, dict(attempt_id=current["attempt_id"], role="unknown", status=400,
-                cursor=dict(session=-1, turn=1) if foreign else None)]
+            row = dict(current, seq=max(r["seq"] for r in found) + 1, role="unknown", status=400,
+                subrole="", served="refused_unknown", served_by="scripted", upstream=[],
+                cursor=dict(session=current["cursor"]["session"] + 1, turn=1) if foreign else None)
+            validate("ledger-record", row)
+            return [*found, row]
         return found
 
     monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
