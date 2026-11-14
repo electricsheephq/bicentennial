@@ -194,6 +194,18 @@ def test_control_only_unreadable(installed, tmp_path, monkeypatch, error):
     assert caught.value.code == "control_only_pack"
 
 
+@pytest.mark.parametrize("digest", [
+    "172b87bf9c60ed79c1b56fbccb0f8caba64f931124581c6d46f6838e55fc59b5",  # validity round 1
+    "a850d736367f010d5613508ba097cddab6076ee04a6903e6de103d5ab9faaf69",  # validity round 2
+])
+def test_committed_list_holds_each_validity_pack(digest):
+    # The committed list is well formed (an unlisted hash passes) and refuses each round's pack.
+    t1._check_control_only("0" * 64)
+    with pytest.raises(t1.T1Refused) as caught:
+        t1._check_control_only(digest)
+    assert caught.value.code == "control_only_pack"
+
+
 @pytest.mark.parametrize("control", [False, True])
 def test_control_only_unlisted_and_verified_order(installed, tmp_path, monkeypatch, control):
     path = tmp_path / "control-only.json"
@@ -226,7 +238,7 @@ def test_control_only_unlisted_and_verified_order(installed, tmp_path, monkeypat
 def test_shipped_control_only_pack_matches_round1_result():
     digest = "172b87bf9c60ed79c1b56fbccb0f8caba64f931124581c6d46f6838e55fc59b5"
     record = json.loads(t1.CONTROL_ONLY_PACKS.read_bytes())
-    assert record["control_only"] == control_only_record(digest)["control_only"]
+    assert record["control_only"][digest] == control_only_record(digest)["control_only"][digest]
     page = (t1.REPO / record["control_only"][digest]["result"]).read_text()
     assert f"**Validation pack** hash `{digest}`" in page
 
