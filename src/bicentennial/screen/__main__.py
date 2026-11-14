@@ -2,6 +2,7 @@
 
 import argparse
 import inspect
+import os
 import re
 import subprocess
 from fractions import Fraction
@@ -80,12 +81,17 @@ def evaluate(root, template, tasks=None):
 
 
 def verdict(variants):
+    """One card's gate (plan §4). At most one finalist per template is named afterwards, by plan §4's order and the
+    cards README rulings 6 and 7, so a card that passes is not yet a finalist."""
     reasons = []
     if set(variants) != {str(v) for v in range(4)}:
         reasons.append("all four prompt variants required")
     for variant, report in variants.items():
-        if not report["placement_succeeded"]:
+        if report.get("placement_succeeded") is False:
             reasons.append(f"variant {variant}: placement failed")
+            continue
+        if "refusal" in report:
+            reasons.append(f"variant {variant}: refused")
             continue
         rows = report["rows"]
         if rows["oracle_evidence"]["net_pair_points_milli"] != 1000 * rows["oracle_evidence"]["pairs"]:
@@ -94,7 +100,14 @@ def verdict(variants):
             reasons.append(f"variant {variant}: best anchor above 35")
         if any(rows[n]["net_pair_points_milli"] > 0 for n in POLICIES):
             reasons.append(f"variant {variant}: no-memory policy above 0")
-    return dict(finalist=not reasons, reasons=reasons)
+    return dict(passes_gate=not reasons, reasons=reasons)
+
+
+def _write(path, report):
+    # Replaced whole after every card, so a later failure keeps the cards already screened.
+    part = path.with_name(path.name + ".part")
+    part.write_bytes(canon(report) + b"\n")
+    os.replace(part, path)
 
 
 def main(argv=None):
@@ -130,10 +143,17 @@ def main(argv=None):
             except (PlacementError, IndependenceError) as error:
                 entry["variants"][str(v)] = dict(placement_succeeded=False, refusal=str(error))
                 continue
-            entry["variants"][str(v)] = dict(evaluate(dest / "T2", CANDIDATES[card][v]), placement_succeeded=True)
+            except ValueError as error:  # any other refusal (PackRefused is one) blocks this variant only
+                entry["variants"][str(v)] = dict(stage="build", refusal=f"{type(error).__name__}: {error}")
+                continue
+            try:
+                entry["variants"][str(v)] = dict(evaluate(dest / "T2", CANDIDATES[card][v]), placement_succeeded=True)
+            except ValueError as error:
+                entry["variants"][str(v)] = dict(placement_succeeded=True, stage="evaluate",
+                                                 refusal=f"{type(error).__name__}: {error}")
         entry["verdict"] = verdict(entry["variants"])
         report["cards"][card] = entry
-    (args.out / "report.json").write_bytes(canon(report) + b"\n")
+        _write(args.out / "report.json", report)
     for card, entry in report["cards"].items():
         for variant, result in entry["variants"].items():
             for name, row in result.get("rows", {}).items():

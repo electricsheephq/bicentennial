@@ -233,13 +233,46 @@ def test_gate_on_synthetic_rows_only():
                                             'oracle_evidence', *command.POLICIES)}
     rows['oracle_evidence'] = command.counts([1000])
     variants = {str(v): dict(placement_succeeded=True, rows=rows.copy()) for v in range(4)}
-    assert command.verdict(variants) == dict(finalist=True, reasons=[])
-    assert not command.verdict({'0': variants['0']})['finalist']
+    assert command.verdict(variants) == dict(passes_gate=True, reasons=[])
+    assert not command.verdict({'0': variants['0']})['passes_gate']
     for name, value in [('oracle_evidence', 999), ('bm25', 351), (command.POLICIES[0], 1)]:
         modified = {**variants, '3': dict(placement_succeeded=True,
                                         rows={**rows, name: command.counts([value])})}
-        assert not command.verdict(modified)['finalist']
+        assert not command.verdict(modified)['passes_gate']
     variants['3']['rows']['bm25'] = command.counts([350])
-    assert command.verdict(variants)['finalist']
+    assert command.verdict(variants)['passes_gate']
     variants['3'] = dict(placement_succeeded=False)
-    assert not command.verdict(variants)['finalist']
+    assert not command.verdict(variants)['passes_gate']
+
+
+def test_refusals_stay_per_variant_and_finished_cards_are_kept(tmp_path, monkeypatch):
+    rows = {n: command.counts([0]) for n in ('naive_rag', *anchors.ANCHORS, *command.POLICIES, *command.HEURISTICS)}
+    rows['oracle_evidence'] = command.counts([1000])
+
+    def fake_build(tier, dest, *, harness_artifacts, spec_path, screening):
+        if screening == ('drift-config-K1', 0):
+            raise build.PackRefused('controls')
+        dest.mkdir(parents=True)
+
+    def fake_evaluate(root, template, tasks=None):
+        if template is CANDIDATES['drift-config-K1'][2]:
+            raise ValueError('no scored candidate pairs')
+        if template is CANDIDATES['drift-quote-K1'][0]:
+            raise KeyError('a defect, not a refusal')
+        return dict(items=[], pairs=[], rows=rows)
+
+    monkeypatch.setattr(command, 'build_tier', fake_build)
+    monkeypatch.setattr(command, 'evaluate', fake_evaluate)
+    out = tmp_path / 'out'
+    with pytest.raises(KeyError):
+        command.main(['--spec', str(ROOT / 'tiers/life_specs/t2.toml'), '--out', str(out),
+                      '--cards', 'drift-config-K1,drift-quote-K1'])
+    data = json.loads((out / 'report.json').read_bytes())
+    assert list(data['cards']) == ['drift-config-K1']
+    card = data['cards']['drift-config-K1']
+    assert card['variants']['0'] == dict(stage='build', refusal='PackRefused: controls')
+    assert card['variants']['2'] == dict(placement_succeeded=True, stage='evaluate',
+                                         refusal='ValueError: no scored candidate pairs')
+    assert all(card['variants'][v]['rows'] == rows for v in ('1', '3'))
+    assert card['verdict'] == dict(passes_gate=False, reasons=['variant 0: refused', 'variant 2: refused'])
+    assert not (out / 'report.json.part').exists()
