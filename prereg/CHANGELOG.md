@@ -2,7 +2,7 @@
 
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
-## Ring 0 erratum, 2026-11-14: judge each source entry on its own, charge a deleted root or an odd database sidecar, and narrow the kill excuse (#559, #526)
+## Ring 0 erratum, 2026-11-15: judge each source entry on its own, charge a deleted root or an odd database sidecar, and narrow the kill excuse (#559, #526)
 - **Source evidence:** Each entry is judged on its own: an entry the checker cannot read is not proof of damage and hides nothing else. A database sidecar that changes from absent or a regular file to another kind is `invalid_store`, rule `sqlite_sidecar`. A root deleted after a directory baseline is `invalid_surface`, rule `missing_root`; an empty directory is made so the harness can restore it, and nothing is kept for it. A root the harness's own swap or restore may have removed stays infrastructure. A FIFO or socket, inside a surface or in place of its root, or a missing root, is not charged between a harness kill of a live worker and the next clean end, since a killed process can leave these behind. Otherwise a worker that exits by itself, at any point, owns what it left; before, a worker that had not yet ended cleanly was treated as killed. No code pin or published result changes.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
