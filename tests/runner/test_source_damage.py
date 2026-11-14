@@ -479,15 +479,9 @@ def test_first_open_self_exit_owns_fifo(lives, tmp_path, monkeypatch):  # noqa: 
             argv = argv[argv.index(sys.executable):]
         return real(argv, *args, **kw)
 
-    class SelfExitWorker(adapter._Worker):
+    class SelfExitWorker(adapter._Worker):  # the harness's own cleanup must see this exit (adapter.EOF_SETTLE_S)
         def __init__(self, argv, *args):
             super().__init__([sys.executable, "-c", code], *args)
-
-        def call(self, **op):
-            out = super().call(**op)
-            if op.get("op") == "open" and out is None:
-                os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT)  # observe self-exit before cleanup
-            return out
 
     monkeypatch.setattr(adapter.subprocess, "Popen", spawn)
     monkeypatch.setattr(adapter, "_Worker", SelfExitWorker)

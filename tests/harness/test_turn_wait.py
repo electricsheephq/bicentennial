@@ -326,3 +326,20 @@ def test_leftover_group_kill_does_not_mark_worker_killed(spawn_adapter, monkeypa
     assert signalled == [worker.proc.pid] and worker._reaped
     assert a.after_kill is False  # killing children cannot excuse their exited parent's residue
     assert baseline.receipt(after_kill=a.after_kill)["rule"] == "unsupported_entry"
+
+
+@pytest.mark.parametrize("exits", [True, False])
+def test_closed_pipe_waits_for_the_exit_before_judging_the_kill(spawn_adapter, monkeypatch, tmp_path, exits):
+    # A worker leaving by itself closes its pipe before its exit is waitable; the kill that follows must not take it
+    # for a live worker. One that closes its pipe and stays is still a live worker after the grace.
+    a = spawn_adapter
+    a.after_kill = False
+    monkeypatch.setattr(adapter, "EOF_SETTLE_S", 10.0 if exits else 0.3)
+    code = "import os,time; print('{\"ready\":true}', flush=True); os.close(1); "
+    code += "time.sleep(0.5); os._exit(0)" if exits else "time.sleep(30)"
+    worker = adapter._Worker([sys.executable, "-c", code], {}, tmp_path, tmp_path / "stderr",
+                             on_kill=a._worker_killed)
+    assert worker.call(op="open") is None  # end of file while the worker is still running
+    worker.kill()
+    assert worker._reaped
+    assert a.after_kill is not exits  # an exit under way is the worker's own; staying past the grace is not

@@ -43,6 +43,7 @@ ENTRYPOINT = "acp_adapter.session.SessionManager in process (S6a fallback)"
 WORKER = Path(__file__).resolve().with_name("worker.py")
 DRAIN_QUIET_S, DRAIN_CAP_S, EXIT_TIMEOUT_S = 3.0, 240.0, 300
 STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 3600, 300
+EOF_SETTLE_S = 5.0  # a worker that closed its pipe has this long to finish exiting before a kill counts as live
 _now = time.monotonic
 
 
@@ -144,7 +145,7 @@ class _Worker:
     def __init__(self, argv, env, cwd, log, egress=None, system_plugin=False, on_kill=None):
         self._buffer, self._reaped, self.egress = b"", False, egress
         self._ready, self._system_plugin = False, system_plugin
-        self._on_kill = on_kill
+        self._on_kill, self._closed = on_kill, False
         self._cleanup_lock = Lock()
         own = os.getpriority(os.PRIO_PROCESS, 0)  # nice -n adds: only the gap to 19 (guard.py 86-91)
         prefix = ["nice", "-n", str(19 - own)] + (["taskpolicy", "-b"] if sys.platform == "darwin" else [])
@@ -193,10 +194,12 @@ class _Worker:
                         raise HarnessFailed(f"{phase}_timeout")
                     chunk = os.read(self.proc.stdout.fileno(), 65536)
                     if not chunk:
+                        self._closed = True
                         return None
                     self._buffer += chunk
             line, self._buffer = self._buffer.split(b"\n", 1)
         except OSError:
+            self._closed = True
             return None
         attributed = self._ready and self._system_plugin
         try:
@@ -213,6 +216,16 @@ class _Worker:
         with self._cleanup_lock:
             self._cleanup(clean)
 
+    def _running(self, grace):
+        """Whether the leader is still running, after up to `grace` s for it to finish an exit already under way.
+        A closed pipe precedes the exit itself, so a worker leaving by itself is not taken for a live one."""
+        deadline = time.monotonic() + grace
+        while os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+            if time.monotonic() >= deadline:
+                return True
+            time.sleep(0.01)
+        return False
+
     def _cleanup(self, clean):
         if self._reaped:
             return
@@ -224,7 +237,7 @@ class _Worker:
                     if time.monotonic() >= deadline:
                         raise subprocess.TimeoutExpired(self.proc.args, EXIT_TIMEOUT_S)
                     time.sleep(0.01)
-            live = not clean and os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None
+            live = not clean and self._running(EOF_SETTLE_S if self._closed else 0)
             try:
                 os.killpg(self.proc.pid, signal.SIGKILL)  # includes children even after the leader exits
             except ProcessLookupError:
