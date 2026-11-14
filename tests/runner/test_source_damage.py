@@ -9,11 +9,13 @@ import sqlite3
 import subprocess
 import sys
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from test_life_fake import offline_life_adapter
 from test_t2 import t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 from test_unreadable_state import harness, lives, unit, unit_sessions  # noqa: F401
@@ -449,7 +451,7 @@ def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, 
                 self.paths["hermes_home"].rename(self.paths["hermes_home"].with_name("killed-mid-replace"))
             else:
                 os.mkfifo(self.paths["hermes_home"] / "ipc.fifo")  # left by the worker the harness now kills
-            self.after_kill = True  # as a spawn with no clean end leaves it (tests/harness/test_turn_wait.py)
+            self.after_kill = True  # the fixture represents a harness kill of a live worker
             raise adapter.HarnessFailed("drain_timeout")
         return result
 
@@ -458,6 +460,44 @@ def test_residue_after_harness_kill_redoes_unit(lives, unit_sessions, tmp_path, 
     assert result.attempts == 2
     first = result.runs[0]
     assert first.stopped[:2] == ("INFRA_FAILURE", "drain_timeout") and not first.source_receipts
+
+
+def test_first_open_self_exit_owns_fifo(lives, tmp_path, monkeypatch):  # noqa: F811
+    offline_life_adapter(monkeypatch)
+    monkeypatch.setattr(adapter, "Egress", lambda: SimpleNamespace(
+        forking=nullcontext(), start=lambda: None, stop=lambda: None,
+        add=lambda *args: None, discard=lambda *args: None,
+        summary=lambda: dict(samples=0, sample_ms=0, failed_samples={}, non_loopback=[])))
+    monkeypatch.setattr(adapter.HermesAdapter, "_gate", lambda *args: None)
+    monkeypatch.setattr(adapter, "_group_survivors", lambda pid: [])  # this synthetic worker never forks; no ps
+    code = ("import os,sys; print('{\"ready\":true}', flush=True); sys.stdin.readline(); "
+            "os.mkfifo(os.path.join(os.environ['HERMES_HOME'], 'ipc.fifo'))")
+    real = subprocess.Popen
+
+    def spawn(argv, *args, **kw):
+        if argv[0] == "nice" and code in argv:
+            argv = argv[argv.index(sys.executable):]
+        return real(argv, *args, **kw)
+
+    class SelfExitWorker(adapter._Worker):
+        def __init__(self, argv, *args):
+            super().__init__([sys.executable, "-c", code], *args)
+
+        def call(self, **op):
+            out = super().call(**op)
+            if op.get("op") == "open" and out is None:
+                os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT)  # observe self-exit before cleanup
+            return out
+
+    monkeypatch.setattr(adapter.subprocess, "Popen", spawn)
+    monkeypatch.setattr(adapter, "_Worker", SelfExitWorker)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 1  # early open_failed must not earn an infrastructure rerun
+    run, = result.runs
+    assert run.stopped[:2] == ("SYSTEM_FAILURE", "invalid_surface")
+    receipt, = run.source_receipts
+    assert (receipt["rule"], receipt["kind"], receipt["path"]) == ("unsupported_entry", "fifo", "ipc.fifo")
+    assert all(row["infra_reruns"] == 0 and row["failure_class"] == "SYSTEM_FAILURE" for row in result.scores.values())
 
 
 def test_without_source_checks_no_source_is_watched(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811

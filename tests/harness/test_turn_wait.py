@@ -1,12 +1,16 @@
 """Ordinary-turn timing and the retained shutdown settle, without listening sockets."""
 
 import inspect
+import os
+import subprocess
+import sys
 from contextlib import nullcontext
 from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
 
+from bicentennial.audit.source_damage import SourceBaseline
 from bicentennial.canon import canon
 from bicentennial.harness.hermes import adapter
 
@@ -14,7 +18,8 @@ FAULTS = {n: [dict(kind=k)] for k, n in (("kill", 2), ("restart", 3), ("compacti
 
 
 def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), compact_drains=(), upgrades=None,
-                 baseline=None, thread_names=None, observed=None, spawned=None, stopped_after=None, made=None):
+                 baseline=None, thread_names=None, observed=None, spawned=None, stopped_after=None, made=None,
+                 residue_checks=None):
     """compact_turns: turns that record a compaction request; compact_drains: short drains (by drain call number)
     during which one is recorded. upgrades collects each short drain's upgrade() answer. spawned collects the kill
     flag at each spawn; stopped_after stops the director from that turn; made receives the adapter."""
@@ -36,13 +41,16 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
                              inflight=0), summariser_requests=0)
     a.egress = SimpleNamespace(forking=nullcontext())
     a._gate, a.records = lambda readings: None, lambda: []
-    a._end = lambda: setattr(a, "after_kill", False) or ()  # the real end clears the flag (test_spawn_sets_and_clean_end_clears_the_kill_flag)
+    a.after_kill = False
+    a._end = lambda: setattr(a, "after_kill", False) or ()  # the real end clears the flag
+    source = SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, root)], [])
     history = 0
 
     def call(**kw):
         nonlocal history
         if a._held:
-            a._fired.add(a._held)
+            with pytest.raises(adapter.HarnessKilled):
+                a._on_hold(dict(session=a._held[0], turn=a._held[1]))
             return None
         history += 1
         a.director.summariser_requests += history in compact_turns
@@ -51,11 +59,21 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
             result["alive_threads"] = thread_names[history - 1]
         return result
 
-    a._worker = SimpleNamespace(call=call, kill=lambda: None)
-    def spawn(*args):  # as the real _spawn_open: the check reads the flag, then the spawn sets it
+    def kill():
+        a._worker_killed()  # this fixture's worker is live when killed
+        if residue_checks is not None and not (root / "ipc.fifo").exists():
+            os.mkfifo(root / "ipc.fifo")
+
+    a._worker = SimpleNamespace(call=call, kill=kill)
+    def spawn(*args):  # as the real _spawn_open: check the previous worker, then reset for the new one
         if spawned is not None:
-            spawned.append(getattr(a, "after_kill", False))
-        a.after_kill = True
+            spawned.append(a.after_kill)
+        if residue_checks is not None:
+            receipt = source.receipt(after_kill=a.after_kill)
+            residue_checks.append(receipt)
+            if receipt is not None:
+                receipt["_path"].unlink()  # as run_life does before the later surface hash
+        a.after_kill = False
         return "session", history, False
 
     a._spawn_open = spawn
@@ -193,37 +211,118 @@ def test_turn_wait_never_exceeds_session_end(tmp_path, monkeypatch):
     assert drains == [()] * 6
 
 
-def test_harness_kills_mark_the_next_source_check(tmp_path):
+@pytest.mark.parametrize("mode", ["boundary", "held"])
+def test_harness_kills_mark_the_next_source_check(tmp_path, mode):
     # audit/source_damage.py: a FIFO or socket after a harness kill is a killed process's residue.
-    seen = []
-    fake_session(tmp_path / "faults", 1.0, spawned=seen)
+    seen, checks = [], []
+    fake_session(tmp_path / "faults", 1.0, mode=mode, spawned=seen, residue_checks=checks)
     assert seen == [False, True, False]  # session start, after the kill at turn 2, after the clean restart at turn 3
+    assert checks[:2] == [None, None]  # the scheduled live kill excuses its FIFO at the next check
+    assert checks[2]["rule"] == "unsupported_entry"  # persistent residue counts after the clean restart
     made = []
     with pytest.raises(adapter.HarnessFailed, match="^director_stopped$"):
         fake_session(tmp_path / "stopped", 1.0, faults={}, stopped_after=1, made=made)
     assert made[0].after_kill is True  # the failure path killed the worker before any clean end
 
 
-def test_spawn_sets_and_clean_end_clears_the_kill_flag(monkeypatch, tmp_path):
+def test_clean_end_clears_the_kill_flag():
     a = object.__new__(adapter.HermesAdapter)
     a.after_kill, a._worker = True, SimpleNamespace(call=lambda **kw: {"ok": True}, kill=lambda clean=False: None)
     a._end()
     assert a.after_kill is False  # the worker ended by itself
 
-    def failed_start(*args, **kw):  # a first worker the harness kills during startup is never assigned
-        raise adapter.HarnessFailed("startup_timeout")
 
-    monkeypatch.setattr(adapter, "_Worker", failed_start)
+@pytest.fixture
+def spawn_adapter(monkeypatch, tmp_path):
+    a = object.__new__(adapter.HermesAdapter)
+    a.after_kill, a._worker = True, None
     a.check_sources, a.before_spawn, a.env_server, a._wiped = None, None, None, False
     a.paths = dict(hermes_home=tmp_path, workspace=tmp_path, logs=tmp_path, home=tmp_path, root=tmp_path)
     monkeypatch.setattr(adapter, "validate_paths", lambda paths: None)
     monkeypatch.setattr(adapter, "write_config", lambda *args, **kw: None)
     monkeypatch.setattr(adapter, "hermes_config", lambda *args, **kw: {})
     monkeypatch.setattr(adapter, "worker_env", lambda *args: {})
+    monkeypatch.setattr(adapter, "assert_niced", lambda pid: None)
     a.server, a.clock, a.checkout, a.extra_env = SimpleNamespace(port=0), SimpleNamespace(path=tmp_path), None, None
     a._alias, a.plugin, a.plugin_config, a.memory, a.toolsets = "scripted", None, None, None, ()
     a.window, a.context_engine, a.plugins_enabled, a.scripted, a.argv, a.pids, a.egress = (
         None, None, False, True, [], [], None)
-    with pytest.raises(adapter.HarnessFailed, match="^startup_timeout$"):
-        a._spawn_open("session_start", None, {"spawn": []})
+    procs, real = [], subprocess.Popen
+
+    def spawn(argv, *args, **kw):
+        # Pipe/group tests do not exercise macOS scheduling policy.
+        proc = real(argv[argv.index(sys.executable):], *args, **kw)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(adapter.subprocess, "Popen", spawn)
+    yield a
+    for proc in procs:
+        if proc.poll() is None:
+            os.killpg(proc.pid, adapter.signal.SIGKILL)
+        proc.wait()
+        proc.stdin.close()
+        proc.stdout.close()
+
+
+def test_spawn_checks_previous_flag_then_resets(spawn_adapter):
+    a, seen = spawn_adapter, []
+    a.check_sources = lambda: seen.append(a.after_kill)
+    a.argv = [sys.executable, "-c", "import sys,time; print('{\"ready\":true}', flush=True); "
+        "sys.stdin.readline(); print('{\"ok\":true,\"session_id\":\"s\",\"history\":0}', flush=True); time.sleep(30)"]
+    try:
+        a._spawn_open("session_start", None, {"spawn": [], "open": []})
+        assert seen == [True]  # previous worker's kill remains visible before the new spawn
+        assert a.after_kill is False  # a spawn alone does not mean a kill
+        a._worker.kill()
+        assert a.after_kill is True  # real live-worker cleanup reports its kill
+    finally:
+        if a._worker is not None:
+            a._worker.kill()
+
+
+@pytest.mark.parametrize("phase", ["startup", "open", "turn"])
+def test_timeout_reports_live_kill_and_excuses_fifo(spawn_adapter, monkeypatch, tmp_path, phase):
+    a, seen = spawn_adapter, []
+    baseline = SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, tmp_path)], [])
+    a.check_sources = lambda: seen.append(a.after_kill)
+    code = "import os,sys,time; "
+    if phase != "startup":
+        code += "print('{\"ready\":true}', flush=True); sys.stdin.readline(); "
+    if phase == "turn":
+        code += "print('{\"ok\":true,\"session_id\":\"s\",\"history\":0}', flush=True); sys.stdin.readline(); "
+    a.argv = [sys.executable, "-c", code + "os.mkfifo('ipc.fifo'); time.sleep(30)"]
+    monkeypatch.setattr(adapter, phase.upper() + "_TIMEOUT_S", 0.5)
+    with pytest.raises(adapter.HarnessFailed, match=f"^{phase}_timeout$"):
+        a._spawn_open("session_start", None, {"spawn": [], "open": []})
+        a._worker.call(op="turn", text="wait")
+    assert seen == [True]
+    assert (a._worker is None) == (phase == "startup")  # constructor timeout precedes assignment
+    assert (tmp_path / "ipc.fifo").is_fifo()
     assert a.after_kill is True
+    assert baseline.receipt(after_kill=a.after_kill) is None
+    assert baseline.receipt()["rule"] == "unsupported_entry"  # the flag alone excuses this FIFO
+
+
+@pytest.mark.parametrize("clean", [False, True])
+def test_leftover_group_kill_does_not_mark_worker_killed(spawn_adapter, monkeypatch, tmp_path, clean):
+    a = spawn_adapter
+    baseline = SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, tmp_path)], [])
+    # The leader exits by itself, leaving a child and FIFO. Keep its pid waitable until group cleanup.
+    a.after_kill = False
+    code = "import os,time; os.mkfifo('ipc.fifo'); print('{\"ready\":true}', flush=True); "
+    code += "pid=os.fork(); time.sleep(30) if pid == 0 else os._exit(0)"
+    worker = adapter._Worker([sys.executable, "-c", code], {}, tmp_path, tmp_path / "stderr",
+                             on_kill=a._worker_killed)
+    os.waitid(os.P_PID, worker.proc.pid, os.WEXITED | os.WNOWAIT)
+    signalled, real = [], os.killpg
+
+    def killpg(pid, sig):
+        signalled.append(pid)
+        real(pid, sig)
+
+    monkeypatch.setattr(adapter.os, "killpg", killpg)
+    worker.kill(clean=clean)
+    assert signalled == [worker.proc.pid] and worker._reaped
+    assert a.after_kill is False  # killing children cannot excuse their exited parent's residue
+    assert baseline.receipt(after_kill=a.after_kill)["rule"] == "unsupported_entry"
