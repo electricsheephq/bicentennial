@@ -1,5 +1,6 @@
 #!/bin/bash
-# Published copy: local paths are replaced by /path/to placeholders; every other byte is the script that ran.
+# Published copy: local paths are replaced by /path/to placeholders, four of them with a comment saying what the path holds,
+# and one comment names the live-settings wrapper instead of its file; every other byte is the script that ran.
 # Validity round 2 (#536; declaration results/validity-2/DECLARATION.md): the draw, the edition-3 validation pack of ten
 # G1 lives, the frozen task list, the thirteen control arms in the declared order, check 3, and the table.
 # Adapted from round 1's reviewed run-v2.sh; the changes are the round's parameters (labels, rows, edition, issue,
