@@ -193,6 +193,54 @@ def test_live_act_state_collision_scores_once(lives, unit_sessions, tmp_path, mo
         assert stat.S_ISLNK(path.lstat().st_mode) and os.readlink(path) == "missing-reader-target"
 
 
+@pytest.mark.parametrize("fault", [False, True])
+def test_act_state_entry_from_a_failed_session_stays_the_readers(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    """A QA session makes the entry, then fails with a probe code and the life continues: the act session's collision
+    is still the reader's. An observation fault at that failure claims nothing and keeps the session's own code."""
+    case = lives["t1-g1", "B0"]
+    probe = act_probe(case)
+    prior = next(p for p in case["compiled"].probes if p.index < probe.index)
+    original, records, absent = adapter.HermesAdapter.run_session, adapter.HermesAdapter.records, life._act_state_absent
+    failing = []
+
+    def session(self, index, **kw):
+        result = original(self, index, **kw)
+        if index == prior.index:
+            (self.paths["workspace"].parent.parent / "act-state").mkdir()
+            failing.append(fault)
+            raise adapter.HarnessFailed("turn_failed")
+        return result
+
+    def observe(root):
+        if failing and failing.pop():
+            raise PermissionError("injected observation fault")
+        return absent(root)
+
+    def rows(self):
+        found = records(self)
+        current = next((r for r in reversed(found) if (r.get("cursor") or {}).get("session") == prior.index), None)
+        if current is None:
+            return found
+        row = dict(current, seq=max(r["seq"] for r in found) + 1, role="unknown", status=400, subrole="",
+            served="refused_unknown", served_by="scripted", upstream=[], cursor=dict(session=prior.index, turn=1))
+        validate("ledger-record", row)
+        return [*found, row]
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", session)
+    monkeypatch.setattr(adapter.HermesAdapter, "records", rows)
+    monkeypatch.setattr(life, "_act_state_absent", observe)
+    result = unit(case, tmp_path)
+    assert result.attempts == 3  # the earlier session's own code redoes the unit, so the third attempt is scored
+    run = result.runs[-1]
+    assert all(run.classes[iid] == ("INFRA_FAILURE", "unknown_400") for iid in prior.item_ids)
+    if fault:
+        assert run.stopped[0] == "INFRA_FAILURE"
+    else:
+        assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
+    assert all(result.scores[iid]["failure_class"] == ("INFRA_FAILURE" if fault else "SYSTEM_FAILURE")
+               for iid in probe.item_ids)
+
+
 def test_act_state_present_before_reader_still_reruns(lives, unit_sessions, tmp_path, monkeypatch):
     case, entries = lives["t1-g1", "B0"], []
     original = adapter.HermesAdapter.__init__
