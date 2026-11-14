@@ -15,7 +15,8 @@ from pathlib import Path
 
 
 def canon(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    # The runner's own encoding (bicentennial.canon): raw UTF-8, no NaN.
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def main(argv):
