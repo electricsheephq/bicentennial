@@ -113,6 +113,7 @@ def test_refusing_partial_run_reaches_caller(scenario, monkeypatch):  # noqa: F8
 def test_t1_spec_constants():
     assert units.T1_SPEC.pack_tier == "T1"
     assert units.T1_SPEC.composition == ("G1", "G2")
+    assert units.T1_SPEC.control_compositions == ()
     assert units.T1_SPEC.roots == 2
     assert units.T1_SPEC.context_roots(Marker(0, False, "synthetic"), None) == 2
     assert units.T1_SPEC.context_roots(Marker(10, False, "synthetic"), None) == 1
@@ -166,6 +167,49 @@ def test_spec_pack_mismatch_refuses(installed, monkeypatch, damage, code):  # no
     with pytest.raises(t1.T1Refused) as caught:
         prepare(installed, spec=units.T1_SPEC)
     assert caught.value.code == code
+
+
+@pytest.mark.parametrize("genres,control,accepted", [
+    (("G1",) * 10, True, True),
+    (("G1",) * 10, False, False),
+    (("G2", "G1") * 5, True, True),
+    (("G2", "G1") * 5, False, True),
+    (("G1",) * 9 + ("G2",), True, False),
+    (("G2",) * 10, True, False),
+    (("G1",) * 11, True, False),
+    (("G1",) * 9, True, False),
+])
+def test_t2_prepare_composition(installed, monkeypatch, genres, control, accepted):  # noqa: F811
+    assert units.T2_SPEC.control_compositions == (("G1",) * 10,)
+    verify, read_json = t1.verify, t1._json
+    rels = {f"composition-{i}": genre for i, genre in enumerate(genres)}
+    metadata = {installed.root / rel / "sealed/meta.json": {"genre": genre}
+                for rel, genre in rels.items()}
+
+    def altered(*args, **kwargs):
+        return verify(*args, **kwargs) | {"tier": "T2", "packs": rels}
+
+    def read(path):
+        return metadata[path] if path in metadata else read_json(path)
+
+    class CompositionPassed(Exception):
+        pass
+
+    def pack(*args):
+        # The fake index has no pack bodies: reaching the next step proves composition admission.
+        raise CompositionPassed
+
+    monkeypatch.setattr(t1, "read_marker", lambda: Marker(0, False, "synthetic"))
+    monkeypatch.setattr(t1, "verify", altered)
+    monkeypatch.setattr(t1, "_json", read)
+    monkeypatch.setattr(t1, "_pack", pack)
+    if accepted:
+        with pytest.raises(CompositionPassed):
+            prepare(installed, spec=units.T2_SPEC, control=control)
+    else:
+        with pytest.raises(t1.T1Refused) as caught:
+            prepare(installed, spec=units.T2_SPEC, control=control)
+        assert caught.value.code == "tier_composition"
 
 
 def test_unit_refusal_carries_runs_and_timing(scenario, tmp_path, monkeypatch):  # noqa: F811

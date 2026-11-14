@@ -22,6 +22,28 @@ TEMPLATES = {"G1": g1.TEMPLATES, "G2": g2.TEMPLATES}  # edition-1 stand-in for E
 PUBLIC = t.load_tier(ROOT / "tiers/life_specs/t2.toml")["lives"]
 
 
+@pytest.fixture
+def draw_tree(tmp_path, monkeypatch):
+    """Keep draw's real collision scan inside a small, deterministic repository."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "seeds.txt").write_text("4 6101 7401\n")
+    original = roster.collisions
+    # draw passes its own root positionally; ignore every root a caller passes and scan only this repository.
+    monkeypatch.setattr(roster, "collisions", lambda seeds, *_, **__: original(seeds, root=root))
+    return root
+
+
+def test_draw_scans_only_the_fixture_repository(tmp_path, monkeypatch, draw_tree):
+    unique = 2 ** 62 + 4242  # written only into the fixture repository
+    (draw_tree / "seeds.txt").write_text(f"{unique}\n")
+    drawn = iter([unique, *range(2 ** 62 + 1, 2 ** 62 + 26)])
+    monkeypatch.setattr(secrets, "randbits", lambda bits: next(drawn))
+    out = tmp_path / "DRAW.json"
+    assert roster.main(["draw", "--out", str(out)]) == 2
+    assert not out.exists()
+
+
 def _no_seed_printed(out, seeds):
     assert not any(str(seed) in out for seed in seeds)
 
@@ -35,11 +57,13 @@ def test_collisions_are_whole_numbers_outside_git(tmp_path):
 
 
 @pytest.mark.parametrize("seed", [6101, 7401])
-def test_repository_seeds_collide(seed):
+def test_fixture_repository_seeds_collide(seed, draw_tree):
     assert roster.collisions([seed, 2 ** 62]) == {seed}
 
 
-def test_draw(tmp_path, capsys):
+def test_draw(tmp_path, monkeypatch, capsys, draw_tree):
+    drawn = iter(range(2 ** 62, 2 ** 62 + 26))
+    monkeypatch.setattr(secrets, "randbits", lambda bits: next(drawn))
     out = tmp_path / "DRAW.json"
     assert roster.main(["draw", "--out", str(out)]) == 0
     raw = out.read_bytes()
@@ -60,11 +84,11 @@ def test_draw(tmp_path, capsys):
 
 @pytest.mark.parametrize("values", [
     [4, *range(2 ** 62, 2 ** 62 + 25)],  # a committed public T2 seed
-    [*range(2 ** 62, 2 ** 62 + 25), 6101],  # a seed in spikes/ and tests/fixtures/
-    [7401, *range(2 ** 62, 2 ** 62 + 25)],  # a seed in schemas/fixtures/gen/
+    [*range(2 ** 62, 2 ** 62 + 25), 6101],  # a collision in the fixture repository
+    [7401, *range(2 ** 62, 2 ** 62 + 25)],  # another fixture collision
     [2 ** 62, *range(2 ** 62, 2 ** 62 + 25)],  # a duplicate within the draw
 ])
-def test_draw_refusals_write_nothing(tmp_path, monkeypatch, capsys, values):
+def test_draw_refusals_write_nothing(tmp_path, monkeypatch, capsys, values, draw_tree):
     drawn = iter(values)
     monkeypatch.setattr(secrets, "randbits", lambda bits: next(drawn))
     out = tmp_path / "DRAW.json"
