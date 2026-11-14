@@ -169,21 +169,29 @@ def test_empty_state_uses_each_items_changed_matches_neither_row(lives):
         validate("item_outcome", row)
 
 
-@pytest.mark.parametrize("write,broken,verdict,score", [
-    ("stale", "other", "FAIL_MEMORY", -1000),
-    ("right", "other", "PASS", 1000),
-    ("benign", "other", "PASS", 0),
-    ("right", "checked", "FAIL_TASK", 0),
-    ("right", "all", "FAIL_TASK", 0),
+@pytest.mark.parametrize("write,broken,verdict,score,split", [
+    ("stale", "other", "FAIL_MEMORY", -1000, False),
+    ("right", "other", "PASS", 1000, False),
+    ("benign", "other", "PASS", 0, False),
+    ("right", "checked", "FAIL_TASK", 0, False),
+    ("right", "all", "FAIL_TASK", 0, False),
+    # The admissible checks' file is broken and the stale write sits on another file that parses.
+    ("stale", "checked", "FAIL_MEMORY", -1000, True),
 ])
 def test_live_partial_state_scores_surviving_files(lives, unit_sessions, tmp_path, monkeypatch,
-                                                  write, broken, verdict, score):
+                                                  write, broken, verdict, score, split):
     case = dict(lives["t1-g1", "B0"])
     probe = act_probe(case)
     target = next(case["cases"][iid] for iid in probe.item_ids
                   if case["cases"][iid].table["gold"] == "act")
-    # Retarget a real sealed template's checks to flags for the cross-file regression.
-    checks = {name: tuple(tuple(replace(c, path="config/flags.toml") for c in group) for group in groups)
+    # Retarget a real sealed template's checks to flags for the cross-file regression; with split, the
+    # disqualifiers' checks go to settings instead, so they read from a different file than the admissible ones.
+    disqualifying = {row["predicate"] for row in target.table["disqualifiers"]}
+
+    def path_for(name):
+        return "config/settings.toml" if split and name in disqualifying else "config/flags.toml"
+
+    checks = {name: tuple(tuple(replace(c, path=path_for(name)) for c in group) for group in groups)
               for name, groups in target.checks.items()}
     table = dict(target.table, benign_extras=["holds:extra"])
     checks["holds:extra"] = ((RepoCheck(kind="constant", path="service/routes.toml",
