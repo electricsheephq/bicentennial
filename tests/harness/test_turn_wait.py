@@ -36,7 +36,7 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
                              inflight=0), summariser_requests=0)
     a.egress = SimpleNamespace(forking=nullcontext())
     a._gate, a.records = lambda readings: None, lambda: []
-    a._end = lambda: setattr(a, "after_kill", False) or ()  # the real end clears the flag (test_end_clears_kill_flag)
+    a._end = lambda: setattr(a, "after_kill", False) or ()  # the real end clears the flag (test_spawn_sets_and_clean_end_clears_the_kill_flag)
     history = 0
 
     def call(**kw):
