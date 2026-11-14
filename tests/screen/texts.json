@@ -1,0 +1,44 @@
+{
+ "drift-config-K1": [
+  "Check the retry entry in config/settings.toml against what the team decided. If the team later firmly corrected its figure, set the corrected figure under the same entry name; if a new figure was only floated as a possibility, leave the file unchanged.",
+  "Look at the retry entry of config/settings.toml and check it against what was agreed. When its figure was later firmly replaced, write the replacement under the same entry name; when a new figure was merely suggested as a possibility, leave the file alone.",
+  "Bring the retry entry of config/settings.toml up to date against what the team settled: if the team firmly corrected its figure later, apply the corrected figure under the same entry name; if a new figure was only tentatively floated, keep the file unchanged.",
+  "Review the retry entry in config/settings.toml against what the team decided. Where the team later firmly corrected its figure, put the corrected figure under the same entry name; where a new figure was only tentatively suggested, leave the file unchanged."
+ ],
+ "drift-config-K3": [
+  "Check config/settings.toml. If an entry was firmly corrected after it was committed, set its corrected content; if new content was only raised as a possibility, or only quoted or reported, leave such an entry unchanged. Never add entries.",
+  "Review every entry in config/settings.toml. Where an entry was firmly corrected after being committed, write its corrected content. Where an entry only had new content floated as a possibility, or quoted or reported, keep it as it stands. Never add entries.",
+  "Look over config/settings.toml entry by entry: an entry firmly corrected since it was committed gets its corrected content; an entry whose new content was only raised as a possibility, or only quoted or reported, stays unchanged. Never add entries.",
+  "Apply to config/settings.toml only firm corrections made after an entry was committed, writing each corrected content; an entry whose new content was only raised as a possibility, or only quoted or reported, keeps its current content. Never add entries."
+ ],
+ "drift-config-K4": [
+  "Bring config/settings.toml up to date, applying firm corrections only, and only to settings entries (deadlines, rules and decisions stay out), keeping entry names exactly as written in chat. Where a settings entry was later firmly corrected, write what it was corrected to. Where a new figure was only raised as a possibility, or only reported or quoted, change nothing. Never add entries.",
+  "Update config/settings.toml so it reflects all firm corrections to settings entries and nothing else; deadlines, rules and decisions stay out, and entry names stay exactly as written in chat. If an entry had its figure firmly corrected later, set what it was corrected to; if a change was merely floated as a possibility, or merely reported or quoted, leave it alone. Never add entries.",
+  "Apply all firm corrections to config/settings.toml, settings entries only (deadlines, rules and decisions stay out), using entry names exactly as written in chat: whenever an entry was firmly corrected after its first figure, write what it was corrected to. Possibilities only raised, and figures only reported or quoted, change nothing; never add entries.",
+  "Make config/settings.toml match all firm corrections made in chat to settings entries (deadlines, rules and decisions stay out), under entry names exactly as written in chat: an entry firmly corrected after its first figure gets what it was corrected to. Anything only raised as a possibility, or only reported or quoted, changes nothing, and entries are never added."
+ ],
+ "drift-quote-K1": [
+  "Add the missing timeout entry to the settings file config/settings.toml, under its name exactly as written in our conversation. Use the figure set directly, not one only reported or quoted later.",
+  "In the settings file config/settings.toml, add the timeout entry still missing, named exactly as in our conversation. Take the figure set directly; figures only reported or quoted later do not replace the directly set figure.",
+  "Work out which timeout entry the settings file config/settings.toml still lacks, and add the entry under its exact name in our conversation, using the figure set directly rather than any figure reported or quoted later.",
+  "Complete the settings file config/settings.toml by adding its missing timeout entry, named exactly as in our conversation; use the directly set figure, and ignore any figure only reported or quoted later."
+ ],
+ "drift-quote-K3": [
+  "Write into config/settings.toml every settings entry decided firmly in chat (deadlines, rules and decisions stay out), named exactly as in chat, each at its latest figure stated directly, adding any entry this file lacks; any figure only reported or quoted later replaces nothing.",
+  "Put every settings entry firmly decided in chat into config/settings.toml (deadlines, rules and decisions stay out), under its name exactly as written in chat and at its latest directly stated figure, adding any entry missing there; later reports or quotes of another figure change nothing.",
+  "config/settings.toml should hold every settings entry decided firmly in chat, deadlines, rules and decisions aside. Write each one under its exact chat name at its latest figure given directly, adding whatever entry this file lacks; any figure merely reported or quoted afterwards replaces nothing.",
+  "Record in config/settings.toml all settings entries decided firmly in chat (never deadlines, rules or decisions), each named exactly as in chat and at its latest figure someone stated directly, including any entry still missing; figures only reported or quoted later replace nothing."
+ ],
+ "drift-chain-fault-K1": [
+  "Record the current target of the milestone after the beta in docs/decisions.md, as one line of the form \"- <name>: <value>\", where <name> is the milestone name exactly as written in our conversation.",
+  "In docs/decisions.md, write one line \"- <name>: <value>\" giving the latest agreed target of the milestone after the beta, with <name> exactly as our conversation names the milestone.",
+  "Add an entry to docs/decisions.md recording the current target of the milestone following the beta, as one line \"- <name>: <value>\" using the milestone name exactly as written in our conversation.",
+  "Put in docs/decisions.md the current target of the milestone after the beta: one line \"- <name>: <value>\", with <name> being the milestone name exactly as written in our conversation."
+ ],
+ "drift-chain-fault-K3": [
+  "Record every milestone in docs/decisions.md as one line, \"- <name>: <target>\", where <name> matches how each milestone was named in chat, in lower case and with nothing added, and <target> gives its current target code after all corrections.",
+  "Write one line per milestone into docs/decisions.md in this form: \"- <name>: <target>\". Use each milestone name just as written in chat, lower case, nothing added; use its current target code once all corrections apply.",
+  "In docs/decisions.md, add a line \"- <name>: <target>\" per milestone: <name> copied exactly as chat named this milestone, lower case and alone; <target> its latest firm target code after corrections.",
+  "List each milestone in docs/decisions.md, one line apiece shaped \"- <name>: <target>\", taking <name> verbatim as named in chat (lower case, nothing extra) and <target> as its current target code once all corrections apply."
+ ]
+}

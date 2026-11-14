@@ -10,13 +10,14 @@ from bicentennial.controls import naive_rag
 from bicentennial.controls.cache import PACKAGE_ROOT, code_sha256, import_closure
 from bicentennial.packs.scoring import control_input, make_score
 
-from . import run
+from . import WINDOW, run
 from .bm25 import BM25
 from .grep import Grep
 from .window import RecentWindow
 
 ANCHORS = {"bm25": BM25, "grep": Grep, "recent_window": RecentWindow}
 REPO = PACKAGE_ROOT.parents[1]
+SENSITIVITY_WINDOWS = (4096, 65536)
 
 
 def load(path):
@@ -34,7 +35,7 @@ def header():
     return dict(anchors=anchors, report_sha256=sha256(Path(__file__).read_bytes()).hexdigest(),
                 naive_rag_spec_sha256=sha256((REPO / "specs/controls/naive_rag.md").read_bytes()).hexdigest(),
                 naive_rag_code_sha256=code_sha256(import_closure(("controls/naive_rag.py",))),
-                window=16384, sensitivity_windows=[4096, 65536],
+                window=WINDOW, sensitivity_windows=list(SENSITIVITY_WINDOWS),
                 score_label="scripted proxy; not a bound on a live reader's score",
                 pair_policy="sealed bundle minimum; right > 0, confidently wrong < 0, no credit = 0")
 
@@ -58,7 +59,7 @@ def screen(packs, tasks=None):
         reports = {name: {r["item_id"]: r for r in arm["reports"]} for name, arm in arms.items()}
         outcomes = {name: {r["item_id"]: r for r in arm["items"]} for name, arm in arms.items()}
         sensitivity = {str(w): {r["item_id"]: r["in_context"] for r in run(
-            inp, RecentWindow, score=score, window=w)["reports"]} for w in (4096, 65536)}
+            inp, RecentWindow, score=score, window=w)["reports"]} for w in SENSITIVITY_WINDOWS}
         ids = set(refs) if selected is None else set(refs) & selected
         if found & ids:
             raise ValueError("duplicate item across packs")
