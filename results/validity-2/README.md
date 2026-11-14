@@ -11,5 +11,7 @@ Round 1 cleared the three Drift templates: with the needed evidence handed over,
 | [`DECLARATION.md`](DECLARATION.md) | Round 2's declaration: how the finalists' and Wake's control trials are run and read, its predictions, and what was already seen; merged before the seed draw. |
 | [`reviews/2026-11-14-adversarial-review.md`](reviews/2026-11-14-adversarial-review.md) | The adversarial review of the declaration and of the run script's rerun rule by a model family other than the author's, with how each finding was used. |
 | [`control-trials/`](control-trials/) | The task-list and reading scripts for round 2's thirteen control arms, with their tests. |
+| [`2026-11-14-control-trials/`](2026-11-14-control-trials/RESULT.md) | Round 2's results: the thirteen control arms, their checks and readings, with the drawn seeds, the frozen task list and the run script. All four templates read ranking candidate, so the fresh-seed follow-up starts with them as its ranking set. |
+| [`reviews/2026-11-14-results-review.md`](reviews/2026-11-14-results-review.md) | The adversarial review of round 2's results page by a model family other than the author's, with how each finding was used. |
 
 Round 2's declaration, the candidate cards, the screen reports and the results land here as each step is done. The work is tracked in the issues listed in the [roadmap](../../ROADMAP.md).

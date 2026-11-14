@@ -206,6 +206,15 @@ def test_committed_list_holds_each_validity_pack(digest):
     assert caught.value.code == "control_only_pack"
 
 
+def test_every_listed_pack_names_its_result_page():
+    # Each entry's result page exists and names its own pack (#561's review).
+    record = json.loads(t1.CONTROL_ONLY_PACKS.read_bytes())["control_only"]
+    assert record
+    for digest, entry in record.items():
+        page = (t1.REPO / entry["result"]).read_text()
+        assert f"**Validation pack** hash `{digest}`" in page, digest
+
+
 @pytest.mark.parametrize("control", [False, True])
 def test_control_only_unlisted_and_verified_order(installed, tmp_path, monkeypatch, control):
     path = tmp_path / "control-only.json"

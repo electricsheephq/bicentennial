@@ -1,0 +1,3 @@
+drift-chain-fault-v3: pairs 5 right 5 wrong 0 no-credit 0 net 100 -> KEEP; infra reruns 0; verdicts [(('B0', 'PASS'), 5), (('B1', 'PASS'), 5)]
+drift-config-v3: pairs 5 right 5 wrong 0 no-credit 0 net 100 -> KEEP; infra reruns 0; verdicts [(('B0', 'PASS'), 5), (('B1', 'PASS'), 5)]
+drift-quote-v3: pairs 5 right 5 wrong 0 no-credit 0 net 100 -> KEEP; infra reruns 0; verdicts [(('B0', 'PASS'), 5), (('B1', 'PASS'), 5)]

@@ -1,0 +1,15 @@
+== 1. Header and identity
+F1: missing (no card.json or outcomes.json; refusal code none recorded)
+F2: missing (no card.json or outcomes.json; refusal code none recorded)
+R1: missing (no card.json or outcomes.json; refusal code none recorded)
+R2: missing (no card.json or outcomes.json; refusal code none recorded)
+B1: missing (no card.json or outcomes.json; refusal code none recorded)
+B2: missing (no card.json or outcomes.json; refusal code none recorded)
+G1: missing (no card.json or outcomes.json; refusal code none recorded)
+G2: missing (no card.json or outcomes.json; refusal code none recorded)
+W1: missing (no card.json or outcomes.json; refusal code none recorded)
+W2: missing (no card.json or outcomes.json; refusal code none recorded)
+O1: missing (no card.json or outcomes.json; refusal code none recorded)
+O2: missing (no card.json or outcomes.json; refusal code none recorded)
+O3: missing (no card.json or outcomes.json; refusal code none recorded)
+no arm has card.json and outcomes.json: no check or reading can be computed
