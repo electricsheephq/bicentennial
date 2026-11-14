@@ -256,7 +256,8 @@ def test_system_run_refuses_a_malformed_entry(edition2, tmp_path, monkeypatch, e
 
 
 @pytest.mark.parametrize("content", [None, "{", "[]", "null", "{}", '{"admitted": []}',
-                                     '{"admitted": {"drift-quote-v2": null}}'])
+                                     '{"admitted": {"drift-quote-v2": null}}',
+                                     pytest.param("[" * 10**6 + "]" * 10**6, id="nested-1e6")])
 def test_admissions_missing_or_malformed(edition1, edition2, tmp_path, monkeypatch, content):
     path = tmp_path / "admissions.json"
     if content is not None:

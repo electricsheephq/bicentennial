@@ -153,7 +153,8 @@ def test_control_only_pack_overrides_all_admissions(installed, tmp_path, monkeyp
     *[json.dumps({"control_only": {"a" * 64: entry}}) for entry in
       (None, [], {}, dict(declaration="d", result="r"), dict(round="", declaration="d", result="r"),
        dict(round=1, declaration="d", result="r"), dict(round="r", declaration="", result="r"),
-       dict(round="r", declaration="d", result=""))]])
+       dict(round="r", declaration="d", result=""))],
+    pytest.param("[" * 10**6 + "]" * 10**6, id="nested-1e6")])
 def test_control_only_missing_or_malformed(installed, tmp_path, monkeypatch, content):
     path = tmp_path / "control-only.json"
     if content is not None:
@@ -175,14 +176,15 @@ def test_control_only_missing_or_malformed(installed, tmp_path, monkeypatch, con
     assert reads == [path]
 
 
-def test_control_only_unreadable(installed, tmp_path, monkeypatch):
+@pytest.mark.parametrize("error", [PermissionError("test unreadable list"), RecursionError("test nesting too deep")])
+def test_control_only_unreadable(installed, tmp_path, monkeypatch, error):
     path = tmp_path / "control-only.json"
     monkeypatch.setattr(t1, "CONTROL_ONLY_PACKS", path)
     real = t1._json
 
     def read(target):
         if target == path:
-            raise PermissionError("test unreadable list")
+            raise error
         return real(target)
 
     monkeypatch.setattr(t1, "_json", read)

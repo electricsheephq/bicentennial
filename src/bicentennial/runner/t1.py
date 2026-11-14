@@ -161,7 +161,7 @@ def _check_control_only(pack_hash):
     try:
         record = _json(CONTROL_ONLY_PACKS)
         listed = record["control_only"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
         raise T1Refused("control_only_pack") from None
     if not isinstance(listed, dict) or any(
         len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
@@ -370,7 +370,7 @@ def _check_c7(packed, control=False):
     if outside and not control:
         try:
             admitted = _json(TEMPLATE_ADMISSIONS)["admitted"]
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, RecursionError):
             raise T1Refused("template_not_admitted") from None
         if not isinstance(admitted, dict) or any(
             not isinstance(admitted.get(ref), dict)
