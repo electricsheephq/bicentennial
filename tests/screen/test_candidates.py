@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import sqlite3
 import sys
 import time
 from contextlib import closing
@@ -212,17 +213,26 @@ def test_registry_import_stays_isolated():
     registries_unchanged()
 
 
-# The public T2 packs as `main` builds them at 99fdadc, from a clean tree with no screening
-# code. Edition 1's is also the pack hash of the published 2026-11-04 live-arm result.
+# The public T2 packs as `main` builds them from a clean tree with no screening code (99fdadc and 0928685), per
+# SQLite build. The packs hold SQLite world databases, and a library that turns secure_delete on by default (Ubuntu's,
+# which CI's Python links) zeroes freed space inside their pages, so their bytes and hash differ (#327,
+# docs/developers/ring0.md section 4). The values for "on" were built on `main` with secure_delete turned on for every
+# connection, which reproduces the hash CI's Python builds. Edition 1's hash with it off is also the pack hash of the
+# published 2026-11-04 live-arm result. A build with another default fails until its hashes are captured on `main`.
 PUBLIC_T2_HASHES = {
-    1: '15141b194ab8abf389af2bfdbb4fd81e4d511fca14c54508d613fbe156628c04',
-    2: '3e58b80124568d1fd275e608a17b2c145531b2619d1d2155ee32aed71c23658d',
+    0: {1: '15141b194ab8abf389af2bfdbb4fd81e4d511fca14c54508d613fbe156628c04',  # off (macOS and uv's Python)
+        2: '3e58b80124568d1fd275e608a17b2c145531b2619d1d2155ee32aed71c23658d'},
+    1: {1: 'dd1ed4aaecd6890ea6da14ed841acab47c53ffe2404da3304d4210b866439a22',  # on (Ubuntu's SQLite)
+        2: 'f4ec2417b6634823f2522dd9dd463d0d3c7e929f03b5d5e46d272dc95a49ee76'},
 }
 
 
 def test_public_t2_hashes_equal_base(tmp_path):
+    with closing(sqlite3.connect(':memory:')) as db:
+        secure_delete = db.execute('PRAGMA secure_delete').fetchone()[0]
+    assert secure_delete in PUBLIC_T2_HASHES, f'no hashes captured on main for secure_delete={secure_delete}'
     artifact = load(REGISTRY / 'hermes-native.toml')['artifact']
-    for edition, expected in PUBLIC_T2_HASHES.items():
+    for edition, expected in PUBLIC_T2_HASHES[secure_delete].items():
         built = build.build_tier('T2', tmp_path / f'edition-{edition}', edition=edition,
                                  harness_artifacts=[artifact])
         assert built['pack_hash'] == expected, f'edition {edition}'
