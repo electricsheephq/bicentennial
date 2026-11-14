@@ -1,0 +1,101 @@
+# Validity round 2 validation spec, placed from draw sha256 176962c47d70da85b23fc86fd6e392fda700b9eac93d92011ca6ab68b1700a6b.
+canary = "c168e5f8-3948-4553-8554-7aa162054723"
+tier = "T2"
+scale = "t2"
+window = 16384
+window_label = "provisional C-5"
+levers_label = "uncalibrated"
+evidence_by = 8
+replacements = []
+checkpoints = [5, 10]
+cold_restart = "every session start after the first"
+min_distance_sessions = 2
+early_sessions = 2
+min_early_bundles = 2
+qa_per_checkpoint = 6
+act_per_checkpoint = 2
+not_exercised = ["KEEP-FORGET", "KEEP-NEIGH", "TUE-EVENT"]
+
+[kill]
+session = 6
+turn = 1
+
+[swap]
+session = 8
+wiring_only = true
+from_alias = "bicentennial-main"
+to_alias = "bicentennial-swap"
+
+[compaction]
+min_sprints = 2
+
+[g1]
+deadline_at = [[[1, 1], [2, 1]], [[1, 2], [2, 2]]]
+
+[g2]
+pref_at = { seat-long = [[1, 1], [2, 1]], seat-short = [[1, 2], [2, 4]] }
+
+[[lives]]
+life = "t2-g1-1"
+genre = "G1"
+seed = 4425530988442495022
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-2"
+genre = "G1"
+seed = 6121448135497754507
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-3"
+genre = "G1"
+seed = 4193157555366809897
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-4"
+genre = "G1"
+seed = 3580638411404487803
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-5"
+genre = "G1"
+seed = 1434878937266722676
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-6"
+genre = "G1"
+seed = 7719023316389376911
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-7"
+genre = "G1"
+seed = 2187190806745177701
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-8"
+genre = "G1"
+seed = 5676270526280125037
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-9"
+genre = "G1"
+seed = 4138467948707939477
+reads_session = 1
+
+[[lives]]
+life = "t2-g1-10"
+genre = "G1"
+seed = 4059481942787703260
+reads_session = 1
+
+[selection]
+g1 = ["drift-chain-fault", "drift-config", "drift-quote", "recall-value", "wake-loop"]
+g2 = ["drift-asof", "drift-booking", "drift-no-update", "keep-incidental", "recall-count"]
+pinned = { drift-chain-fault = 10, drift-booking = 10 }
