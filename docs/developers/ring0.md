@@ -252,7 +252,9 @@ them. Validity round 1 cleared its three versions for the fresh-seed follow-up (
 labelled "near-solved by naive retrieval": a result on those versions states both. Validity
 round 2 read its three v3 versions as ranking candidates and admitted them for the same
 follow-up, labelled "ranking candidate". The gate
-checks only the reading and the hash. A format-validated version is not admitted. Control
+checks only the reading and the hash, not `scope` or `labels`: a non-control run outside that
+scope also passes it, and a result on these versions states their scope and labels itself. A
+format-validated version is not admitted. Control
 arms bypass this admission check; edition-1 runs do not read the file. Template edition 3,
 validity round 2's candidate edition (`results/validity-2/PLAN.md` §5 and §6), carries
 version 3 of `drift-chain-fault`, `drift-config` and `drift-quote`, the round's finalists,
