@@ -254,8 +254,8 @@ follow-up, labelled "ranking candidate". The gate
 checks only the reading and the hash. A format-validated version is not admitted. Control
 arms bypass this admission check; edition-1 runs do not read the file. Template edition 3,
 validity round 2's candidate edition (`results/validity-2/PLAN.md` §5 and §6), carries
-version 3 of `drift-chain-fault`, `drift-config` and `drift-quote`, the round's finalists;
-none is admitted, so only control runs can use it. A validation pack that its round declares
+version 3 of `drift-chain-fault`, `drift-config` and `drift-quote`, the round's finalists,
+all three admitted after the round. A validation pack that its round declares
 control-only is listed by hash in `specs/ring0/control-only-packs.json`, with its round,
 declaration section and result page; a non-control run on a listed pack is refused
 (`control_only_pack`) whatever the admissions say. The gate does not check which control arm
