@@ -29,6 +29,11 @@ NEW_FILES = ("items/editions.py", "items/templates/g1/drift_action_v2.py", "item
              "items/templates/g1/drift_action_v3.py", "items/templates/g1/drift_chain_v3.py")
 DEPARTURE = ("validity round 2 (results/validity-2/PLAN.md §4): varies lever 1, no cue in the prompt, "
              "instead of the cell's primary lever (chain_depth)")
+# drift-config's K3 card varies levers 1 and 4 (results/validity-2/cards/CARDS.md, `drift-config` K3).
+DEPARTURES = {"drift-chain-fault": DEPARTURE, "drift-quote": DEPARTURE,
+              "drift-config": ("validity round 2 (results/validity-2/PLAN.md §4): varies levers 1 and 4, no cue in the "
+                               "prompt and the decision rule restated in other words, instead of the cell's primary "
+                               "lever (chain_depth)")}
 
 
 def pairs(version=2):
@@ -129,9 +134,9 @@ def test_c7_edition3_committed_and_shared_entries_unchanged():
     assert set(three) - set(one) == {v3.ref for _, v3 in pairs(3)}
     assert set(one) - set(three) == {v1.ref for v1, _ in pairs(3)}
     assert all(one[ref] == three[ref] for ref in set(one) & set(three))
-    for v1, v3 in pairs(3):
-        assert v3.lever_mix == dict(v1.lever_mix, departure=DEPARTURE)
-        assert three[v3.ref]["lever_mix"]["template"] == dict(v1.lever_mix, departure=DEPARTURE)
+    for tid, (v1, v3) in zip(SWAPPED["G1"], pairs(3), strict=True):
+        assert v3.lever_mix == dict(v1.lever_mix, departure=DEPARTURES[tid])
+        assert three[v3.ref]["lever_mix"]["template"] == dict(v1.lever_mix, departure=DEPARTURES[tid])
         assert three[v3.ref]["lever_mix"]["template"]["label"] == LEVER_MIX_LABEL
     out = subprocess.run([sys.executable, "-m", "bicentennial.items.c7", str(ROOT), "--edition", "3"], cwd=ROOT,
                          check=True, capture_output=True, text=True, env={**os.environ, "PYTHONHASHSEED": "random"})

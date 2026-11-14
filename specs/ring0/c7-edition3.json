@@ -302,7 +302,7 @@
    },
    "cell_id": "DRIFT-CUR",
    "class": "bicentennial.items.templates.g1.drift_action_v3.DriftActionV3",
-   "class_source_sha256": "16dd428abe4eae90a69bf050bf7cf56f4e8e06ad0f5212b42e3d146dcc818716",
+   "class_source_sha256": "a269141c753008f32de79ea1c7ea301e710121059968ef26af49190e7fb2e7d0",
    "decision_tables": [
     {
      "admissible": [
@@ -332,7 +332,7 @@
     }
    ],
    "direction": "extraction and consolidation",
-   "entry_sha256": "c1ef4ba7f2ce3aaa8282f2951a254a5f7451865bd40c037af219b5d0d165d9bc",
+   "entry_sha256": "7b563b243c941cdf8099f6938bf7513a0f32ff867dc8813280c2cd3bfb5ee419",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -340,7 +340,7 @@
     "primary": "update-chain depth",
     "primary_key": "chain_depth",
     "template": {
-     "departure": "validity round 2 (results/validity-2/PLAN.md §4): varies lever 1, no cue in the prompt, instead of the cell's primary lever (chain_depth)",
+     "departure": "validity round 2 (results/validity-2/PLAN.md §4): varies levers 1 and 4, no cue in the prompt and the decision rule restated in other words, instead of the cell's primary lever (chain_depth)",
      "label": "provisional pending PREREG-v0.5",
      "others": "not neutralised at v0.1",
      "primary": "chain_depth",
@@ -354,7 +354,7 @@
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
     "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/drift_action.py": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d",
-    "items/templates/g1/drift_action_v3.py": "16dd428abe4eae90a69bf050bf7cf56f4e8e06ad0f5212b42e3d146dcc818716"
+    "items/templates/g1/drift_action_v3.py": "a269141c753008f32de79ea1c7ea301e710121059968ef26af49190e7fb2e7d0"
    },
    "template": {
     "cell_id": "DRIFT-CUR",
@@ -485,7 +485,7 @@
    },
    "cell_id": "DRIFT-CUR",
    "class": "bicentennial.items.templates.g1.drift_action_v3.DriftQuoteV3",
-   "class_source_sha256": "16dd428abe4eae90a69bf050bf7cf56f4e8e06ad0f5212b42e3d146dcc818716",
+   "class_source_sha256": "a269141c753008f32de79ea1c7ea301e710121059968ef26af49190e7fb2e7d0",
    "decision_tables": [
     {
      "admissible": [
@@ -506,7 +506,7 @@
     }
    ],
    "direction": "verbatim retention",
-   "entry_sha256": "dc7e4e123f58a72e03948e903d4e6a57ae8290415987778022a9c1dc51ecdf47",
+   "entry_sha256": "ede9e73d2308b5a810c24abf7691a55022ed403b009ec09a215adb3081298066",
    "genre": "g1",
    "kind": "act",
    "lever_mix": {
@@ -528,7 +528,7 @@
     "items/protocol.py": "a2132ffcaf0ef975f7d7d1f49f0224ad7db3ecac8f47fece41501713649dc5f3",
     "items/templates/g1/common.py": "2e52fcde43c95431564ef084234a318ab65937bb7c750e09a61c6958d0b1e78b",
     "items/templates/g1/drift_action.py": "e6e00687f41e3f7711d40060048be15c376e0a4ca1d8c48f669c0a5453b8989d",
-    "items/templates/g1/drift_action_v3.py": "16dd428abe4eae90a69bf050bf7cf56f4e8e06ad0f5212b42e3d146dcc818716"
+    "items/templates/g1/drift_action_v3.py": "a269141c753008f32de79ea1c7ea301e710121059968ef26af49190e7fb2e7d0"
    },
    "template": {
     "cell_id": "DRIFT-CUR",
@@ -1223,7 +1223,7 @@
   }
  },
  "entry_hash": "sha256 of the canonical JSON (sorted keys, no spaces) of the entry without entry_sha256",
- "file_sha256_of_entries": "2a7e2fcf57ec1f78783e0cb387f27a459d7ef57c358c97b544968dcf0877bc33",
+ "file_sha256_of_entries": "66460dbf623523a6afc1ddd446bdba846e195ef3ae635d6a6be95c9ff0e026c0",
  "keyed_by": "template ref (template_id-vN)",
  "slot": "C-7",
  "status": "partial, provisional (Ring 0 v0.1), template edition 3"
