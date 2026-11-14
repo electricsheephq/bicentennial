@@ -111,6 +111,7 @@ class LifeRun:
     retained_roots: dict = field(default_factory=dict)
     act: dict = field(default_factory=dict)
     item_labels: dict = field(default_factory=dict)
+    incidental_unknown_400: int = 0
     kill: tuple | None = None
     expected_call_ids: tuple = ()
     post_restart_requests: tuple = ()
@@ -190,7 +191,7 @@ def _read_action_state(workspace, scratch, *, absent_before=False):
     state, unreadable = {}, False
     empty = render({p: {} for p in PATHS.values()})
     # One fixed scratch folder inside the life's fresh root: tempfile's random names are outside this module's
-    # firewall (tests/runner/test_life_fake.py). Only an entry made during this reader session is attributed to it.
+    # firewall (tests/runner/test_life_fake.py). The caller carries provenance across the attempt's sessions.
     root = Path(scratch) / "act-state"
     try:
         root.mkdir()
@@ -294,10 +295,13 @@ def _probe_earlier(ledger):
         _answer_content(blob) for blob in _earlier(ledger, session, before))
 
 
-def _probe_code(rows, attempt_id, *, probe_live=False):
-    for r in rows:
-        if r.get("attempt_id") != attempt_id:
-            continue
+def _probe_rows(rows, attempt_id, session=None):
+    return [r for r in rows if attempt_id is not None and r.get("attempt_id") == attempt_id
+            and (session is None or (r.get("cursor") or {}).get("session") in (None, session))]
+
+
+def _probe_code(rows, attempt_id, *, session=None, probe_live=False):
+    for r in _probe_rows(rows, attempt_id, session):
         if probe_live and (code := live_probe_code(r)):
             return code
         for upstream in r.get("upstream", []):
@@ -306,6 +310,14 @@ def _probe_code(rows, attempt_id, *, probe_live=False):
         if r.get("role") == "unknown" and r.get("status") == 400:
             return "unknown_400"
     return None
+
+
+def _act_state_absent(root):
+    try:
+        (root / "act-state").lstat()
+    except FileNotFoundError:
+        return True
+    return False
 
 
 def _pair_inputs(root, rows, kill, genre):
@@ -509,6 +521,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         for iid in sorted(by_id) if by_id[iid]["probe_point"] == checkpoint)
 
             previous_session = None
+            # Harness setup is complete. Observation errors must remain infrastructure, as must a baseline entry.
+            act_state_baseline = _act_state_absent(root) if leg is not None and genre == "G1" else False
+            act_state_created = False
             for session in script["sessions"]:
                 index, probe = session["index"], probes.get(session["index"])
                 if repro is not None and (probe is None or repro.item_id not in probe.item_ids):
@@ -571,13 +586,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(swap_in(clone, canonical))
                         before = workspace_hash(paths["workspace"]) if genre == "G1" else EMPTY_TREE_HASH
-                        act_state_absent = False
-                        if leg is not None and genre == "G1" and probe and by_id[probe.item_ids[0]]["stage"] == "act":
-                            try:
-                                (root / "act-state").lstat()
-                            except FileNotFoundError:
-                                act_state_absent = True
+                        track_state = leg is not None and genre == "G1"
+                        absent_before = _act_state_absent(root) if track_state else False
                         result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)
+                        if track_state:
+                            act_state_created = (act_state_baseline and not _act_state_absent(root)
+                                                 and (absent_before or act_state_created))
                         live_cut = False
                         sessions.append(result)
                         if not probe:
@@ -597,7 +611,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     state, unreadable = read_state(paths["workspace"]), False
                                 else:
                                     state, unreadable = _read_action_state(paths["workspace"], root,
-                                                                         absent_before=act_state_absent)
+                                                                         absent_before=act_state_created)
                                 for iid in probe.item_ids:
                                     evidence.act[iid] = state
                                     if unreadable:
@@ -606,7 +620,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 for iid in probe.item_ids:
                                     evidence.act[iid] = {"records": wiring.records(index)}
                     if probe:
-                        code = _probe_code(adapter.records(), attempt_id, probe_live=leg is not None)
+                        code = _probe_code(adapter.records(), attempt_id, session=index, probe_live=leg is not None)
                         for n, final in result.finals:
                             iid = probe.item_ids[n - 1]
                             if ((leg is not None and by_id[iid]["stage"] != "act") or
@@ -641,7 +655,12 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     raise
                 except Exception as error:
                     cause = _cause(error)
-                    code = _probe_code(adapter.records(), attempt_id, probe_live=leg is not None) if probe else None
+                    rows = _probe_rows(adapter.records(), attempt_id, index) if probe else []
+                    proven = cause[1] in ("act_state_collision", "worker_protocol") and cause[0] == "SYSTEM_FAILURE"
+                    if proven:
+                        evidence = replace(evidence, incidental_unknown_400=evidence.incidental_unknown_400 + sum(
+                            r.get("role") == "unknown" and r.get("status") == 400 for r in rows))
+                    code = _probe_code(rows, attempt_id, session=index, probe_live=leg is not None) if not proven else None
                     if code:
                         cause = ("INFRA_FAILURE", code)
                     stopped = (*cause, index)

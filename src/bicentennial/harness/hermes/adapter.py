@@ -121,7 +121,7 @@ def verify_pin(checkout, pin) -> str:
 
 
 def _session_reply(out, phase):
-    """The fields consumed by the session adapter; an explicit failed op may omit its success fields."""
+    """The fields consumed by the session adapter, including the real worker's failed-open shape."""
     if not isinstance(out, dict) or type(out.get("ok")) is not bool:
         return False
     for key in ("alive_threads", "active_memory_providers"):
@@ -131,7 +131,8 @@ def _session_reply(out, phase):
     if engine is not None and not isinstance(engine, str):
         return False
     if not out["ok"]:
-        return True
+        return phase != "open" or ("session_id" in out and out["session_id"] is None
+            and "history" in out and out["history"] is None and "alive_threads" in out)
     if phase == "open":
         return isinstance(out.get("session_id"), str) and type(out.get("history")) is int
     if phase == "turn":

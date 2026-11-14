@@ -61,8 +61,22 @@ def test_plugin_reply_matches_op(worker_factory, phase, reply):
 
 @pytest.mark.parametrize("phase", ["open", "turn", "end"])
 def test_explicit_failed_op_keeps_its_existing_label(worker_factory, phase):
-    worker = worker_factory(phase, '{"ok": false}')
-    assert worker.call(op=phase) == {"ok": False}
+    reply = dict(ok=False)
+    if phase == "open":
+        reply.update(session_id=None, history=None, alive_threads=[])
+    worker = worker_factory(phase, json.dumps(reply))
+    assert worker.call(op=phase) == reply
+
+
+@pytest.mark.parametrize("reply", [dict(ok=False), dict(ok=False, history=None, alive_threads=[]),
+    dict(ok=False, session_id=None, alive_threads=[]), dict(ok=False, session_id=None, history=None),
+    dict(ok=False, session_id="s", history=None, alive_threads=[]),
+    dict(ok=False, session_id=None, history=0, alive_threads=[]),
+    dict(ok=False, session_id=None, history=None, alive_threads=[1])])
+def test_failed_open_requires_real_shape(worker_factory, reply):
+    worker = worker_factory("open", json.dumps(reply))
+    with pytest.raises(adapter.HarnessFailed, match="^worker_protocol$"):
+        worker.call(op="open")
 
 
 @pytest.mark.parametrize("plugin", [False, True])
@@ -71,7 +85,7 @@ def test_before_ready_stays_json_error(worker_factory, plugin):
         worker_factory("startup", "not-json", plugin)
 
 
-@pytest.mark.parametrize("reply", ["not-json", "null", "[]", "{}"])
+@pytest.mark.parametrize("reply", ["not-json", "null", "[]", "{}", '{"ok": false}'])
 def test_no_plugin_keeps_legacy_line_reader(worker_factory, reply):
     worker = worker_factory("open", reply, False)
     if reply == "not-json":
