@@ -1,5 +1,6 @@
 """Ordinary-turn timing and the retained shutdown settle, without listening sockets."""
 
+import errno
 import inspect
 import os
 import subprocess
@@ -65,7 +66,7 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
             os.mkfifo(root / "ipc.fifo")
 
     a._worker = SimpleNamespace(call=call, kill=kill)
-    def spawn(*args):  # as the real _spawn_open: check the previous worker, then reset for the new one
+    def spawn(*args):  # as the real _spawn_open: check first; only a clean end clears the flag
         if spawned is not None:
             spawned.append(a.after_kill)
         if residue_checks is not None:
@@ -73,7 +74,6 @@ def fake_session(root, wait, mode="boundary", faults=FAULTS, compact_turns=(), c
             residue_checks.append(receipt)
             if receipt is not None:
                 receipt["_path"].unlink()  # as run_life does before the later surface hash
-        a.after_kill = False
         return "session", history, False
 
     a._spawn_open = spawn
@@ -265,15 +265,17 @@ def spawn_adapter(monkeypatch, tmp_path):
         proc.stdout.close()
 
 
-def test_spawn_checks_previous_flag_then_resets(spawn_adapter):
+@pytest.mark.parametrize("before", [False, True])
+def test_spawn_keeps_the_kill_flag_until_a_clean_end(spawn_adapter, before):
     a, seen = spawn_adapter, []
+    a.after_kill = before
     a.check_sources = lambda: seen.append(a.after_kill)
     a.argv = [sys.executable, "-c", "import sys,time; print('{\"ready\":true}', flush=True); "
         "sys.stdin.readline(); print('{\"ok\":true,\"session_id\":\"s\",\"history\":0}', flush=True); time.sleep(30)"]
     try:
         a._spawn_open("session_start", None, {"spawn": [], "open": []})
-        assert seen == [True]  # previous worker's kill remains visible before the new spawn
-        assert a.after_kill is False  # a spawn alone does not mean a kill
+        assert seen == [before]  # the pre-spawn check sees the state before this spawn
+        assert a.after_kill is before  # a spawn neither marks a kill nor clears an earlier one
         a._worker.kill()
         assert a.after_kill is True  # real live-worker cleanup reports its kill
     finally:
@@ -281,10 +283,36 @@ def test_spawn_checks_previous_flag_then_resets(spawn_adapter):
             a._worker.kill()
 
 
+@pytest.mark.parametrize("failure", ["spawn", "self_exit"])
+def test_failure_after_a_harness_kill_keeps_its_residue_excused(spawn_adapter, monkeypatch, tmp_path, failure):
+    # A harness kill left a FIFO; the next worker never starts, or exits by itself during its first open. Until a clean
+    # end, nothing tells the killed worker's residue from the next one's, so it stays excused.
+    a = spawn_adapter
+    baseline = SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, tmp_path)], [])
+    os.mkfifo(tmp_path / "ipc.fifo")
+    a.after_kill = True
+    if failure == "spawn":
+        def refuse(*args, **kw):
+            raise OSError(errno.EMFILE, "Too many open files")
+        monkeypatch.setattr(adapter.subprocess, "Popen", refuse)
+        error = OSError
+    else:
+        a.argv = [sys.executable, "-c", "import sys; print('{\"ready\":true}', flush=True); sys.stdin.readline()"]
+        monkeypatch.setattr(adapter, "_group_survivors", lambda pid: [])  # this synthetic worker never forks; no ps
+        error = adapter.HarnessFailed
+    with pytest.raises(error):
+        a._spawn_open("session_start", None, {"spawn": [], "open": []})
+    if a._worker is not None:
+        a._worker.kill()  # as run_session's failure path
+    assert a.after_kill is True
+    assert baseline.receipt(after_kill=a.after_kill) is None
+
+
 @pytest.mark.parametrize("phase", ["startup", "open", "turn"])
 def test_timeout_reports_live_kill_and_excuses_fifo(spawn_adapter, monkeypatch, tmp_path, phase):
     a, seen = spawn_adapter, []
     baseline = SourceBaseline([({"root": "HERMES_HOME", "relative": "."}, tmp_path)], [])
+    a.after_kill = False
     a.check_sources = lambda: seen.append(a.after_kill)
     code = "import os,sys,time; "
     if phase != "startup":
@@ -296,7 +324,7 @@ def test_timeout_reports_live_kill_and_excuses_fifo(spawn_adapter, monkeypatch, 
     with pytest.raises(adapter.HarnessFailed, match=f"^{phase}_timeout$"):
         a._spawn_open("session_start", None, {"spawn": [], "open": []})
         a._worker.call(op="turn", text="wait")
-    assert seen == [True]
+    assert seen == [False]
     assert (a._worker is None) == (phase == "startup")  # constructor timeout precedes assignment
     assert (tmp_path / "ipc.fifo").is_fifo()
     assert a.after_kill is True
@@ -334,7 +362,7 @@ def test_closed_pipe_waits_for_the_exit_before_judging_the_kill(spawn_adapter, m
     # for a live worker. One that closes its pipe and stays is still a live worker after the grace.
     a = spawn_adapter
     a.after_kill = False
-    monkeypatch.setattr(adapter, "EOF_SETTLE_S", 10.0 if exits else 0.3)
+    monkeypatch.setattr(adapter, "EOF_SETTLE_S", 10.0 if exits else 0.3, raising=False)  # absent before the grace
     monkeypatch.setattr(adapter, "_group_survivors", lambda pid: [])  # this synthetic worker never forks; no ps
     code = "import os,time; print('{\"ready\":true}', flush=True); os.close(1); "
     code += "time.sleep(0.5); os._exit(0)" if exits else "time.sleep(30)"

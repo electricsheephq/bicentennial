@@ -303,7 +303,7 @@ class HermesAdapter:
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
-        self.after_kill = False  # the harness killed a live worker since the last spawn
+        self.after_kill = False  # the harness killed a live worker since the last clean end
         self.end_threads = None
         self._receipt_sessions = {}
         self.background_threads = []
@@ -465,7 +465,6 @@ class HermesAdapter:
                                                             scripted=self.scripted))
         t0 = _now()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
-        self.after_kill = False  # the pre-spawn check above still saw the previous worker's state
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress,
                                bool(self.plugin is not None or self.context_engine is not None or self.plugins_enabled),
@@ -498,7 +497,7 @@ class HermesAdapter:
         except subprocess.TimeoutExpired:
             self._worker.kill()
             raise HarnessFailed("exit_timeout") from None
-        self.after_kill = False  # the worker ended by itself
+        self.after_kill = False  # a clean end: from here on, what a check finds is the system's own
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
