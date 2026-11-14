@@ -5,6 +5,11 @@
       "round": "validity-1",
       "declaration": "results/validity-1/DECLARATION.md §2",
       "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
+    },
+    "a850d736367f010d5613508ba097cddab6076ee04a6903e6de103d5ab9faaf69": {
+      "round": "validity-2",
+      "declaration": "results/validity-2/DECLARATION.md §2",
+      "result": "results/validity-2/2026-11-14-control-trials/RESULT.md"
     }
   }
 }
