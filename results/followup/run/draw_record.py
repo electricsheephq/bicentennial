@@ -31,6 +31,16 @@ class Refused(Exception):
     """A fixed, public-safe refusal label."""
 
 
+def parse_integer(text):
+    if not re.fullmatch(r"[+-]?[0-9]{1,18}", text):
+        raise Refused("invalid or overlong integer")
+    return int(text)
+
+
+def read_json(raw):
+    return json.loads(raw, parse_int=parse_integer)
+
+
 def canonical(value):
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
 
@@ -63,7 +73,7 @@ def parse_body(body):
             values[name] = value
     r = values.get("round", "")
     c = values.get("run_commit", "")
-    number = int(r) if re.fullmatch(r"[1-9][0-9]*", r) else None
+    number = int(r) if re.fullmatch(r"[1-9][0-9]{0,17}", r) else None
     commit = c.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", c) else None
     if commit is not None:
         values["run_commit"] = commit
@@ -108,7 +118,7 @@ def normalize_comment(node):
     uid = author.get("databaseId") if author else None
     cid = node.get("fullDatabaseId")
     if isinstance(cid, str):
-        cid = int(cid)
+        cid = parse_integer(cid)
     if type(cid) is not int or (uid is not None and type(uid) is not int):
         raise Refused("invalid comment or author id")
     return {"id": cid, "author": uid, "created_at": node["createdAt"], "body": node["body"],
@@ -353,7 +363,7 @@ def accept_beacon(number, left, right, t=None):
     if t is not None and t >= round_due(number) + 86400:
         return "cutoff", None
     try:
-        a, b = json.loads(left), json.loads(right)
+        a, b = read_json(left), read_json(right)
         if canonical(a) != canonical(b):
             return "relay disagreement", None
         if not isinstance(a, dict) or set(a) != {"round", "randomness", "signature"}:
@@ -421,7 +431,7 @@ def load_records(state):
         for path in folder.iterdir():
             match = RECORD_NAME.fullmatch(path.name)
             if match and match[3] == "json":
-                result.append({"number": int(match[1]), "kind": match[2], "data": json.loads(path.read_bytes())})
+                result.append({"number": int(match[1]), "kind": match[2], "data": read_json(path.read_bytes())})
     return sorted(result, key=lambda r: r["number"])
 
 
@@ -514,7 +524,7 @@ def curl(url):
 def response_json(response):
     if response["status"] not in (200, 201):
         raise Refused("GitHub HTTP status")
-    value = json.loads(response["body"])
+    value = read_json(response["body"])
     if isinstance(value, dict) and "errors" in value:
         raise Refused("GitHub GraphQL errors")
     return value
@@ -590,7 +600,7 @@ def evidence_status(response):
     if status == 404:
         return "not found"
     if status == 422:
-        value = json.loads(response["body"])
+        value = read_json(response["body"])
         if value.get("message", "").startswith("No commit found for SHA"):
             return "no commit found"
     if status != 200:
@@ -673,7 +683,7 @@ def evaluate_saved(state, recheck=False):
                 append_record(state, kind, data)
                 records = load_records(state)
         result = evaluate_records(records)
-        if result["counted"] is not None and result["counted"]["id"] == comment["id"]:
+        if not recheck and result["counted"] is not None and result["counted"]["id"] == comment["id"]:
             break
     for kind, data in pending:
         append_record(state, kind, data)
@@ -754,7 +764,7 @@ def post(state, kind, filename, records, reason=None, failure_hash=None):
         append_record(state, "evidence", evidence)
     github, _, t = now()
     if kind == "first":
-        if t - read_time > 60:
+        if github - read_time > 60:
             raise Refused("pre-post read older than 60 seconds")
         validate_first(parsed, newest(records, "round"), t, evidence, declaration)
     elif kind == "stop":
@@ -865,7 +875,7 @@ def beacon_attempt(state, number, out):
 
 
 def rehearsal(state, fixture):
-    expected = json.loads(Path(fixture).read_bytes())
+    expected = read_json(Path(fixture).read_bytes())
     reason, checked = accept_beacon(expected["round"], canonical(expected), canonical(expected))
     if checked is None:
         raise Refused("invalid rehearsal fixture")
@@ -925,12 +935,12 @@ def publish_records(state, out):
             continue
         raw = path.read_bytes()
         if match[2] == "read" and match[3] == "json":
-            data = json.loads(raw)
+            data = read_json(raw)
             comments = [c for c in data["comments"] if c["author"] == declaration["merging_id"]]
             data = {**data, "comments": comments,
                     "other_comments": data.get("other_comments", 0) + len(data["comments"]) - len(comments)}
             raw = canonical(data)
-        write_record(target, int(match[1]), match[2], raw if match[3] == "body" else json.loads(raw),
+        write_record(target, int(match[1]), match[2], raw if match[3] == "body" else read_json(raw),
                      raw=match[3] == "body")
     return "published records"
 
@@ -956,7 +966,7 @@ def parser():
             sub.add_argument("--reason", choices=["beacon", "build"])
             sub.add_argument("--failure-sha256")
         if command in ("beacon", "record-void"):
-            sub.add_argument("--round", type=int, required=command == "record-void")
+            sub.add_argument("--round", type=parse_integer, required=command == "record-void")
         if command == "beacon":
             sub.add_argument("--out")
             sub.add_argument("--rehearsal", action="store_true")
@@ -983,6 +993,8 @@ def execute(args):
         if content["status"] != 200:
             raise Refused("declaration content unavailable")
         data = initial_declaration(pr, content["body"])
+        if declaration is not None:
+            data["merging_login"] = declaration["merging_login"]
         if declaration is not None and data != declaration:
             raise Refused("declaration changed")
         append_record(state, "declaration", data)

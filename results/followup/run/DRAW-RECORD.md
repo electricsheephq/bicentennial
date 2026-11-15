@@ -30,8 +30,11 @@ The first line must exactly equal one of:
 
 A value line has a name matching `[a-z0-9_]+`, one space, and a nonempty value
 without whitespace. Other lines, such as blanks, hidden markers or prose that does not match this grammar, are not value lines.
-Each name must occur once; even equal repeated names fail. A round value is ASCII
-decimal, at least 1, without a sign or leading zero. A `run_commit` value is exactly
+Each name must occur once; even equal repeated names fail. A round value matches
+`[1-9][0-9]{0,17}`: 1 to 18 ASCII digits, without a sign or leading zero. Any other
+round value is read as `missing round`. Every integer read from JSON, a string id
+or a command argument is limited to 18 digits (excluding a sign); an invalid or
+overlong integer refuses before conversion. A `run_commit` value is exactly
 40 hex characters in either case; it is compared and stored in lowercase. A first
 post must give both. Invalid or repeated lines make it not a commitment post.
 The six H values (`registry_entry_sha256`, `fresh_install_hash`, `artifact_sha256`,
@@ -51,8 +54,9 @@ A never-seen deletion is a limit of the record, not another stop.
 
 `init` saves the merging account's integer id and login, merge time, declaration
 commit, declaration byte length and SHA-256. It requires a merged pull request and
-nonempty declaration. Repeated initialization must agree. Author identity is the
-integer id, fixed at first sight with the created body, for every comment by that
+nonempty declaration. Repeated initialization compares the account id, merge time,
+declaration commit, SHA-256 and length, retaining the first initialization's login.
+Author identity is the integer id, fixed at first sight with the created body, for every comment by that
 account, including comments that are not candidates. A rename changes nothing;
 a reused login on a different id changes nothing. A null author is not a candidate.
 
@@ -88,8 +92,9 @@ The first deciding result is frozen in a `test` record for that comment. If no
 saved evidence decides, new evidence is fetched. A successful fetch is saved even
 when it cannot decide; then evaluation refuses with `post <id> undecided` (exit 2),
 never `none`, and `post first` refuses too. A failed fetch keeps its own refusal.
-`evaluate --recheck` writes separate `recheck` records for already tested comments,
-reports differences or `undecided <id>` when it cannot decide, and never creates or
+`evaluate --recheck` writes separate `recheck` records for every already tested
+comment, including those after the counted post, reports differences or
+`undecided <id>` when it cannot decide, and never creates or
 replaces deciding evidence or tests. A default-branch flip and restore inside the
 pulls call is not detected and could freeze `no qualifying pull request` under the
 older GitHub behaviour; a later `evaluate --recheck` exposes that forced failure publicly.
@@ -119,8 +124,8 @@ round due at least 900 seconds ahead.
 all issue pages and edit pages, then evaluates the saved set. It refuses unless
 none counts, and prints `blocked <id>...` (13) if an unrecoverable merging-account
 candidate created after the merge exists. This gates a further first post; it does not stop the draw. Just
-before sending, a fresh GitHub time must leave the read at most 60 seconds old,
-the saved round more than 600 seconds ahead, and the qualifying merge at least
+before sending, a fresh GitHub time must leave the read at most 60 seconds old by
+GitHub's time, the saved round more than 600 seconds ahead, and the qualifying merge at least
 60 seconds old. The module at the named commit must have identical bytes.
 
 Only a 201 POST response with an integer id is success. The `post` record is saved
@@ -188,7 +193,9 @@ apart. It passes only on an accepted object equal to the fixture, writes a
 `rehearsal-beacon` outcome/attempt count, and never writes a `beacon` record.
 
 `match second|tasks FILE` records matches and differences, prints every difference
-and uses the earliest match. `publish-list` includes both, all first posts by the
+and uses the earliest match. It considers only comments after the counted post
+in comment order (creation second, then integer id). `publish-list` includes both,
+all first posts by the
 merging id, unrecoverable comments, H's values and every other draw marker by that
 account, including before the merge. Markers carry boolean `after_merge` (strictly
 after the merge second). Other authors' comments are counted as `other_comments`,

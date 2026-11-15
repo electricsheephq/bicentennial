@@ -1794,6 +1794,144 @@ def test_r4_publish_list_failed_fetch(h):
     assert not h.data("evidence") and not h.data("test")
 
 
+@pytest.mark.parametrize("digits", [19, 4300, 4301])
+@pytest.mark.parametrize("author", [AUTHOR, AUTHOR + 1])
+def test_r5_overlong_comment_round_cannot_block(h, digits, author):
+    h.init()
+    text = body(n="9" * digits)
+    nodes = [graph_comment(1, body=text, createdAt=stamp(DUE - 901),
+                           author={"login": LOGIN, "databaseId": author}), graph_comment(2)]
+    h.queue(read_steps(nodes))
+    assert h.run("read") == "read 2\n"
+    h.save("evidence", evidence())
+    expected = f"counted 2 round {N} due {DUE} commit {COMMIT}\n"
+    assert h.run("evaluate") == expected
+    listing = json.loads(h.run("publish-list"))
+    assert next(row for row in listing["first_posts"] if row["id"] == 2)["counted"]
+    if author == AUTHOR:
+        row = listing["first_posts"][0]
+        assert row["round"] is None and row["reason"] == "not a commitment post: missing round"
+    else:
+        assert listing["other_comments"] == 1
+    assert h.dr.parse_body(text)["reason"] == "missing round"
+
+
+def test_r5_round_18_digits_counts(dr):
+    number = 10**18 - 1
+    assert dr.parse_body(body(n=number))["round"] == number
+    result = dr.evaluate_records(records([comment(text=body(n=number))]))
+    assert result["counted"]["round"] == number
+    assert f"due {dr.round_due(number)} " in dr.evaluation_line(result)
+    assert dr.response_json({"status": 200, "body": json.dumps({"id": number})})["id"] == number
+    assert dr.normalize_comment(graph_comment(fullDatabaseId=str(number)))["id"] == number
+    args = dr.parser().parse_args(["beacon", "--state", "synthetic", "--round", str(number)])
+    assert args.round == number
+
+
+@pytest.mark.parametrize("digits", [19, 4301])
+@pytest.mark.parametrize("source", ["github", "error-json", "relay", "string-id", "saved", "fixture"])
+def test_r5_external_integer_bound(h, digits, source):
+    raw = b'{"round":' + b"9" * digits + b'}'
+    dr = h.dr
+    with pytest.raises(dr.Refused):
+        if source == "github":
+            dr.response_json({"status": 200, "body": raw})
+        elif source == "error-json":
+            dr.evidence_status({"status": 422, "body": raw})
+        elif source == "relay":
+            dr.accept_beacon(N, raw, raw)
+        elif source == "string-id":
+            dr.normalize_comment(graph_comment(fullDatabaseId="9" * digits))
+        elif source == "saved":
+            h.init()
+            (h.state / "records" / "000002-round.json").write_bytes(raw)
+            dr.load_records(h.state)
+        else:
+            path = h.root / "fixture.json"
+            path.write_bytes(raw)
+            dr.rehearsal(h.state, path)
+
+
+@pytest.mark.parametrize("digits", [19, 4301])
+@pytest.mark.parametrize("source", ["github-number", "github-string", "cli"])
+def test_r5_overlong_integer_clean_refusal(h, digits, source):
+    h.init()
+    if source == "cli":
+        h.run("beacon", "--round", "9" * digits, code=2)
+    else:
+        if source == "github-number":
+            raw = b'{"id":' + b"9" * digits + b',"login":"synthetic"}'
+            # Embed an integer token without asking the fixture encoder to parse it.
+            raw = json.dumps(pr()).encode().replace(json.dumps(pr()["merged_by"]).encode(), raw)
+            h.queue([http(raw), http(b"synthetic declaration\n")])
+            h.run("init", code=2)
+        else:
+            h.queue(read_steps([graph_comment(fullDatabaseId="9" * digits)]))
+            h.run("read", code=2)
+    assert h.err == "refused: invalid or overlong integer\n"
+    assert not h.data("read") and not h.data("post")
+
+
+@pytest.mark.parametrize("age", [10, 60, 61])
+def test_r5_preread_age_uses_github(h, age):
+    h.init()
+    h.save("round", {"round": N})
+    github = DUE - 900
+    steps = [http({"id": AUTHOR}), *read_steps(when=github - age),
+             *evidence_steps(when=github), http({}, when=github),
+             http(response(body(), when=github), status=201), *read_steps(when=github)]
+    h.queue(steps)
+    clocks = iter([github - age + 55, github + 55, github + 55, github + 55])
+    out = h.run("post", "first", h.file(body()), code=2 if age == 61 else 0,
+                clock=lambda: next(clocks))
+    if age == 61:
+        assert "pre-post read older than 60 seconds" in h.err
+        assert not any("POST" in call["args"] for call in h.calls())
+    else:
+        assert out == f"posted 17 {stamp(github)}\n"
+        assert len(h.data("post")) == 1
+
+
+def test_r5_recheck_every_tested_post(h):
+    h.seed([comment(), comment(2, when=DUE - 899, text=body(n=N + 1))])
+    expected = f"counted 1 round {N} due {DUE} commit {COMMIT}\n"
+    assert h.run("evaluate") == expected
+    assert [test["id"] for test in h.data("test")] == [1]
+    listing = json.loads(h.run("publish-list"))
+    assert listing["first_posts"][1]["reason"] == "after the counted post"
+    before = h.data("test")
+    h.queue([*evidence_steps(), *evidence_steps()])
+    assert h.run("evaluate", "--recheck") == "unchanged 1\nunchanged 2\n"
+    assert [row["id"] for row in h.data("recheck")] == [1, 2]
+    assert h.data("test") == before
+    assert h.run("evaluate") == expected
+
+
+@pytest.mark.parametrize("change", ["rename", "id", "time", "commit", "hash", "length"])
+def test_r5_repeated_init_identity(h, change):
+    h.queue([http(pr()), http(b"synthetic declaration\n")])
+    assert h.run("init") == "initialized\n"
+    before = h.snapshot()
+    account = {"login": "synthetic-renamed", "id": AUTHOR + (change == "id")}
+    changes = {"merged_by": account}
+    if change == "time":
+        changes["merged_at"] = stamp(MERGE + 1)
+    elif change == "commit":
+        changes["merge_commit_sha"] = OTHER
+    content = b"synthetic declaration\n"
+    if change == "hash":
+        content = b"Synthetic declaration\n"
+    elif change == "length":
+        content += b"x"
+    h.queue([http(pr(**changes)), http(content)])
+    assert h.run("init", code=0 if change == "rename" else 2) == ("initialized\n" if change == "rename" else "")
+    if change == "rename":
+        assert h.data("declaration") == [declaration(), declaration()]
+        assert all(h.snapshot()[name] == value for name, value in before.items())
+    else:
+        assert h.err == "refused: declaration changed\n" and h.snapshot() == before
+
+
 @pytest.mark.parametrize("failure", ["refused-middle", "exception-suffix"])
 def test_r4_publish_list_other_failures(h, monkeypatch, failure):
     h.init()
