@@ -90,14 +90,10 @@ class ParkedProbe(ExitStack):
         return result
 
     @staticmethod
-    def explained(file_state, receipts, *, effects=False):
-        """Readable bytes explain gaps; an unreadable entry needs its own matching receipt."""
-        if not file_state.get("observation", "unhashable:unknown").startswith("unhashable:"):
-            return not effects or file_state.get("reread_raises", False)
-        state = file_state.get("state")
-        cannot_read = state == "denied" or isinstance(state, dict) and (
-            state["kind"] != stat.S_IFREG or not state["mode"] & 0o400)
-        return cannot_read and any(r["after_state"] == state for r in receipts)
+    def explained(file_state, *, effects=False):
+        """Only hashed observations explain gaps or the effects reader's own refusal."""
+        return (not file_state.get("observation", "unhashable:unknown").startswith("unhashable:")
+                and (not effects or file_state.get("reread_raises", False)))
 
     @classmethod
     def hashes(cls, path, native):

@@ -873,13 +873,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     and r["path"] in dict(HERMES_FILES).values()]
         native = {r["path"] for r in receipts}
         failed_file = evidence.audit_phase.get("file_state", {})
-        explained = ParkedProbe.explained(failed_file, [r for r in receipts
-            if r["path"] == evidence.audit_phase.get("path")], effects=True)
+        explained = ParkedProbe.explained(failed_file, effects=True)
         if (leg is not None and arm == "system" and audited.get("status") != "OK" and native
+                and not evidence.restore_failures
                 and (set(audited.get("failures", ())) == {"A4.gaps"}
                      and evidence.audit_phase.get("gap_paths")
-                     and all(p in native and ParkedProbe.explained(evidence.audit_phase.get("gap_states", {}).get(p, {}),
-                         [r for r in receipts if r["path"] == p]) for p in evidence.audit_phase["gap_paths"])
+                     and all(p in native and ParkedProbe.explained(evidence.audit_phase.get("gap_states", {}).get(p, {}))
+                             for p in evidence.audit_phase["gap_paths"])
                      or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
                      and evidence.audit_phase.get("other_failures") == [] and explained)):
             for iid in by_id:
