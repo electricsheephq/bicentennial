@@ -9,12 +9,17 @@
 
 The reading is the module at the run commit. Before posting a first post it compares
 its own bytes with the public file at that post's `run_commit`. When reporting a
-counted post, or acting on it, it compares with that counted commit. A difference
+counted post with `evaluate` exit 0, or acting on it, it compares with that counted commit. A difference
 refuses with `reading module differs at <C>` (or `reading module unavailable at <C>`);
 the caller moves to that full 40-hex commit. There is no operator-selected reading
 commit. Two merged versions of this module could read posts differently. This is
 why §2 fixes the reading, reader, controls and placement at the public run commit.
-An already accepted beacon is returned from its record without another remote read;
+Exports never refuse for this comparison: `publish-list` reports its result as
+`reading_module`: `none` when no post counts, `same`, `differs at <C>` or
+`unavailable at <C>`. `publish-records` never evaluates the draw or checks the
+reading module; it copies the saved records with the comment cut described below.
+The checks on `post`, `beacon`, `match`, `record-void` and `evaluate` exit 0 remain.
+An already accepted beacon with its timing receipt is returned without another remote read;
 a stopped draw is refused first.
 
 ## The maintainers' reading of §2
@@ -128,6 +133,8 @@ before sending, a fresh GitHub time must leave the read at most 60 seconds old b
 GitHub's time, the saved round more than 600 seconds ahead, and the qualifying merge at least
 60 seconds old. The module at the named commit must have identical bytes.
 
+The POST sends the validated text itself with the raw string field `-f body=<text>`,
+so a later change to FILE cannot change the submitted body.
 Only a 201 POST response with an integer id is success. The `post` record is saved
 before another read or success output. It reads the issue back and prints
 `posted <id> <created_at>`, exit 0, even if that read fails; stderr then says
@@ -176,8 +183,14 @@ and `signature`, agreeing by canonical JSON bytes (so `5` and `5.0`, or `true` a
 `1`, differ), the expected integer round, lowercase hex signature bytes, and
 64 lowercase hex randomness equal to the signature bytes' SHA-256. An attempt
 writes its outcome, before/after GitHub times, after-read machine time, and raw-body
-record names. On acceptance the `beacon` record is saved before `beacon-attempt`,
-so a crash between them cannot lose an in-time acceptance. At or
+record names. On acceptance the timing receipt (`beacon-attempt`) is saved and
+synced before the final `beacon` record. A restart revalidates the receipt's saved
+raw bodies using its GitHub after-read time and completes a missing `beacon`
+record. It never takes a later clock or relay reading for that recovery, so a
+crash between the writes cannot turn an on-time read into a cutoff. A saved
+`beacon` without a valid matching receipt is never reported accepted; missing
+timing evidence refuses, since raw bodies alone cannot prove an on-time read.
+At or
 past due + 86400 it is `cutoff`, regardless of relay agreement. Accepted objects
 are canonical JSON (sorted keys, compact separators, one newline). A later beacon
 call returns the saved acceptance, including after that round is void, without cutoff or any remote read, after
@@ -194,7 +207,9 @@ apart. It passes only on an accepted object equal to the fixture, writes a
 
 `match second|tasks FILE` records matches and differences, prints every difference
 and uses the earliest match. It considers only comments after the counted post
-in comment order (creation second, then integer id). `publish-list` includes both,
+in comment order (creation second, then integer id). Match records are looked up
+by kind and round, retaining earlier rounds' matched and differing comments.
+`publish-list` includes both,
 all first posts by the
 merging id, unrecoverable comments, H's values and every other draw marker by that
 account, including before the merge. Markers carry boolean `after_merge` (strictly
@@ -206,8 +221,13 @@ the caller must reproduce the placement void at that commit first.
 
 `publish-records OUT` creates a new folder and copies every finalized record kind
 and raw relay body. Reads retain GitHub time and the merging account's comment ids,
-author ids, bodies, `includesCreatedEdit` and complete edit nodes; other comments
-are replaced by a count. No other author's body is exported. The exported folder
+author ids, bodies, `includesCreatedEdit` and complete edit nodes. The cut uses
+each comment id's frozen first-observed author, retaining every observation of a
+merging-account comment even when a later observation reports another author.
+Removed read comments retain only their ids in `other_comment_ids`; a removed
+POST is an id-only record. `other_comments` counts distinct other-author ids
+across these ids and the saved comment set, so repeated reads and re-exports keep
+the source count. No frozen other author's body is exported. The exported folder
 is itself a state folder: the same `evaluate` gives the same result. OUT is the
 exception, together with beacon `--out`, to writing exclusively beneath `DIR/records`.
 
@@ -234,7 +254,7 @@ All except `init` require a declaration record. Every refusal prints
 | `beacon --rehearsal [--fixture FILE]` | `rehearsal-beacon pass` or `rehearsal-beacon fail <reason>` | 0 or 10 |
 | `match second|tasks FILE` | `differs <id>` lines, then `matched <id>` or `none` | 0 or 10 |
 | `record-void --round n --receipt-sha256 H` | `void round <n>` | 0 |
-| `publish-list` | canonical JSON with `first_posts`, `markers` and `other_comments` | 0 |
+| `publish-list` | canonical JSON with `first_posts`, `markers`, `other_comments` and `reading_module` | 0 |
 | `publish-records OUT` | `published records` | 0 |
 
 `gh api -i` output is split at the first blank line, supporting LF and CRLF, and

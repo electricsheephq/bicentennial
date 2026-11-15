@@ -156,6 +156,8 @@ def comment_set(records):
         comments = data["comments"] if kind == "read" else [data] if kind == "post" else []
         for comment in comments:
             cid = int(comment["id"])
+            if set(comment) == {"id"}:  # Exported other-author POST: id only.
+                continue
             if cid in seen:
                 continue
             body, deleted = created_body(comment, kind)
@@ -163,6 +165,17 @@ def comment_set(records):
                          "body": body, "deletedAt": deleted,
                          "first_seen": data.get("github_time")}
     return sorted(seen.values(), key=comment_order)
+
+
+def other_comment_ids(records):
+    declaration = newest(records, "declaration")
+    ids = {c["id"] for c in comment_set(records) if c["author"] != declaration["merging_id"]}
+    for record in records:
+        if record["kind"] == "read":
+            ids.update(record["data"].get("other_comment_ids", []))
+        elif record["kind"] == "post" and set(record["data"]) == {"id"}:
+            ids.add(record["data"]["id"])
+    return ids
 
 
 def candidates(records):
@@ -312,7 +325,7 @@ def publish_list(records, untested=None):
     matches = {}
     for record in records:
         if record["kind"] == "match":
-            matches[record["data"]["kind"]] = record["data"]
+            matches[record["data"]["kind"], record["data"]["round"]] = record["data"]
     for c in comment_set(records):
         p = parse_body(c["body"]) if c["body"] is not None else None
         if c["author"] == declaration["merging_id"] and (p is None or p["kind"] == "first"):
@@ -329,12 +342,12 @@ def publish_list(records, untested=None):
             entry = {"id": c["id"], "created_at": c["created_at"], "first_line": p["first_line"],
                      "after_merge": seconds(c["created_at"]) > seconds(declaration["merge_time"])}
             if p["kind"] in ("second", "tasks"):
-                match = matches.get(p["kind"], {})
+                match = matches.get((p["kind"], p["round"]), {})
                 entry["match"] = ("matched" if c["id"] in match.get("matches", []) else
                                   "differs" if c["id"] in match.get("differences", []) else "unmatched")
             markers.append(entry)
     return {"first_posts": rows, "markers": markers,
-            "other_comments": sum(c["author"] != declaration["merging_id"] for c in comment_set(records))}
+            "other_comments": len(other_comment_ids(records))}
 
 
 def choose_round(t, saved):
@@ -711,13 +724,21 @@ def require_counted(result, number=None):
     return counted
 
 
+def reading_module(commit):
+    try:
+        raw = gh("api", "-X", "GET", "-H", "Accept: application/vnd.github.raw+json",
+                 f"{REPOSITORY}/contents/{MODULE_PATH}?ref={commit}")
+        if raw["status"] == 200:
+            return "same" if raw["body"] == Path(__file__).read_bytes() else f"differs at {commit}"
+    except Exception:
+        pass
+    return f"unavailable at {commit}"
+
+
 def verify_reading(commit):
-    raw = gh("api", "-X", "GET", "-H", "Accept: application/vnd.github.raw+json",
-             f"{REPOSITORY}/contents/{MODULE_PATH}?ref={commit}")
-    if raw["status"] != 200:
-        raise Refused(f"reading module unavailable at {commit}")
-    if raw["body"] != Path(__file__).read_bytes():
-        raise Refused(f"reading module differs at {commit}")
+    status = reading_module(commit)
+    if status != "same":
+        raise Refused("reading module " + status)
 
 
 def acting_counted(state, number=None):
@@ -771,7 +792,7 @@ def post(state, kind, filename, records, reason=None, failure_hash=None):
         stop_admission(records, counted, reason, failure_hash, github)
     known = [c["id"] for c in comment_set(records)]
     try:
-        raw = gh("api", "-X", "POST", f"{REPOSITORY}/issues/394/comments", "-F", "body=@" + str(filename))
+        raw = gh("api", "-X", "POST", f"{REPOSITORY}/issues/394/comments", "-f", "body=" + text)
         if raw["status"] != 201:
             raise Refused("post response not 201")
         saved = rest_comment(response_json(raw))
@@ -816,10 +837,10 @@ def relay_attempt(state, number, rehearsal=False):
         reason, value = "relay unavailable", None
     outcome = "accepted" if value else "cutoff" if reason == "cutoff" else "not-accepted"
     if not rehearsal:
-        if value is not None:
-            append_record(state, "beacon", value)
         append_record(state, "beacon-attempt", {"round": number, "outcome": outcome, "reason": reason,
                       "github_before": before, "github_after": after, "machine_after": after + skew, "raw_bodies": names})
+        if value is not None:
+            append_record(state, "beacon", value)
     return reason, value
 
 
@@ -863,7 +884,23 @@ def beacon_attempt(state, number, out):
     if result["code"] == 14:
         raise Refused("draw stopped")
     accepted = next((r["data"] for r in records if r["kind"] == "beacon" and r["data"]["round"] == number), None)
+    receipts = [r["data"] for r in records if r["kind"] == "beacon-attempt"
+                and r["data"]["round"] == number and r["data"]["outcome"] == "accepted"]
+    if receipts:
+        receipt = receipts[0]
+        folder = Path(state) / "records"
+        raw_files = {p.name: p for p in folder.iterdir()
+                     if (m := RECORD_NAME.fullmatch(p.name)) and m[3] == "body"}
+        bodies = [raw_files[name].read_bytes() for name in receipt["raw_bodies"]]
+        _, recovered = accept_beacon(number, *bodies, receipt["github_after"])
+        if recovered is None or (accepted is not None and canonical(accepted) != canonical(recovered)):
+            raise Refused("beacon timing receipt invalid")
+        if accepted is None:
+            append_record(state, "beacon", recovered)
+        accepted = recovered
     if accepted is not None:
+        if not receipts:
+            raise Refused("beacon timing receipt missing")
         write_beacon_output(out, accepted)
         return f"accepted round {number}", 0
     acting_counted(state, number)
@@ -913,18 +950,14 @@ def prepare_list(state):
         finally:
             records = load_records(state)
     result = evaluate_records(records)
-    if result["counted"]:
-        verify_reading(result["counted"]["commit"])
-    return publish_list(records, failures)
+    status = reading_module(result["counted"]["commit"]) if result["counted"] else "none"
+    return {**publish_list(records, failures), "reading_module": status}
 
 
 def publish_records(state, out):
     records = load_records(state)
-    result = evaluate_saved(state)
-    if result["counted"]:
-        verify_reading(result["counted"]["commit"])
-    records = load_records(state)
     declaration = newest(records, "declaration")
+    own_ids = {c["id"] for c in comment_set(records) if c["author"] == declaration["merging_id"]}
     target = Path(out)
     target.mkdir()  # OUT is new; existing folders are never reused.
     (target / "records").mkdir()
@@ -936,10 +969,15 @@ def publish_records(state, out):
         raw = path.read_bytes()
         if match[2] == "read" and match[3] == "json":
             data = read_json(raw)
-            comments = [c for c in data["comments"] if c["author"] == declaration["merging_id"]]
+            comments = [c for c in data["comments"] if c["id"] in own_ids]
+            others = set(data.get("other_comment_ids", [])) | {c["id"] for c in data["comments"] if c["id"] not in own_ids}
             data = {**data, "comments": comments,
-                    "other_comments": data.get("other_comments", 0) + len(data["comments"]) - len(comments)}
+                    "other_comment_ids": sorted(others)}
             raw = canonical(data)
+        elif match[2] == "post" and match[3] == "json":
+            data = read_json(raw)
+            if data["id"] not in own_ids:
+                raw = canonical({"id": data["id"]})
         write_record(target, int(match[1]), match[2], raw if match[3] == "body" else read_json(raw),
                      raw=match[3] == "body")
     return "published records"

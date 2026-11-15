@@ -130,6 +130,11 @@ with (root / "calls").open("a") as out:
     out.write(json.dumps({"tool": pathlib.Path(sys.argv[0]).name, "args": args,
                           "env": sorted(os.environ), "stdin": sys.stdin.read()}) + "\n")
 if any("contents/results/followup/run/draw_record.py?ref=" in a for a in args):
+    if (root / "unavailable-module").exists():
+        sys.stdout.buffer.write(b"HTTP/2.0 404 Synthetic\r\n\r\n")
+        sys.exit(0)
+    if (root / "failed-module").exists():
+        sys.exit(92)
     data = pathlib.Path(MODULE).read_bytes()
     if (root / "different-module").exists():
         data += b"different"
@@ -632,6 +637,7 @@ def test_t9_after_read_cutoff(h, offset, code):
 
 def test_accepted_no_reads_at_cutoff_and_stopped_first(h):
     h.seed()
+    save_beacon_receipt(h)
     h.save("beacon", beacon())
     assert h.run("beacon", "--round", N, clock=lambda: DUE + 86400) == f"accepted round {N}\n"
     assert not h.calls()
@@ -682,7 +688,7 @@ def test_early_stop_marker(h):
     assert json.loads(h.run("publish-list"))["markers"][0]["id"] == 2
 
 
-@pytest.mark.parametrize("command", ["first", "evaluate", "beacon", "match", "record-void", "second", "tasks", "stop", "publish-list", "publish-records"])
+@pytest.mark.parametrize("command", ["first", "evaluate", "beacon", "match", "record-void", "second", "tasks", "stop"])
 def test_module_bytes_enforced(h, command):
     h.seed([] if command == "first" else None)
     h.save("round", {"round": N})
@@ -874,7 +880,7 @@ def test_publish_records_private_body_and_replay(h):
     h.run("publish-records", out)
     assert all(SENTINEL.encode() not in p.read_bytes() for p in out.rglob("*") if p.is_file())
     read = h.dr.newest(h.dr.load_records(out), "read")
-    assert read["github_time"] == DUE - 900 and read["other_comments"] == 1
+    assert read["github_time"] == DUE - 900 and read["other_comment_ids"] == [2]
     assert read["comments"][0]["author"] == AUTHOR and read["comments"][1]["includesCreatedEdit"]
     assert {r["kind"] for r in h.dr.load_records(out)} >= {"declaration", "read", "round", "post-unknown", "evidence", "test", "recheck"}
     original = h.state
@@ -1203,6 +1209,7 @@ def test_post_saved_before_readback(h, monkeypatch):
 @pytest.mark.parametrize("next_post", [False, True])
 def test_accepted_receipt_after_void(h, next_post):
     h.seed()
+    save_beacon_receipt(h)
     h.save("beacon", beacon())
     h.save("void", {"round": N})
     if next_post:
@@ -1467,6 +1474,7 @@ def test_r3_beacon_out_required(h, rehearsal):
 
 def test_r3_beacon_output_no_replace_race(h, monkeypatch):
     h.seed()
+    save_beacon_receipt(h)
     h.save("beacon", beacon())
     target = h.root / "raced.json"
     link = h.dr.os.link
@@ -1640,12 +1648,12 @@ def test_r3_public_list_stops_count_after_untested(h):
     assert not any(r["counted"] for r in data["first_posts"])
 
 
-def test_r3_beacon_saved_before_attempt_crash(h, monkeypatch):
+def test_r3_beacon_receipt_before_acceptance_crash(h, monkeypatch):
     h.seed()
     original = h.dr.append_record
 
     def crash(state, kind, data, **kwargs):
-        if kind == "beacon-attempt":
+        if kind == "beacon":
             raise KeyboardInterrupt
         return original(state, kind, data, **kwargs)
 
@@ -1654,7 +1662,7 @@ def test_r3_beacon_saved_before_attempt_crash(h, monkeypatch):
         m.setattr(h.dr, "append_record", crash)
         with pytest.raises(KeyboardInterrupt):
             h.run("beacon", "--round", N, "--out", h.root / "crash.json", clock=lambda: DUE)
-    assert h.data("beacon") == [beacon()] and not h.data("beacon-attempt")
+    assert not h.data("beacon") and h.data("beacon-attempt")[0]["outcome"] == "accepted"
     h.run("beacon", "--round", N, "--out", h.root / "crash.json", clock=lambda: DUE + 86400)
     assert (h.root / "crash.json").read_bytes() == h.dr.canonical(beacon())
 
@@ -1945,3 +1953,248 @@ def test_r4_publish_list_other_failures(h, monkeypatch, failure):
     monkeypatch.setattr(h.dr, "fetch_evidence", fetch)
     listing = json.loads(h.run("publish-list"))
     assert listing["first_posts"][0]["reason"] == "untested: commitment evidence unavailable"
+
+
+@pytest.mark.parametrize("module,status", [("unavailable", "unavailable at "),
+                                          ("different", "differs at "),
+                                          ("failed", "unavailable at "), ("same", "same")])
+def test_r6_stopped_exports_ignore_reader(h, module, status):
+    h.seed([comment(), comment(2, when=DUE, text=body("stop"))])
+    if module != "same":
+        (h.root / (module + "-module")).write_text("synthetic")
+    assert h.run("evaluate", code=14) == "stopped 2\n"
+    listing = json.loads(h.run("publish-list"))
+    assert listing["reading_module"] == (status if module == "same" else status + COMMIT)
+    before, calls = h.snapshot(), len(h.calls())
+    h.run("publish-records", h.root / "export")
+    assert h.snapshot() == before and len(h.calls()) == calls
+    for args in [("post", "first", h.file(body())), ("beacon", "--round", N),
+                 ("record-void", "--round", N, "--receipt-sha256", "0" * 64)]:
+        h.run(*args, code=2)
+        assert "draw stopped" in h.err
+
+
+@pytest.mark.parametrize("failure", ["undecided", "unavailable"])
+def test_r6_exports_with_untested_first(h, failure):
+    h.init()
+    h.save("read", [comment(), comment(2, when=DUE, text=body("stop"))])
+    steps = evidence_steps()
+    if failure == "undecided":
+        steps[1] = http({"default_branch": "other"})
+    else:
+        steps = [http({}, status=502)]
+    before = h.snapshot()
+    h.run("publish-records", h.root / "export")
+    assert h.snapshot() == before and not h.calls()
+    h.queue(steps)
+    data = json.loads(h.run("publish-list"))
+    assert data["reading_module"] == "none"
+    assert data["first_posts"][0]["reason"] == ("untested: undecided" if failure == "undecided"
+                                                   else "untested: commitment evidence unavailable")
+
+
+def test_r6_records_never_evaluate_or_verify(h, monkeypatch):
+    h.seed()
+
+    def forbidden(*args):
+        pytest.fail("record export interpreted the draw")
+
+    monkeypatch.setattr(h.dr, "evaluate_saved", forbidden)
+    monkeypatch.setattr(h.dr, "verify_reading", forbidden)
+    h.run("publish-records", h.root / "export")
+
+
+def test_r6_export_distinct_other_ids(h):
+    h.seed([comment(), comment(2, author=72, text=SENTINEL), comment(3, author=73, text=SENTINEL)])
+    h.save("read", [comment(2, author=72, text=SENTINEL)])
+    assert json.loads(h.run("publish-list"))["other_comments"] == 2
+    out = h.root / "export"
+    h.run("publish-records", out)
+    for r in h.dr.load_records(out):
+        if r["kind"] == "read":
+            assert all(c["author"] == AUTHOR for c in r["data"]["comments"])
+            assert set(r["data"]["other_comment_ids"]) <= {2, 3}
+    h.state = out
+    assert json.loads(h.run("publish-list"))["other_comments"] == 2
+    h.run("publish-records", h.root / "export-again")
+    h.state = h.root / "export-again"
+    assert json.loads(h.run("publish-list"))["other_comments"] == 2
+
+
+@pytest.mark.parametrize("kind", ["second", "tasks"])
+def test_r6_matches_kept_per_round(h, kind):
+    old = body(kind, tail="receipt old\n")
+    later = body(kind, n=N + 1, tail="receipt new\n")
+    h.seed([comment(), comment(2, when=DUE - 899, text=old),
+            comment(3, when=DUE - 898, text=old + "extra differs\n"),
+            comment(4, when=DUE - 897, text=body(n=N + 1)),
+            comment(5, when=DUE - 896, text=later)])
+    h.run("match", kind, h.file(old))
+    h.save("beacon", beacon())
+    h.run("record-void", "--round", N, "--receipt-sha256", "0" * 64)
+    h.run("match", kind, h.file(later))
+    rows = {r["id"]: r["match"] for r in json.loads(h.run("publish-list"))["markers"]}
+    assert rows == {2: "matched", 3: "differs", 5: "matched"}
+
+
+def save_beacon_receipt(h, when=DUE):
+    names = [h.dr.append_record(h.state, label, h.dr.canonical(beacon()), raw=True).name
+             for label in ("relay-primary", "relay-secondary")]
+    h.save("beacon-attempt", {"round": N, "outcome": "accepted", "reason": "accepted",
+                            "github_before": DUE, "github_after": when,
+                            "machine_after": when, "raw_bodies": names})
+
+
+@pytest.mark.parametrize("restart", [DUE + 1, DUE + 86401])
+def test_r6_beacon_receipt_before_final_and_recovery(h, monkeypatch, restart):
+    h.seed()
+    original = h.dr.append_record
+
+    def crash(state, kind, data, **kwargs):
+        if kind == "beacon":
+            assert h.data("beacon-attempt")[-1]["outcome"] == "accepted"
+            raise KeyboardInterrupt
+        return original(state, kind, data, **kwargs)
+
+    h.queue([http({}, when=DUE), relay(beacon()), relay(beacon()), http({}, when=DUE)])
+    with monkeypatch.context() as m:
+        m.setattr(h.dr, "append_record", crash)
+        with pytest.raises(KeyboardInterrupt):
+            h.run("beacon", "--round", N, clock=lambda: DUE)
+    assert not h.data("beacon") and len(h.data("beacon-attempt")) == 1
+    calls = len(h.calls())
+    h.run("beacon", "--round", N, clock=lambda: restart)
+    assert h.data("beacon") == [beacon()] and len(h.calls()) == calls
+    assert h.data("beacon-attempt")[0]["github_after"] == DUE
+
+
+@pytest.mark.parametrize("damage", ["missing", "late", "raw", "mismatch"])
+def test_r6_beacon_never_reports_unreceipted(h, damage):
+    h.seed()
+    if damage != "missing":
+        save_beacon_receipt(h, DUE + 86400 if damage == "late" else DUE)
+    value = beacon()
+    if damage == "mismatch":
+        value = {**value, "randomness": "0" * 64}
+    if damage == "raw":
+        raw = next((h.state / "records").glob("*-relay-primary.body"))
+        raw.write_bytes(b"{}")
+    h.save("beacon", value)
+    h.run("beacon", "--round", N, code=2, clock=lambda: DUE + 86401)
+    assert not (h.root / "beacon-output.json").exists() and not h.calls()
+
+
+def test_r6_post_sends_validated_text(h):
+    h.init()
+    h.save("round", {"round": N})
+    text = body(tail="receipt @synthetic\n")
+    path = h.file(text)
+    # The stand-in edits FILE on the user check, after post() has read it.
+    fake = h.bin / "gh"
+    source = fake.read_text()
+    fake.write_text(source.replace('args = sys.argv[1:]',
+                                   'args = sys.argv[1:]\nif args[-1:] == ["user"]:\n'
+                                   '    (root / "post.txt").write_text("changed after validation")'))
+    steps = first_steps()
+    steps[-3] = http(response(text), status=201)
+    h.queue(steps)
+    h.run("post", "first", path)
+    args = next(c["args"] for c in h.calls() if "POST" in c["args"])
+    index = args.index("body=" + text)
+    assert args[index - 1] == "-f" and "-F" not in args
+    assert path.read_text() == "changed after validation"
+
+
+@pytest.mark.parametrize("first_author", [AUTHOR, 72])
+@pytest.mark.parametrize("later_kind", ["read", "post"])
+def test_r6_export_frozen_author(h, first_author, later_kind):
+    h.seed([comment(author=first_author)])
+    changed = comment(text=body(n=N + 1), author=72 if first_author == AUTHOR else AUTHOR)
+    h.save(later_kind, [changed] if later_kind == "read" else changed)
+    expected = h.run("evaluate", code=0 if first_author == AUTHOR else 10)
+    out = h.root / "export"
+    h.run("publish-records", out)
+    observed = [c for r in h.dr.load_records(out) if r["kind"] == "read" for c in r["data"]["comments"]]
+    assert len(observed) == (2 if later_kind == "read" and first_author == AUTHOR else
+                             1 if first_author == AUTHOR else 0)
+    h.state = out
+    assert h.run("evaluate", code=0 if first_author == AUTHOR else 10) == expected
+    assert json.loads(h.run("publish-list"))["other_comments"] == (0 if first_author == AUTHOR else 1)
+
+
+def test_r6_export_post_only_other_id(h):
+    h.seed([])
+    h.save("post", comment(2, author=72, text=SENTINEL))
+    assert json.loads(h.run("publish-list"))["other_comments"] == 1
+    out = h.root / "export"
+    h.run("publish-records", out)
+    assert h.dr.newest(h.dr.load_records(out), "post") == {"id": 2}
+    h.state = out
+    assert h.run("evaluate", code=10) == "none\n"
+    assert json.loads(h.run("publish-list"))["other_comments"] == 1
+
+
+@pytest.mark.parametrize("field,value", [("round", N + 1), ("outcome", "not-accepted")])
+def test_r6_beacon_receipt_must_accept_this_round(h, field, value):
+    h.seed()
+    save_beacon_receipt(h)
+    path = next((h.state / "records").glob("*-beacon-attempt.json"))
+    receipt = json.loads(path.read_bytes())
+    path.write_bytes(h.dr.canonical({**receipt, field: value}))
+    h.save("beacon", beacon())
+    h.run("beacon", "--round", N, code=2)
+    assert "beacon timing receipt missing" in h.err and not h.calls()
+
+
+def test_r6_pending_receipt_must_be_on_time(h):
+    h.seed()
+    save_beacon_receipt(h, DUE + 86400)
+    before = h.snapshot()
+    h.run("beacon", "--round", N, code=2)
+    assert "beacon timing receipt invalid" in h.err
+    assert h.snapshot() == before and not h.calls()
+
+
+@pytest.mark.parametrize("module", ["unavailable", "different", "failed"])
+def test_r6_active_reader_checks_remain(h, module):
+    h.seed()
+    (h.root / (module + "-module")).write_text("synthetic")
+    for args in [("evaluate",), ("post", "second", h.file(body("second"))),
+                 ("beacon", "--round", N),
+                 ("record-void", "--round", N, "--receipt-sha256", "0" * 64)]:
+        h.run(*args, code=2)
+        assert "reading module " in h.err
+    assert not h.data("beacon") and not h.data("void") and not h.data("post")
+
+
+@pytest.mark.parametrize("failure", ["undecided", "unavailable"])
+def test_r6_undecided_acting_commands_still_refuse(h, failure):
+    h.init()
+    h.save("read", [comment()])
+    for args in [("evaluate",), ("beacon", "--round", N),
+                 ("record-void", "--round", N, "--receipt-sha256", "0" * 64),
+                 ("post", "first", h.file(body()))]:
+        steps = evidence_steps()
+        if failure == "undecided":
+            steps[1] = http({"default_branch": "other"})
+        else:
+            steps = [http({}, status=502)]
+        if args[0] == "post":
+            steps = [http({"id": AUTHOR}), *read_steps([graph_comment()]), *steps]
+        h.queue(steps)
+        h.run(*args, code=2)
+        assert ("undecided" if failure == "undecided" else "unavailable") in h.err
+    assert not h.data("beacon") and not h.data("void") and not h.data("post")
+
+
+def test_r6_stopped_export_with_later_evidence_failure(h):
+    h.seed([comment(), comment(2, when=DUE - 899, text=body(n=N + 1, commit=OTHER)),
+            comment(3, when=DUE, text=body("stop"))])
+    assert h.run("evaluate", code=14) == "stopped 3\n"
+    h.queue([http({}, status=502)])
+    data = json.loads(h.run("publish-list"))
+    assert data["reading_module"] == "same"
+    assert data["first_posts"][1]["reason"] == "untested: commitment evidence unavailable"
+    before, calls = h.snapshot(), len(h.calls())
+    h.run("publish-records", h.root / "export")
+    assert h.snapshot() == before and len(h.calls()) == calls
