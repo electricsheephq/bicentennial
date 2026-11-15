@@ -5,6 +5,24 @@ import sqlite3
 import stat
 
 SIDECARS = ("-journal", "-wal", "-shm")
+SQLITE = ("sqlite_valid", "sqlite_malformed", "sqlite_unchecked")
+
+
+class RestoreWatch:
+    """Record a swap's exit failure before the session handles it or continues."""
+
+    def __init__(self, context, failures):
+        self.context, self.failures = context, failures
+
+    def __enter__(self):
+        return self.context.__enter__()
+
+    def __exit__(self, *exc):
+        try:
+            return self.context.__exit__(*exc)
+        except Exception as error:
+            self.failures.append(type(error).__name__)
+            raise
 
 
 def _sidecars_regular(path):
@@ -51,17 +69,29 @@ def _file_rule(path):
         db.close()
 
 
-def _scan(root):
-    if not stat.S_ISDIR(root.lstat().st_mode):
-        return {root: "not_a_directory"}
+def _scan(root, nested=False):
+    try:
+        mode = root.lstat().st_mode
+    except FileNotFoundError:
+        return {} if nested else {root: "absent"}
+    except OSError:
+        return {root: "unobserved"}
+    if not stat.S_ISDIR(mode):
+        if not nested:
+            return {root: "not_a_directory"}
+        try:
+            rule = (_file_rule(root) if stat.S_ISREG(mode) else
+                    "link" if stat.S_ISLNK(mode) else "unsupported_entry")
+        except (OSError, sqlite3.Error):
+            rule = "unreadable"
+        return {root: rule}
     rows = {root: "directory"}
-    for path in sorted(root.iterdir()):
-        mode = path.lstat().st_mode
-        if stat.S_ISDIR(mode):
-            rows.update(_scan(path))
-        else:
-            rows[path] = (_file_rule(path) if stat.S_ISREG(mode) else
-                          "link" if stat.S_ISLNK(mode) else "unsupported_entry")
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return {root: "unreadable_directory"}
+    for path in entries:
+        rows.update(_scan(path, nested=True))
     return rows
 
 
@@ -80,32 +110,50 @@ class SourceBaseline:
         for surface, root in surfaces:
             try:
                 rows = _scan(root)
-                if not set(rows.values()) & {"not_a_directory", "unsupported_entry"}:
+                if (rows.get(root) in ("directory", "unreadable_directory")
+                        and "unsupported_entry" not in rows.values()):
                     self.roots[root] = (surface, rows)
             except Exception:
                 pass
 
-    def receipt(self, after_kill=False):
-        """The first proven damage, or None. After a harness kill, a FIFO or socket is a killed process's residue,
-        whether it replaced a root or lies inside one."""
-        try:
-            for root, (surface, before) in self.roots.items():
-                for path, rule in _scan(root).items():
+    def receipt(self, after_kill=False, restore_failures=()):
+        """First proven damage; unreadable entries and possible harness residue charge nothing."""
+        for root, (surface, before) in self.roots.items():
+            rows = _scan(root)
+            # A file the checker cannot read now, or an entry it cannot examine, was proved a database by its baseline.
+            sidecars = {p.with_name(p.name + suffix) for p, rule in rows.items()
+                        if rule == "sqlite_unchecked" or (rule in ("unreadable", "unobserved") and before.get(p) in SQLITE)
+                        for suffix in SIDECARS}
+            for path, rule in rows.items():
+                try:
                     if path in self.excluded:
                         continue
-                    if rule not in ("not_a_directory", "unsupported_entry", "sqlite_malformed"):
+                    if before.get(path) == "unobserved" or any(
+                            before.get(parent) in ("unobserved", "unreadable_directory") for parent in path.parents):
+                        continue  # an unobserved baseline entry or subtree was never proved absent
+                    if rule == "absent" and before.get(root) in ("directory", "unreadable_directory"):
+                        if after_kill or restore_failures:
+                            continue  # only a harness kill or a recorded restore failure can explain a missing root
+                        return dict(_path=root, surface=f"{surface['root']}/{surface['relative']}",
+                                    path=".", rule="missing_root", kind="absent", label="invalid_surface")
+                    if (path in sidecars and rule in ("link", "directory", "unreadable_directory", "unsupported_entry")
+                            and before.get(path) in (None, "file", "unreadable", "sqlite_valid",
+                                                     "sqlite_malformed", "sqlite_unchecked")):
+                        rule = "sqlite_sidecar"
+                    if rule not in ("not_a_directory", "unsupported_entry", "sqlite_malformed", "sqlite_sidecar"):
                         continue
                     if rule == "sqlite_malformed" and before.get(path) not in (None, "sqlite_valid"):
                         continue
                     mode = path.lstat().st_mode
                     kind = next((name for check, name in ((stat.S_ISREG, "file"), (stat.S_ISLNK, "symlink"),
-                        (stat.S_ISFIFO, "fifo"), (stat.S_ISSOCK, "socket")) if check(mode)), "other")
+                        (stat.S_ISFIFO, "fifo"), (stat.S_ISSOCK, "socket"),
+                        (stat.S_ISDIR, "directory")) if check(mode)), "other")
                     if after_kill and kind in ("fifo", "socket"):
-                        continue  # judged again once the system's worker ends by itself
+                        continue  # judged again at the first check after the next clean end
                     return dict(_path=path, surface=f"{surface['root']}/{surface['relative']}",
                         **_text("path", path.relative_to(root).as_posix()), rule=rule, kind=kind,
                         **(_text("link", os.readlink(path)) if kind == "symlink" else {}),
-                        label="invalid_store" if rule == "sqlite_malformed" else "invalid_surface")
-        except Exception:
-            pass
+                        label="invalid_store" if rule in ("sqlite_malformed", "sqlite_sidecar") else "invalid_surface")
+                except (OSError, sqlite3.Error):
+                    continue
         return None

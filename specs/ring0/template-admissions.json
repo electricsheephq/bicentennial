@@ -11,6 +11,16 @@
       "round": "validity-1",
       "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
     },
+    "drift-chain-fault-v3": {
+      "reading": "cleared",
+      "scope": "fresh-seed follow-up (#394)",
+      "labels": [
+        "ranking candidate"
+      ],
+      "entry_sha256": "725a0d540a2d92ca1aaa9c3b81107e8d48c51a7473a4a8f9c4be2dd12f6f1dd5",
+      "round": "validity-2",
+      "result": "results/validity-2/2026-11-14-control-trials/RESULT.md"
+    },
     "drift-config-v2": {
       "reading": "cleared",
       "scope": "fresh-seed follow-up (#394)",
@@ -21,6 +31,16 @@
       "round": "validity-1",
       "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
     },
+    "drift-config-v3": {
+      "reading": "cleared",
+      "scope": "fresh-seed follow-up (#394)",
+      "labels": [
+        "ranking candidate"
+      ],
+      "entry_sha256": "7b563b243c941cdf8099f6938bf7513a0f32ff867dc8813280c2cd3bfb5ee419",
+      "round": "validity-2",
+      "result": "results/validity-2/2026-11-14-control-trials/RESULT.md"
+    },
     "drift-quote-v2": {
       "reading": "cleared",
       "scope": "fresh-seed follow-up (#394)",
@@ -30,6 +50,16 @@
       "entry_sha256": "656b0c9eadbd91d6cdda5358a038000f104ad9069c85e87ffeb18e84be502488",
       "round": "validity-1",
       "result": "results/validity-1/2026-11-13-control-trials/RESULT.md"
+    },
+    "drift-quote-v3": {
+      "reading": "cleared",
+      "scope": "fresh-seed follow-up (#394)",
+      "labels": [
+        "ranking candidate"
+      ],
+      "entry_sha256": "ede9e73d2308b5a810c24abf7691a55022ed403b009ec09a215adb3081298066",
+      "round": "validity-2",
+      "result": "results/validity-2/2026-11-14-control-trials/RESULT.md"
     }
   }
 }

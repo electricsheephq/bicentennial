@@ -19,10 +19,10 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
-from bicentennial.audit.source_damage import SourceBaseline, keep_sidecars
+from bicentennial.audit.source_damage import RestoreWatch, SourceBaseline, keep_sidecars
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
-from bicentennial.contracts.surfaces import tree_listing
+from bicentennial.contracts.surfaces import tree_hash, tree_listing
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import expected_probe_env, precondition_holds
 from bicentennial.director.compiler.hermes import compile_script, step_call
@@ -31,6 +31,7 @@ from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.genres.g1_software.diffs import (
     EMPTY_TREE_HASH,
     PATHS,
+    VOLATILE,
     end_boundary,
     read_state,
     render,
@@ -53,6 +54,7 @@ from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
+from bicentennial.runner.input_reads import read_input, repair_permissions, unlock_tree
 from bicentennial.runner.lock import LockMismatch
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
@@ -116,6 +118,7 @@ class LifeRun:
     retained_roots: dict = field(default_factory=dict)
     act: dict = field(default_factory=dict)
     item_labels: dict = field(default_factory=dict)
+    unreadable_paths: dict = field(default_factory=dict)
     incidental_unknown_400: int = 0
     infra_item_labels: tuple = ()
     source_receipts: list = field(default_factory=list)
@@ -148,7 +151,11 @@ class LifeRun:
     def cleanup(self):
         """Release this attempt after its evidence has been scored."""
         if self._root is not None and self._root.exists():
-            shutil.rmtree(self._root)
+            try:
+                shutil.rmtree(self._root)
+            except PermissionError:  # a live reader locked a directory of its probe clone
+                unlock_tree(self._root)
+                shutil.rmtree(self._root)
 
 
 class PluginWake:
@@ -189,16 +196,26 @@ def reader_made(error):
     read_state (genres/g1_software/diffs.py) raises malformed content as a plain ValueError and wraps OSError,
     UnicodeError and TOMLDecodeError in ValueError, keeping the original as __cause__; tomllib raises RecursionError
     on deeply nested arrays. The reader's: malformed content, bad UTF-8 or TOML, deep nesting, a deleted file, a file
-    replaced by a directory or a path through a file. Any other OS error (descriptor exhaustion, I/O, permission) is
-    the harness's, so it keeps the infrastructure class.
+    replaced by a directory or a path through a file. Raw input permission loss and new link loops are tied to the
+    reader separately against the probe listing, as are non-regular replacements. Other OS errors (including
+    unattributed permission or loop faults, and scratch faults) keep the infrastructure class.
     """
     cause = error if isinstance(error, OSError) else error.__cause__
     return not isinstance(cause, OSError) or isinstance(cause, READER_OS_ERRORS)
 
 
-def _read_action_state(workspace, scratch, *, absent_before=False):
+def _unreadable_reason(error):
+    cause = error.__cause__ or error
+    return next((reason for kind, reason in ((FileNotFoundError, "missing"),
+        (IsADirectoryError, "directory"), (NotADirectoryError, "not_a_directory"),
+        (RecursionError, "nested")) if isinstance(cause, kind)),
+        "encoding" if isinstance(error.__cause__, UnicodeError) else "malformed")
+
+
+def _read_action_state(workspace, scratch, listing, *, absent_before=False):
     """Read each live action file with the pinned parser; omit only reader-made failures."""
-    state, unreadable = {}, False
+    state, failed, repairs = {}, [], set()
+    baseline = {row["path"]: row for row in listing}
     empty = render({p: {} for p in PATHS.values()})
     # One fixed scratch folder inside the life's fresh root: tempfile's random names are outside this module's
     # firewall (tests/runner/test_life_fake.py). The caller carries provenance across the attempt's sessions.
@@ -215,11 +232,13 @@ def _read_action_state(workspace, scratch, *, absent_before=False):
             (root / p).write_bytes(data)
         for p in sorted(empty):
             try:
-                raw = (workspace / p).read_bytes()
+                raw, reason = read_input(workspace, p, baseline, repairs)
             except STATE_READ_ERRORS as error:
                 if not reader_made(error):
                     raise
-                unreadable = True
+                raw, reason = None, _unreadable_reason(error)
+            if reason:
+                failed.append((p, reason))
                 continue
             # Scratch writes are harness operations, outside the reader-error boundary.
             (root / p).write_bytes(raw)
@@ -228,11 +247,14 @@ def _read_action_state(workspace, scratch, *, absent_before=False):
             except STATE_READ_ERRORS as error:
                 if not reader_made(error):
                     raise
-                unreadable = True
+                failed.append((p, _unreadable_reason(error)))
             (root / p).write_bytes(empty[p])
     finally:
-        shutil.rmtree(root)
-    return state, unreadable
+        try:
+            repair_permissions(workspace, repairs)
+        finally:
+            shutil.rmtree(root)
+    return state, bool(failed), tuple(sorted(failed))
 
 
 def _cause(error):
@@ -544,16 +566,18 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 nonlocal source_receipt
                 if exc_type is not None and not isinstance(error, Exception):
                     return
-                source_receipt = source_receipt or session_baseline.receipt(getattr(adapter, "after_kill", False))
+                source_receipt = source_receipt or session_baseline.receipt(
+                    getattr(adapter, "after_kill", False), evidence.restore_failures)
                 if source_receipt is not None:
                     if source_receipt not in evidence.source_receipts:
                         evidence.source_receipts.append(source_receipt)
                         try:
                             path = source_receipt["_path"]
                             kept = root / f"invalid-source-{index}"
-                            path.rename(kept)  # preserve the entry itself, without following it
-                            source_receipt["_kept"] = kept
-                            if source_receipt["rule"] == "not_a_directory":
+                            if source_receipt["rule"] != "missing_root":
+                                path.rename(kept)  # preserve the entry itself, without following it
+                                source_receipt["_kept"] = kept
+                            if source_receipt["rule"] in ("not_a_directory", "missing_root"):
                                 path.mkdir()
                             if source_receipt["rule"] == "sqlite_malformed":
                                 # Its -journal, -wal and -shm go with it: the journal and WAL may hold the damage read.
@@ -600,6 +624,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 clone.parent.mkdir(parents=True, exist_ok=True)
                                 clone_tree(canonical, clone)
                                 clones.append(clone)
+                            listing = tree_listing(clones[-1], VOLATILE) if genre == "G1" else []
+                            probe_hash = tree_hash(listing) if genre == "G1" else EMPTY_TREE_HASH
                             if keep_pre_probe:
                                 from bicentennial.runner.kept import record_pre_probe
 
@@ -615,7 +641,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                         contract_hash=compiled.answer_contract_sha256)
                             for iid in probe.item_ids:
                                 holds = precondition_holds(by_id[iid],
-                                    repo_tree_hash=workspace_hash(clones[-1]) if genre == "G1" else EMPTY_TREE_HASH,
+                                    repo_tree_hash=probe_hash,
                                     env_state_hash=sha256_canon(seeds[index]["state"] if genre == "G2" else {}),
                                     probe_env_state_hash=expected_probe_env(db, genre, index, probe.checkpoint))
                                 if (iid, arm) not in voids.records:
@@ -627,7 +653,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 evidence.retained_roots[iid] = (
                                     evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
-                                stack.enter_context(swap_in(clone, canonical))
+                                stack.enter_context(RestoreWatch(swap_in(clone, canonical), evidence.restore_failures))
                         if probe:
                             session_baseline = SourceBaseline(source_surfaces, baseline.excluded)
                         stack.push(check_sources)  # runs before any swap restores, including on exceptions
@@ -658,12 +684,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 if leg is None:
                                     state, unreadable = read_state(paths["workspace"]), False
                                 else:
-                                    state, unreadable = _read_action_state(paths["workspace"], root,
-                                                                         absent_before=act_state_created)
+                                    state, unreadable, failed = _read_action_state(paths["workspace"], root, listing,
+                                                                                 absent_before=act_state_created)
                                 for iid in probe.item_ids:
                                     evidence.act[iid] = state
                                     if unreadable:
                                         evidence.item_labels[iid] = "unreadable_state"
+                                        evidence.unreadable_paths[iid] = failed
                             else:
                                 for iid in probe.item_ids:
                                     evidence.act[iid] = {"records": wiring.records(index)}
@@ -712,8 +739,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         except OSError:
                             pass
                     cause = ("SYSTEM_FAILURE", source_receipt["label"]) if source_receipt else _cause(error)
-                    if source_receipt and not isinstance(error, SourceDamage):
-                        evidence.restore_failures.append(_cause(error)[1])
                     proven = cause[1] in ("act_state_collision", "worker_protocol", "invalid_store", "invalid_surface") and cause[0] == "SYSTEM_FAILURE"
                     try:
                         rows = _probe_rows(adapter.records(), attempt_id, index) if probe or proven else []

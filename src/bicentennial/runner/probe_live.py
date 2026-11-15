@@ -194,5 +194,7 @@ class ProbeLiveLeg:
                         citation_match=citation_match(env["citation"], texts) if env else None),
                     live=dict(served_by=final.get("served_by"), served=final.get("served"),
                               identity_flag=probe.index in self.identity_flags or probe.index in changed),
-                    **({"label": evidence.item_labels[iid]} if iid in evidence.item_labels else {})))
+                    **({"label": evidence.item_labels[iid],
+                        **({"unreadable_paths": [list(pair) for pair in evidence.unreadable_paths[iid]]}
+                           if evidence.unreadable_paths.get(iid) else {})} if iid in evidence.item_labels else {})))
         (root / "t2lite_probes.json").write_bytes(canon(sorted(records, key=lambda r: r["item_id"])))

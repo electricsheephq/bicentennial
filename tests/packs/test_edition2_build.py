@@ -209,18 +209,21 @@ def admissions_with_count():
 
 
 def test_shipped_admissions_match_their_frozen_entries_and_result():
-    """The shipped record admits exactly round 1's cleared versions, at their frozen C-7 content, with the scope and
-    label their result page states."""
+    """The shipped record admits exactly round 1's cleared v2s and round 2's v3s (ranking candidates), each at its
+    edition's frozen C-7 content, with the scope and label its result page states."""
     record = json.loads(t1.TEMPLATE_ADMISSIONS.read_bytes())
-    entries = build.c7_entries(ROOT / C7_FILES[2])
-    assert set(record["admitted"]) == {"drift-chain-fault-v2", "drift-config-v2", "drift-quote-v2"}
+    rounds = {"validity-1": (2, "near-solved by naive retrieval"), "validity-2": (3, "ranking candidate")}
+    drift = ("drift-chain-fault", "drift-config", "drift-quote")
+    assert set(record["admitted"]) == {f"{t}-v{edition}" for t in drift for edition, _ in rounds.values()}
     for ref, admission in record["admitted"].items():
-        assert admission["reading"] == "cleared" and admission["round"] == "validity-1"
-        assert admission["entry_sha256"] == entries[ref]["entry_sha256"]
+        edition, label = rounds[admission["round"]]
+        template, version = ref.rsplit("-v", 1)
+        assert version == str(edition) and admission["reading"] == "cleared"
+        assert admission["entry_sha256"] == build.c7_entries(ROOT / C7_FILES[edition])[ref]["entry_sha256"]
         assert admission["scope"] == "fresh-seed follow-up (#394)"
-        assert admission["labels"] == ["near-solved by naive retrieval"]
+        assert admission["labels"] == [label]
         page = (ROOT / admission["result"]).read_text()
-        assert f"`{ref.removesuffix('-v2')}` v2" in page and "near-solved by naive retrieval" in page
+        assert f"`{template}` v{edition}" in page and label in page
 
 
 def test_system_run_accepts_all_v2_when_admitted(edition2, tmp_path, monkeypatch):
