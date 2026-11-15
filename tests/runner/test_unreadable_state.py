@@ -188,6 +188,34 @@ def test_replaced_root_keeps_act_state_collision(lives, unit_sessions, tmp_path,
                result.scores[iid]["infra_reruns"] == 0 for iid in probe.item_ids)
 
 
+def test_replaced_root_with_baseline_act_state_reruns(lives, unit_sessions, tmp_path, monkeypatch):
+    case, entries = lives["t1-g1", "B0"], []
+    clean = unit(case, tmp_path / "clean")
+    original = adapter.HermesAdapter.__init__
+
+    def construct(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        if not entries:
+            path = self.paths["root"].parent / "act-state"
+            path.mkdir()
+            entries.append(path)
+
+    def replace_root(workspace):
+        if workspace.parent.parent == entries[0].parent:
+            workspace.rename(tmp_path / "discarded-clone")
+            workspace.write_text("reader replacement")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "__init__", construct)
+    probe, _ = damage_probe(monkeypatch, case, replace_root)
+    result = unit(case, tmp_path / "broken")
+    assert result.attempts == 2 and result.stop is None
+    first, redo = result.runs
+    assert first.stopped == ("INFRA_FAILURE", "FileExistsError", probe.index)
+    assert not first.item_labels and not first.unreadable_paths
+    assert redo.stopped is None
+    assert result.scores == {iid: dict(row, infra_reruns=1) for iid, row in clean.scores.items()}
+
+
 def test_control_diagnostics_skip_replaced_workspace(lives, unit_sessions, tmp_path, monkeypatch):
     case = lives["t1-g1", "B0"]
     diag = Diagnostics(tmp_path / "diag", tmp_path / "synthetic-home")
