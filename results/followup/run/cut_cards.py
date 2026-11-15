@@ -52,6 +52,7 @@ def main(argv=None):
             card["counts"] = dict(card["counts"], **outcome_counts(kept))
             ready[label] = canon(card)
             full[label] = hashlib.sha256(raw).hexdigest()
+        label = "card"  # a fault making the output folder is no card's
         out.mkdir(parents=True)
         for label, payload in ready.items():
             (out / f"{label}.json").write_bytes(payload)

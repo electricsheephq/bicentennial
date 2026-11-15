@@ -133,3 +133,11 @@ def test_cut_refuses_existing_output_folder(tmp_path):
     assert sorted(p.name for p in out.iterdir()) == ["earlier.json"]
     result, _ = cut(tmp_path, full_card(keys(), system=True), out=tmp_path / "new" / "cut")
     assert result.returncode == 0 and (tmp_path / "new/cut/A.F1.json").is_file()
+
+
+def test_cut_output_folder_fault_names_no_card(tmp_path):
+    # The folder cannot be made (its parent is a file) only after every card is read and found sound.
+    (tmp_path / "parent").write_bytes(b"")
+    result, _ = cut(tmp_path, full_card(keys(), system=True), out=tmp_path / "parent" / "cut")
+    assert result.returncode != 0 and (result.stdout + result.stderr).strip() == "card"
+    assert (tmp_path / "parent").read_bytes() == b""
