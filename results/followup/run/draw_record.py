@@ -107,9 +107,7 @@ def normalize_comment(node):
     author = node["author"]
     uid = author.get("databaseId") if author else None
     cid = node.get("fullDatabaseId")
-    if cid is None:
-        cid = node["databaseId"]
-    elif isinstance(cid, str):
+    if isinstance(cid, str):
         cid = int(cid)
     if type(cid) is not int or (uid is not None and type(uid) is not int):
         raise Refused("invalid comment or author id")
@@ -171,6 +169,8 @@ def commitment_test(comment, evidence, declaration):
     """None means this snapshot cannot decide this comment; rechecks are separate."""
     result = {"id": int(comment["id"]), "commit": evidence["commit"], "passed": False,
               "reason": "not found", "pull_request": None, "merged_at": None}
+    if evidence["default_branch"] != "main" or evidence.get("default_branch_after", evidence["default_branch"]) != "main":
+        return None
     content = evidence["content"]
     predates = evidence["github_time"] < seconds(comment["created_at"])
     if content["status"] != 200:
@@ -179,9 +179,6 @@ def commitment_test(comment, evidence, declaration):
     if content["sha256"] != declaration["sha256"] or content["length"] != declaration["length"]:
         result["reason"] = "declaration differs"
         return result
-    if evidence["default_branch"] != "main":
-        result["reason"] = "default branch is not main"
-        return None if predates else result
     qualifying = [p for p in evidence["pulls"] if p["base"] == "main" and p["merged_at"]
                   and p["merge_commit_sha"] and p.get("compare") in ("identical", "ahead")]
     earliest = min(qualifying, key=lambda p: (seconds(p["merged_at"]), p["number"])) if qualifying else None
@@ -252,12 +249,26 @@ def first_row(comment, records, seen_rounds, counted):
     return row
 
 
+def task_list_comments(records, counted):
+    """Task lists need a unique round and value names, never a run_commit."""
+    result = []
+    for c in candidates(records):
+        if c["body"] is None:
+            continue
+        p = parse_body(c["body"])
+        if p["kind"] == "tasks" and not p["repeated"] and p["round"] == counted["round"]:
+            result.append(c)
+    return result
+
+
 def stopped_comment(records, counted):
     if counted is None:
         return None
+    tasks = task_list_comments(records, counted)
     for c in candidates(records):
         if c["body"] is not None and parse_body(c["body"])["kind"] == "stop":
-            if seconds(c["created_at"]) >= round_due(counted["round"]):
+            if seconds(c["created_at"]) >= round_due(counted["round"]) and not any(
+                    comment_order(task) < comment_order(c) for task in tasks):
                 return c["id"]
     return None
 
@@ -283,6 +294,7 @@ def evaluate_records(records):
 
 def publish_list(records, untested=None):
     rows, markers, seen, counted = [], [], {}, None
+    undecided = False
     declaration = newest(records, "declaration")
     matches = {}
     for record in records:
@@ -294,17 +306,22 @@ def publish_list(records, untested=None):
             row = first_row(c, records, seen, counted)
             if untested and c["id"] in untested and row["reason"].startswith("untested:"):
                 row["reason"] = "untested: " + untested[c["id"]]
+            if undecided:
+                row.update(counted=False, reason="undecided: an earlier post is untested")
+            undecided = undecided or row["reason"].startswith("untested:")
             rows.append(row)
             if row["counted"]:
                 counted = row
-        elif p and p["first_line"].startswith("Follow-up draw:"):
-            entry = {"id": c["id"], "created_at": c["created_at"], "first_line": p["first_line"]}
+        elif c["author"] == declaration["merging_id"] and p and p["first_line"].startswith("Follow-up draw:"):
+            entry = {"id": c["id"], "created_at": c["created_at"], "first_line": p["first_line"],
+                     "after_merge": seconds(c["created_at"]) > seconds(declaration["merge_time"])}
             if p["kind"] in ("second", "tasks"):
                 match = matches.get(p["kind"], {})
                 entry["match"] = ("matched" if c["id"] in match.get("matches", []) else
                                   "differs" if c["id"] in match.get("differences", []) else "unmatched")
             markers.append(entry)
-    return {"first_posts": rows, "markers": markers}
+    return {"first_posts": rows, "markers": markers,
+            "other_comments": sum(c["author"] != declaration["merging_id"] for c in comment_set(records))}
 
 
 def choose_round(t, saved):
@@ -334,7 +351,7 @@ def accept_beacon(number, left, right, t=None):
         return "cutoff", None
     try:
         a, b = json.loads(left), json.loads(right)
-        if a != b:
+        if canonical(a) != canonical(b):
             return "relay disagreement", None
         if not isinstance(a, dict) or set(a) != {"round", "randomness", "signature"}:
             return "beacon fields", None
@@ -368,32 +385,16 @@ def matching_comments(records, kind, expected, counted):
     return matches, differences
 
 
-def unknown_pending(records):
-    declaration = newest(records, "declaration")
-    fixed = {c["id"]: c for c in comment_set(records)}
-    for record in records:
-        if record["kind"] != "post-unknown":
-            continue
-        unknown = record["data"]
-        resolved = False
-        for read in records:
-            if read["kind"] != "read" or read["number"] <= record["number"]:
-                continue
-            data = read["data"]
-            if data["github_time"] < unknown["github_time"] + 60:
-                continue
-            if not any(c["author"] == declaration["merging_id"] and c["id"] not in unknown["known_ids"]
-                       and (c["body"] is None or parse_body(c["body"])["kind"] == unknown["kind"])
-                       for c in (fixed[int(raw["id"])] for raw in data["comments"])):
-                resolved = True
-                break
-        if not resolved:
-            return True
-    return False
+def first_unknown_pending(records, github_time, timeout):
+    unknowns = [r for r in records if r["kind"] == "post-unknown" and r["data"]["kind"] == "first"]
+    latest = max(unknowns, key=lambda r: r["number"])["data"] if unknowns else None
+    return latest is not None and github_time < latest["github_time"] + timeout + 60
 
 
 def stop_admission(records, counted, reason, failure_hash, t):
     n = counted["round"]
+    if task_list_comments(records, counted):
+        raise Refused("task lists already posted")
     if t < round_due(n):
         raise Refused("stop before round due")
     accepted = any(r["kind"] == "beacon" and r["data"]["round"] == n for r in records)
@@ -476,7 +477,7 @@ def parse_http(raw):
 
 
 def tool_environment():
-    return {k: v for k, v in os.environ.items() if k in ("PATH", "HOME") or k.startswith("GH_")}
+    return {k: v for k, v in os.environ.items() if k in ("PATH", "HOME")}
 
 
 def gh(*args):
@@ -497,7 +498,7 @@ def gh(*args):
 
 def curl(url):
     try:
-        response = subprocess.run(["curl", "--silent", "--show-error", "--max-time", "20", url],
+        response = subprocess.run(["curl", "-q", "--silent", "--show-error", "--max-time", "20", url],
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   timeout=30, check=False, env=tool_environment())
         return response.returncode == 0, response.stdout
@@ -531,7 +532,7 @@ def now():
 
 
 EDIT_FIELDS = "userContentEdits(first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{editedAt deletedAt diff}}"
-COMMENT_FIELDS = ("id fullDatabaseId databaseId author{login ... on User { databaseId }} createdAt lastEditedAt includesCreatedEdit body "
+COMMENT_FIELDS = ("id fullDatabaseId author{login ... on User { databaseId }} createdAt lastEditedAt includesCreatedEdit body "
                   "userContentEdits(first:100){pageInfo{hasNextPage endCursor} nodes{editedAt deletedAt diff}}")
 COMMENTS_QUERY = ("query($cursor:String){repository(owner:\"electricsheephq\",name:\"bicentennial\"){"
                   "issue(number:394){comments(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{"
@@ -606,6 +607,7 @@ def fetch_evidence(commit):
     if failure:
         return {**evidence, "failure": failure}
     response = gh("api", f"{REPOSITORY}/commits/{commit}/pulls?per_page=100")
+    evidence["default_branch_after"] = response_json(gh("api", REPOSITORY))["default_branch"]
     failure = evidence_status(response)
     if failure:
         return {**evidence, "failure": failure}
@@ -628,16 +630,14 @@ def fetch_evidence(commit):
 def ensure_test(records, comment, fetch=True):
     parsed = parse_body(comment["body"])
     test = saved_test(records, comment, parsed)
-    additions = []
     if test is None and fetch:
         evidence = fetch_evidence(parsed["run_commit"])
-        additions.append(("evidence", evidence))
+        yield "evidence", evidence
         test = commitment_test(comment, evidence, newest(records, "declaration"))
         if test is None:
-            raise Refused("evidence predates comment and cannot decide")
+            raise Refused(f"post {comment['id']} undecided")
     if test is not None and not any(r["kind"] == "test" and r["data"]["id"] == comment["id"] for r in records):
-        additions.append(("test", test))
-    return additions
+        yield "test", test
 
 
 def evaluate_saved(state, recheck=False):
@@ -660,13 +660,15 @@ def evaluate_saved(state, recheck=False):
                            if fresh is not None and old[k] != fresh[k]]
             changes.extend(f"changed {comment['id']} {k} {json.dumps(old[k])} {json.dumps(fresh[k])}"
                            for k in differences)
-            if not differences:
+            if fresh is None:
+                changes.append(f"undecided {comment['id']}")
+            elif not differences:
                 changes.append(f"unchanged {comment['id']}")
         else:
             additions = ensure_test(records, comment)
             for kind, data in additions:
-                records.append({"number": max(r["number"] for r in records) + 1, "kind": kind, "data": data})
-            pending.extend(additions)
+                append_record(state, kind, data)
+                records = load_records(state)
         result = evaluate_records(records)
         if result["counted"] is not None and result["counted"]["id"] == comment["id"]:
             break
@@ -700,9 +702,9 @@ def verify_reading(commit):
     raw = gh("api", "-X", "GET", "-H", "Accept: application/vnd.github.raw+json",
              f"{REPOSITORY}/contents/{MODULE_PATH}?ref={commit}")
     if raw["status"] != 200:
-        raise Refused("reading module unavailable")
+        raise Refused(f"reading module unavailable at {commit}")
     if raw["body"] != Path(__file__).read_bytes():
-        raise Refused("reading module differs")
+        raise Refused(f"reading module differs at {commit}")
 
 
 def acting_counted(state, number=None):
@@ -727,6 +729,9 @@ def post(state, kind, filename, records, reason=None, failure_hash=None):
     read_time = None
     if kind == "first":
         _, read_time = read_issue(state)
+        records = load_records(state)
+        if first_unknown_pending(records, read_time, RUNTIME.get()["gh_timeout"]):
+            raise Refused("post outcome unknown")
         result = evaluate_saved(state)
         if result["code"] == 14:
             raise Refused("draw stopped")
@@ -734,15 +739,13 @@ def post(state, kind, filename, records, reason=None, failure_hash=None):
             verify_reading(result["counted"]["commit"])
             raise Refused("counted draw already exists")
         records = load_records(state)
-        blocked = [c["id"] for c in comment_set(records) if c["author"] == declaration["merging_id"] and c["body"] is None]
+        blocked = [c["id"] for c in candidates(records) if c["body"] is None]
         if blocked:
             return "blocked " + " ".join(map(str, blocked)), 13
         if parsed["reason"]:
             raise Refused("first post lacks unambiguous round or commit")
         verify_reading(parsed["run_commit"])
     records = load_records(state)
-    if unknown_pending(records):
-        raise Refused("previous post outcome unknown")
     if kind == "first":
         evidence = fetch_evidence(parsed["run_commit"])
         append_record(state, "evidence", evidence)
@@ -752,7 +755,7 @@ def post(state, kind, filename, records, reason=None, failure_hash=None):
             raise Refused("pre-post read older than 60 seconds")
         validate_first(parsed, newest(records, "round"), t, evidence, declaration)
     elif kind == "stop":
-        stop_admission(records, counted, reason, failure_hash, t)
+        stop_admission(records, counted, reason, failure_hash, github)
     known = [c["id"] for c in comment_set(records)]
     try:
         raw = gh("api", "-X", "POST", f"{REPOSITORY}/issues/394/comments", "-F", "body=@" + str(filename))
@@ -776,12 +779,17 @@ def post(state, kind, filename, records, reason=None, failure_hash=None):
         read_issue(state)
     except Exception:
         print("read-back failed", file=sys.stderr)
+    if kind == "first":
+        try:
+            evaluate_saved(state)
+        except Exception:
+            print("evaluation failed", file=sys.stderr)
     return f"posted {saved['id']} {saved['created_at']}", 0
 
 
 def relay_attempt(state, number, rehearsal=False):
-    before, _, t = now()
-    if not rehearsal and t < round_due(number):
+    before, _, _ = now()
+    if not rehearsal and before < round_due(number):
         raise Refused("round not due")
     names, bodies, oks = [], [], []
     for host, label in (("api.drand.sh", "relay-primary"), ("drand.cloudflare.com", "relay-secondary")):
@@ -789,29 +797,66 @@ def relay_attempt(state, number, rehearsal=False):
         names.append(append_record(state, label, raw, raw=True).name)
         bodies.append(raw)
         oks.append(ok)
-    after, _, t = now()
-    reason, value = accept_beacon(number, *bodies, None if rehearsal else t)
+    after, skew, _ = now()
+    reason, value = accept_beacon(number, *bodies, None if rehearsal else after)
     if reason != "cutoff" and not all(oks):
         reason, value = "relay unavailable", None
     outcome = "accepted" if value else "cutoff" if reason == "cutoff" else "not-accepted"
     if not rehearsal:
+        if value is not None:
+            append_record(state, "beacon", value)
         append_record(state, "beacon-attempt", {"round": number, "outcome": outcome, "reason": reason,
-                      "github_before": before, "github_after": after, "raw_bodies": names})
+                      "github_before": before, "github_after": after, "machine_after": after + skew, "raw_bodies": names})
     return reason, value
 
 
-def beacon_attempt(state, number):
+def write_beacon_output(out, value):
+    """Link accepted bytes without replacement; an existing file must be identical."""
+    target = Path(out)
+    raw = canonical(value)
+    if target.exists():
+        if target.read_bytes() != raw:
+            raise Refused("beacon output differs")
+        return
+    # Each partial is exclusive and retained, just like the record writer's partials.
+    number = 0
+    while True:
+        partial = target.with_name(target.name + f".{number}.partial")
+        try:
+            output = partial.open("xb")
+            break
+        except FileExistsError:
+            number += 1
+    with output:
+        output.write(raw)
+        output.flush()
+        sync_file(output.fileno())
+    try:
+        os.link(partial, target)
+    except FileExistsError as error:
+        if target.read_bytes() != raw:
+            raise Refused("beacon output differs") from error
+    fd = os.open(target.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def beacon_attempt(state, number, out):
     # A saved acceptance is final; do not even read the module or a clock again.
     records = load_records(state)
     result = evaluate_records(records)
     if result["code"] == 14:
         raise Refused("draw stopped")
-    if any(r["kind"] == "beacon" and r["data"]["round"] == number for r in records):
+    accepted = next((r["data"] for r in records if r["kind"] == "beacon" and r["data"]["round"] == number), None)
+    if accepted is not None:
+        write_beacon_output(out, accepted)
         return f"accepted round {number}", 0
     acting_counted(state, number)
     reason, value = relay_attempt(state, number)
     if value:
-        append_record(state, "beacon", value)
+        write_beacon_output(out, value)
         return f"accepted round {number}", 0
     return (f"cutoff round {number}", 13) if reason == "cutoff" else ("not-accepted " + reason, 10)
 
@@ -906,6 +951,7 @@ def parser():
         if command in ("beacon", "record-void"):
             sub.add_argument("--round", type=int, required=command == "record-void")
         if command == "beacon":
+            sub.add_argument("--out")
             sub.add_argument("--rehearsal", action="store_true")
             sub.add_argument("--fixture", default=str(Path(__file__).with_name("known-answer-round.json")))
         if command == "record-void":
@@ -963,11 +1009,13 @@ def execute(args):
     elif command == "beacon":
         if evaluate_records(records)["code"] == 14:
             raise Refused("draw stopped")
+        if args.round is not None and args.out is None:
+            raise Refused("beacon round requires out")
         if args.rehearsal:
             line, code = rehearsal(state, args.fixture)
         else:
             round_due(args.round)
-            line, code = beacon_attempt(state, args.round)
+            line, code = beacon_attempt(state, args.round, args.out)
         print(line)
         return code
     elif command == "match":

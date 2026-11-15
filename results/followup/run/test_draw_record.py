@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -38,7 +39,8 @@ def stamp(t):
 
 def body(kind="first", n=N, commit=COMMIT, tail=""):
     names = {"first": "first post", "second": "second post", "tasks": "task lists", "stop": "stop"}
-    return f"Follow-up draw: {names[kind]}\nround {n}\nrun_commit {commit}\n{tail}"
+    commit_line = "" if kind == "tasks" else f"run_commit {commit}\n"
+    return f"Follow-up draw: {names[kind]}\nround {n}\n{commit_line}{tail}"
 
 
 def comment(cid=1, when=DUE - 900, text=None, author=AUTHOR, **extra):
@@ -58,7 +60,7 @@ def declaration():
 
 
 def evidence(merged=MERGE + 1, **changes):
-    data = {"commit": COMMIT, "github_time": DUE - 900, "default_branch": "main",
+    data = {"commit": COMMIT, "github_time": DUE - 900, "default_branch": "main", "default_branch_after": "main",
             "content": {"status": 200, "sha256": declaration()["sha256"], "length": declaration()["length"]},
             "pulls": [{"number": 71, "base": "main", "merged_at": stamp(merged),
                        "merge_commit_sha": OTHER, "compare": "ahead"}]}
@@ -94,6 +96,7 @@ def evidence_steps(when=DUE - 900, merged=MERGE + 1, pulls=None):
             http(b"synthetic declaration\n", when=when, contains="contents/"),
             http([{"number": 71, "base": {"ref": "main"}, "merged_at": stamp(merged),
                    "merge_commit_sha": OTHER}] if pulls is None else pulls, when=when, contains="/pulls"),
+            http({"default_branch": "main"}, when=when, contains="repos/"),
             *([http({"status": "ahead"}, when=when, contains="compare/")] if pulls is None else [])]
 
 
@@ -102,7 +105,7 @@ def page(nodes, more=False, cursor=None):
 
 
 def graph_comment(cid=1, **changes):
-    return {"id": f"node-{cid}", "databaseId": cid, "author": {"login": LOGIN, "databaseId": AUTHOR},
+    return {"id": f"node-{cid}", "fullDatabaseId": str(cid), "author": {"login": LOGIN, "databaseId": AUTHOR},
             "createdAt": stamp(DUE - 900), "lastEditedAt": None,
             "includesCreatedEdit": False, "body": body(), "userContentEdits": page([]), **changes}
 
@@ -186,6 +189,8 @@ class Harness:
         self.save("evidence", evidence())
 
     def run(self, *args, code=0, clock=None, sleep=lambda _: None, gh_timeout=60):
+        if args[0] == "beacon" and "--round" in args and "--out" not in args:
+            args = (*args, "--out", self.root / "beacon-output.json")
         self.capsys.readouterr()
         result = self.dr.main([args[0], "--state", str(self.state), *map(str, args[1:])],
                               clock=clock or self.dr.machine_time, sleep=sleep, gh_timeout=gh_timeout)
@@ -291,7 +296,7 @@ def test_t3_integer_order(dr):
 @pytest.mark.parametrize("change,reason", [({}, "passed"),
     ({"content": {"status": 200, "sha256": "0" * 64, "length": 22}}, "declaration differs"),
     ({"content": {"status": 200, "sha256": declaration()["sha256"], "length": 999}}, "declaration differs"),
-    ({"pulls": []}, "no qualifying pull request"), ({"default_branch": "other"}, "default branch is not main")])
+    ({"pulls": []}, "no qualifying pull request")])
 def test_t4_commitment(dr, change, reason):
     result = dr.commitment_test(comment(), evidence(**change), declaration())
     assert result["reason"] == reason and result["passed"] == (reason == "passed")
@@ -338,7 +343,7 @@ def test_counterexample_frozen_per_comment_and_recheck(h):
     recheck = evidence_steps(when=DUE - 699, merged=DUE - 800)
     recheck[1] = http({"default_branch": "other"}, when=DUE - 699)
     h.queue([*recheck, *recheck])
-    assert "changed 2 passed true false" in h.run("evaluate", "--recheck", clock=lambda: DUE - 699)
+    assert "undecided 2" in h.run("evaluate", "--recheck", clock=lambda: DUE - 699)
     assert len(h.data("recheck")) == 2
     assert h.data("test")[0] == first
     assert h.run("evaluate").startswith("counted 2 ")
@@ -371,7 +376,7 @@ def test_t4_page_limit_and_earliest(h):
     assert h.dr.commitment_test(comment(), ev, declaration())["pull_request"] == 72
     h.init()
     h.save("read", [comment()])
-    h.queue([*evidence_steps()[:3], http([{"number": n, "base": {"ref": "other"}, "merged_at": None, "merge_commit_sha": None} for n in range(100)])])
+    h.queue([*evidence_steps()[:3], http([{"number": n, "base": {"ref": "other"}, "merged_at": None, "merge_commit_sha": None} for n in range(100)]), evidence_steps()[4]])
     h.run("evaluate", code=2)
     assert h.data("evidence") == []
 
@@ -531,7 +536,7 @@ def test_t8_post_refusals(h, variant):
     if variant == "margin":
         steps = first_steps(when=DUE - 600)
     if variant == "merge-age":
-        steps[3:8] = evidence_steps(merged=DUE - 959)
+        steps[3:9] = evidence_steps(merged=DUE - 959)
     h.queue(steps)
     clocks = iter([DUE - 900, DUE - 900, DUE - 839]) if variant == "stale" else None
     h.run("post", "first", h.file(text), code=2,
@@ -551,7 +556,7 @@ def test_t8_readback_failure_still_posted(h):
 
 @pytest.mark.parametrize("kind", ["first", "second"])
 @pytest.mark.parametrize("outcome", ["timeout", "500", "no-id", "no-status"])
-def test_unknown_post_and_later_read_gate(h, kind, outcome):
+def test_unknown_post_and_first_timing(h, kind, outcome):
     h.seed([] if kind == "first" else None)
     h.save("round", {"round": N})
     text = body(kind)
@@ -564,25 +569,23 @@ def test_unknown_post_and_later_read_gate(h, kind, outcome):
         h.queue([http({"id": AUTHOR}), http({}), bad])
     h.run("post", kind, h.file(text), code=2, gh_timeout=.5 if outcome == "timeout" else 60)
     assert len(h.data("post-unknown")) == 1 and not h.data("post")
-    h.queue(first_steps() if kind == "first" else [http({"id": AUTHOR}), http({}),
-             http(response(text, when=DUE - 899), status=201), *read_steps()])
-    h.run("post", kind, h.file(text), code=2)
-    h.save("read", {"github_time": DUE - 840, "comments": []})
     if kind == "first":
-        h.queue(first_steps(when=DUE - 840, created=DUE - 839))
+        h.queue(first_steps(when=DUE - 781))
+        h.run("post", kind, h.file(text), code=2, clock=lambda: DUE - 781)
+        assert "post outcome unknown" in h.err
+        h.queue(first_steps(when=DUE - 780, created=DUE - 779))
+        assert h.run("post", kind, h.file(text), clock=lambda: DUE - 780).startswith("posted 17 ")
     else:
-        h.queue([http({"id": AUTHOR}), http({}, when=DUE - 840),
-                 http(response(text, when=DUE - 839), status=201), *read_steps(when=DUE - 840)])
-    assert h.run("post", kind, h.file(text), clock=lambda: DUE - 840).startswith("posted 17 ")
+        h.queue([http({"id": AUTHOR}), http({}), http(response(text), status=201), *read_steps()])
+        assert h.run("post", kind, h.file(text)).startswith("posted 17 ")
 
 
-def test_unknown_new_comment_still_refuses(h):
+def test_unknown_new_comment_does_not_gate(h):
     h.seed()
     h.save("post-unknown", {"kind": "second", "github_time": DUE - 900, "known_ids": []})
     h.save("read", {"github_time": DUE - 840, "comments": [comment(9, text=body("second"))]})
-    assert h.dr.unknown_pending(h.dr.load_records(h.state))
-    h.queue([http({"id": AUTHOR})])
-    h.run("post", "second", h.file(body("second")), code=2)
+    h.queue([http({"id": AUTHOR}), http({}), http(response(body("second")), status=201), *read_steps()])
+    assert h.run("post", "second", h.file(body("second"))).startswith("posted 17 ")
 
 
 def beacon(n=N):
@@ -907,7 +910,7 @@ def test_tools_fixed_environment_stdin_and_http(h, monkeypatch):
 
     def checked(argv, **kwargs):
         assert kwargs["env"] == {k: v for k, v in os.environ.items()
-                                  if k in ("PATH", "HOME") or k.startswith("GH_")}
+                                  if k in ("PATH", "HOME")}
         assert kwargs["stdin"] == subprocess.DEVNULL
         return original(argv, **kwargs)
 
@@ -917,7 +920,7 @@ def test_tools_fixed_environment_stdin_and_http(h, monkeypatch):
     h.run("now")
     call = h.calls()[0]
     assert call["stdin"] == "" and "DROP_SYNTHETIC" not in call["env"]
-    assert set(call["env"]) <= {"PATH", "HOME", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"} | {k for k in os.environ if k.startswith("GH_")}
+    assert set(call["env"]) <= {"PATH", "HOME", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
     raw = b"HTTP/2 200 OK\r\n\r\nHTTP/body\n\ntext"
     assert h.dr.parse_http(raw)["body"] == b"HTTP/body\n\ntext"
 
@@ -994,20 +997,24 @@ def test_reading_case_renamed_and_reused_login(h):
     assert h.run("evaluate").startswith("counted 1 ")
 
 
-def test_unknown_read_at_59_not_60(h):
-    h.seed()
-    h.save("post-unknown", {"kind": "second", "github_time": DUE - 900, "known_ids": [1]})
-    h.save("read", {"github_time": DUE - 841, "comments": []})
-    assert h.dr.unknown_pending(h.dr.load_records(h.state))
-    h.save("read", {"github_time": DUE - 840, "comments": []})
-    assert not h.dr.unknown_pending(h.dr.load_records(h.state))
+def test_unknown_first_timeout_plus_sixty(dr):
+    rs = records() + [rec("post-unknown", {"kind": "first", "github_time": DUE - 900}, 4)]
+    assert dr.first_unknown_pending(rs, DUE - 781, 60)
+    assert not dr.first_unknown_pending(rs, DUE - 780, 60)
+    assert dr.first_unknown_pending(rs, DUE - 601, 240)
+    assert not dr.first_unknown_pending(rs, DUE - 600, 240)
+    rs += [rec("post-unknown", {"kind": "first", "github_time": DUE - 800}, 5)]
+    assert dr.first_unknown_pending(rs, DUE - 780, 60)
+    assert not dr.first_unknown_pending(rs, DUE - 680, 60)
+    assert not dr.first_unknown_pending([r for r in rs if r["kind"] != "post-unknown"], DUE, 60)
+    assert not dr.first_unknown_pending(records() + [rec("post-unknown", {"kind": "second", "github_time": DUE}, 4)], DUE, 60)
 
 
-def test_beacon_cutoff_uses_later_clock(h):
+def test_beacon_cutoff_uses_github_clock(h):
     h.seed()
     h.queue([http({}, when=DUE + 86340), relay(beacon()), relay(beacon()), http({}, when=DUE + 86340)])
-    h.run("beacon", "--round", N, code=13, clock=lambda: DUE + 86400)
-    assert h.data("beacon-attempt")[-1]["outcome"] == "cutoff"
+    h.run("beacon", "--round", N, clock=lambda: DUE + 86400)
+    assert h.data("beacon-attempt")[-1]["outcome"] == "accepted"
 
 
 def test_all_records_exported_and_first_sight_non_candidates(h):
@@ -1034,7 +1041,7 @@ def test_invalid_scalar_types(dr):
         dr.round_due(True)
     with pytest.raises(dr.Refused):
         dr.initial_declaration(pr(merged_by={"id": "71", "login": LOGIN}), b"x")
-    for change in ({"databaseId": "1"}, {"author": {"databaseId": "71", "login": LOGIN}}):
+    for change in ({"fullDatabaseId": None}, {"author": {"databaseId": "71", "login": LOGIN}}):
         with pytest.raises(dr.Refused):
             dr.normalize_comment(graph_comment(**change))
     with pytest.raises(dr.Refused):
@@ -1121,9 +1128,9 @@ def test_tool_protocol_for_curl(h, monkeypatch):
     original = h.dr.subprocess.run
 
     def checked(argv, **kwargs):
-        assert argv[:5] == ["curl", "--silent", "--show-error", "--max-time", "20"]
+        assert argv[:6] == ["curl", "-q", "--silent", "--show-error", "--max-time", "20"]
         assert kwargs["timeout"] == 30 and kwargs["stdin"] == subprocess.DEVNULL
-        assert set(kwargs["env"]) <= {"PATH", "HOME"} | {k for k in os.environ if k.startswith("GH_")}
+        assert set(kwargs["env"]) <= {"PATH", "HOME"}
         return original(argv, **kwargs)
 
     monkeypatch.setattr(h.dr.subprocess, "run", checked)
@@ -1254,7 +1261,7 @@ def test_stop_admission_reason_and_attempt(dr):
 
 
 @pytest.mark.parametrize("created_second", [False, True])
-def test_unknown_clearance_uses_frozen_created_body(h, created_second):
+def test_unknown_second_never_gates_with_frozen_created_body(h, created_second):
     h.seed()
     h.save("post-unknown", {"kind": "second", "github_time": DUE - 900, "known_ids": [1]})
     if not created_second:
@@ -1266,10 +1273,11 @@ def test_unknown_clearance_uses_frozen_created_body(h, created_second):
                 "deletedAt": None if created_second else stamp(DUE - 850),
                 "diff": body("second") if created_second else None}])
     h.save("read", {"github_time": DUE - 839, "comments": [c]})
-    assert h.dr.unknown_pending(h.dr.load_records(h.state)) is created_second
+    h.queue([http({"id": AUTHOR}), http({}), http(response(task_body()), status=201), *read_steps()])
+    assert h.run("post", "tasks", h.file(task_body())).startswith("posted 17 ")
 
 
-@pytest.mark.parametrize("negative", ["absent-content", "non-main"])
+@pytest.mark.parametrize("negative", ["absent-content"])
 def test_old_non_tree_negative_does_not_decide_later_comment(h, negative):
     h.init()
     h.save("read", [comment()])
@@ -1299,7 +1307,7 @@ def test_post_test_uses_response_second_and_read_age_sixty(h):
     h.save("round", {"round": N})
     t = DUE - 900
     steps = first_steps(when=t, created=t)
-    steps[3:8] = evidence_steps(when=t, merged=t)
+    steps[3:9] = evidence_steps(when=t, merged=t)
     h.queue(steps)
     assert h.run("post", "first", h.file(body()), clock=lambda: t + 60) == f"posted 17 {stamp(t)}\n"
     test = h.data("test")[0]
@@ -1334,4 +1342,374 @@ def test_t3_full_comment_id_survives_database_id_overflow(h):
     saved = h.data("read")[0]["comments"][0]
     assert saved["id"] == h.dr.rest_comment(response(body(), cid=cid))["id"] == cid
     query = next(c for c in h.calls() if "graphql" in c["args"])
-    assert "fullDatabaseId" in " ".join(query["args"]) and "databaseId" in " ".join(query["args"])
+    assert "fullDatabaseId author{" in " ".join(query["args"]) and "on User { databaseId }" in " ".join(query["args"])
+
+
+# Round 3: the run script's public interface and the reviewed rule corrections.
+def task_body(n=N):
+    return body("tasks", n=n, tail="\n".join(f"{pack}_{kind}_sha256 {'d' * 64}"
+                for pack in ("a", "b", "c") for kind in ("pack", "tasks")))
+
+
+@pytest.mark.parametrize("case,stopped", [("before", True), ("after", False),
+    ("other-round", True), ("repeated", True), ("no-round", True),
+    ("tie-stop-first", True), ("tie-tasks-first", False), ("other-author", False)])
+def test_r3_stop_task_order(h, case, stopped):
+    tasks = task_body(N + 1 if case == "other-round" else N)
+    if case == "repeated":
+        tasks += f"\nround {N}"
+    if case == "no-round":
+        tasks = tasks.replace(f"round {N}\n", "")
+    stop_time = DUE + (2 if case in ("after", "other-author", "other-round", "repeated", "no-round") else 0)
+    task_time = DUE + (0 if case.startswith("tie-") else 1)
+    stop_id, task_id = (3, 2) if case == "tie-tasks-first" else (2, 3)
+    cs = [comment(), comment(stop_id, when=stop_time, text=body("stop"),
+                           author=AUTHOR + (case == "other-author")),
+          comment(task_id, when=task_time, text=tasks)]
+    h.init()
+    h.queue(read_steps([graph_comment(c["id"], createdAt=c["created_at"], body=c["body"],
+              author={"login": LOGIN, "databaseId": c["author"]}) for c in cs], DUE + 2))
+    h.run("read", clock=lambda: DUE + 2)
+    h.save("evidence", evidence())
+    out = h.run("evaluate", code=14 if stopped else 0)
+    assert out.startswith(f"stopped {stop_id}" if stopped else "counted 1 ")
+    listing = json.loads(h.run("publish-list"))
+    if case == "after":
+        assert stop_id in [m["id"] for m in listing["markers"]]
+        h.save("beacon", beacon())
+        h.queue([http({"id": AUTHOR}), http({}, when=DUE + 2)])
+        h.run("post", "stop", h.file(body("stop")), "--reason", "build",
+              "--failure-sha256", "f" * 64, code=2, clock=lambda: DUE + 2)
+        assert "task lists already posted" in h.err
+        assert not any("POST" in c["args"] for c in h.calls())
+
+
+def test_r3_markers_author_time_and_count(h):
+    h.seed([comment(), comment(2, when=MERGE - 1, text="Follow-up draw: before"),
+            comment(3, when=MERGE, text="Follow-up draw: merge second"),
+            comment(4, when=MERGE + 1, text="Follow-up draw: after"),
+            comment(5, text="Follow-up draw: " + SENTINEL, author=AUTHOR + 1)])
+    data = json.loads(h.run("publish-list"))
+    assert [(m["id"], m["after_merge"]) for m in data["markers"]] == [(2, False), (3, False), (4, True)]
+    assert data["other_comments"] == 1
+
+
+def test_r3_reading_refusal_names_counted_commit(h):
+    h.seed([comment(text=body(commit=OTHER))])
+    h.save("evidence", evidence(commit=OTHER))
+    (h.root / "different-module").write_text("synthetic")
+    h.run("evaluate", code=2)
+    assert h.err == f"refused: reading module differs at {OTHER}\n"
+
+
+def test_r3_reading_unavailable_names_commit(h, monkeypatch):
+    monkeypatch.setattr(h.dr, "gh", lambda *args: {"status": 404, "body": b""})
+    with pytest.raises(h.dr.Refused, match=f"reading module unavailable at {OTHER}"):
+        h.dr.verify_reading(OTHER)
+
+
+def s1_beacon_rule(path):
+    # Verbatim rule from the reviewed S1 reader; the real integration follows merge.
+    data = json.loads(Path(path).read_bytes().decode("utf-8"))
+    if not isinstance(data, dict) or set(data) != {"round", "randomness", "signature"}: raise ValueError  # noqa: E701
+    if type(data["round"]) is not int or data["round"] <= 0: raise ValueError  # noqa: E701
+    if not isinstance(data["randomness"], str) or not re.fullmatch(r"[0-9a-f]{64}", data["randomness"]): raise ValueError  # noqa: E701
+    if not isinstance(data["signature"], str) or not re.fullmatch(r"[0-9a-f]+", data["signature"]): raise ValueError  # noqa: E701
+    if hashlib.sha256(bytes.fromhex(data["signature"])).hexdigest() != data["randomness"]: raise ValueError  # noqa: E701
+    return data
+
+
+def test_r3_beacon_out_accept_saved_existing_and_s1(h):
+    h.seed()
+    target = h.root / "accepted.json"
+    h.queue([http({}, when=DUE), relay(beacon()), relay(beacon()), http({}, when=DUE)])
+    assert h.run("beacon", "--round", N, "--out", target, clock=lambda: DUE) == f"accepted round {N}\n"
+    assert target.read_bytes() == h.dr.canonical(beacon())
+    assert s1_beacon_rule(target)["round"] == N
+    before = target.stat()
+    calls = len(h.calls())
+    snapshot = h.snapshot()
+    h.run("beacon", "--round", N, "--out", target, clock=lambda: DUE + 86400)
+    assert target.stat().st_ino == before.st_ino and target.stat().st_mtime_ns == before.st_mtime_ns
+    assert h.snapshot() == snapshot and len(h.calls()) == calls
+    other = h.root / "saved.json"
+    h.run("beacon", "--round", N, "--out", other)
+    assert other.read_bytes() == target.read_bytes() and len(h.calls()) == calls
+    recovered = h.root / "recovered.json"
+    partial = recovered.with_name(recovered.name + ".0.partial")
+    partial.write_bytes(b"abandoned")
+    h.run("beacon", "--round", N, "--out", recovered)
+    assert partial.read_bytes() == b"abandoned"
+    assert recovered.read_bytes() == target.read_bytes()
+    other.write_bytes(b"different")
+    h.run("beacon", "--round", N, "--out", other, code=2)
+    assert other.read_bytes() == b"different"
+    assert "beacon output differs" in h.err
+
+
+@pytest.mark.parametrize("offset,code", [(0, 10), (86400, 13)])
+def test_r3_beacon_no_output_on_negative(h, offset, code):
+    h.seed()
+    target = h.root / "negative.json"
+    h.queue([http({}, when=DUE + offset), relay(b"{}"), relay(b"{}"), http({}, when=DUE + offset)])
+    h.run("beacon", "--round", N, "--out", target, code=code, clock=lambda: DUE + offset)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("rehearsal", [False, True])
+def test_r3_beacon_out_required(h, rehearsal):
+    h.seed()
+    h.save("beacon", beacon())
+    args = ["beacon", "--state", str(h.state), "--round", str(N)]
+    assert h.dr.main(args + (["--rehearsal"] if rehearsal else [])) == 2
+    assert "beacon round requires out" in h.capsys.readouterr().err and not h.calls()
+
+
+def test_r3_beacon_output_no_replace_race(h, monkeypatch):
+    h.seed()
+    h.save("beacon", beacon())
+    target = h.root / "raced.json"
+    link = h.dr.os.link
+
+    def race(source, destination):
+        if destination == target:
+            target.write_bytes(b"winner")
+        return link(source, destination)
+
+    monkeypatch.setattr(h.dr.os, "link", race)
+    h.run("beacon", "--round", N, "--out", target, code=2)
+    assert target.read_bytes() == b"winner"
+
+
+@pytest.mark.parametrize("kind", ["tasks", "stop"])
+def test_r3_lost_second_landed_does_not_gate(h, kind):
+    h.seed()
+    h.queue([http({"id": AUTHOR}), http({}, when=DUE), http({}, status=500)])
+    h.run("post", "second", h.file(body("second")), code=2, clock=lambda: DUE)
+    assert len(h.data("post-unknown")) == 1
+    h.save("read", [comment(17, when=DUE, text=body("second"))])
+    h.save("beacon", beacon())
+    text = task_body() if kind == "tasks" else body("stop")
+    h.queue([http({"id": AUTHOR}), http({}, when=DUE), http(response(text, cid=18, when=DUE), status=201),
+             *read_steps(when=DUE)])
+    args = ["--reason", "build", "--failure-sha256", "f" * 64] if kind == "stop" else []
+    assert h.run("post", kind, h.file(text), *args, clock=lambda: DUE).startswith("posted 18 ")
+    out = h.root / "unknown-export"
+    h.run("publish-records", out)
+    assert h.dr.newest(h.dr.load_records(out), "post-unknown")["kind"] == "second"
+
+
+def test_r3_kill_after_landed_second_does_not_gate(h, monkeypatch):
+    h.seed()
+    original = h.dr.append_record
+
+    def crash(state, kind, data, **kwargs):
+        if kind == "post":
+            raise KeyboardInterrupt
+        return original(state, kind, data, **kwargs)
+
+    h.queue([http({"id": AUTHOR}), http({}), http(response(body("second")), status=201)])
+    with monkeypatch.context() as m:
+        m.setattr(h.dr, "append_record", crash)
+        with pytest.raises(KeyboardInterrupt):
+            h.run("post", "second", h.file(body("second")))
+    assert not h.data("post") and not h.data("post-unknown")
+    h.save("read", [comment(17, when=DUE - 800, text=body("second"))])
+    h.queue([http({"id": AUTHOR}), http({}), http(response(task_body(), cid=18), status=201), *read_steps()])
+    assert h.run("post", "tasks", h.file(task_body())).startswith("posted 18 ")
+
+
+@pytest.mark.parametrize("landed", [False, True])
+def test_r3_lost_first_time_only_and_preread(h, landed):
+    h.init()
+    h.save("round", {"round": N})
+    h.queue(first_steps(outcome=http({}, status=500)))
+    h.run("post", "first", h.file(body()), code=2)
+    unknown = h.data("post-unknown")[-1]
+    assert unknown["github_time"] == DUE - 900
+    h.queue(first_steps(when=DUE - 781))
+    h.run("post", "first", h.file(body()), code=2, clock=lambda: DUE - 781)
+    assert h.err == "refused: post outcome unknown\n"
+    nodes = [graph_comment(17, createdAt=stamp(DUE - 899))] if landed else []
+    h.queue(first_steps(nodes, when=DUE - 780, created=DUE - 779))
+    out = h.run("post", "first", h.file(body()), code=2 if landed else 0, clock=lambda: DUE - 780)
+    if landed:
+        assert "counted draw already exists" in h.err
+    else:
+        assert out.startswith("posted 17 ")
+
+
+@pytest.mark.parametrize("side", ["before", "after", "predates"])
+def test_r3_default_branch_undecided_saved_then_restored(h, side):
+    h.init()
+    h.save("read", [comment()])
+    evtime = DUE - 1000 if side == "predates" else DUE - 900
+    steps = evidence_steps(when=evtime, pulls=[] if side == "predates" else None)
+    if side == "before":
+        steps[1] = http({"default_branch": "other"}, when=evtime)
+    if side == "after":
+        # The after-pulls repository read is new in this round.
+        steps[4] = http({"default_branch": "other"}, when=evtime, contains="repos/")
+    h.queue(steps)
+    assert h.run("evaluate", code=2, clock=lambda: evtime) == ""
+    assert h.err == "refused: post 1 undecided\n"
+    ev = h.data("evidence")[-1]
+    if side != "predates":
+        assert ev["default_branch" if side == "before" else "default_branch_after"] == "other"
+    assert not h.data("test")
+    h.queue([http({"id": AUTHOR}), *read_steps(when=evtime), *steps])
+    h.run("post", "first", h.file(body()), code=2, clock=lambda: evtime)
+    assert h.err == "refused: post 1 undecided\n"
+    h.queue(evidence_steps())
+    assert h.run("evaluate").startswith("counted 1 ")
+    frozen = h.snapshot()
+    assert h.run("evaluate").startswith("counted 1 ")
+    assert h.snapshot() == frozen
+
+
+def test_r3_failed_fetch_keeps_refusal(h):
+    h.init()
+    h.save("read", [comment()])
+    h.queue([*evidence_steps()[:2], http({}, status=502)])
+    h.run("evaluate", code=2)
+    assert h.err == "refused: commitment evidence unavailable\n"
+    assert not h.data("evidence") and not h.data("test")
+
+
+@pytest.mark.parametrize("branch", ["default_branch", "default_branch_after"])
+def test_r3_default_setting_never_decides_tree_failure(dr, branch):
+    ev = evidence(**{branch: "other"}, content={"status": 200, "sha256": "x", "length": 0})
+    assert dr.commitment_test(comment(), ev, declaration()) is None
+
+
+@pytest.mark.parametrize("offset,accepted", [(86340, True), (86400, False)])
+def test_r3_cutoff_and_stop_github_clock(h, offset, accepted):
+    h.seed()
+    t = DUE + offset
+    h.queue([http({}, when=t), relay(beacon()), relay(beacon()), http({}, when=t)])
+    h.run("beacon", "--round", N, "--out", h.root / "clock-beacon.json", code=0 if accepted else 13,
+          clock=lambda: t + 60)
+    attempt = h.data("beacon-attempt")[-1]
+    assert attempt["github_after"] == t and attempt["machine_after"] == t + 60
+    assert attempt["outcome"] == ("accepted" if accepted else "cutoff")
+    # A forged cutoff attempt still cannot make an early beacon-stop pass admission.
+    if accepted:
+        rs = records([comment()]) + [rec("beacon-attempt", {"round": N, "outcome": "cutoff"}, 4)]
+        state = h.root / "stop-state"
+        for r in rs:
+            h.dr.append_record(state, r["kind"], r["data"])
+        h.state = state
+    h.queue([http({"id": AUTHOR}), http({}, when=t), http(response(body("stop"), when=t), status=201),
+             *read_steps(when=t)])
+    h.run("post", "stop", h.file(body("stop")), "--reason", "beacon", code=2 if accepted else 0,
+          clock=lambda: t + 60)
+    if accepted:
+        assert "beacon stop conditions not met" in h.err
+        assert not any("POST" in c["args"] for c in h.calls())
+
+
+def test_r3_stop_due_uses_github_clock(h):
+    h.seed()
+    h.save("beacon", beacon())
+    h.queue([http({"id": AUTHOR}), http({}, when=DUE - 1)])
+    h.run("post", "stop", h.file(body("stop")), "--reason", "build", "--failure-sha256", "f" * 64,
+          code=2, clock=lambda: DUE + 59)
+    assert "stop before round due" in h.err
+
+
+def test_r3_full_id_only_query_and_no_fallback(h):
+    h.init()
+    node = graph_comment(fullDatabaseId="5000000000")
+    node.pop("databaseId", None)
+    h.queue(read_steps([node]))
+    h.run("read")
+    assert h.data("read")[0]["comments"][0]["id"] == 5000000000
+    query = next(c for c in h.calls() if "graphql" in c["args"])["args"]
+    query = next(a for a in query if a.startswith("query="))
+    assert "fullDatabaseId author{" in query
+    with pytest.raises(h.dr.Refused):
+        h.dr.normalize_comment(graph_comment(fullDatabaseId=None, databaseId=1))
+
+
+def test_r3_public_list_stops_count_after_untested(h):
+    h.seed([comment(text=body(commit=OTHER)), comment(2, when=DUE - 899)])
+    h.queue([*evidence_steps()[:2], http({}, status=502)])
+    data = json.loads(h.run("publish-list"))
+    assert data["first_posts"][0]["reason"].startswith("untested:")
+    assert data["first_posts"][1]["reason"] == "undecided: an earlier post is untested"
+    assert not any(r["counted"] for r in data["first_posts"])
+
+
+def test_r3_beacon_saved_before_attempt_crash(h, monkeypatch):
+    h.seed()
+    original = h.dr.append_record
+
+    def crash(state, kind, data, **kwargs):
+        if kind == "beacon-attempt":
+            raise KeyboardInterrupt
+        return original(state, kind, data, **kwargs)
+
+    h.queue([http({}, when=DUE), relay(beacon()), relay(beacon()), http({}, when=DUE)])
+    with monkeypatch.context() as m:
+        m.setattr(h.dr, "append_record", crash)
+        with pytest.raises(KeyboardInterrupt):
+            h.run("beacon", "--round", N, "--out", h.root / "crash.json", clock=lambda: DUE)
+    assert h.data("beacon") == [beacon()] and not h.data("beacon-attempt")
+    h.run("beacon", "--round", N, "--out", h.root / "crash.json", clock=lambda: DUE + 86400)
+    assert (h.root / "crash.json").read_bytes() == h.dr.canonical(beacon())
+
+
+def test_r3_first_readback_evaluates_window_comment(h):
+    h.init()
+    h.save("round", {"round": N})
+    steps = first_steps()
+    steps[-1] = http(graph([graph_comment(16, createdAt=stamp(DUE - 900), body=body(commit=OTHER)),
+                             graph_comment(17, createdAt=stamp(DUE - 899))]))
+    h.queue([*steps, *evidence_steps()])
+    h.run("post", "first", h.file(body()))
+    assert {t["id"] for t in h.data("test")} == {16, 17}
+    assert h.data("test")[-1]["id"] == 16
+
+
+@pytest.mark.parametrize("when,author,blocked", [(MERGE, AUTHOR, False), (MERGE - 1, AUTHOR, False),
+                                                   (MERGE + 1, AUTHOR, True), (MERGE + 1, AUTHOR + 1, False)])
+def test_r3_blocked_candidates_only(h, when, author, blocked):
+    h.init()
+    h.save("round", {"round": N})
+    node = graph_comment(9, createdAt=stamp(when), author={"login": LOGIN, "databaseId": author},
+                         lastEditedAt=stamp(DUE - 800))
+    h.queue(first_steps([node]))
+    out = h.run("post", "first", h.file(body()), code=13 if blocked else 0)
+    assert out.startswith("blocked 9" if blocked else "posted 17 ")
+
+
+@pytest.mark.parametrize("number,other", [(5, 5.0), (1, True)])
+def test_r3_relay_canonical_agreement(dr, number, other):
+    a = beacon(number)
+    b = {**a, "round": other}
+    assert dr.accept_beacon(number, dr.canonical(a), dr.canonical(b))[1] is None
+    assert dr.accept_beacon(number, b' { "round":' + str(number).encode() + b', "signature":"' +
+               a["signature"].encode() + b'", "randomness":"' + a["randomness"].encode() + b'"}', dr.canonical(a))[1] == a
+
+
+def test_r3_tool_environment_and_curl_q(h, monkeypatch):
+    h.init()
+    monkeypatch.setenv("GH_HOST", "synthetic.invalid")
+    monkeypatch.setenv("GH_TOKEN", "synthetic-token")
+    h.queue([http({}), relay(beacon())])
+    h.run("now")
+    h.dr.curl("synthetic")
+    calls = h.calls()
+    assert all(not any(k.startswith("GH_") for k in c["env"]) for c in calls)
+    assert calls[-1]["args"][0] == "-q"
+
+
+def test_r3_recheck_undecided_not_unchanged(h):
+    h.seed()
+    h.run("evaluate")
+    before = h.data("test")
+    steps = evidence_steps()
+    steps[1] = http({"default_branch": "other"})
+    h.queue(steps)
+    assert h.run("evaluate", "--recheck") == "undecided 1\n"
+    assert h.data("recheck")[-1]["result"] is None and h.data("test") == before
