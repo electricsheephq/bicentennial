@@ -136,8 +136,14 @@ def _commit_blobs(root):
 def _beacon_draw(beacon, root):
     data = _read_beacon(beacon)
     top = _git(root, "rev-parse", "--show-toplevel")
-    if top.returncode != 0 or top.stdout != os.fsencode(Path(root).resolve()) + b"\n":
+    line, sep, rest = top.stdout.partition(b"\n")
+    if top.returncode != 0 or sep != b"\n" or rest:
         raise Refused("root is not the repository top level")
+    try:
+        if not os.path.samefile(line, root):
+            raise Refused("root is not the repository top level")
+    except OSError:
+        raise Refused("root is not the repository top level") from None
     clean = _git(root, "diff", "--no-ext-diff", "--quiet", "HEAD", "--")
     if clean.returncode != 0:  # guards only that this tool's own code is the commit's
         raise Refused("checkout differs from HEAD")

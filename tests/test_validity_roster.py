@@ -6,6 +6,7 @@ PYTEST_DONT_REWRITE: keep seed values out of assertion failure messages.
 import hashlib
 import importlib.util
 import json
+import os
 import secrets
 import subprocess
 import tomllib
@@ -1347,7 +1348,8 @@ def test_beacon_refuses_malformed_tree_listing(tmp_path, monkeypatch, capsys, be
     root, beacon = beacon_tree
     clean = _clean_draw(tmp_path, root, beacon)
     original = roster._git
-    oid = _fixture_git(root, "rev-parse", "HEAD").strip()
+    entries = original(root, "ls-tree", "-r", "-z", "--full-tree", "HEAD").stdout
+    oid = entries.split(b"\t", 1)[0].split(b" ")[2]
     listings = {
         "type": b"040000 tree " + oid + b"\tsynthetic\0",
         "malformed": b"100644 blob " + oid + b" synthetic\0",
@@ -1356,12 +1358,17 @@ def test_beacon_refuses_malformed_tree_listing(tmp_path, monkeypatch, capsys, be
         "empty-path": b"100644 blob " + oid + b"\t\0",
         "no-nul": b"100644 blob " + oid + b"\tsynthetic",
         "empty-entry": b"\0",
-        "object": b"100644 blob a\tsynthetic\0",
+        "object": b"100644 blob " + oid[:-1] + b"\tsynthetic\0",
     }
 
     def listing(root, *args, **kwargs):
         if args == ("ls-tree", "-r", "-z", "--full-tree", "HEAD"):
             return subprocess.CompletedProcess(args, 0, stdout=listings[case])
+        if case == "object" and args == ("cat-file", "--batch"):
+            # Echo the requested short id, so only the listing's id-length check can refuse.
+            assert kwargs["stdin"] == oid[:-1] + b"\n"
+            reply = original(root, *args, stdin=oid + b"\n").stdout
+            return subprocess.CompletedProcess(args, 0, stdout=oid[:-1] + reply[len(oid):])
         return original(root, *args, **kwargs)
 
     monkeypatch.setattr(roster, "_git", listing)
@@ -1399,6 +1406,7 @@ def test_beacon_accepts_exact_blob_replies_and_omits_commits(tmp_path, monkeypat
         return result
 
     monkeypatch.setattr(roster, "_git", exact)
+    assert roster._commit_blobs(root) == [b"x\0\nx\n", b"x\0\nx\n", b"", b"synthetic committed text\n"]
     out = tmp_path / "draw.json"
     assert roster.main(_beacon_args("draw", out, beacon)) == 0
     assert out.read_bytes() == clean
@@ -1469,4 +1477,61 @@ def test_beacon_refuses_invalid_top_level_reply(tmp_path, monkeypatch, capsys, b
     assert out.read_bytes() == clean if command == "verify" else not out.exists()
     captured = capsys.readouterr()
     assert captured.out == "" and captured.err == "refused: root is not the repository top level\n"
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+@pytest.mark.parametrize("case", ["symlink", "other", "missing", "two-lines", "no-lf"])
+def test_beacon_top_level_directory_identity(tmp_path, monkeypatch, capsys, beacon_tree, command, case):
+    root, beacon = beacon_tree
+    clean = _clean_draw(tmp_path, root, beacon)
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    other = tmp_path / "other"
+    other.mkdir()
+    replies = {
+        "symlink": os.fsencode(alias) + b"\n",
+        "other": os.fsencode(other) + b"\n",
+        "missing": os.fsencode(tmp_path / "missing") + b"\n",
+        "two-lines": os.fsencode(root) + b"\nextra\n",
+        "no-lf": os.fsencode(root),
+    }
+    original = roster._git
+
+    def top(root, *args, **kwargs):
+        if args == ("rev-parse", "--show-toplevel"):
+            return subprocess.CompletedProcess(args, 0, stdout=replies[case])
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(roster, "_git", top)
+    out = tmp_path / "draw.json"
+    if command == "verify":
+        out.write_bytes(clean)
+    capsys.readouterr()
+    assert roster.main(_beacon_args(command, out, beacon)) == (0 if case == "symlink" else 2)
+    assert out.read_bytes() == clean if command == "verify" or case == "symlink" else not out.exists()
+    captured = capsys.readouterr()
+    if case == "symlink":
+        digest = hashlib.sha256(clean).hexdigest()
+        assert captured.out == (f"sha256 {digest}\ndesign 30 spares 48\nround {BEACON['round']}\n"
+                                if command == "draw" else f"verified sha256 {digest}\n")
+        assert not captured.err
+    else:
+        assert captured.out == "" and captured.err == "refused: root is not the repository top level\n"
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+def test_beacon_accepts_case_swapped_root(tmp_path, monkeypatch, capsys, beacon_tree):
+    root, beacon = beacon_tree
+    swapped = root.with_name(root.name.swapcase())
+    if not swapped.exists() or not os.path.samefile(swapped, root):
+        pytest.skip("fixture volume is case-sensitive")
+    clean = _clean_draw(tmp_path, root, beacon)
+    monkeypatch.setattr(roster, "ROOT", swapped)
+    out = tmp_path / "draw.json"
+    capsys.readouterr()
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    assert out.read_bytes() == clean
+    captured = capsys.readouterr()
+    assert not captured.err
     _no_seed_printed(captured.out + captured.err, _raw_candidates())
