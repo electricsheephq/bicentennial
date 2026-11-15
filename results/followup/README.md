@@ -6,5 +6,6 @@ Validity round 2 found four ranking candidates on one control-only pack: `drift-
 |---|---|
 | [`DECLARATION.md`](DECLARATION.md) | The follow-up's declaration: the lives and how their seeds are drawn, what runs, the checks made before any score is read, how the run is read, what the result triggers, the predictions, what was already seen, and what it does not prove. It merges before the seed draw. |
 | [`reviews/2026-11-14-declaration-review.md`](reviews/2026-11-14-declaration-review.md) | The declaration's reviews, by a model family other than the author's and by a fresh Claude reviewer, with how each finding was used. |
+| [`reviews/2026-11-15-draw-amendment-review.md`](reviews/2026-11-15-draw-amendment-review.md) | The review of the amendment that replaced the seed draw with a public beacon round, by a model family other than the author's and by three Claude lenses, with how each finding was used and why the mechanism changed. |
 
 The seed tool's three-pack mode, the task-list and reading scripts, the card cutter, the run script and the results land here as each step is done.
