@@ -492,3 +492,452 @@ def test_round2_uses_the_real_edition3(tmp_path, monkeypatch, capsys):
     refs = {f"{x.template_id}-v{x.version}" for x in EDITIONS[3]["G1"]}
     assert {"drift-chain-fault-v3", "drift-config-v3", "drift-quote-v3", "wake-loop-v1"} <= refs
     _no_seed_printed(capsys.readouterr().out, [*design, *spares])
+
+
+# Fresh-seed follow-up: all fixtures below are invented, not taken from a pack.
+def _three_draw(tmp_path):
+    design = list(range(2 ** 62 + 100, 2 ** 62 + 130))
+    spares = list(range(2 ** 61 + 100, 2 ** 61 + 148))
+    path = tmp_path / "DRAW.json"
+    path.write_bytes(canon(dict(design=design, spares=spares, drawn_at="2026-11-15T00:00:00Z")) + b"\n")
+    return path, design, spares
+
+
+def _three_args(draw, tmp_path):
+    return ["place", "--packs", "3", "--draw", str(draw), "--work", str(tmp_path / "work"),
+            "--out-dir", str(tmp_path / "out")]
+
+
+def _expected_pack(design, index):
+    chunk = design[index * 10:(index + 1) * 10]
+    seeds = {f"t2-g{genre}-{i}": chunk[2 * (i - 1) + genre - 1]
+             for genre in (1, 2) for i in range(1, 6)}
+    return [dict(row, seed=seeds[row["life"]]) for row in PUBLIC]
+
+
+@pytest.mark.parametrize("case", ["ok", "duplicate", "collision"])
+def test_three_real_draw(tmp_path, monkeypatch, capsys, draw_tree, case):
+    import re
+
+    seeds = list(range(2 ** 62 + 100, 2 ** 62 + 178))
+    if case == "duplicate":
+        seeds[-1] = seeds[0]
+    elif case == "collision":
+        (draw_tree / "seeds.txt").write_text(str(seeds[-1]))
+    drawn = iter(seeds)
+    bits_seen = []
+
+    def randbits(bits):
+        bits_seen.append(bits)
+        return next(drawn)
+
+    monkeypatch.setattr(secrets, "randbits", randbits)
+    out = tmp_path / "DRAW.json"
+    assert roster.main(["draw", "--packs", "3", "--out", str(out)]) == (0 if case == "ok" else 2)
+    assert bits_seen == [63] * 78
+    captured = capsys.readouterr()
+    if case == "ok":
+        raw = out.read_bytes()
+        data = json.loads(raw)
+        assert raw == canon(data) + b"\n"
+        assert set(data) == {"design", "spares", "drawn_at"}
+        assert data["design"] == seeds[:30] and data["spares"] == seeds[30:]
+        assert len(set(seeds)) == 78 and all(0 <= n < 2 ** 63 for n in seeds)
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", data["drawn_at"])
+        assert captured.out.splitlines() == [f"sha256 {hashlib.sha256(raw).hexdigest()}", "design 30 spares 48"]
+        assert not captured.err
+        assert roster.main(["draw", "--packs", "3", "--out", str(out)]) == 2
+        assert out.read_bytes() == raw
+    else:
+        assert not out.exists() and captured.out == ""
+        assert captured.err.startswith("refused: ")
+    more = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err + more.out + more.err, seeds)
+
+
+def test_three_rehearsal_draw(tmp_path, monkeypatch, capsys, draw_tree):
+    seeds = list(range(2001, 2079))
+    (draw_tree / "seeds.txt").write_text(" ".join(map(str, seeds)))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("rehearsal must not scan or draw random integers")
+
+    monkeypatch.setattr(roster, "collisions", forbidden)
+    monkeypatch.setattr(secrets, "randbits", forbidden)
+    expected = canon(dict(design=seeds[:30], spares=seeds[30:], drawn_at="rehearsal: public integers")) + b"\n"
+    for name in ("one.json", "two.json"):
+        out = tmp_path / name
+        assert roster.main(["draw", "--packs", "3", "--rehearsal", "--out", str(out)]) == 0
+        assert out.read_bytes() == expected
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [f"sha256 {hashlib.sha256(expected).hexdigest()}",
+                                         "design 30 spares 48", "rehearsal draw: public integers"] * 2
+    assert captured.err == ""
+    assert roster.main(["draw", "--rehearsal", "--out", str(tmp_path / "no.json")]) == 2
+    assert not (tmp_path / "no.json").exists()
+    refused = capsys.readouterr()
+    assert refused.out == "" and refused.err.startswith("refused: ")
+    _no_seed_printed(captured.out + captured.err + refused.out + refused.err, seeds)
+
+
+def test_three_mapping_and_walk(tmp_path, monkeypatch, capsys):
+    from bicentennial.runner.units import T2_SPEC
+
+    draw, design, spares = _three_draw(tmp_path)
+    tried = _stub(monkeypatch, lambda seed: False)
+    roots = []
+    dry_run = t.t2_dry_run
+
+    def record(*args, **kwargs):
+        roots.append(Path(kwargs["root"]))
+        return dry_run(*args, **kwargs)
+
+    monkeypatch.setattr(t, "t2_dry_run", record)
+    out = tmp_path / "out"
+    assert roster.place_packs(draw, tmp_path / "work", out, templates=TEMPLATES) == 0
+    assert roots == [tmp_path / "work" / label for label in "ABC"]
+    expected_tried = []
+    draw_sha = hashlib.sha256(draw.read_bytes()).hexdigest()
+    lines = [f"draw_sha256 {draw_sha}"]
+    assert {p.name for p in out.iterdir()} == {f"{stem}-{label}.{ext}" for label in "ABC"
+                                             for stem, ext in (("pack", "toml"), ("placement", "json"))}
+    for index, label in enumerate("ABC"):
+        rows = _expected_pack(design, index)
+        expected_tried.extend(row["seed"] for row in rows)
+        spec, table = out / f"pack-{label}.toml", out / f"placement-{label}.json"
+        expected = t._tier_source("T2", lives=rows, replacements=[])
+        assert t.load_tier(spec) == tomllib.loads(spec.read_text()) == expected
+        assert sorted(row["genre"] for row in rows) == sorted(T2_SPEC.composition)
+        assert spec.read_text().splitlines()[0] == (
+            f"# Fresh-seed follow-up pack {label} (positions {index * 10 + 1}-{index * 10 + 10}), "
+            f"placed from draw sha256 {draw_sha}.")
+        data = json.loads(table.read_bytes())
+        assert table.read_bytes() == canon(data) + b"\n"
+        assert [r["seed"] for r in data] == [r["seed"] for r in rows]
+        assert all(r["result"] == "pass" for r in data)
+        lines.append(f"pack {label} spec_sha256 {hashlib.sha256(spec.read_bytes()).hexdigest()} "
+                     f"table_sha256 {hashlib.sha256(table.read_bytes()).hexdigest()} "
+                     "lives 10 replacements 0 table_rows 10")
+    assert tried == expected_tried
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [*lines, "spares_used 0 of 48"] and captured.err == ""
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("case", ["shared", "per-pack"])
+def test_three_shared_spares_and_pack_limit(tmp_path, monkeypatch, capsys, case):
+    draw, design, spares = _three_draw(tmp_path)
+    failures = {design[2], spares[0], design[11]} if case == "shared" else {design[0], design[10], design[20]}
+    tried = _stub(monkeypatch, lambda seed: seed in failures)
+    out = tmp_path / "out"
+    assert roster.place_packs(draw, tmp_path / "work", out, templates=TEMPLATES) == 0
+    specs = [t.load_tier(out / f"pack-{label}.toml") for label in "ABC"]
+    used = [r["replacement_seed"] for spec in specs for r in spec["replacements"]]
+    assert used == spares[:3]
+    assert all(tried.count(seed) == 1 for seed in spares[:3])
+    if case == "shared":
+        assert specs[0]["lives"][1]["seed"] == spares[1]
+        assert specs[1]["lives"][5]["seed"] == spares[2]
+        assert [len(s["replacements"]) for s in specs] == [2, 1, 0]
+    else:
+        assert [len(s["replacements"]) for s in specs] == [1, 1, 1]
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == "spares_used 3 of 48" and not captured.err
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("rule", ["design_failures", "replacements", "pool"])
+def test_three_void_rules(tmp_path, monkeypatch, capsys, rule):
+    draw, design, spares = _three_draw(tmp_path)
+    if rule == "design_failures":
+        failures = {design[0], design[10], design[12]}
+    else:
+        failures = {design[10], *spares[:8]}
+    tried = _stub(monkeypatch, lambda seed: seed in failures)
+    if rule == "pool":
+        place_three = roster._place_three
+
+        def short_pool(rows, design, pool, work, templates):
+            return place_three(rows, design, pool[:1], work, templates)
+
+        monkeypatch.setattr(roster, "_place_three", short_pool)
+    out = tmp_path / "out"
+    assert roster.place_packs(draw, tmp_path / "work", out, templates=TEMPLATES) == 1
+    assert [p.name for p in out.iterdir()] == ["void.json"] and not list(out.rglob("*.toml"))
+    raw = (out / "void.json").read_bytes()
+    receipt = json.loads(raw)
+    assert raw == canon(receipt) + b"\n"
+    draw_sha = hashlib.sha256(draw.read_bytes()).hexdigest()
+    assert set(receipt) == {"void", "rule", "pack", "draw_sha256", "packs"}
+    assert {key: receipt[key] for key in ("void", "rule", "pack", "draw_sha256")} == dict(
+        void=True, rule=rule, pack="B", draw_sha256=draw_sha)
+    assert list(receipt["packs"]) == ["A", "B"]
+    a, b = (receipt["packs"][label] for label in "AB")
+    assert all(set(pack) == {"table", "replacements"} for pack in (a, b))
+    assert len(a["table"]) == (11 if rule == "design_failures" else 10)
+    assert len(b["table"]) == {"design_failures": 3, "replacements": 9, "pool": 2}[rule]
+    assert [r["seed"] for p in (a, b) for r in p["table"]] == tried
+    assert [r["replacement_seed"] for p in (a, b) for r in p["replacements"]] == (
+        spares[:2] if rule == "design_failures" else spares[:8] if rule == "replacements" else spares[:1])
+    lines = [f"void {rule} pack B", f"draw_sha256 {draw_sha}",
+             f"receipt_sha256 {hashlib.sha256(raw).hexdigest()}"]
+    lines.extend(f"pack {label} table_rows {len(p['table'])} replacements {len(p['replacements'])}"
+                 for label, p in receipt["packs"].items())
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == lines and not captured.err
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("edit", ["legacy", "short", "duplicate", "negative", "extra-key", "design-null",
+                                  "spares-string", "spares-int", "nested-list", "not-json", "bool", "large",
+                                  "whole-file", "design-deep", "parser-recursion", "utf16"])
+def test_three_malformed_draw(tmp_path, monkeypatch, capsys, edit):
+    draw, design, spares = _three_draw(tmp_path)
+    data = json.loads(draw.read_bytes())
+    if edit == "legacy":
+        data["design"], data["spares"] = design[:10], spares[:16]
+    elif edit == "short":
+        data["spares"] = spares[:-1]
+    elif edit == "duplicate":
+        data["spares"][0] = design[0]
+    elif edit == "negative":
+        data["design"][0] = -1
+    elif edit == "extra-key":
+        data["note"] = "x"
+    elif edit == "design-null":
+        data["design"] = None
+    elif edit == "spares-string":
+        data["spares"] = "x"
+    elif edit == "spares-int":
+        data["spares"] = 5
+    elif edit == "nested-list":
+        data["design"][0] = [design[0]]
+    elif edit == "bool":
+        data["design"][0] = True
+    elif edit == "large":
+        data["design"][0] = 2 ** 63
+    raw = canon(data)
+    if edit == "utf16":
+        raw = raw.decode("utf-8").encode("utf-16")
+    elif edit == "not-json":
+        raw = b"\xff{"
+    elif edit in ("whole-file", "design-deep"):
+        deep = b"[" * 100_000 + b"]" * 100_000
+        raw = deep if edit == "whole-file" else b'{"design":' + deep + b',"spares":[],"drawn_at":"x"}'
+    elif edit == "parser-recursion":
+        def too_deep(*args, **kwargs):
+            raise RecursionError("nested input")
+        monkeypatch.setattr(json, "loads", too_deep)
+    draw.write_bytes(raw)
+    tried = _stub(monkeypatch, lambda seed: False)
+    assert roster.main(_three_args(draw, tmp_path)) == 2
+    assert not (tmp_path / "out").exists() and not (tmp_path / "work").exists() and tried == []
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: malformed draw\n"
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("round_", [1, 2])
+def test_three_draw_refused_by_legacy_modes(tmp_path, monkeypatch, capsys, round_):
+    assert roster.main(["draw", "--packs", "3", "--rehearsal", "--out", str(tmp_path / "public.json")]) == 0
+    rehearsal_output = capsys.readouterr()
+    draw, design, spares = _three_draw(tmp_path)
+    tried = _stub(monkeypatch, lambda seed: False)
+    assert roster.main(["place", "--round", str(round_), "--draw", str(draw), "--work", str(tmp_path / "work"),
+                        "--spec-out", str(tmp_path / "spec.toml"), "--table-out", str(tmp_path / "table.json")]) == 2
+    assert tried == [] and not (tmp_path / "work").exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: malformed draw\n"
+    _no_seed_printed(rehearsal_output.out + rehearsal_output.err + captured.out + captured.err,
+                     [*design, *spares, *range(2001, 2079)])
+
+
+@pytest.mark.parametrize("edit", ["short", "genre", "name", "duplicate"])
+def test_three_public_roster_refused(tmp_path, monkeypatch, capsys, edit):
+    draw, design, spares = _three_draw(tmp_path)
+    rows = [dict(row) for row in PUBLIC]
+    if edit == "short":
+        rows.pop()
+    elif edit == "genre":
+        rows[-1]["genre"] = "G1"
+    elif edit == "name":
+        rows[-1]["life"] = "synthetic-life"
+    else:
+        rows[-1] = dict(rows[-2])
+    root = tmp_path / "repo"
+    source = root / "tiers/life_specs/t2.toml"
+    source.parent.mkdir(parents=True)
+    source.write_text(roster.toml_text(t._tier_source("T2", lives=rows), "synthetic public roster"))
+    tried = _stub(monkeypatch, lambda seed: False)
+    with pytest.raises(roster.Refused):
+        roster.place_packs(draw, tmp_path / "work", tmp_path / "out", templates=TEMPLATES, root=root)
+    assert tried == [] and not (tmp_path / "out").exists() and not (tmp_path / "work").exists()
+    captured = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("case", ["existing", "missing-parent", "write", "load", "load-mismatch", "toml"])
+def test_three_all_or_nothing(tmp_path, monkeypatch, capsys, case):
+    draw, design, spares = _three_draw(tmp_path)
+    tried = _stub(monkeypatch, lambda seed: False)
+    out = tmp_path / "out"
+    if case == "existing":
+        out.mkdir()
+        (out / "keep").write_bytes(b"keep")
+    elif case == "missing-parent":
+        out = tmp_path / "missing" / "out"
+    elif case == "write":
+        original = roster._write_new
+        calls = []
+
+        def fail_second(path, data):
+            calls.append(path)
+            assert len(tried) == 30  # all placements precede the first write
+            if len(calls) == 2:
+                raise OSError("synthetic write failure")
+            return original(path, data)
+
+        monkeypatch.setattr(roster, "_write_new", fail_second)
+    elif case in ("load", "load-mismatch"):
+        original = t.load_tier
+
+        def reject(path):
+            if Path(path).parent == out:
+                if case == "load":
+                    raise ValueError("synthetic spec failure")
+                return {}
+            return original(path)
+
+        monkeypatch.setattr(t, "load_tier", reject)
+    else:
+        monkeypatch.setattr(roster, "toml_text", lambda *args: "tier = 'wrong'\n")
+    with pytest.raises((roster.Refused, OSError, ValueError)):
+        roster.place_packs(draw, tmp_path / "work", out, templates=TEMPLATES)
+    if case == "existing":
+        assert [p.name for p in out.iterdir()] == ["keep"] and (out / "keep").read_bytes() == b"keep"
+    else:
+        assert not out.exists()
+    if case in ("existing", "missing-parent"):
+        assert tried == [] and not (tmp_path / "work").exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+def test_three_real_edition(tmp_path, monkeypatch, capsys):
+    from bicentennial.items.editions import EDITIONS
+
+    draw, design, spares = _three_draw(tmp_path)
+    _stub(monkeypatch, lambda seed: False)
+    seen = []
+
+    def record(spec, row, templates, **kwargs):
+        seen.append((row["genre"], templates))
+        compiled = SimpleNamespace(items=[], records=[])
+        return SimpleNamespace(twin=SimpleNamespace(compiled=compiled, b1=SimpleNamespace(close=lambda: None)))
+
+    monkeypatch.setattr(t, "t1_life", record)
+    assert roster.place_packs(draw, tmp_path / "work", tmp_path / "out") == 0
+    assert len(seen) == 30 and {genre for genre, _ in seen} == {"G1", "G2"}
+    assert all(templates is EDITIONS[3][genre] for genre, templates in seen)
+    captured = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("args", [["draw", "--packs", "2", "--out", "unused"],
+                                  ["place", "--packs", "2"], ["place", "--packs", "3"],
+                                  ["place", "--packs", "3", "--round", "2"],
+                                  ["place", "--packs", "3", "--round", "1"],
+                                  ["place", "--packs", "3", "--spec-out", "unused"],
+                                  ["place", "--packs", "3", "--table-out", "unused"],
+                                  ["place"], ["place", "--out-dir", "unused"]])
+def test_three_cli_rejects_mixed_modes(tmp_path, monkeypatch, capsys, draw_tree, args):
+    drawn = iter(range(2 ** 62 + 500, 2 ** 62 + 578))
+    monkeypatch.setattr(secrets, "randbits", lambda bits: next(drawn))
+    args = [str(tmp_path / "unused") if arg == "unused" else arg for arg in args]
+    complete = [*args, "--draw", str(tmp_path / "unused"), "--work", str(tmp_path / "work")]
+    if len(args) > 3:
+        complete += ["--out-dir", str(tmp_path / "out")]
+    three = "--packs" in args and args[args.index("--packs") + 1] == "3"
+    if args[0] == "place" and three:
+        assert roster.main(complete) == 2
+        captured = capsys.readouterr()
+        reason = ("--packs cannot be combined with --round, --spec-out or --table-out"
+                  if any(flag in args for flag in ("--round", "--spec-out", "--table-out")) else
+                  "--packs requires --out-dir")
+        assert captured.out == "" and captured.err == f"refused: {reason}\n"
+    else:
+        with pytest.raises(SystemExit) as caught:
+            roster.main(complete if args[0] == "place" else args)
+        assert caught.value.code == 2
+        captured = capsys.readouterr()
+        if "--packs" in args:
+            assert "invalid choice" in captured.err
+    assert not (tmp_path / "work").exists() and not (tmp_path / "out").exists()
+    assert roster.main(["draw", "--packs", "3", "--rehearsal", "--out", str(tmp_path / "public.json")]) == 0
+    more = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err + more.out + more.err,
+                     [*range(2001, 2079), *range(2 ** 62 + 500, 2 ** 62 + 578)])
+
+
+def test_three_cli_round_trip(tmp_path, monkeypatch, capsys):
+    from bicentennial.items import editions
+
+    monkeypatch.setitem(editions.EDITIONS, 3, TEMPLATES)
+    tried = _stub(monkeypatch, lambda seed: False)
+    draw = tmp_path / "DRAW.json"
+    assert roster.main(["draw", "--packs", "3", "--rehearsal", "--out", str(draw)]) == 0
+    assert roster.main(_three_args(draw, tmp_path)) == 0
+    design = list(range(2001, 2031))
+    assert tried == [row["seed"] for index in range(3) for row in _expected_pack(design, index)]
+    assert len(list((tmp_path / "out").iterdir())) == 6
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    _no_seed_printed(captured.out + captured.err, range(2001, 2079))
+
+
+@pytest.mark.parametrize("case", ["read", "placement", "unannotated", "write", "exists", "void-write"])
+def test_three_cli_failure_is_private(tmp_path, monkeypatch, capsys, case):
+    from bicentennial.items import editions
+
+    draw, design, spares = _three_draw(tmp_path)
+    monkeypatch.setitem(editions.EDITIONS, 3, TEMPLATES)
+    _stub(monkeypatch, lambda seed: case == "void-write" and seed in (design[0], design[2]))
+    if case == "read":
+        draw = tmp_path / str(design[0])
+    else:
+        error_type = FileExistsError if case == "exists" else t.PlacementError if case == "unannotated" else OSError
+
+        def reject(*args, **kwargs):
+            raise error_type(f"synthetic failure {design[0]}")
+
+        if case in ("placement", "unannotated"):
+            monkeypatch.setattr(t, "t2_dry_run", reject)
+        else:
+            monkeypatch.setattr(roster, "_write_new", reject)
+    assert roster.main(_three_args(draw, tmp_path)) == 2
+    assert not (tmp_path / "out").exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ("refused: output exists\n" if case == "exists" else
+                            "refused: three-pack operation failed\n")
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+@pytest.mark.parametrize("case", ["same", "inside", "pack-root"])
+def test_three_work_output_collision(tmp_path, monkeypatch, capsys, case):
+    draw, design, spares = _three_draw(tmp_path)
+    tried = _stub(monkeypatch, lambda seed: False)
+    out = tmp_path / "out"
+    work = out if case == "same" else out / "work"
+    if case == "pack-root":
+        work = tmp_path / "work"
+        work.mkdir()
+        out = work / "A"
+    with pytest.raises(roster.Refused):
+        roster.place_packs(draw, work, out, templates=TEMPLATES)
+    assert not out.exists() and tried == []
+    if case == "pack-root":
+        assert list(work.iterdir()) == []
+    captured = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err, [*design, *spares])
