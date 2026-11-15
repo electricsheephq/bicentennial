@@ -549,16 +549,27 @@ def test_symlink_sidecar_is_store_damage_without_open(tmp_path, monkeypatch):
         "invalid_store", "sqlite_sidecar", "test.db-wal", "symlink")
 
 
+@pytest.mark.parametrize("fault", ["read", "lstat"])
 @pytest.mark.parametrize("baseline_read", [True, False])
-def test_unreadable_database_hides_no_sidecar_change(tmp_path, baseline_read):
-    # The read fault suppresses only the database's own rule; its baseline read proved it a database.
+def test_unreadable_database_hides_no_sidecar_change(tmp_path, monkeypatch, baseline_read, fault):
+    # The fault suppresses only the database's own rule; its baseline read proved it a database.
     db = tmp_path / "test.db"
     valid_db(db)
+    lstat = Path.lstat
+
+    def unlisted(self, *args, **kwargs):
+        if self == db:
+            raise OSError(errno.EIO, "injected metadata fault")
+        return lstat(self, *args, **kwargs)
+
+    def break_db():
+        db.chmod(0) if fault == "read" else monkeypatch.setattr(Path, "lstat", unlisted)
+
     if not baseline_read:
-        db.chmod(0)
+        break_db()
     try:
         baseline = surface(tmp_path)
-        db.chmod(0)
+        break_db()
         assert baseline.receipt() is None  # the read fault itself never charges
         (tmp_path / "test.db-wal").symlink_to("absent")
         receipt = baseline.receipt()
