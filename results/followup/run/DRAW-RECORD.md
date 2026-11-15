@@ -1,217 +1,245 @@
 # The draw's record
 
-`draw_record.py` holds the saved-record rules for the follow-up draw in
-[the declaration](../DECLARATION.md), §2. The draw, release, and readers use
-these same pure functions. The command layer reads remote responses through
-`gh` and `curl` and appends private records. It never edits or deletes a posted
-comment. It uses only the Python standard library.
+`draw_record.py` implements the saved-record rules of [the declaration](../DECLARATION.md),
+§2, using the standard library under the project's Python 3.14:
 
-Run `python3 -I results/followup/run/draw_record.py COMMAND --state DIR [args]`.
-`DIR` is supplied by the caller and must be private, with one writer at a time.
-No command prints bodies, served identities, or relay contents. Published
-comment identifiers, rounds, times, commit identifiers and fixed reason labels
-are the only identifying output. A refusal prints `refused: <reason>` to stderr
-and exits 2; otherwise results go to stdout.
+```
+<the project's Python 3.14> -I results/followup/run/draw_record.py <command> --state DIR [args]
+```
+
+The reading is the module at the run commit. Before posting a first post it compares
+its own bytes with the public file at that post's `run_commit`. When reporting a
+counted post, or acting on it, it compares with that counted commit. A difference
+refuses; the caller moves to that commit. There is no operator-selected reading
+commit. Two merged versions of this module could read posts differently. This is
+why §2 fixes the reading, reader, controls and placement at the public run commit.
+An already accepted beacon is returned from its record without another remote read;
+a stopped draw is refused first.
 
 ## The maintainers' reading of §2
 
-This is the maintainers' reading of §2, fixed at the run commit before the draw.
-The declaration says that a post gives a round and a full commit identifier,
-without specifying value lines. One reading must govern the run's own posts
-and every other candidate before any round's value is known.
-
-Split the created body at every line feed. Remove one carriage return at the
-end of each resulting line. A final line without a line feed is still a line.
-A carriage return anywhere else stays in the line. The first line must be
-exactly the appropriate first line:
+Split bodies at line feeds; remove one terminal carriage return per line. The last
+line need not end in a line feed. A carriage return within a line remains there.
+The first line must exactly equal one of:
 
 - `Follow-up draw: first post`
 - `Follow-up draw: second post`
 - `Follow-up draw: task lists`
 - `Follow-up draw: stop`
 
-A line gives a round only when it is exactly `round ` followed by a positive
-decimal number in ASCII digits, without a sign or a leading zero. A line gives
-a commit only when it is exactly `run_commit ` followed by 40 lowercase hex
-characters (`0123456789abcdef`). At least one qualifying line must exist for
-each value, and every qualifying line for that value must agree. Invalid lines
-give nothing. Equal repeated lines give the same value; differing qualifying
-lines make that value ambiguous. Missing or ambiguous round or commit lines
-make a first post not a commitment post, with the reason retained.
+A value line has a name matching `[a-z0-9_]+`, one space, and a nonempty value
+without whitespace. Other lines, such as blanks, hidden markers or prose that does not match this grammar, are not value lines.
+Each name must occur once; even equal repeated names fail. A round value is ASCII
+decimal, at least 1, without a sign or leading zero. A `run_commit` value is exactly
+40 hex characters in either case; it is compared and stored in lowercase. A first
+post must give both. Invalid or repeated lines make it not a commitment post.
+The six H values (`registry_entry_sha256`, `fresh_install_hash`, `artifact_sha256`,
+`system_hash`, `harness_hash`, `route_table_hash`) are retained; their contents do not decide whether the post counts.
+The unique-name rule still applies to them. Matching second and task-list posts uses exact equality
+of the full value-line sets. No missing or extra value is allowed. Prose and blank
+lines do not affect a match. The earliest matching comment is used.
 
-The six frozen identity values are read as `<name> <value>` with no whitespace
-in the value: `registry_entry_sha256`, `fresh_install_hash`, `artifact_sha256`,
-`system_hash`, `harness_hash`, and `route_table_hash`. They are retained, but
-do not decide whether the post counts. Other value lines used for matching
-have a lowercase name beginning with a letter and continuing with letters,
-digits or underscores, one space, and a nonempty value without whitespace.
-Equal repetitions agree; conflicting repetitions have no single value. Round
-and commit value lines retain their stricter syntax. All such value lines are
-compared for second and task-list posts. Text outside value lines, including
-a hidden marker after the final value line, contributes no value.
+## Saved comments and evidence
 
-## Saved facts and pure decisions
+The comment set is every comment in any saved read or POST response, keyed by its
+integer id. The query asks for both comment id fields and prefers the full BigInt
+converted to an integer; the author uses the User integer id. A comment never seen is outside the set. Deleting a comment later
+does not remove it from that union. The run's own posts are saved from the POST
+response; §2's prohibition on editing or deleting draw posts covers those posts.
+A never-seen deletion is a limit of the record, not another stop.
 
-`candidates` unions every read and post, by integer comment identifier, in
-record-number order. An absent later comment remains present. Only comments
-by the merging login, created in a second strictly after the declaration's
-merge second, are candidates. The first sight fixes the created body forever:
+`init` saves the merging account's integer id and login, merge time, declaration
+commit, declaration byte length and SHA-256. It requires a merged pull request and
+nonempty declaration. Repeated initialization must agree. Author identity is the
+integer id, fixed at first sight with the created body, for every comment by that
+account, including comments that are not candidates. A rename changes nothing;
+a reused login on a different id changes nothing. A null author is not a candidate.
 
-- A post response supplies its body.
-- An unedited read supplies its body.
-- An edited read supplies the earliest edit node's `diff` only when
-  `includesCreatedEdit` is true and that node's `deletedAt` is null.
-- Otherwise the created body is unrecoverable.
+An unedited comment, or the run's POST response, supplies its body directly. For an
+edited comment with `includesCreatedEdit`, exactly one edit node must have `editedAt`
+equal to the comment's `createdAt`. That node's `diff` supplies the created body
+only when `deletedAt` is null. No qualifying node, two qualifying nodes, a deleted
+creation revision, or missing creation history makes it unrecoverable. Node order
+does not break ties. The public list retains unrecoverable comments by the merging
+account, with the creation revision's `deletedAt` when known and the GitHub time
+of first sight. No later observation changes the first sight.
 
-Non-candidates need no created body. `evaluate_records` orders candidates by
-creation second, then integer identifier. A first post's commitment test uses
-the saved declaration hash and length, the pull requests attached to the
-named commit, and their comparisons. A qualifying pull request targets main,
-is merged, has a merge commit containing the named commit (`identical` or
-`ahead`), and merged in a second strictly earlier than the comment. The earliest
-qualifying merge decides. Commit dates contribute nothing. A 404 or a 422
-saying no commit was found is a failed test; other HTTP failures, rate limits,
-and timeouts refuse without new evidence or tests. A full 100-pull-request
-page refuses rather than silently truncating the evidence.
+A candidate is by the merging id, in a second strictly after the declaration's
+merge. Creation in the merge's second is `not after the merge`. First-line syntax
+is checked before author/time rules, then evidence calls in their order. A passing
+commit has the unchanged declaration (hash and length), repository default branch
+`main`, and a qualifying pull request to `main` with compare status `identical` or
+`ahead`. The earliest qualifying merge must be in an earlier second than the
+comment. Commit dates are irrelevant. A full 100-pull-request response refuses.
+A 404, or a 422 whose JSON message begins `No commit found for SHA`, can fail a
+comment; another status or another 422 refuses.
 
-A round is due at `1692803367 + (round - 1) * 3`. Creation exactly 600 seconds
-before that time is on time. Passing commitments to the same round are one,
-carrying the earliest's time, commit and values. The earliest on-time commitment
-whose round has no void is counted. Earlier unrecoverable candidates block
-the decision; later ones do not. The list retains the provisional selection among
-recoverable comments with its `counted` reason, even when an earlier
-unrecoverable candidate makes `evaluate` report `blocked`. A blocked selection
-cannot be used by any later action. When nothing counts, any unrecoverable
-candidate blocks. The public list retains unrecoverable candidates because
-their original first line cannot be known. It reports each first post's
-round, commit, qualifying pull request, merge time, timing, test, and counting
-reason. No saved test is replaced by a later observation.
+Evidence records keep GitHub's time from before their first evidence call. The
+successfully fetched declaration bytes describe an immutable commit tree and decide
+at any fetch time. A 404 or no-commit response does not describe a fetched tree;
+like an old non-main default-branch snapshot, it cannot negatively decide a later
+comment. Those failures decide only at or after the comment's creation. A positive
+qualifying main merge before the comment also decides at any fetch time. A negative pull/compare result decides only when that evidence time
+is at or after creation. An earlier negative snapshot never rejects a later post.
+The first deciding result is frozen in a `test` record for that comment. If no
+saved evidence decides, new evidence is fetched. `evaluate --recheck` writes
+separate `recheck` records for already tested comments, reports differences and
+never creates or replaces deciding evidence or tests.
 
-`github_clock` uses the HTTP Date header and the machine's whole Unix second.
-A skew of 60 seconds either way passes; more refuses. Round selection retains
-a saved round only while it is more than 600 seconds ahead, rejects a saved
-round more than 3600 seconds ahead, and otherwise saves the smallest round due
-at least 900 seconds ahead before posting.
+`evaluate` tests in creation-time then integer-id order, stopping at the first
+on-time, nonvoid commitment. Exactly 600 seconds before due is on time. Passing
+posts of one round are one post with the earliest's values. After a placement
+void it continues to the next round. Later candidates are tested only for the
+public list; a failed fetch there is `untested: <reason>` and cannot displace the
+counted post. `evaluate` never blocks. An unrecoverable comment changes no counted
+draw, even if discovered later. Only `post first` is gated by one when nothing counts.
 
-`accept_beacon` requires two equal JSON objects with exactly `round`,
-`randomness`, and `signature`; the expected integer round; 64 lowercase hex
-randomness characters; nonempty lowercase hex signature bytes; and randomness
-equal to the signature bytes' SHA-256. A failed relay is never accepted even
-if it returns parseable bytes. The GitHub time taken after both reads decides
-the 86400-second cutoff. At the cutoff, agreement cannot rescue the read.
-Acceptance records canonical JSON, sorted keys, compact separators, and one
-newline. This verifies the two-relay/hash rule, not a beacon signature proof.
+## Clocks, posting and stops
+
+GitHub time is the Date header from `gh api -i rate_limit`. Every timed command
+refuses a machine skew greater than 60 seconds either way. Within that window,
+§2's “its own clock” means the later of GitHub time and the machine clock, for all
+900-, 600- and 3600-second rules, posting margins, due times and cutoff checks.
+Round n is due at `1692803367 + (n - 1) * 3`. A saved round more than 600 seconds
+ahead is reused; more than 3600 seconds ahead refuses. Otherwise save the smallest
+round due at least 900 seconds ahead.
+
+`post` verifies the authenticated account's integer id. `post first` itself reads
+all issue pages and edit pages, then evaluates the saved set. It refuses unless
+none counts, and prints `blocked <id>...` (13) if an unrecoverable merging-account
+comment exists. This gates a further first post; it does not stop the draw. Just
+before sending, a fresh GitHub time must leave the read at most 60 seconds old,
+the saved round more than 600 seconds ahead, and the qualifying merge at least
+60 seconds old. The module at the named commit must have identical bytes.
+
+Only a 201 POST response with an integer id is success. The `post` record is saved
+before another read or success output. It reads the issue back and prints
+`posted <id> <created_at>`, exit 0, even if that read fails; stderr then says
+`read-back failed`. Any other status, missing status, timeout or exception after
+sending writes `post-unknown` and refuses. All later posting is gated until a
+subsequent complete read, at least 60 seconds after the uncertain send's GitHub
+time, contains no new comment of that kind by the merging account. A new comment
+in such a read keeps posting gated: new means absent from the ids saved before the
+uncertain send. Comment kind uses its frozen created body and author, including
+when the displayed body was edited. This applies to every post kind.
+
+A stop post is permitted only with a counted draw at or past its due time:
+
+- `post stop --reason beacon FILE`: no accepted beacon, newest attempt for that
+  round says `cutoff`, and time is at least due + 86400 seconds.
+- `post stop --reason build --failure-sha256 H FILE`: an accepted beacon and a
+  64-character lowercase failure-record SHA-256, saved with the post. The caller
+  owns the one fresh-checkout build retry and the truth of that failure receipt.
+
+A saved stop by the merging id at or after the counted round's due time makes
+`evaluate` print `stopped <id>` (14). Earlier stops and other markers change
+nothing. Once stopped, first posting, beacon acceptance and voiding refuse.
+These implement §2's two stops; unrecoverable comments are never another stop.
+
+## Beacon, matching and export
+
+A beacon attempt reads both relays and saves both raw bodies, then takes time
+again. Both must return the same JSON object, with exactly `round`, `randomness`
+and `signature`, the expected integer round, lowercase hex signature bytes, and
+64 lowercase hex randomness equal to the signature bytes' SHA-256. An attempt
+writes its outcome, before/after GitHub times, and raw-body record names. At or
+past due + 86400 it is `cutoff`, regardless of relay agreement. Accepted objects
+are canonical JSON (sorted keys, compact separators, one newline). A later beacon
+call returns the saved acceptance, including after that round is void, without cutoff or any remote read, after
+checking for a stopped draw. These checks are not signature verification.
+
+`beacon --rehearsal [--fixture FILE]` uses the tracked known-answer round by default.
+It needs no counted post, omits the cutoff and retries up to three times 30 seconds
+apart. It passes only on an accepted object equal to the fixture, writes a
+`rehearsal-beacon` outcome/attempt count, and never writes a `beacon` record.
+
+`match second|tasks FILE` records matches and differences, prints every difference
+and uses the earliest match. `publish-list` includes both, all first posts by the
+merging id, unrecoverable comments, H's values and every other draw marker.
+`record-void` requires the counted round, its accepted beacon and a receipt hash;
+the caller must reproduce the placement void at that commit first.
+
+`publish-records OUT` creates a new folder and copies every finalized record kind
+and raw relay body. Reads retain GitHub time and the merging account's comment ids,
+author ids, bodies, `includesCreatedEdit` and complete edit nodes; other comments
+are replaced by a count. No other author's body is exported. The exported folder
+is itself a state folder: the same `evaluate` gives the same result. OUT is the
+only exception to writing exclusively beneath `DIR/records`.
 
 ## Commands and results
 
-| Command and arguments | stdout | Exit |
+All except `init` require a declaration record. Every refusal prints
+`refused: <reason>` on stderr and exits 2. Result exit 1 is never used.
+
+| Command | Output | Exit |
 |---|---|---|
 | `init` | `initialized` | 0 |
 | `now` | `github <seconds> skew <seconds>` | 0 |
-| `read` | `read <comment-count>` | 0 |
-| `evaluate` | `counted <id> round <n> due <seconds> commit <commit>` | 0 |
-| `evaluate` | `none` | 1 |
-| `evaluate` | `blocked <id> [<id> ...]` | 3 |
-| `evaluate --recheck` | `changed <id> <field> <old-json-value> <new-json-value>` per difference, or `unchanged <id>` | 0 |
-| `choose-round` | `round <n> due <seconds> kept` or `round <n> due <seconds> new` | 0 |
-| `post first FILE`, `post second FILE`, `post tasks FILE`, `post stop FILE` | `posted <id> <created-at>` | 0 |
+| `read` | `read <count>` | 0 |
+| `evaluate` | `counted <id> round <n> due <seconds> commit <C>` | 0 |
+| `evaluate` | `none` | 10 |
+| `evaluate` | `stopped <id>` | 14 |
+| `evaluate --recheck` | `changed <id> <field> <old-json> <new-json>` or `unchanged <id>` | 0 |
+| `choose-round` | `round <n> due <seconds> kept|new` | 0 |
+| `post first|second|tasks FILE` or guarded `post stop ... FILE` | `posted <id> <created_at>` | 0 |
+| `post first FILE` | `blocked <id>...` | 13 |
 | `beacon --round n` | `accepted round <n>` | 0 |
-| `beacon --round n` | `not-accepted <reason>`; retry after 30 seconds | 1 |
-| `beacon --round n` | `cutoff round <n>` | 3 |
-| `match second FILE`, `match tasks FILE` | `differs <id>` for differing candidates, then `matched <id>` | 0 |
-| `match second FILE`, `match tasks FILE` | `differs <id>` for differing candidates, then `none` | 1 |
+| `beacon --round n` | `not-accepted <reason>` | 10 |
+| `beacon --round n` | `cutoff round <n>` | 13 |
+| `beacon --rehearsal [--fixture FILE]` | `rehearsal-beacon pass` or `rehearsal-beacon fail <reason>` | 0 or 10 |
+| `match second|tasks FILE` | `differs <id>` lines, then `matched <id>` or `none` | 0 or 10 |
 | `record-void --round n --receipt-sha256 H` | `void round <n>` | 0 |
-| `publish-list` | canonical JSON array and one newline | 0 |
+| `publish-list` | canonical JSON with `first_posts` and `markers` | 0 |
+| `publish-records OUT` | `published records` | 0 |
 
-All commands except `init` require a declaration record. After a blocked
-evaluation only `evaluate` and `publish-list` remain available: the former
-continues to report the block or compare evidence. `publish-list` performs no
-remote reads; run `evaluate` first to save missing commitment evidence.
-`evaluate --recheck` reports differences without writing any records.
+`gh api -i` output is split at the first blank line, supporting LF and CRLF, and
+its status is used regardless of the process exit code. Missing status, malformed
+records, missing tools and unexpected exceptions refuse. The test entry point is
+`main(argv, clock=..., sleep=..., gh_timeout=...)`. Tool stdin is the null device;
+the tool environment contains only PATH, HOME and GH-prefixed variables.
 
-`init` reads the declaration pull request, its merging login, merge second,
-merge commit and declaration bytes at that commit. A repeat must agree with
-the saved declaration. Every `gh api` includes headers, and the HTTP status is
-read even when the tool exits nonzero. Each call has a 60-second timeout.
-GraphQL reads complete both comment and edit pagination; failure of any page
-leaves no read record. Integer comment identifiers use `fullDatabaseId`.
+## Crash-safe records
 
-Before a first post the caller runs `read` and `evaluate`, then `choose-round`
-when no draw counts. `post` also refuses a further first post when a saved draw
-counts. It checks the first line and authenticated login; a first post must
-use the newest saved round, due more than 600 seconds ahead, and a passing
-commit with its earliest qualifying merge at least 60 seconds before GitHub's
-time. The returned comment is saved before any output or subsequent record.
-Its creation time, rather than the pre-post clock, decides its saved test.
-A late response remains public evidence; the caller selects a new round and
-retries under the same rules.
+Each command takes a blocking exclusive flock on the records folder. The next
+number is the maximum prefix matching `^\d{6}-`, including partial or otherwise
+unfinished names, plus one; unrelated names are ignored. Names are
+`NNNNNN-<kind>.json` or `.body`. A record is written with exclusive creation to its
+`.partial` name, flushed, fsynced (also `F_FULLFSYNC` where available), hard-linked
+to the final name without replacement, then the folder is fsynced. The partial
+file is retained and readers ignore it. Nothing is overwritten, moved or deleted.
 
-`match` considers only merging-account candidates after the counted comment
-(by second and integer identifier), with the proper kind and counted round.
-It records differing comments without halting the run. Its body file is the
-run's proposed post; the caller supplies the second-post receipt and task-list
-values. `record-void` accepts only the counted round and a receipt hash. The
-caller must first confirm that the seed tool at the counted commit reproduces
-the placement void; this module does not reproduce placement.
-
-## Records
-
-Only `DIR/records` is written. Names are `NNNN-<kind>.json`, or `.body` for raw
-relay responses. One increasing counter spans both extensions and every kind.
-A record is written exclusively to a partial name, flushed, then finalized by
-a no-replace rename: link the final name exclusively and unlink the partial
-name. This standard-library link/unlink pair cannot replace a competing final
-name, unlike the platform's replacing rename operation. An
-existing final or partial name refuses. Finalized records are never replaced,
-moved or deleted; abandoned partials remain and reserve their counter.
-
-| Kind | Contents |
-|---|---|
-| `declaration` | merging login, merge time, declaration commit, SHA-256, length |
-| `read` | one complete issue read, including complete edit histories |
-| `post` | normalized REST response with integer identifier and created body |
-| `evidence` | commit, content status/hash/length, pull requests and comparison statuses; any definitive failure label |
-| `test` | comment identifier and its fixed commitment result and qualifying merge |
-| `round` | saved round number |
-| `relay-primary`, `relay-secondary` | raw response bytes, including failed attempts |
-| `beacon` | accepted object as canonical JSON |
-| `difference` | differing comment identifier, kind and round |
-| `void` | void round and caller-confirmed receipt hash |
-
-Newest means the highest record number of a kind; first-sight bodies, evidence
-and tests deliberately use the earliest applicable record. Private records
-can contain bodies and identity values; command output does not expose them.
+Kinds include `declaration`, `read`, `round`, `post`, `post-unknown`, `evidence`,
+`test`, `recheck`, `relay-primary`, `relay-secondary`, `beacon`, `beacon-attempt`,
+`rehearsal-beacon`, `void` and `match`. Newest means highest record number, except
+first sightings and first deciding tests, which are frozen at their earliest record.
 
 ## Declaration sentence map
 
-| §2 sentence or rule implemented here | Pure rule; command layer |
+| §2 rule implemented | Pure rule / command |
 |---|---|
-| The merging account posts the round, full run commit and frozen identity. | `parse_body`, `initial_declaration`, `validate_first`; `post` |
-| Round n is due at the stated epoch plus three-second intervals. | `round_due` |
-| Name a round fifteen minutes ahead and save it before posting. | `choose_round`, `validate_first`; `append_record` |
-| Retry or restart reuses the round while more than ten minutes ahead. | `choose_round` |
-| Read the issue before a first post; make no further first post while an on-time nonvoid draw exists. | `evaluate_records`; `read_issue`, `post`; caller sequences the pre-post read |
-| A late post is retried with a new round. | `evaluate_records`, `choose_round`; caller retries |
-| A commitment is by the merging account, after merge, with the exact first line and a full commit holding the declaration on main. | `candidates`, `parse_body`, `commitment_test` |
-| GitHub creation time and lower integer comment identifier order posts. | `seconds`, `comment_order`, `candidates` |
-| A qualifying main merge must precede creation by a whole second; commit dates do not decide. | `commitment_test`; `fetch_evidence` |
-| On time is at least ten minutes before the due time; a late post never counts. | `round_due`, `evaluate_records` |
-| Later edits and deletions change nothing. | `candidates`; `write_record` |
-| Same-round commitments are one with all the earliest's values. | `evaluate_records` |
-| The earliest on-time draw counts, proceeding past placement voids. | `evaluate_records` |
-| The counted post fixes the run commit. | `evaluate_records`; saved `test` records |
-| No draw post is edited or deleted. | `post`, `write_record`; no edit/delete operation exists |
-| Read both named relays, requiring equal exact-field objects and the signature hash. | `accept_beacon`; `beacon_attempt` |
-| A down, behind or disagreeing relay is read again. | `accept_beacon`; exit 1 tells the caller to retry |
-| A late round is waited for; no redraw follows relay delay. | `evaluate_records`, `accept_beacon`; caller waits |
-| Stop if no valid read occurs within 24 hours of due time. | `accept_beacon`; `beacon_attempt` gives cutoff, caller posts stop |
-| The stop is posted by the merging account with the exact stop first line, using GitHub creation time. | `parse_body`, `rest_comment`; `post` |
-| Only a reproduced placement void advances the draw. | `evaluate_records`; `record-void` records the caller's confirmed receipt |
-| The second post records the round and drawn-list receipt after the round is read. | `parse_body`, `matching_comments`; `post`; caller supplies receipt and ordering |
-| Pack and task-list hashes are posted before the first arm. | `parse_body`, `matching_comments`; `post`; caller supplies hashes and ordering |
-| With results, publish every first post's identifier/time, commit, qualifying pull request/merge, and counting decision. | `publish_list`, `evaluate_records`, `commitment_test` |
+| Merging account posts round, full run commit and H identity | `initial_declaration`, `parse_body`, `post` |
+| Epoch and three-second due time | `round_due` |
+| Save round at least fifteen minutes ahead; reuse while over ten minutes ahead | `choose_round`, `validate_first` |
+| Read before first post; no further first while a nonvoid on-time post exists | `read_issue`, `evaluate_saved`, `post` |
+| Retry a late post with a new round | `evaluate_records`, `choose_round`; caller retries |
+| Commitment author, after-merge time, first line and unchanged declaration on main | `candidates`, `parse_body`, `commitment_test` |
+| Creation-time and integer-id ordering | `comment_order`, `comment_set` |
+| Earlier qualifying merge second; own commit dates irrelevant | `commitment_test`, `fetch_evidence` |
+| At least ten minutes before due is on time | `first_row`, `round_due` |
+| Edits and deletions change nothing | `created_body`, `comment_set` |
+| Same-round posts share the earliest's values | `first_row`, `evaluate_records` |
+| Earliest on-time nonvoid draw counts; proceed after placement void | `evaluate_records`, `record-void` command |
+| Counted commit never changes; reading fixed there | `saved_test`, `verify_reading` |
+| No draw post edited or deleted | `post` exposes POST only; append-only `write_record` |
+| Two exact-field agreeing relays with signature hash | `accept_beacon`, `relay_attempt` |
+| Down, behind or disagreeing relay retried; late round waited for | `accept_beacon`, `beacon_attempt`; caller retries |
+| Only unread-after-24-hours or build-after-retry stops | `stop_admission`, `stopped_comment`; caller proves build retry |
+| Stop author, first line and creation time | `candidates`, `parse_body`, `stopped_comment`, `post` |
+| Only reproduced placement void advances | `evaluate_records`; `record-void` requires beacon and receipt; caller reproduces |
+| Second post records drawn list, time and randomness after reading | `matching_comments`, `post`; caller supplies receipt and ordering |
+| Packs/task-list hashes before first arm | `matching_comments`, `post`; caller supplies hashes and ordering |
+| Public list of first comments with commit, PR, merge and counting reason | `publish_list`, `prepare_list`, `publish_records` |
 
-Seed derivation, tracked-seed exclusion, placement reproduction, build retries,
-pack creation, arm ordering, score reading, release publication and live-service
-proof are outside this module. Offline synthetic tests prove the local rules
-and tool protocol only.
+Synthetic tests prove these local rules and the tool protocol. They do not prove
+live issue reads/posts, live relay reads, the calling run script, seed derivation,
+placement reproduction, build retries, arm sequencing, scores or publication.
