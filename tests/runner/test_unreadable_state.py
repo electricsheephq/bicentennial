@@ -1,5 +1,6 @@
 """Reader-made unreadable G1 workspaces are scored, with no socket or live model."""
 
+import errno
 import json
 import os
 import stat
@@ -7,6 +8,7 @@ import sys
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +20,7 @@ from bicentennial.contracts.run import validate
 from bicentennial.genres.g1_software.diffs import PATHS, read_state, render
 from bicentennial.harness.hermes import adapter
 from bicentennial.items.checks.repo import RepoCheck, repo_state_predicates
-from bicentennial.runner import life, t2, t2lite, units
+from bicentennial.runner import input_reads, life, t2, t2lite, units
 from bicentennial.runner.diagnostics import Diagnostics
 from bicentennial.runner.hermes_score import (
     MISSING,
@@ -85,6 +87,7 @@ def expected(case):
 def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions, tmp_path, monkeypatch, damage):
     case = lives["t1-g1", "B0"]
     clean = unit(case, tmp_path / "clean")
+    assert all("unreadable_paths" not in row for row in clean.probes)
     probe, visited = damage_probe(monkeypatch, case, damage)
     result = unit(case, tmp_path / "broken")
     assert result.attempts == 1 and result.stop is None
@@ -92,6 +95,9 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
     run, = result.runs
     assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
     assert {p["item_id"] for p in result.probes if p.get("label") == "unreadable_state"} == set(probe.item_ids)
+    reason = "missing" if damage == "deleted" else "malformed"
+    assert all(row["unreadable_paths"] == [["docs/decisions.md", reason]]
+               for row in result.probes if row.get("label") == "unreadable_state")
     for iid, row in result.scores.items():
         assert not isinstance(row, Infra)
         assert row["infra_reruns"] == 0
@@ -105,6 +111,202 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
         else:
             assert row == clean.scores[iid]
 
+
+@pytest.mark.parametrize("damage,reason", [("file_mode", "permission"), ("dir_mode", "permission"),
+    ("dir_exec_mode", "permission"), ("root_mode", "permission"), ("link", "symlink_loop"), ("dir_link", "symlink_loop"), ("fifo", "not_regular"),
+    ("link_locked", "symlink_target")])
+def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, monkeypatch, damage, reason):
+    case, locked, guards, released = lives["t1-g1", "B0"], [], [], []
+    done = Event()
+
+    def break_input(workspace):
+        path = workspace / "docs/decisions.md"
+        if damage.endswith("mode"):
+            path = (workspace if damage == "root_mode" else
+                    workspace / "config" if damage in ("dir_mode", "dir_exec_mode") else path)
+            locked.append(path)
+            # dir_exec_mode keeps the owner's read and removes only execute: the folder can be listed, not entered.
+            path.chmod(0o600 if damage == "dir_exec_mode" else 0)
+        elif damage == "link_locked":  # a new link into a folder the reader locked, outside the workspace
+            target = tmp_path / "locked-target"
+            target.mkdir()
+            (target / "decisions.md").write_text("# Decisions\n")
+            target.chmod(0)
+            locked.append(target)
+            path.unlink()
+            path.symlink_to(target / "decisions.md")
+        else:
+            if damage == "dir_link":
+                path.unlink()
+                path = path.parent
+                path.rmdir()
+            else:
+                path.unlink()
+            if damage in ("link", "dir_link"):
+                path.symlink_to(path.name)
+            else:
+                os.mkfifo(path)
+                # A second name for this FIFO that nothing else touches: the harness later moves the clone aside and
+                # restores the original file at the input's path (#564's review).
+                handle = tmp_path / "fifo-handle"
+                os.link(path, handle)
+
+                def release_regression():
+                    # While anything holds the FIFO open for reading, through any name, a non-blocking writer's open
+                    # succeeds (with no reader it fails with ENXIO); closing that writer ends a regressed blocking open
+                    # or read.
+                    while not done.wait(0.05):
+                        try:
+                            fd = os.open(handle, os.O_WRONLY | os.O_NONBLOCK)
+                        except OSError:
+                            continue
+                        released.append(True)
+                        os.close(fd)
+
+                thread = Thread(target=release_regression)
+                thread.start()
+                guards.append(thread)
+
+    probe, _ = damage_probe(monkeypatch, case, break_input)
+    try:
+        result = unit(case, tmp_path)
+        assert result.attempts == 1 and result.stop is None  # base reruns permission/loop faults
+        run, = result.runs
+        failed = sorted(p for p in PATHS.values() if damage == "root_mode" or
+                        (p.startswith("config/") if damage in ("dir_mode", "dir_exec_mode") else
+                         p.startswith("docs/") if damage == "dir_link" else p == "docs/decisions.md"))
+        assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
+        for iid in probe.item_ids:
+            assert set(run.act[iid]) == set(PATHS.values()) - set(failed)
+            assert run.unreadable_paths[iid] == tuple((p, reason) for p in failed)
+        assert {row["item_id"] for row in result.probes if "unreadable_paths" in row} == set(probe.item_ids)
+        assert all(row["unreadable_paths"] == [[p, reason] for p in failed]
+                   for row in result.probes if row["item_id"] in probe.item_ids)
+        assert not released  # base opens the FIFO and needs the guard to finish
+    finally:
+        done.set()
+        for thread in guards:
+            thread.join()
+        for path in locked:
+            if path.exists():
+                path.chmod(0o700 if path.is_dir() else 0o600)
+
+
+def test_live_locked_directory_off_the_input_paths_still_cleans_up(lives, unit_sessions, tmp_path, monkeypatch):
+    case, locked = lives["t1-g1", "B0"], []
+
+    def lock_extra(workspace):
+        extra = workspace / "extra" / "locked"
+        extra.mkdir(parents=True)
+        (extra / "kept.txt").write_text("a file the reader keeps")
+        extra.chmod(0)
+        locked.append(extra)
+
+    damage_probe(monkeypatch, case, lock_extra)
+    try:
+        result = unit(case, tmp_path)  # base: the attempt's cleanup raises PermissionError on the locked folder
+        assert result.attempts == 1 and result.stop is None
+        run, = result.runs
+        assert not run.item_labels and not run.unreadable_paths
+        assert run._root is not None and not run._root.exists()
+    finally:
+        for path in locked:
+            if path.exists():
+                path.chmod(0o700)
+
+
+@pytest.mark.parametrize("fault", ["permission", "loop", "eperm_link"])
+def test_live_unchanged_raw_read_fault_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    read, armed, failed = input_reads._read_regular, [], []
+
+    def arm(workspace):
+        armed.append(workspace)
+        if fault == "eperm_link":  # a harmless new link: its target is a readable copy of the input
+            path = workspace / "docs/decisions.md"
+            copy = tmp_path / f"decisions-{len(armed)}.md"
+            copy.write_bytes(path.read_bytes())
+            path.unlink()
+            path.symlink_to(copy)
+
+    damage_probe(monkeypatch, lives["t1-g1", "B0"], arm)
+
+    def read_regular(target):
+        if armed and target == armed[-1] / "docs/decisions.md" and not failed:
+            failed.append(target)
+            if fault == "loop":
+                raise OSError(errno.ELOOP, "loop")
+            # EPERM is a sandbox's or the system's refusal, not a mode the reader removed (#564's review)
+            raise PermissionError(errno.EPERM if fault == "eperm_link" else errno.EACCES, "injected raw read fault")
+        return read(target)
+
+    monkeypatch.setattr(input_reads, "_read_regular", read_regular)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    assert result.attempts == 2
+    first, redo = result.runs
+    assert first.stopped[:2] == ("INFRA_FAILURE", "OSError" if fault == "loop" else "PermissionError")
+    assert redo.stopped is None and not first.item_labels and not redo.item_labels
+    assert all(row["infra_reruns"] == 1 for row in result.scores.values())
+
+
+
+def test_input_behind_a_baseline_link_is_never_charged(tmp_path):
+    # The probe listing records a link's target, not what lies behind it: a FIFO there was not shown to be new.
+    workspace, outside = tmp_path / "w", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    os.mkfifo(outside / "decisions.md")
+    (workspace / "docs").symlink_to(outside)
+    baseline = {"docs": {"kind": "symlink", "target": str(outside)}}
+    with pytest.raises(OSError) as caught:
+        input_reads.read_input(workspace, "docs/decisions.md", baseline, set())
+    assert caught.value.errno == errno.EINVAL
+    # The same FIFO where the listing had the file itself is the reader's replacement.
+    (workspace / "docs").unlink()
+    (workspace / "docs").mkdir()
+    os.mkfifo(workspace / "docs/decisions.md")
+    assert input_reads.read_input(workspace, "docs/decisions.md", {"docs/decisions.md": {"kind": "file", "mode": 0o644}},
+                                  set()) == (None, "not_regular")
+
+
+def test_folder_read_bit_alone_is_not_the_cause(tmp_path, monkeypatch):
+    # Opening a known path needs search (execute) on its folders; their read bit only lists them. So when a folder lost
+    # only owner read, a denied open came from elsewhere (an LSM, an ACL, the harness) and stays infrastructure.
+    workspace = tmp_path / "w"
+    (workspace / "config").mkdir(parents=True)
+    (workspace / "config/flags.toml").write_text("a = 1\n")
+    baseline = {"config": {"kind": "dir", "mode": 0o755}, "config/flags.toml": {"kind": "file", "mode": 0o644}}
+
+    def denied(target):
+        raise PermissionError(errno.EACCES, "denied by a policy, not a mode")
+
+    monkeypatch.setattr(input_reads, "_read_regular", denied)
+    repairs = set()
+    try:
+        (workspace / "config").chmod(0o300)  # read removed, write and search kept
+        with pytest.raises(PermissionError):
+            input_reads.read_input(workspace, "config/flags.toml", baseline, repairs)
+        assert not repairs
+        (workspace / "config").chmod(0o600)  # search removed: this alone denies the open, so it is the reader's
+        assert input_reads.read_input(workspace, "config/flags.toml", baseline, repairs) == (None, "permission")
+        assert repairs == {workspace / "config"}
+    finally:
+        (workspace / "config").chmod(0o755)
+
+
+def test_read_regular_never_blocks_on_or_reads_a_fifo(tmp_path):
+    # The race backstop: an input replaced by a FIFO after the first stat is opened without blocking and never read.
+    path, result = tmp_path / "decisions.md", []
+    os.mkfifo(path)
+    thread = Thread(target=lambda: result.append(input_reads._read_regular(path)))
+    thread.start()
+    thread.join(5)
+    blocked = thread.is_alive()
+    if blocked:  # release a regressed blocking open before failing
+        os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+        thread.join()
+    assert not blocked
+    (data, mode), = result
+    assert data is None and stat.S_ISFIFO(mode)
 
 def test_live_harness_read_fault_still_reruns(lives, unit_sessions, tmp_path, monkeypatch):
     case = lives["t1-g1", "B0"]
