@@ -1,6 +1,6 @@
 # Fresh-seed follow-up readers
 
-These offline scripts implement the [declaration](../DECLARATION.md), sections
+The offline readers in this section implement the [declaration](../DECLARATION.md), sections
 3–5. They use no live reader and change no pack or run. Their output is an
 exploratory reading, never a rank, certification or prediction of the full tier.
 
@@ -124,3 +124,84 @@ Then run each neighbour separately, again with the developer-document tests:
 The fixtures use invented packs and runs; one module-scoped test builds and
 installs the public T2 spec at edition 3. No test uses a login, network,
 socket or live model. This proves offline script logic only, not a real-arm reading.
+
+## Operating the follow-up
+
+`run-followup.sh` implements the declaration's operator steps. The
+[draw-record rules](DRAW-RECORD.md) govern how a post is read, which one counts,
+and how an unrecoverable created body gates another first post. The script
+uses that module at the run commit for every draw operation; it never reads
+or changes its record folder.
+
+Supply these environment variables before `prep`, then keep them unchanged:
+`FOLLOWUP_STATE`, `FOLLOWUP_REPO`, `FOLLOWUP_HERMES`, `FOLLOWUP_WRAPPER`,
+`FOLLOWUP_LOGIN_HOME`, `FOLLOWUP_MARKER`, `FOLLOWUP_PYTHON`, `FOLLOWUP_SLOT`,
+and `ORIGIN_MARKER`. `FOLLOWUP_PYTHON` is the project's Python 3.14;
+`ORIGIN_MARKER` is the complete hidden agent-origin comment. `prep` records
+these settings and the resolved paths of `gh`, `curl`, `git` and that Python
+in `private/settings` (0600). Its private folder is 0700. Use `gh`'s stored
+login (configuration or keychain): `env -i PATH="$PATH" HOME="$HOME" gh auth
+status` must pass, because the draw module removes every inherited `GH_`
+variable, including `GH_TOKEN`.
+
+The environment's live-settings wrapper is responsible for live model settings;
+none is printed or copied into the public run script. `FOLLOWUP_STANDIN` is
+only a test dispatcher: it works solely in a directory already holding
+`.followup-test-dir` before `prep`; prep never creates that marker. A real arm
+can only run in the official directory named by the machine-wide record
+`.bicentennial-followup-official` in the operator's home. Marking an official
+directory permanently disables its steps. A failed `prep` leaves an
+unrecorded folder that must be moved aside; it posts nothing.
+
+Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
+
+| Step, in operating order | Needs; leaves |
+|---|---|
+| `prep SHA PR [PR ...] [--import DIR\|none]` | A main commit and merged prerequisites; fixes settings, detached worktree, venv and declaration record. Import copies the prior draw records and voids before initialization; `none` records lost state. |
+| `rehearse` | No real BEACON; places, builds and installs three public-integer packs, prepares H without sends, freezes lists, checks the no-arms reading, check 3, follow-up tests and known-answer derivation. Keeps failed rehearsals. |
+| `post-commit` | Rehearsal passed at the run commit; adopts the counted post or posts round, commit and H's six values. Posted values govern H's checks even if they differ from rehearsal. |
+| `beacon` | Counted commitment; waits under caffeinate, retries both relay reads and clock refusals every thirty seconds, saves accepted BEACON or posts the cutoff stop. |
+| `draw` | Accepted counted BEACON; fresh clean worktree, recorded draw and exact hash-and-commit verification. |
+| `post-draw` | Verified draw; matches or posts round, draw hash, draw time and randomness. |
+| `place` | Recorded second post; two independent placements agree, or a reproduced void is confirmed, recorded and archived. |
+| `build` | Agreed placements; builds and installs A, B and C through the slot, with logs and hashes. |
+| `tasks` | Installed packs, no attempts; validates and freezes all three task lists. |
+| `rebuild` | A recorded failed build attempt; repeats draw, two placements, three builds and lists once, from fresh worktrees, preserving the first attempt. Failure posts the build stop. |
+| `post-tasks` | Three frozen lists and packs; matches or posts their hashes and the round. |
+| `check3` | Task-list post, no arm attempt; keeps one passing attempt or at most two attempts, with commit and exit. A second failure ends the run. |
+| `run LABEL` | All posts still match, passing check 3, preceding first attempts; runs the next of thirty-six arms with the frozen send bound. |
+| `table [--after-reruns]` | All first attempts, frozen lists and check 3; preserves each reading, flags, exit and sequence. The flag first recomputes which arms are pending. |
+| `rerun LABEL` | All first attempts and the latest reading naming the label; one whole rerun with the same command and send bound, then another reading. |
+| `abandon TAG` | Dead wrapper and no arm process; removes a stale lock and records invocation start and kill times, counting existing output as an attempt. |
+| `cards` | Table exit 0; cuts used cards and replaced first attempts per pack, preserving hashes, missing labels, faults and every repeated cut. |
+| `stop beacon\|build` | Recorded cutoff, or first failure plus failed rebuild, before any arm; posts only the declaration's reason, exits and log hashes. |
+| `release` | Cards complete, stop, blocked first post, unconfirmed void, terminal reading fault or second failed check 3; publishes all extant draw and attempt evidence with versioned exports and recomputation checks. |
+
+Invocations refused before output, or refused by the machine guard before any
+unit, are kept but are not attempts; every other invocation that creates output
+is the label's attempt. An interrupted build tool is resumed from its exit
+record, or, after proving its recorded process dead, its partial output is kept
+and it is retried within the declared cutoff budget. A failed build attempt
+can proceed only by the one rebuild; no failed attempt changes the draw.
+
+Reruns happen only after all thirty-six first attempts, once per label, when the
+latest reading made after every attempt names that label pending or invalid.
+After each rerun, read again before another rerun; once scores open, the run
+ends, shared pins or order fail, or check 3 fails twice, no rerun is allowed.
+
+Each void is published with its round, DRAW and receipt; at the run commit,
+anyone can repeat it with `python scripts/validity_roster.py draw --packs 3
+--beacon BEACON --out DRAW` and `python scripts/validity_roster.py place --packs 3
+--draw DRAW --work WORK --out-dir OUT`, where BEACON is the public round's
+three-field object and WORK and OUT are new. A void that does not reproduce
+there leaves the earlier draw standing under §2, which `release` reports.
+
+A counted post naming a commit at which these tools cannot run is recorded and
+refused; once §2's stop condition holds, the merging account posts its stop by
+hand and `release` publishes it, including unavailable or different reading
+module status. `release` also publishes every abandoned invocation's start and
+kill times; a killed attempt is rerun once only when the latest reading names
+it under the rerun rule. No release step commits or posts results: maintainers
+review and commit its publication folder beside the result.
+
+When placement confirms a void, its exit 1 means the next step is `post-commit` for a new round; a failed placement instead requires `rebuild`. Every cutoff keeps its partial logs, and the saved tool PID and process start distinguish a live invocation from a reused PID.
