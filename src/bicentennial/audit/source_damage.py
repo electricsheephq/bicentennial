@@ -120,7 +120,7 @@ class SourceBaseline:
         """First proven damage; unreadable entries and possible harness residue charge nothing."""
         for root, (surface, before) in self.roots.items():
             rows = _scan(root)
-            # A database the checker cannot read or list now was still proved one by its baseline read.
+            # A file the checker cannot read now, or an entry it cannot examine, was proved a database by its baseline.
             sidecars = {p.with_name(p.name + suffix) for p, rule in rows.items()
                         if rule == "sqlite_unchecked" or (rule in ("unreadable", "unobserved") and before.get(p) in SQLITE)
                         for suffix in SIDECARS}
