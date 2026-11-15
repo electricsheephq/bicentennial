@@ -19,7 +19,7 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
-from bicentennial.audit.source_damage import SourceBaseline, keep_sidecars
+from bicentennial.audit.source_damage import RestoreWatch, SourceBaseline, keep_sidecars
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_hash, tree_listing
@@ -566,16 +566,18 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 nonlocal source_receipt
                 if exc_type is not None and not isinstance(error, Exception):
                     return
-                source_receipt = source_receipt or session_baseline.receipt(getattr(adapter, "after_kill", False))
+                source_receipt = source_receipt or session_baseline.receipt(
+                    getattr(adapter, "after_kill", False), evidence.restore_failures)
                 if source_receipt is not None:
                     if source_receipt not in evidence.source_receipts:
                         evidence.source_receipts.append(source_receipt)
                         try:
                             path = source_receipt["_path"]
                             kept = root / f"invalid-source-{index}"
-                            path.rename(kept)  # preserve the entry itself, without following it
-                            source_receipt["_kept"] = kept
-                            if source_receipt["rule"] == "not_a_directory":
+                            if source_receipt["rule"] != "missing_root":
+                                path.rename(kept)  # preserve the entry itself, without following it
+                                source_receipt["_kept"] = kept
+                            if source_receipt["rule"] in ("not_a_directory", "missing_root"):
                                 path.mkdir()
                             if source_receipt["rule"] == "sqlite_malformed":
                                 # Its -journal, -wal and -shm go with it: the journal and WAL may hold the damage read.
@@ -651,7 +653,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 evidence.retained_roots[iid] = (
                                     evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
-                                stack.enter_context(swap_in(clone, canonical))
+                                stack.enter_context(RestoreWatch(swap_in(clone, canonical), evidence.restore_failures))
                         if probe:
                             session_baseline = SourceBaseline(source_surfaces, baseline.excluded)
                         stack.push(check_sources)  # runs before any swap restores, including on exceptions
@@ -737,8 +739,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         except OSError:
                             pass
                     cause = ("SYSTEM_FAILURE", source_receipt["label"]) if source_receipt else _cause(error)
-                    if source_receipt and not isinstance(error, SourceDamage):
-                        evidence.restore_failures.append(_cause(error)[1])
                     proven = cause[1] in ("act_state_collision", "worker_protocol", "invalid_store", "invalid_surface") and cause[0] == "SYSTEM_FAILURE"
                     try:
                         rows = _probe_rows(adapter.records(), attempt_id, index) if probe or proven else []
