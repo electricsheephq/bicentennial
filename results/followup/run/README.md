@@ -83,7 +83,9 @@ Sections appear in this order:
    each kind's readings (`o_excluded_by_kind`).
 
 Sections 3–8 stay closed while a check is invalid, a rerun is pending or the
-run has ended. With `--after-reruns`, a pending arm is published as it is only
+run has ended. The three packs' four code pins must each be recorded and equal,
+or the run is refused (exit 3), with `--checks-only` too.
+With `--after-reruns`, a pending arm is published as it is only
 when `--reruns` names it; any other pending arm is still owed its one rerun,
 so the reader prints the pending line with those labels and exits 4.
 `--checks-only` prints sections 1–2 only.
@@ -91,7 +93,7 @@ so the reader prints the pending line with those labels and exits 4.
 | Exit | Meaning |
 |---|---|
 | 0 | Scores printed, or checks-only with no pending arm |
-| 3 | Refused inputs, invalid control, order, shared code pins, pack or check 3; also no arms after reruns |
+| 3 | Refused inputs, invalid control, order, shared code pins (arms' card pins and the three packs' four code pins), pack or check 3; also no arms after reruns |
 | 4 | Pending arms not yet rerun: rerun each once, then use `--after-reruns` |
 | 5 | A control rerun fails check 1, 2 or 7, or check 3 still fails after reruns |
 

@@ -602,6 +602,106 @@ def test_card_pin_drift_stays_global(run, label, pin, value):
     assert "card pins equal pass False\n" in out and "== 3. Scores" not in out
 
 
+def rebind_pack(run, table, letter):
+    tree = table.pack_tree_hash(run.packs[letter])
+    edit(run.tasks[letter], lambda o: o["header"].update(pack_hash=tree))
+    for label, path in run.paths.items():
+        if label[0] == letter:
+            edit(path / "card.json", lambda o: o.update(pack_hash=tree))
+
+
+def pack_pin_files(run, letter, pin):
+    return ([run.packs[letter] / "index.json"] if pin == "scoring_code_sha256" else
+            sorted(run.packs[letter].glob("pack/*/*/*/manifest.json")))
+
+
+def assert_pack_pin_fault(code, out):
+    assert code == 3
+    assert "fault: pack code pins\n" in out
+    assert "pack code pins equal pass False\n" in out.split("== 2. Checks before any score\n")[1]
+    assert [line for line in out.splitlines() if line.startswith("== ")] == [
+        "== 1. Header and identity", "== 2. Checks before any score"]
+    assert not any(line.startswith(("INVALID CONTROL ROW", "row ", "pooled repeat ", "reading ",
+                                    "Room:", "Use:", "descriptive ", "filter ")) for line in out.splitlines())
+
+
+@pytest.mark.parametrize("pin", ("controls_sha256", "reader_sha256", "scoring_code_sha256", "scorer_sha256"))
+@pytest.mark.parametrize("flags", ((), ("--checks-only",)), ids=("reading", "checks-only"))
+def test_pack_code_pin_difference_refuses_before_scores(run, table, pin, flags):
+    for path in pack_pin_files(run, "B", pin):
+        edit(path, lambda o: o["pins"].update({pin: "d" * 64}))
+    rebind_pack(run, table, "B")
+    code, out = run(flags=flags)
+    assert_pack_pin_fault(code, out)
+    assert f"pack code pin B {pin} {'d' * 12}\n" in out and "d" * 64 not in out
+    assert len([line for line in out.splitlines() if line.startswith("pack code pin ")]) == 12
+
+
+@pytest.mark.parametrize("pin", ("controls_sha256", "reader_sha256", "scoring_code_sha256", "scorer_sha256"))
+@pytest.mark.parametrize("fault", ("missing-one", "missing-all", "uppercase", "short", "nonhex", "nonstring"))
+def test_pack_code_pin_missing_or_malformed(run, table, pin, fault):
+    for letter in ("ABC" if fault == "missing-all" else "B"):
+        paths = pack_pin_files(run, letter, pin)
+        for path in (paths[:1] if fault == "missing-one" else paths):
+            if fault.startswith("missing"):
+                edit(path, lambda o: o["pins"].pop(pin))
+            else:
+                value = {"uppercase": "D" * 64, "short": "d" * 63, "nonhex": "z" * 64,
+                         "nonstring": ["d" * 64]}[fault]
+                edit(path, lambda o, value=value: o["pins"].update({pin: value}))
+        rebind_pack(run, table, letter)
+    for flags in ((), ("--checks-only",)):
+        code, out = run(flags=flags)
+        assert_pack_pin_fault(code, out)
+        line = next(line for line in out.splitlines() if line.startswith(f"pack code pin B {pin} "))
+        assert "not recorded" in line
+        assert not any(value in out for value in ("D" * 64, "d" * 63, "z" * 64, str(run.packs["B"])))
+
+
+@pytest.mark.parametrize("pin", ("controls_sha256", "reader_sha256", "scorer_sha256"))
+def test_pack_code_pin_lives_disagree(run, table, pin):
+    edit(pack_pin_files(run, "B", pin)[-1], lambda o: o["pins"].update({pin: "d" * 64}))
+    rebind_pack(run, table, "B")
+    for flags in ((), ("--checks-only",)):
+        code, out = run(flags=flags)
+        assert_pack_pin_fault(code, out)
+        prefix = {"controls_sha256": "9", "reader_sha256": "a", "scorer_sha256": "c"}[pin] * 12
+        assert f"pack code pin B {pin} {prefix} {'d' * 12}\n" in out
+
+
+def test_pack_code_pins_require_life_manifests(run, table):
+    for path in pack_pin_files(run, "B", "controls_sha256"):
+        path.unlink()
+    rebind_pack(run, table, "B")
+    for flags in ((), ("--checks-only",)):
+        code, out = run(flags=flags)
+        assert_pack_pin_fault(code, out)
+        assert all(f"pack code pin B {pin} not recorded\n" in out
+                   for pin in table.PACK_PINS if pin != "scoring_code_sha256")
+        assert f"pack code pin B scoring_code_sha256 {'b' * 12}\n" in out
+
+
+def test_pack_code_pins_agree_before_scores(run):
+    for flags in ((), ("--checks-only",)):
+        code, out = run(flags=flags)
+        assert code == 0
+        section = out.split("== 2. Checks before any score\n")[1].split("== 3.")[0]
+        assert section.count("pack code pins equal pass True\n") == 1
+        assert "fault: pack code pins" not in out
+        assert ("== 3. Scores" in out) == (not flags)
+        assert ("three packs code pins agree True\n" in out) == (not flags)
+
+
+def test_pack_code_pin_fault_keeps_exit5_precedence(run, table):
+    edit(run.packs["B"] / "index.json", lambda o: o["pins"].pop("scoring_code_sha256"))
+    rebind_pack(run, table, "B")
+    run.check3.write_text("exit 1")
+    for flags in (("--after-reruns",), ("--after-reruns", "--checks-only")):
+        code, out = run(flags=flags)
+        assert code == 5 and "RUN ENDS:" in out
+        assert "pack code pins equal pass False\n" in out and "== 3." not in out
+
+
 def test_also_printed_uses_runner_shapes(run):
     path = run.paths["A.H1"]
     units = json.loads((path / "card.json").read_bytes())["floor"]["units"]

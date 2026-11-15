@@ -95,7 +95,7 @@ def load_pack(letter, packs, path, digest):
     code_pins = [dict(read(p, {}).get("pins", {}), scoring_code_sha256=index_pins.get("scoring_code_sha256"))
                  for p in sorted(packs.glob("pack/*/*/*/manifest.json"))]
     return dict(letter=letter, path=packs, tasks=tasks, digest=digest, tree=tree,
-                reports=reports[0], expected_keys=reports[1], records=records, code_pins=code_pins)
+                reports=reports[0], expected_keys=reports[1], records=records, code_pins=code_pins, index_pins=index_pins)
 
 
 def positions(attempts, order, reruns):
@@ -268,11 +268,36 @@ def header(packs, arms, order, reruns, place):
     return ref
 
 
+def pack_code_pins_equal(packs):
+    codes = {}
+    for p, pack in packs.items():
+        codes[p] = {}
+        for key in PACK_PINS:
+            values = ([pack["index_pins"].get(key)] if key == "scoring_code_sha256" else
+                      [m.get(key) for m in pack["code_pins"]])
+            # Invalid values carry no printable hash; never echo arbitrary input.
+            codes[p][key] = {v if isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) else None
+                             for v in values}
+    recorded = all(values and None not in values for code in codes.values() for values in code.values())
+    one_per_pack = all(len(values) == 1 for code in codes.values() for values in code.values())
+    same = all(code == codes["A"] for code in codes.values())
+    ok = recorded and one_per_pack and same
+    print("pack code pins equal pass", ok)
+    if not ok:
+        for p, code in codes.items():
+            for key, values in code.items():
+                print("pack code pin", p, key, " ".join(v[:12] if v is not None else "not recorded"
+                      for v in sorted(values, key=str)) if values else "not recorded")
+    return ok
+
+
 def checks(args, packs, arms, order, reruns, place):
     ref = header(packs, arms, order, reruns, place)
     print("== 2. Checks before any score")
     missing = set(DECLARED_ORDER) - arms.keys()
     invalid, failed, compacted, mismatch, bad_h = set(), {}, set(), set(), set()
+    if not pack_code_pins_equal(packs):
+        invalid.add("pack code pins")
     times = [(k, arms[k]["units"].get("start_ms"), arms[k]["units"].get("end_ms")) for k in order if k in arms]
     time_bad = any(not (is_int(s) and is_int(e) and s <= e) for _, s, e in times)
     overlaps = False if time_bad else any(b[1] < a[2] for a, b in pairwise(times))
@@ -652,7 +677,7 @@ def finish(ctx):
             print(f"reading {t}: unresolved")
         return 5
     if ctx["invalid"]:
-        for fault in ("run order", "card pins", "check 3"):
+        for fault in ("run order", "card pins", "pack code pins", "check 3"):
             if fault in ctx["invalid"]:
                 print("fault:", fault)
         for k in DECLARED_ORDER:
