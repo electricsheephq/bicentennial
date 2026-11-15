@@ -5,7 +5,7 @@ import json
 import os
 import stat
 import sys
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
@@ -16,7 +16,9 @@ import test_probe_live as helpers
 from test_t2 import t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 
+from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
+from bicentennial.contracts.surfaces import tree_hash, tree_listing
 from bicentennial.genres.g1_software.diffs import PATHS, read_state, render
 from bicentennial.harness.hermes import adapter
 from bicentennial.items.checks.repo import RepoCheck, repo_state_predicates
@@ -42,6 +44,11 @@ def act_probe(case):
     return next(p for p in case["compiled"].probes if items[p.item_ids[0]]["stage"] == "act")
 
 
+def qa_probe(case):
+    items = {i["item_id"]: i for i in case["items"]}
+    return next(p for p in case["compiled"].probes if all(items[iid]["stage"] != "act" for iid in p.item_ids))
+
+
 def damage_probe(monkeypatch, case, damage, *, session_index=None):
     probe, original, visited = act_probe(case), adapter.HermesAdapter.run_session, []
 
@@ -63,7 +70,7 @@ def damage_probe(monkeypatch, case, damage, *, session_index=None):
     return probe, visited
 
 
-def unit(case, tmp_path):
+def unit(case, tmp_path, *, arm="system", diagnostics=None):
     entry = helpers.ENTRY
     pins = build_lock(**json.loads((helpers.ROOT /
         "tests/fixtures/run/contracts.json").read_bytes())["contracts"]["lock"])
@@ -74,13 +81,286 @@ def unit(case, tmp_path):
         items={"B0": case["items"]}, records_b={"B0": case["records"]}, keys=case["keys"],
         cases=case["cases"], visible={}, meta={"honeypot_token": None},
         scoring={"evidence": {i["item_id"]: [] for i in case["items"]}})
-    return units._unit_attempts(ctx, pack, "B0", "system", tmp_path / "attempts",
-        units._Guard(helpers.FakeLive()), [], tmp_path / "out")
+    return units._unit_attempts(ctx, pack, "B0", arm, tmp_path / "attempts",
+        units._Guard(helpers.FakeLive()), [], tmp_path / "out", diagnostics=diagnostics)
 
 
 def expected(case):
     return score_action(case.item, case.table, Trace(False, True, case.t_sim),
         {name: False for name in case.checks}, window=case.window)
+
+
+@pytest.mark.parametrize("stage,kind", [
+    ("act", "file"), ("act", "directory_link"), ("act", "dangling_link"),
+    ("act", "self_link"), ("act", "non_utf8_link"), ("qa", "file"), ("qa", "dangling_link")])
+def test_live_workspace_root_replaced_scores_empty_and_restores(
+        lives, unit_sessions, tmp_path, monkeypatch, kind, stage):
+    case = lives["t1-g1", "B0"]
+    clean = unit(case, tmp_path / "clean")
+    assert not (tmp_path / "clean/out/unit_diagnostics.json").exists()
+    assert not getattr(clean.runs[0], "workspace_receipts", [])
+    probe = act_probe(case) if stage == "act" else qa_probe(case)
+    assert probe.index < case["compiled"].script["sessions"][-1]["index"]
+    swap, read = life.swap_in, life.read_input
+    originals, restored, reads, damaged = [], [], [], []
+    target = tmp_path / "link-target"
+    target.mkdir()
+    for p, data in render({p: {} for p in PATHS.values()}).items():
+        (target / p).parent.mkdir(parents=True, exist_ok=True)
+        (target / p).write_bytes(data)
+    target_info, target_hash = target.stat(), tree_hash(tree_listing(target, []))
+
+    @contextmanager
+    def watch(clone, canonical):
+        selected = canonical.name == "workspace" and clone.parent.name == str(probe.index)
+        if selected:
+            info = canonical.lstat()
+            originals.append((info.st_dev, info.st_ino, tree_hash(tree_listing(canonical, []))))
+        with swap(clone, canonical):
+            yield
+        if selected:
+            info = canonical.lstat()
+            assert stat.S_ISDIR(info.st_mode)
+            restored.append((info.st_dev, info.st_ino, tree_hash(tree_listing(canonical, []))))
+            assert not os.path.lexists(canonical.parent / "absent-target")
+            assert not os.path.lexists(canonical.parent / os.fsdecode(b"absent-\xff"))
+            damaged.clear()
+
+    def replace_root(workspace):
+        workspace.rename(tmp_path / "discarded-reader-clone")
+        damaged.append(workspace)
+        if kind == "file":
+            workspace.write_text("reader replacement")
+        elif kind == "non_utf8_link":
+            os.symlink(b"absent-\xff", os.fsencode(workspace))
+        else:
+            workspace.symlink_to(target if kind == "directory_link" else
+                                 "absent-target" if kind == "dangling_link" else workspace.name)
+
+    def record_read(workspace, *args):
+        if workspace in damaged:
+            reads.append(args[0])
+        return read(workspace, *args)
+
+    monkeypatch.setattr(life, "swap_in", watch)
+    monkeypatch.setattr(life, "read_input", record_read)
+    _, visited = damage_probe(monkeypatch, case, replace_root, session_index=probe.index)
+    result = unit(case, tmp_path / "broken")
+    assert result.attempts == 1 and result.stop is None  # base reruns after the failed root restore
+    run, = result.runs
+    assert not reads  # base follows directory links and tries every input under other replacements
+    assert restored == originals and len(restored) == 1
+    assert visited == [s["index"] for s in case["compiled"].script["sessions"]]
+    assert run.item_labels == ({iid: "unreadable_state" for iid in probe.item_ids} if stage == "act" else {})
+    failed = tuple((p, "workspace_replaced") for p in sorted(PATHS.values()))
+    assert run.unreadable_paths == ({iid: failed for iid in probe.item_ids} if stage == "act" else {})
+    for iid, row in result.scores.items():
+        assert not isinstance(row, Infra) and row["infra_reruns"] == 0
+        if iid in probe.item_ids and stage == "act":
+            assert run.act[iid] == {}
+            scored = expected(case["cases"][iid])
+            assert row["failure_class"] == scored.failure_class
+            assert row["score_milli"] == row["worst_case_milli"] == scored.score_milli
+        else:
+            assert row == clean.scores[iid]
+    receipt = dict(session=probe.index, kind="file" if kind == "file" else "symlink")
+    if kind == "non_utf8_link":
+        receipt.update(target="absent-\\xff", target_hex=b"absent-\xff".hex())
+    elif kind != "file":
+        receipt["target"] = str(target) if kind == "directory_link" else (
+            "absent-target" if kind == "dangling_link" else "workspace")
+    assert run.workspace_receipts == [receipt]
+    assert json.loads(canon(run.workspace_receipts)) == [receipt]
+    diagnostics = json.loads((tmp_path / "broken/out/unit_diagnostics.json").read_bytes())
+    assert diagnostics["attempts"][0]["workspace_receipts"] == [receipt]
+    assert not run.restore_failures and not run._root.exists()  # moved entry removed with the attempt
+    assert (target.stat().st_dev, target.stat().st_ino) == (target_info.st_dev, target_info.st_ino)
+    assert tree_hash(tree_listing(target, [])) == target_hash
+
+
+def test_replaced_root_keeps_act_state_collision(lives, unit_sessions, tmp_path, monkeypatch):
+    case = lives["t1-g1", "B0"]
+
+    def collide(workspace):
+        (workspace.parent.parent / "act-state").mkdir()
+        workspace.rename(tmp_path / "discarded-clone")
+        workspace.write_text("reader replacement")
+
+    probe, _ = damage_probe(monkeypatch, case, collide)
+    result = unit(case, tmp_path)
+    assert result.attempts == 1
+    run, = result.runs
+    assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
+    assert not run.item_labels
+    assert all(result.scores[iid]["failure_class"] == "SYSTEM_FAILURE" and
+               result.scores[iid]["infra_reruns"] == 0 for iid in probe.item_ids)
+
+
+def test_replaced_root_with_baseline_act_state_reruns(lives, unit_sessions, tmp_path, monkeypatch):
+    case, entries = lives["t1-g1", "B0"], []
+    clean = unit(case, tmp_path / "clean")
+    original = adapter.HermesAdapter.__init__
+
+    def construct(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        if not entries:
+            path = self.paths["root"].parent / "act-state"
+            path.mkdir()
+            entries.append(path)
+
+    def replace_root(workspace):
+        if workspace.parent.parent == entries[0].parent:
+            workspace.rename(tmp_path / "discarded-clone")
+            workspace.write_text("reader replacement")
+
+    monkeypatch.setattr(adapter.HermesAdapter, "__init__", construct)
+    probe, _ = damage_probe(monkeypatch, case, replace_root)
+    result = unit(case, tmp_path / "broken")
+    assert (tmp_path / "discarded-clone").is_dir()  # the first attempt's root was replaced
+    assert result.attempts == 2 and result.stop is None
+    first, redo = result.runs
+    assert first.stopped == ("INFRA_FAILURE", "FileExistsError", probe.index)
+    assert not first.item_labels and not first.unreadable_paths
+    assert redo.stopped is None
+    assert result.scores == {iid: dict(row, infra_reruns=1) for iid, row in clean.scores.items()}
+
+
+def test_control_diagnostics_skip_replaced_workspace(lives, unit_sessions, tmp_path, monkeypatch):
+    case = lives["t1-g1", "B0"]
+    diag = Diagnostics(tmp_path / "diag", tmp_path / "synthetic-home")
+    monkeypatch.setattr(diag, "_needles", lambda: ())
+
+    def replace_root(workspace):
+        workspace.rename(tmp_path / "discarded-clone")
+        workspace.write_text("reader replacement")
+
+    probe, _ = damage_probe(monkeypatch, case, replace_root)
+    result = unit(case, tmp_path, arm="no_memory", diagnostics=diag)
+    assert result.attempts == 1 and result.stop is None
+    for iid in probe.item_ids:
+        top = f"{case['t'].life}/B0/0/{iid}/workspace"
+        assert dict(path=top, reason="workspace replaced") in diag.skips
+        assert not (diag.root / top).exists()
+        assert not any(p.startswith(top + "/") for p in diag.files)
+    assert not diag.failures
+
+
+@pytest.mark.parametrize("fault", ["occupied", "rename"])
+def test_workspace_move_fault_redoes_without_deleting(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    case, entries, errors = lives["t1-g1", "B0"], [], []
+    clean = unit(case, tmp_path / "clean")
+    move, rename = life.move_workspace_replacement, Path.rename
+
+    def replace_root(workspace):
+        if not entries:
+            workspace.rename(tmp_path / "discarded-clone")
+            workspace.write_text("reader replacement")
+            entries.append((workspace, workspace.stat().st_ino))
+
+    def fail_rename(path, target):
+        if entries and path == entries[0][0] and Path(target).name == "workspace-replaced":
+            raise OSError("injected rename failure")
+        return rename(path, target)
+
+    def checked_move(workspace, folder, receipts, session):
+        if not entries or workspace != entries[0][0]:
+            return move(workspace, folder, receipts, session)
+        parked = folder / "workspace-replaced"
+        if fault == "occupied":
+            parked.write_text("existing parking entry")
+            inode = parked.stat().st_ino
+        with pytest.raises(FileExistsError if fault == "occupied" else OSError) as error:
+            move(workspace, folder, receipts, session)
+        errors.append(type(error.value).__name__)
+        assert workspace.stat().st_ino == entries[0][1]
+        assert workspace.read_text() == "reader replacement" and not receipts
+        if fault == "occupied":
+            assert parked.stat().st_ino == inode and parked.read_text() == "existing parking entry"
+        else:
+            assert not os.path.lexists(parked)
+        raise error.value
+
+    damage_probe(monkeypatch, case, replace_root)
+    monkeypatch.setattr(life, "move_workspace_replacement", checked_move)
+    if fault == "rename":
+        monkeypatch.setattr(Path, "rename", fail_rename)
+    monkeypatch.setattr(life.LifeRun, "cleanup", lambda self: None)
+    result = unit(case, tmp_path / "broken")
+    assert errors == ["FileExistsError" if fault == "occupied" else "OSError"]
+    assert result.attempts == 2 and result.stop is None
+    first, redo = result.runs
+    assert first.stopped[0] == "INFRA_FAILURE" and redo.stopped is None
+    assert not first.workspace_receipts and not first.source_receipts
+    assert result.scores == {iid: dict(row, infra_reruns=1) for iid, row in clean.scores.items()}
+    assert entries[0][0].stat().st_ino == entries[0][1]
+
+
+@pytest.mark.parametrize("fault,stage", [
+    ("restore", "act"), ("before_session", "act"), ("observation", "act"), ("restore", "qa")])
+def test_workspace_harness_fault_still_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, fault, stage):
+    case, failed, armed = lives["t1-g1", "B0"], [], []
+    probe = act_probe(case) if stage == "act" else qa_probe(case)
+    swap, clone_tree, lstat = life.swap_in, life.clone_tree, Path.lstat
+
+    @contextmanager
+    def broken_restore(clone, canonical):
+        with swap(clone, canonical):
+            yield
+        if canonical.name == "workspace" and clone.parent.name == str(probe.index) and not failed:
+            assert stat.S_ISDIR(canonical.lstat().st_mode)
+            failed.append(True)
+            raise OSError("injected directory restore fault")
+
+    def broken_baseline(canonical, clone):
+        if canonical.name == "workspace" and clone.parent.name == str(probe.index) and not failed:
+            canonical.rename(canonical.with_name("before-session-original"))
+            canonical.write_text("harness replacement before session")
+            failed.append(True)
+        return clone_tree(canonical, clone)
+
+    def broken_observation(path, *args, **kwargs):
+        if path in armed and not failed:
+            failed.append(True)
+            raise PermissionError("injected workspace observation fault")
+        return lstat(path, *args, **kwargs)
+
+    if fault == "restore":
+        monkeypatch.setattr(life, "swap_in", broken_restore)
+    elif fault == "before_session":
+        monkeypatch.setattr(life, "clone_tree", broken_baseline)
+    else:
+        damage_probe(monkeypatch, case, armed.append)
+        monkeypatch.setattr(Path, "lstat", broken_observation)
+    result = unit(case, tmp_path)
+    assert failed and result.attempts == 2
+    first, redo = result.runs
+    assert first.stopped[:2] == ("INFRA_FAILURE", {
+        "restore": "OSError", "before_session": "ValueError", "observation": "PermissionError"}[fault])
+    assert not first.item_labels and not getattr(first, "workspace_receipts", [])
+    assert redo.stopped is None and not getattr(redo, "workspace_receipts", [])
+    assert first.restore_failures == (["OSError"] if fault == "restore" else [])
+    assert all(row["infra_reruns"] == 1 for row in result.scores.values())
+
+
+def test_workspace_replacement_is_moved_even_on_session_error(lives, unit_sessions, tmp_path, monkeypatch):
+    case, workspace = lives["t1-g1", "B0"], []
+    probe = act_probe(case)
+
+    def replace_then_fail(path):
+        path.rename(tmp_path / "discarded-clone")
+        path.symlink_to("absent-target")
+        workspace.append(path)
+        raise adapter.HarnessFailed("turn_failed")
+
+    damage_probe(monkeypatch, case, replace_then_fail)
+    monkeypatch.setattr(life.LifeRun, "cleanup", lambda self: None)
+    result = unit(case, tmp_path)
+    assert result.attempts == 1  # base's restore fault supersedes the session failure and reruns
+    run, = result.runs
+    assert run.stopped == ("SYSTEM_FAILURE", "turn_failed", probe.index)
+    assert not run.restore_failures
+    assert run.workspace_receipts == [dict(session=probe.index, kind="symlink", target="absent-target")]
+    assert stat.S_ISDIR(workspace[0].lstat().st_mode)
 
 
 @pytest.mark.parametrize("damage", ["blank", "deleted"])

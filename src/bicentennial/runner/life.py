@@ -54,7 +54,13 @@ from bicentennial.harness.hermes.envwire import END_WAIT_S, EnvWiring
 from bicentennial.harness.hermes.plugin_host import GateRefused
 from bicentennial.ledger import BlobStore, Guard
 from bicentennial.probe.probe_responder import ProbeResponder
-from bicentennial.runner.input_reads import read_input, repair_permissions, unlock_tree
+from bicentennial.runner.input_reads import (
+    move_workspace_replacement,
+    read_input,
+    repair_permissions,
+    unlock_tree,
+    workspace_replacement,
+)
 from bicentennial.runner.lock import LockMismatch
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
@@ -122,6 +128,7 @@ class LifeRun:
     incidental_unknown_400: int = 0
     infra_item_labels: tuple = ()
     source_receipts: list = field(default_factory=list)
+    workspace_receipts: list = field(default_factory=list)
     restore_failures: list = field(default_factory=list)
     retention_failures: list = field(default_factory=list)
     superseded_causes: list = field(default_factory=list)
@@ -197,7 +204,8 @@ def reader_made(error):
     UnicodeError and TOMLDecodeError in ValueError, keeping the original as __cause__; tomllib raises RecursionError
     on deeply nested arrays. The reader's: malformed content, bad UTF-8 or TOML, deep nesting, a deleted file, a file
     replaced by a directory or a path through a file. Raw input permission loss and new link loops are tied to the
-    reader separately against the probe listing, as are non-regular replacements. Other OS errors (including
+    reader separately against the probe listing, as are non-regular replacements. A replaced workspace root is
+    tied separately by lstat before any input is read. Other OS errors (including
     unattributed permission or loop faults, and scratch faults) keep the infrastructure class.
     """
     cause = error if isinstance(error, OSError) else error.__cause__
@@ -214,6 +222,12 @@ def _unreadable_reason(error):
 
 def _read_action_state(workspace, scratch, listing, *, absent_before=False):
     """Read each live action file with the pinned parser; omit only reader-made failures."""
+    if workspace_replacement(workspace) is not None:
+        if not _act_state_absent(scratch):
+            if absent_before:
+                raise HarnessFailed("act_state_collision")
+            raise FileExistsError(Path(scratch) / "act-state")
+        return {}, True, tuple((p, "workspace_replaced") for p in sorted(PATHS.values()))
     state, failed, repairs = {}, [], set()
     baseline = {row["path"]: row for row in listing}
     empty = render({p: {} for p in PATHS.values()})
@@ -661,6 +675,9 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         track_state = leg is not None and genre == "G1"
                         absent_before = _act_state_absent(root) if track_state else False
                         observed = absent_before if track_state else None
+                        if track_state and probe:
+                            stack.callback(move_workspace_replacement, paths["workspace"], clones[-1].parent,
+                                           evidence.workspace_receipts, index)
                         result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)
                         if track_state:
                             act_state_created = (act_state_baseline and not _act_state_absent(root)

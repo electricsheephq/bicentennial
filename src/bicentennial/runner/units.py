@@ -428,11 +428,11 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
                             receipt["kept_sidecars"] = [p for p in found if p is not None]
             # Only a unit with something to record writes it, so every other run keeps its output bytes.
             if any(r.incidental_unknown_400 or r.stopped and r.stopped[0] == "INFRA_FAILURE"
-                   or r.source_receipts or r.restore_failures
+                   or r.source_receipts or r.workspace_receipts or r.restore_failures
                    for r in runs):
                 _write(out, "unit_diagnostics.json", dict(attempts=[dict(attempt=r.attempt, stopped=r.stopped,
                     incidental_unknown_400=r.incidental_unknown_400, **{k: getattr(r, k) for k in (
-                        "infra_item_labels", "source_receipts", "restore_failures", "retention_failures",
+                        "infra_item_labels", "source_receipts", "workspace_receipts", "restore_failures", "retention_failures",
                         "superseded_causes") if getattr(r, k)}) for r in runs]))
             final = attempt == 2 or not any(isinstance(s, Infra) for s in scores.values())
             if arm == "no_memory" and final:

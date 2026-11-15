@@ -269,7 +269,7 @@ def workspace_keeper(tmp_path, build):
     (home / "auth.json").write_bytes(b'{"tokens": {"access_token": "synthetic-access-token"}}')
     keeper = diagnostics.Diagnostics(tmp_path / "diag", home)
     assert keeper.create() is None
-    run = SimpleNamespace(_root=tmp_path / "attempt")
+    run = SimpleNamespace(_root=tmp_path / "attempt", workspace_receipts=[])
     (run._root / "probe/21/0").mkdir(parents=True)
     workspace = run._root / "probe/21/1"
     workspace.mkdir()
@@ -305,7 +305,7 @@ def test_d3_the_entry_cap_stops_the_walk(tmp_path, monkeypatch):
 
 def test_d3_a_session_without_a_clone_is_a_skip(tmp_path):
     keeper = diagnostics.Diagnostics(tmp_path / "diag", tmp_path)
-    keeper._workspace("item", SimpleNamespace(_root=tmp_path / "attempt"), 21)
+    keeper._workspace("item", SimpleNamespace(_root=tmp_path / "attempt", workspace_receipts=[]), 21)
     assert keeper.skips == [dict(path="item/workspace", reason="no workspace clone")] and keeper.failures == []
 
 

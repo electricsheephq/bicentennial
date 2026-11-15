@@ -299,3 +299,11 @@ def test_doc_public_text():
     for path in (GUIDE, REPO / "README.md"):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             assert not paths.search(line), (path.relative_to(REPO), number)
+
+
+@pytest.mark.parametrize("guide", ["t2.md", "t2lite.md"])
+def test_doc_workspace_root_replacement_covers_all_entries(guide):
+    text = (REPO / "docs/developers" / guide).read_text()
+    assert text.count("anything other than a directory (a file, a symbolic link or another entry)") == 2
+    assert text.count("during any live G1 probe session") == 2
+    assert "QA items keep their answer scores" in text

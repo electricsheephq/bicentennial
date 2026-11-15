@@ -192,6 +192,9 @@ class Diagnostics:
         # life.py clones the surfaces, then the workspace last, to probe/<session>/<n>; swap_in's restore returns the
         # edited workspace to its clone path, so the highest n holds what the reader left.
         top = f"{rel}/workspace"
+        if any(r["session"] == session for r in run.workspace_receipts):
+            self._skip(top, "workspace replaced")
+            return
         try:
             clones = run._root / "probe" / str(session)
             numbers = [int(p.name) for p in clones.iterdir() if p.name.isdigit()] if clones.is_dir() else []
