@@ -8,7 +8,8 @@ commitment) and the counts. `place` freezes the validation spec from that draw, 
 receipt when the dry run stops.
 
 With `--packs 3 --beacon`, draw derives thirty design seeds and forty-eight ordered spares from
-an already published beacon round and the clean checkout's tracked files; verify recomputes its bytes.
+an already published beacon round and the blobs of the run commit (HEAD), read from Git's objects with
+no inherited GIT_ variable and no replace refs; verify recomputes its bytes.
 `--rehearsal` uses fixed public integers. Place maps positions 1–10 to A, 11–20 to B and 21–30 to C. Within
 pack X, odd positions name t2-g1-1 through t2-g1-5 and even positions t2-g2-1 through t2-g2-5;
 each pack walks the public T2 row order. Packs share one ordered spare list, excluding every
@@ -42,11 +43,11 @@ class Refused(ValueError):
     pass
 
 
-def collisions(seeds, root=ROOT, *, files=None):
-    """Whole-number matches in supplied paths, or regular files outside .git for legacy draws."""
+def collisions(seeds, root=ROOT, *, contents=None):
+    """Whole-number matches in supplied byte strings, or regular files outside .git for legacy draws."""
     number = re.compile(rb"(?<![0-9])(" + b"|".join(str(n).encode() for n in seeds) + rb")(?![0-9])")
     found = set()
-    if files is None:
+    if contents is None:
         files = []
         for folder, dirs, names in os.walk(root):
             dirs[:] = [d for d in dirs if d != ".git"]
@@ -54,8 +55,9 @@ def collisions(seeds, root=ROOT, *, files=None):
                 path = Path(folder) / name
                 if name != ".git" and stat.S_ISREG(path.lstat().st_mode):
                     files.append(path)
-    for path in files:
-        found.update(int(n) for n in number.findall(Path(path).read_bytes()))
+        contents = (Path(path).read_bytes() for path in files)
+    for data in contents:
+        found.update(int(n) for n in number.findall(data))
     return found
 
 
@@ -86,19 +88,45 @@ def _candidates(randomness):
         k += 1
 
 
+def _git(root, *args, stdin=None):
+    """Git on root alone: no inherited GIT_ variable and no replace ref can redirect what it reads."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    return subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args],
+                          input=stdin, env=env, capture_output=True)
+
+
+def _commit_blobs(root):
+    """Each blob of HEAD's tree, read from the object store; submodule entries are left out."""
+    listing = _git(root, "ls-tree", "-r", "-z", "--full-tree", "HEAD")
+    listing.check_returncode()
+    oids = []
+    for entry in filter(None, listing.stdout.split(b"\0")):
+        _mode, kind, oid = entry.split(b"\t", 1)[0].split(b" ")
+        if kind == b"blob":  # regular files, executables and symbolic links; mode 160000 is a commit
+            oids.append(oid)
+    batch = _git(root, "cat-file", "--batch", stdin=b"".join(oid + b"\n" for oid in oids))
+    batch.check_returncode()
+    blobs, at = [], 0
+    for _ in oids:
+        header = batch.stdout.index(b"\n", at)
+        size = int(batch.stdout[at:header].split(b" ")[2])  # "<oid> blob <size>"
+        at = header + 1 + size
+        blobs.append(batch.stdout[header + 1:at])
+        at += 1
+    return blobs
+
+
 def _beacon_draw(beacon, root):
     data = _read_beacon(beacon)
-    clean = subprocess.run(["git", "-C", str(root), "diff", "--no-ext-diff", "--quiet", "HEAD", "--"],
-                           capture_output=True)
-    if clean.returncode != 0:
+    clean = _git(root, "diff", "--no-ext-diff", "--quiet", "HEAD", "--")
+    if clean.returncode != 0:  # guards only that this tool's own code is the commit's
         raise Refused("checkout differs from HEAD")
-    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True).stdout
-    files = [Path(root) / os.fsdecode(path) for path in tracked.split(b"\0") if path]
+    blobs = _commit_blobs(root)
     candidates = _candidates(bytes.fromhex(data["randomness"]))
     seeds, seen = [], set()
     while len(seeds) < 78:
         batch = [next(candidates) for _ in range(78 - len(seeds))]
-        blocked = collisions(batch, root, files=files)
+        blocked = collisions(batch, root, contents=blobs)
         for seed in batch:
             if seed in blocked or seed in seen:
                 continue

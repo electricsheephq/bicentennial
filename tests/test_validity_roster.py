@@ -1183,3 +1183,116 @@ def test_beacon_requires_three(tmp_path, capsys, beacon_tree):
     captured = capsys.readouterr()
     assert captured.out == "" and captured.err.startswith("refused: ")
     _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+def _commit(root, message):
+    _fixture_git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", message)
+
+
+def _clean_draw(tmp_path, root, beacon):
+    """The bytes a third party draws from a fresh clone of the same commit."""
+    clone = tmp_path / "fresh-clone"
+    _fixture_git(root, "clone", "-q", ".", str(clone))
+    out = tmp_path / "clean.json"
+    assert roster.draw(out, root=clone, packs=3, beacon=beacon) == 0
+    return out.read_bytes()
+
+
+def _skipped_draw(clean, skipped):
+    """The list a checkout would publish if it skipped one more candidate."""
+    data = json.loads(clean)
+    kept = [n for n in [*data["design"], *data["spares"]] if n != skipped]
+    kept.append(next(n for n in _raw_candidates(200) if n not in kept and n != skipped))
+    return canon(dict(design=kept[:30], spares=kept[30:], drawn_at=data["drawn_at"])) + b"\n"
+
+
+def _draw_and_verify(tmp_path, capsys, beacon, clean, skipped):
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    assert out.read_bytes() == clean
+    assert roster.main(_beacon_args("verify", out, beacon)) == 0
+    out.write_bytes(_skipped_draw(clean, skipped))
+    assert roster.main(_beacon_args("verify", out, beacon)) == 1
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-2:] == [f"verified sha256 {hashlib.sha256(clean).hexdigest()}", "mismatch"]
+    assert not captured.err
+    _no_seed_printed(captured.out + captured.err, _raw_candidates(200))
+
+
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_beacon_reads_commit_not_hidden_working_copy(tmp_path, capsys, beacon_tree, flag):
+    root, beacon = beacon_tree
+    seeds = _raw_candidates()
+    clean = _clean_draw(tmp_path, root, beacon)
+    tracked = root / "tracked file\nname"
+    _fixture_git(root, "update-index", flag, "--", tracked.name)
+    tracked.write_bytes(tracked.read_bytes() + f"{seeds[3]}\n".encode())
+    _draw_and_verify(tmp_path, capsys, beacon, clean, seeds[3])
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_INDEX_FILE"])
+def test_beacon_ignores_inherited_git_environment(tmp_path, monkeypatch, capsys, beacon_tree, variable):
+    root, beacon = beacon_tree
+    seeds = _raw_candidates()
+    clean = _clean_draw(tmp_path, root, beacon)
+    other = tmp_path / "other"
+    _fixture_git(root, "clone", "-q", ".", str(other))
+    planted = f"{seeds[3]}\n".encode()
+    (other / "planted").write_bytes(planted)
+    _fixture_git(other, "add", "planted")
+    _commit(other, "planted")
+    (root / "planted").write_bytes(planted)  # the same bytes, untracked in the checkout itself
+    monkeypatch.setenv(variable, str(other / ".git" / "index" if variable == "GIT_INDEX_FILE" else other / ".git"))
+    _draw_and_verify(tmp_path, capsys, beacon, clean, seeds[3])
+
+
+@pytest.mark.parametrize("working_copy", ["committed", "replaced"])
+def test_beacon_ignores_replace_refs(tmp_path, capsys, beacon_tree, working_copy):
+    root, beacon = beacon_tree
+    seeds = _raw_candidates()
+    clean = _clean_draw(tmp_path, root, beacon)
+    tracked = root / "tracked file\nname"
+    original = _fixture_git(root, "hash-object", "--", tracked.name).decode().strip()
+    swapped = tmp_path / "swapped"
+    swapped.write_bytes(tracked.read_bytes() + f"{seeds[3]}\n".encode())
+    planted = _fixture_git(root, "hash-object", "-w", "--", str(swapped)).decode().strip()
+    _fixture_git(root, "replace", original, planted)
+    if working_copy == "committed":
+        _draw_and_verify(tmp_path, capsys, beacon, clean, seeds[3])
+        return
+    # A working copy matching the replacement differs from the commit's own blob: both commands refuse.
+    tracked.write_bytes(swapped.read_bytes())
+    capsys.readouterr()  # drop the clean draw's lines
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 2
+    assert not out.exists()
+    out.write_bytes(_skipped_draw(clean, seeds[3]))
+    assert roster.main(_beacon_args("verify", out, beacon)) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: checkout differs from HEAD\n" * 2
+    _no_seed_printed(captured.out + captured.err, _raw_candidates(200))
+
+
+def test_beacon_scan_counts_committed_blobs_only(tmp_path, capsys, beacon_tree):
+    root, beacon = beacon_tree
+    seeds = _raw_candidates(90)
+    (root / "tracked").write_text(f"{seeds[2]}\n")  # committed whole number: skipped
+    (root / "nested" / "deeper").mkdir(parents=True)
+    (root / "nested" / "deeper" / "file").write_text(f"{seeds[6]}\n")  # committed in a subtree: skipped
+    (root / "link").symlink_to(str(seeds[3]))  # dangling link; its blob is the decimal text: skipped
+    (root / "untracked").write_text(f"{seeds[4]}\n")  # never committed: kept
+    # A gitlink to a commit whose message holds a candidate: a submodule entry, never scanned.
+    holder = _fixture_git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                          "commit-tree", "HEAD^{tree}", "-m", str(seeds[5])).decode().strip()
+    (root / "sub").mkdir()
+    _fixture_git(root, "add", "--", "tracked", "link", "nested")
+    _fixture_git(root, "update-index", "--add", "--cacheinfo", f"160000,{holder},sub")
+    _commit(root, "what counts")
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    data = json.loads(out.read_bytes())
+    assert data["design"] + data["spares"] == [*seeds[:2], *seeds[4:6], *seeds[7:81]]
+    captured = capsys.readouterr()
+    assert not captured.err
+    _no_seed_printed(captured.out + captured.err, seeds)
