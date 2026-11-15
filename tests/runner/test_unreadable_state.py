@@ -113,7 +113,7 @@ def test_live_unreadable_scores_once_and_keeps_other_items(lives, unit_sessions,
 
 
 @pytest.mark.parametrize("damage,reason", [("file_mode", "permission"), ("dir_mode", "permission"),
-    ("root_mode", "permission"), ("link", "symlink_loop"), ("dir_link", "symlink_loop"), ("fifo", "not_regular"),
+    ("dir_exec_mode", "permission"), ("root_mode", "permission"), ("link", "symlink_loop"), ("dir_link", "symlink_loop"), ("fifo", "not_regular"),
     ("link_locked", "symlink_target")])
 def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, monkeypatch, damage, reason):
     case, locked, guards, released = lives["t1-g1", "B0"], [], [], []
@@ -122,9 +122,11 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
     def break_input(workspace):
         path = workspace / "docs/decisions.md"
         if damage.endswith("mode"):
-            path = workspace if damage == "root_mode" else workspace / "config" if damage == "dir_mode" else path
+            path = (workspace if damage == "root_mode" else
+                    workspace / "config" if damage in ("dir_mode", "dir_exec_mode") else path)
             locked.append(path)
-            path.chmod(0)
+            # dir_exec_mode keeps the owner's read and removes only execute: the folder can be listed, not entered.
+            path.chmod(0o600 if damage == "dir_exec_mode" else 0)
         elif damage == "link_locked":  # a new link into a folder the reader locked, outside the workspace
             target = tmp_path / "locked-target"
             target.mkdir()
@@ -171,7 +173,7 @@ def test_live_input_damage_scores_partial_once(lives, unit_sessions, tmp_path, m
         assert result.attempts == 1 and result.stop is None  # base reruns permission/loop faults
         run, = result.runs
         failed = sorted(p for p in PATHS.values() if damage == "root_mode" or
-                        (p.startswith("config/") if damage == "dir_mode" else
+                        (p.startswith("config/") if damage in ("dir_mode", "dir_exec_mode") else
                          p.startswith("docs/") if damage == "dir_link" else p == "docs/decisions.md"))
         assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
         for iid in probe.item_ids:
