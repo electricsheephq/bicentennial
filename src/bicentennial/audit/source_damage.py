@@ -5,6 +5,7 @@ import sqlite3
 import stat
 
 SIDECARS = ("-journal", "-wal", "-shm")
+SQLITE = ("sqlite_valid", "sqlite_malformed", "sqlite_unchecked")
 
 
 class RestoreWatch:
@@ -119,8 +120,10 @@ class SourceBaseline:
         """First proven damage; unreadable entries and possible harness residue charge nothing."""
         for root, (surface, before) in self.roots.items():
             rows = _scan(root)
+            # A database the checker cannot read now was still proved one by its baseline read.
             sidecars = {p.with_name(p.name + suffix) for p, rule in rows.items()
-                        if rule == "sqlite_unchecked" for suffix in SIDECARS}
+                        if rule == "sqlite_unchecked" or (rule == "unreadable" and before.get(p) in SQLITE)
+                        for suffix in SIDECARS}
             for path, rule in rows.items():
                 try:
                     if path in self.excluded:

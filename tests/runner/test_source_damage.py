@@ -549,6 +549,28 @@ def test_symlink_sidecar_is_store_damage_without_open(tmp_path, monkeypatch):
         "invalid_store", "sqlite_sidecar", "test.db-wal", "symlink")
 
 
+@pytest.mark.parametrize("baseline_read", [True, False])
+def test_unreadable_database_hides_no_sidecar_change(tmp_path, baseline_read):
+    # The read fault suppresses only the database's own rule; its baseline read proved it a database.
+    db = tmp_path / "test.db"
+    valid_db(db)
+    if not baseline_read:
+        db.chmod(0)
+    try:
+        baseline = surface(tmp_path)
+        db.chmod(0)
+        assert baseline.receipt() is None  # the read fault itself never charges
+        (tmp_path / "test.db-wal").symlink_to("absent")
+        receipt = baseline.receipt()
+        if baseline_read:
+            assert (receipt["label"], receipt["rule"], receipt["path"], receipt["kind"]) == (
+                "invalid_store", "sqlite_sidecar", "test.db-wal", "symlink")
+        else:
+            assert receipt is None  # never read as a database, so the link is judged as itself
+    finally:
+        db.chmod(0o600)
+
+
 def test_hot_journal_is_read_only_and_hides_no_damage(tmp_path):
     path = tmp_path / "test.db"
     valid_db(path)
