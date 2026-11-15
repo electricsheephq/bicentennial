@@ -391,19 +391,41 @@ def _pair_inputs(root, rows, kill, genre):
     return tuple(sorted(ids)), tuple(requests)
 
 
+def _gap_paths(report, rows, blobs):
+    """Resolve every gapped call to its native file; unreadable evidence stays unknown."""
+    try:
+        paths = set()
+        for gap in report["A4"]["gaps"]:
+            call, = [c for c in report["A4"]["calls"] if c["call"] == gap]
+            row, = [r for r in rows if r["seq"] == call["record"]]
+            served, = [c for c in output(blobs[row["resp"]], "chat")[0] if c["id"] == gap]
+            args = json.loads(served["arguments"])
+            target = args.get("target", "memory")
+            path = dict(HERMES_FILES).get(target) if isinstance(target, str) else None
+            if path is None:
+                return [None]
+            paths.add(path)
+        return sorted(paths) or [None]
+    except Exception:
+        return [None]
+
+
 def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=False, diagnostics=None):
     phase = dict(phase="ledger")
     try:
         rows, blobs, _ = load_ledger(adapter.paths["root"] / "ledger", "kit")
         phase = dict(phase="audit")
         model_for, mode = route_models(table, adapter.entry["name"], faults)
+        def check(effects):
+            return audit(rows, blobs, turns_from_script(script), "chat", fmt="kit", model_for=model_for,
+                         suffix=None, write_tools=tuple(t["tool"] for t in adapter.entry["write_tools"]),
+                         id_needles=life_ids({"items": list(items), "records": list(records)}),
+                         effects=effects, probe_live=probe_live)
+
         phase = dict(phase="effects")
         effects = None if plugin else hermes_effects(adapter.paths["hermes_home"], reading=lambda p: phase.update(path=p))
         phase = dict(phase="audit")
-        report = audit(rows, blobs, turns_from_script(script), "chat", fmt="kit", model_for=model_for,
-                       suffix=None, write_tools=tuple(t["tool"] for t in adapter.entry["write_tools"]),
-                       id_needles=life_ids({"items": list(items), "records": list(records)}),
-                       effects=effects, probe_live=probe_live)
+        report = check(effects)
         codes = failures(report)
         ignored = ("A4.no_effects_hook",) if plugin else ()
         if arm == "wiped":
@@ -421,10 +443,19 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
                 result["a4_unclassified"] = unclassified
         if status != "OK" and diagnostics is not None:
             diagnostics.update(phase)
+            if "A4.gaps" in codes:
+                diagnostics["gap_paths"] = _gap_paths(report, rows, blobs)
         return result
     except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
         raise
     except Exception:
+        if phase["phase"] == "effects":
+            try:
+                phase["other_failures"] = [c for c in failures(check(None)) if not c.startswith("A4.")]
+            except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+                raise
+            except Exception:
+                phase["other_failures"] = ["audit_exception"]
         if diagnostics is not None:
             diagnostics.update(phase)
         return {"status": "INFRA_FAILURE", "failures": ["audit_exception"]}
@@ -632,6 +663,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
                     if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
                         m = _now()
+                        if probe and any(r["surface"] == "workspace" for r in evidence.parked_receipts):
+                            repair_permissions(paths["workspace"], {paths["workspace"]})
                         shutil.rmtree(paths["workspace"])
                         boundary = end_boundary(schedule, probe.checkpoint) if probe else start_boundary(schedule, index)
                         materialize(db, schedule, branch=branch, boundary=boundary, root=paths["workspace"])
@@ -835,7 +868,10 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                   and r["path"] in dict(HERMES_FILES).values()}
         if (leg is not None and arm == "system" and audited.get("status") != "OK" and native
                 and (set(audited.get("failures", ())) == {"A4.gaps"}
-                     or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native)):
+                     and evidence.audit_phase.get("gap_paths")
+                     and all(p in native for p in evidence.audit_phase["gap_paths"])
+                     or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
+                     and evidence.audit_phase.get("other_failures") == [])):
             for iid in by_id:
                 if iid not in evidence.classes:
                     evidence.classes[iid] = ("SYSTEM_FAILURE", "system_audit_failure")

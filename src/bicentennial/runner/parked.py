@@ -25,7 +25,11 @@ class ParkedProbe(ExitStack):
         """Observe one target without letting evidence errors change a session."""
         try:
             if rel == ".":
-                return sha256_canon(tree_listing(path, []))
+                info = path.lstat()
+                if not stat.S_ISDIR(info.st_mode):
+                    raise ValueError("surface root must be a real directory")
+                return sha256_canon([dict(path=".", kind="dir", mode=info.st_mode & 0o7777),
+                                     *tree_listing(path, [])])
             target = path
             try:
                 for part in rel.split("/"):
@@ -86,7 +90,8 @@ class ParkedProbe(ExitStack):
                             path=rel, before=before, after=after[rel]))
                 if surface == "workspace" and self.expected_hash is not None:
                     try:
-                        differs = after["."].startswith("unhashable:") or workspace_hash(path) != self.expected_hash
+                        differs = (after["."] != self.before[path]["."] or after["."].startswith("unhashable:")
+                                   or workspace_hash(path) != self.expected_hash)
                     except Exception:
                         differs = True
                     if differs:

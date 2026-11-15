@@ -61,11 +61,10 @@ def test_parked_memory(lives, unit_sessions, tmp_path, monkeypatch, request, cha
         def fault(*args, **kw):
             raise ValueError("injected audit failure")
         monkeypatch.setattr(life, "load_ledger" if failure == "ledger" else "audit", fault)
-    elif failure:
-        monkeypatch.setattr(life, "audit", lambda *a, **k: {})
-        monkeypatch.setattr(life, "failures", lambda report: ["A4.gaps", "A3.missing"]
-                            if failure == "mixed" else ["A4.gaps" if failure == "classed" else failure])
-        monkeypatch.setattr(life, "run_status", lambda *a: "INFRA_FAILURE")
+    elif failure and failure != "effects":
+        a4_failure(monkeypatch, ("user" if changed == "USER.md" else "memory",),
+                   ["A4.gaps", "A3.missing"] if failure == "mixed" else [
+                       "A4.gaps" if failure == "classed" else failure])
     if arm == "scripted":
         run = helpers.drive(case, tmp_path)
         assert run.audit["failures"] == ["A4.gaps"]
@@ -83,7 +82,7 @@ def test_parked_memory(lives, unit_sessions, tmp_path, monkeypatch, request, cha
     else:
         assert not receipts
     if failure in ("A4.gaps", "A3.missing", "mixed", "classed"):
-        assert run.audit_phase == {"phase": "audit"}
+        assert run.audit_phase["phase"] == "audit"
     if failure in ("effects", "other_effect", "ledger", "audit"):
         assert canon(run.audit) == b'{"failures":["audit_exception"],"status":"INFRA_FAILURE"}'
         assert run.audit_phase["phase"] == ("effects" if "effect" in failure else failure)
@@ -241,9 +240,7 @@ def test_unhashable_hermes(lives, unit_sessions, tmp_path, monkeypatch, kind):
 
     damage_probe(monkeypatch, case, damage, session_index=case["compiled"].probes[-1].index)
     if kind != "unreadable":
-        monkeypatch.setattr(life, "audit", lambda *a, **k: {})
-        monkeypatch.setattr(life, "failures", lambda report: ["A4.gaps"])
-        monkeypatch.setattr(life, "run_status", lambda *a: "INFRA_FAILURE")
+        a4_failure(monkeypatch, ("memory",))
     try:
         result = unit(case, tmp_path)
     finally:
@@ -265,7 +262,7 @@ def test_unhashable_hermes(lives, unit_sessions, tmp_path, monkeypatch, kind):
         assert receipt["after"] == "unhashable:" + (
             "PermissionError" if kind == "unreadable" else "not_regular")
         if kind == "unreadable":
-            assert run.audit_phase == {"phase": "effects", "path": "memories/MEMORY.md"}
+            assert run.audit_phase == {"phase": "effects", "path": "memories/MEMORY.md", "other_failures": []}
 
 
 @pytest.mark.parametrize("kind", ["credential", "worker_protocol"])
@@ -352,3 +349,139 @@ def test_observation_errors_preserve_stack_result(tmp_path, monkeypatch, phase):
     assert not checkpoints
     if phase == "stable":
         assert not run.parked_receipts
+
+
+@pytest.mark.parametrize("kind", ["head", "root_mode"])
+def test_changed_workspace_rebuilt(lives, unit_sessions, tmp_path, monkeypatch, kind):
+    case = lives["t1-g1", "B0"]
+    probes, builds, damaged, observed = case["compiled"].probes, [], [], []
+    first = next(p for p, q in zip(probes, probes[1:], strict=False) if p.checkpoint == q.checkpoint)
+    materialize, clone = life.materialize, life.clone_tree
+
+    def rebuild(*a, **k):
+        materialize(*a, **k)
+        builds.append(k["boundary"])
+
+    def cloning(source, dest):
+        if source.name == "workspace" and dest.parent.name == str(first.index + 1):
+            observed.append(((source / ".git/HEAD").read_bytes(), source.stat().st_mode & 0o7777))
+        return clone(source, dest)
+
+    def damage(workspace):
+        parked = next(workspace.parent.glob(".workspace.original-*"))
+        expected = ((parked / ".git/HEAD").read_bytes(), parked.stat().st_mode & 0o7777)
+        assert expected[1] == 0o755
+        damaged.append((parked, workspace, expected, builds[-1], len(builds)))
+        if kind == "head":
+            (parked / ".git/HEAD").write_text("ref: refs/heads/changed\n")
+        else:
+            parked.chmod(0o555)
+
+    monkeypatch.setattr(life, "materialize", rebuild)
+    monkeypatch.setattr(life, "clone_tree", cloning)
+    damage_probe(monkeypatch, case, damage, session_index=first.index)
+    try:
+        result = unit(case, tmp_path)
+    finally:
+        for parked, workspace, expected, _, _ in damaged:
+            for path in (parked, workspace):
+                if path.exists():
+                    path.chmod(expected[1])
+    run = result.runs[0]
+    assert any(r["surface"] == "workspace" and r["session"] == first.index for r in run.parked_receipts)
+    _, _, expected, boundary, count = damaged[0]
+    assert builds[count:].count(boundary) == 1
+    assert observed == [expected]
+    assert result.attempts == 1 and run.stopped is None and not run.classes
+    assert all(row["base_verdict"] != "VOID" and row["infra_reruns"] == 0 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("other", ["A1.mismatches", "A3.failures", "raises"])
+def test_effects_exception_keeps_other_failure(lives, unit_sessions, tmp_path, monkeypatch, other):
+    case, calls = lives["t1-g1", "B0"], []
+
+    def damage(workspace):
+        path = next(workspace.parent.glob(".hermes-home.original-*")) / "memories/MEMORY.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"\xff")
+
+    damage_probe(monkeypatch, case, damage)
+
+    original = life.audit
+
+    def audit(*a, **kw):
+        calls.append(kw["effects"])
+        if other == "raises":
+            raise ValueError("effects-free audit failure")
+        report = original(*a, **kw)
+        report["A1" if other.startswith("A1.") else "A3"][
+            "mismatches" if other.startswith("A1.") else "failures"] = [1]
+        return report
+
+    monkeypatch.setattr(life, "audit", audit)
+    result = unit(case, tmp_path)
+    assert result.attempts == 3
+    run = result.runs[0]
+    assert not run.classes and any(r["path"] == "memories/MEMORY.md" for r in run.parked_receipts)
+    assert calls == [None] * 3
+    assert run.audit_phase["other_failures"] == (["audit_exception"] if other == "raises" else ["A1.mismatches" if other.startswith("A1.") else other])
+    assert canon(run.audit) == b'{"failures":["audit_exception"],"status":"INFRA_FAILURE"}'
+
+
+def a4_failure(monkeypatch, targets, codes=("A4.gaps",)):
+    load = life.load_ledger
+
+    def ledger(*a):
+        rows, blobs, extra = load(*a)
+        seq = max((r["seq"] for r in rows), default=0) + 1
+        calls = [dict(id=f"gap-{i}", function=dict(name="memory", arguments=(
+            target if target == "bad-json" else json.dumps({} if target == "default" else {"target": target}))))
+            for i, target in enumerate(targets)]
+        blob = {"choices": [{"message": {"tool_calls": calls}}]}
+        return [*rows, dict(seq=seq, resp="gap-response")], dict(blobs, **{"gap-response": blob}), extra
+
+    def audit(rows, *a, **kw):
+        calls = [dict(call=f"gap-{i}", record=rows[-1]["seq"]) for i in range(len(targets))]
+        return {"A4": dict(gaps=[c["call"] for c in calls], calls=calls)}
+
+    monkeypatch.setattr(life, "load_ledger", ledger)
+    monkeypatch.setattr(life, "audit", audit)
+    monkeypatch.setattr(life, "failures", lambda report: list(codes))
+    monkeypatch.setattr(life, "run_status", lambda *a: "INFRA_FAILURE")
+
+
+@pytest.mark.parametrize("changed,targets,attempts", [
+    (("USER.md",), ("memory",), 3),
+    (("MEMORY.md", "USER.md"), ("memory", "user"), 1),
+    (("MEMORY.md",), ("memory", "user"), 3),
+    (("MEMORY.md",), ("bad-json",), 3),
+    (("MEMORY.md",), ([],), 3),
+    (("MEMORY.md",), ("unknown",), 3),
+    (("MEMORY.md",), ("default",), 1),
+])
+def test_gaps_require_matching_files(lives, unit_sessions, tmp_path, monkeypatch, changed, targets, attempts):
+    case = lives["t1-g1", "B0"]
+
+    def damage(workspace):
+        home = next(workspace.parent.glob(".hermes-home.original-*"))
+        for name in changed:
+            path = home / "memories" / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text("changed")
+
+    damage_probe(monkeypatch, case, damage)
+    a4_failure(monkeypatch, targets)
+    result = unit(case, tmp_path)
+    assert result.attempts == attempts
+    run = result.runs[0]
+    assert {r["path"] for r in run.parked_receipts if r["path"] != "."} == {"memories/" + n for n in changed}
+    assert set(run.classes.values()) == ({("SYSTEM_FAILURE", "system_audit_failure")} if attempts == 1 else set())
+    assert all(row["infra_reruns"] == attempts - 1 for row in result.scores.values())
+
+
+def test_healthy_audit_bytes(lives, unit_sessions, tmp_path):
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    run, = result.runs
+    assert canon(run.audit) == b'{"failures":[],"status":"OK"}'
+    assert not run.audit_phase and not run.parked_receipts
+    assert not (tmp_path / "out/unit_diagnostics.json").exists()
