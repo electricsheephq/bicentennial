@@ -208,6 +208,7 @@ def test_replaced_root_with_baseline_act_state_reruns(lives, unit_sessions, tmp_
     monkeypatch.setattr(adapter.HermesAdapter, "__init__", construct)
     probe, _ = damage_probe(monkeypatch, case, replace_root)
     result = unit(case, tmp_path / "broken")
+    assert (tmp_path / "discarded-clone").is_dir()  # the first attempt's root was replaced
     assert result.attempts == 2 and result.stop is None
     first, redo = result.runs
     assert first.stopped == ("INFRA_FAILURE", "FileExistsError", probe.index)
