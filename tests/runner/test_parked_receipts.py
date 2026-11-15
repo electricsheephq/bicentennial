@@ -3,6 +3,8 @@
 import errno
 import json
 import os
+import shutil
+import stat
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,9 +50,15 @@ def test_parked_memory(lives, unit_sessions, tmp_path, monkeypatch, request, cha
     if failure == "classed":
         monkeypatch.setattr(life, "_probe_code", lambda *a, **k: "known_infra" if k.get("session") == probe.index else None)
     if failure in ("effects", "other_effect") and (not changed or failure == "other_effect"):
-        read, is_file = Path.read_text, Path.is_file
-        monkeypatch.setattr(Path, "is_file", lambda p: True if p.name == (
-            "USER.md" if changed else "MEMORY.md") else is_file(p))
+        read, effects = Path.read_text, life.hermes_effects
+
+        def with_store(home, **kw):
+            path = home / "memories" / ("USER.md" if changed else "MEMORY.md")
+            path.parent.mkdir(exist_ok=True)
+            path.touch()
+            return effects(home, **kw)
+
+        monkeypatch.setattr(life, "hermes_effects", with_store)
 
         def fault(path, *args, **kw):
             if path.name == ("USER.md" if failure == "other_effect" else "MEMORY.md"):
@@ -265,7 +273,7 @@ def test_unhashable_hermes(lives, unit_sessions, tmp_path, monkeypatch, kind):
         if kind == "unreadable":
             assert run.audit_phase == {"phase": "effects", "path": "memories/MEMORY.md", "other_failures": [],
                 "file_state": {"observation": "unhashable:PermissionError", "state": receipt["after_state"],
-                               "reread_raises": True}}
+                               "reread_raises": False}}
 
 
 @pytest.mark.parametrize("kind", ["credential", "worker_protocol"])
@@ -601,7 +609,7 @@ def test_r4_effects_requires_current_explanation(lives, unit_sessions, tmp_path,
     assert receipt["proven"]
     state = run.audit_phase["file_state"]
     assert len(reads) == 2 * result.attempts
-    assert state["reread_raises"] == (later != "valid")
+    assert state["reread_raises"] == (later == "invalid")
     assert run.audit_phase["other_failures"] == []
     if later == "mode":
         assert state["observation"] == "unhashable:PermissionError"
@@ -613,3 +621,196 @@ def test_r4_effects_requires_current_explanation(lives, unit_sessions, tmp_path,
         assert state["observation"] not in (receipt["before"], receipt["after"])
     assert set(run.classes.values()) == (set() if later == "valid" else {("SYSTEM_FAILURE", "system_audit_failure")})
     assert all(row["infra_reruns"] == (2 if later == "valid" else 0) for row in result.scores.values())
+
+
+# Round 5: deterministic states and the effects reader's own refusals.
+def r5_baseline(monkeypatch, probe, *, absent=False):
+    enter = life.ParkedProbe.__enter__
+
+    def baseline(stack):
+        for _, home, native in stack.targets:
+            if native:
+                path = home / "memories/MEMORY.md"
+                path.parent.mkdir(exist_ok=True)
+                if absent and stack.index == probe.index:
+                    path.unlink(missing_ok=True)
+                elif not path.exists():
+                    path.write_text("baseline")
+        return enter(stack)
+
+    monkeypatch.setattr(life.ParkedProbe, "__enter__", baseline)
+
+
+@pytest.mark.parametrize("fault", ["after", "persistent", "eperm", "eacces"])
+def test_r5_unknown_lstat_is_not_change(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    case, paths = lives["t1-g1", "B0"], set()
+    probe = case["compiled"].probes[-1]
+    r5_baseline(monkeypatch, probe)
+    lstat, exiting = Path.lstat, life.ParkedProbe.__exit__
+    after = []
+
+    def damage(workspace):
+        paths.add(workspace.parent / "hermes-home/memories/MEMORY.md")
+
+    def exit_probe(stack, *exc):
+        after.append(True)
+        try:
+            return exiting(stack, *exc)
+        finally:
+            after.clear()
+
+    def failing(path, *a, **kw):
+        if path in paths and (after or fault != "after"):
+            code = {"eperm": errno.EPERM, "eacces": errno.EACCES}.get(fault, errno.EIO)
+            raise OSError(code, "injected lstat fault")
+        return lstat(path, *a, **kw)
+
+    damage_probe(monkeypatch, case, damage, session_index=probe.index)
+    monkeypatch.setattr(life.ParkedProbe, "__exit__", exit_probe)
+    monkeypatch.setattr(Path, "lstat", failing)
+    if fault != "persistent":
+        a4_failure(monkeypatch, ("memory",))
+    result = unit(case, tmp_path)
+    run = result.runs[0]
+    receipt, = [r for r in run.parked_receipts if r["path"] == "memories/MEMORY.md"]
+    assert receipt["after_state"] is None and not receipt["proven"]
+    assert result.attempts == 3 and not run.classes
+    assert all(row["infra_reruns"] == 2 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("fault", ["bytes", "created", "repeat", "stat", "fifo", "tradeoff"])
+def test_r5_proven_receipt_needs_explanation(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    case, changed, writes, active, faults = lives["t1-g1", "B0"], set(), [], [], []
+    probe = case["compiled"].probes[0 if fault in ("stat", "fifo", "tradeoff") else -1]
+    r5_baseline(monkeypatch, probe, absent=fault == "created")
+
+    def damage(workspace):
+        path = next(workspace.parent.glob(".hermes-home.original-*")) / "memories/MEMORY.md"
+        path.write_text("reader's new valid bytes")
+        changed.add(workspace.parent / "hermes-home/memories/MEMORY.md")
+
+    damage_probe(monkeypatch, case, damage, session_index=probe.index)
+    session = helpers.adapter.HermesAdapter.run_session
+    replay = {s["index"] for s in case["compiled"].script["sessions"] if s["kind"] == "replay"}
+
+    def later(self, index, **kw):
+        result = session(self, index, **kw)
+        path = self.paths["hermes_home"] / "memories/MEMORY.md"
+        if path in changed and index in replay and fault in ("stat", "fifo", "tradeoff"):
+            if fault == "fifo":
+                path.unlink(missing_ok=True)
+                os.mkfifo(path)
+            else:
+                path.write_text("later replay's valid bytes")
+            writes.append(index)
+        return result
+
+    effects, opening, reading, statting = life.hermes_effects, Path.open, Path.read_text, Path.lstat
+    is_file, is_link = Path.is_file, Path.is_symlink
+
+    def final(home, **kw):
+        active[:] = [home / "memories/MEMORY.md", False]
+        return effects(home, **kw)
+
+    def open_fault(path, *a, **kw):
+        if active and path == active[0] and fault in ("bytes", "created"):
+            faults.append("open")
+            raise OSError(errno.EIO, "persistent open fault")
+        return opening(path, *a, **kw)
+
+    def text_fault(path, *a, **kw):
+        if active and path == active[0] and fault == "repeat":
+            faults.append("text")
+            raise OSError(errno.EIO, "effects and repeat only")
+        return reading(path, *a, **kw)
+
+    def stat_fault(path, *a, **kw):
+        if active and path == active[0] and fault == "stat" and not active[1]:
+            active[1] = True
+            faults.append("stat")
+            raise OSError(errno.EIO, "transient final stat fault")
+        return statting(path, *a, **kw)
+
+    def file_314(path):
+        try:
+            if active and path == active[0] and fault == "stat":
+                stat_fault(path)
+            return is_file(path)
+        except OSError:  # Python 3.14 is_file's error-to-False behaviour on older interpreters too.
+            return False
+
+    if fault == "fifo":
+        # Isolate audit attribution: source-damage scoring and cloning special files are separate rules.
+        monkeypatch.setattr(life.SourceBaseline, "receipt", lambda *a, **kw: None)
+        monkeypatch.setattr(helpers, "surface_hash", lambda *a, **kw: sha256_canon([]))
+        clone = life.clone_tree
+
+        def copy_entry(source, dest):
+            if stat.S_ISFIFO(Path(source).lstat().st_mode):
+                os.mkfifo(dest)
+                return dest
+            return shutil.copy2(source, dest)
+
+        monkeypatch.setattr(life, "clone_tree", lambda source, dest: (
+            shutil.copytree(source, dest, symlinks=True, copy_function=copy_entry)
+            if source.name == "hermes-home" else clone(source, dest)))
+    monkeypatch.setattr(helpers.adapter.HermesAdapter, "run_session", later)
+    monkeypatch.setattr(life, "hermes_effects", final)
+    monkeypatch.setattr(Path, "open", open_fault)
+    monkeypatch.setattr(Path, "read_text", text_fault)
+    monkeypatch.setattr(Path, "lstat", stat_fault)
+    monkeypatch.setattr(Path, "is_file", file_314)
+    # The entry is regular: keep the transient fault for is_file (base) or explicit lstat (fixed reader).
+    monkeypatch.setattr(Path, "is_symlink", lambda p: False if active and p == active[0] and fault == "stat" else is_link(p))
+    if fault in ("stat", "fifo", "tradeoff"):
+        a4_failure(monkeypatch, ("memory",))
+    result = unit(case, tmp_path)
+    run = result.runs[0]
+    receipt, = [r for r in run.parked_receipts if r["path"] == "memories/MEMORY.md"]
+    assert receipt["proven"] and not receipt["after"].startswith("unhashable:")
+    assert receipt["after_state"] == receipt["before_state"] or fault == "created"
+    if fault in ("stat", "fifo", "tradeoff"):
+        assert writes
+    else:
+        assert faults
+        assert run.audit_phase["phase"] == "effects"
+    if fault == "repeat":
+        assert not run.audit_phase["file_state"]["observation"].startswith("unhashable:")
+    if fault == "stat":
+        assert faults == ["stat"] * result.attempts
+    if fault == "fifo":
+        assert run.stopped is None and not run.source_receipts
+    assert result.attempts == (1 if fault == "tradeoff" else 3)
+    assert set(run.classes.values()) == ({("SYSTEM_FAILURE", "system_audit_failure")} if fault == "tradeoff" else set())
+
+
+@pytest.mark.parametrize("kind", ["denied", "deleted", "link"])
+def test_r5_native_positive_controls(lives, unit_sessions, tmp_path, monkeypatch, kind):
+    case, damaged = lives["t1-g1", "B0"], []
+    probe = case["compiled"].probes[-1]
+    r5_baseline(monkeypatch, probe)
+
+    def damage(workspace):
+        home = next(workspace.parent.glob(".hermes-home.original-*"))
+        path = home / "memories/MEMORY.md"
+        if kind == "denied":
+            damaged.extend((path.parent, workspace.parent / "hermes-home/memories"))
+            path.parent.chmod(0)
+        else:
+            path.unlink()
+            if kind == "link":
+                path.symlink_to("absent")
+
+    damage_probe(monkeypatch, case, damage, session_index=probe.index)
+    if kind in ("denied", "deleted"):
+        a4_failure(monkeypatch, ("memory",))
+    try:
+        result = unit(case, tmp_path)
+    finally:
+        for path in damaged:
+            if path.exists():
+                path.chmod(0o700)
+    run, = result.runs
+    assert result.attempts == 1
+    assert set(run.classes.values()) == {("SYSTEM_FAILURE", "system_audit_failure")}
+    assert any(r["path"] == "memories/MEMORY.md" and r["proven"] for r in run.parked_receipts)

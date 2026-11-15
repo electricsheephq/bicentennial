@@ -284,6 +284,23 @@ def effects(calls, requests, stores, wire):
                 gaps=gaps, calls=reports, **counts)
 
 
+def read_hermes_file(home, relative):
+    """Read one native store; only absence or a non-regular entry is empty."""
+    import stat
+
+    path = Path(home) / relative
+    target = next(t for t, rel in HERMES_FILES if rel == relative)
+    if path.parent.is_symlink():
+        raise ValueError(f"hermes_store_symlink:{target}")
+    try:
+        info = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return ""
+    if stat.S_ISLNK(info.st_mode):
+        raise ValueError(f"hermes_store_symlink:{target}")
+    return path.read_text(encoding="utf-8") if stat.S_ISREG(info.st_mode) else ""
+
+
 def hermes(home, *, reading=None):
     """-> hook(calls, requests, wire). Reads only home/memories/MEMORY.md and USER.md, now; no symlinks."""
     home = Path(home)
@@ -293,8 +310,5 @@ def hermes(home, *, reading=None):
     for target, relative in HERMES_FILES:
         if reading is not None:
             reading(relative)
-        path = home / relative
-        if path.parent.is_symlink() or path.is_symlink():
-            raise ValueError(f"hermes_store_symlink:{target}")
-        stores[target] = path.read_text(encoding="utf-8") if path.is_file() else ""
+        stores[target] = read_hermes_file(home, relative)
     return lambda calls, requests, wire: effects(calls, requests, stores, wire)

@@ -1,11 +1,12 @@
 """Observe originals around a probe's complete swap/restore stack."""
 
+import errno
 import os
 import stat
 from contextlib import ExitStack, contextmanager
 from hashlib import file_digest
 
-from bicentennial.audit.effects import HERMES_FILES
+from bicentennial.audit.effects import HERMES_FILES, read_hermes_file
 from bicentennial.audit.source_damage import RestoreWatch
 from bicentennial.canon import sha256_canon
 from bicentennial.contracts.surfaces import tree_listing
@@ -58,10 +59,21 @@ class ParkedProbe(ExitStack):
 
     @staticmethod
     def state(path, rel="."):
-        """The target's own kind and permissions, or unknown when lstat fails."""
+        """Own kind/mode, known absence or owner-search denial; other faults are unknown."""
         try:
             info = (path / rel).lstat()
             return dict(kind=stat.S_IFMT(info.st_mode), mode=info.st_mode & 0o7777)
+        except (FileNotFoundError, NotADirectoryError):
+            return "absent"
+        except PermissionError as error:
+            if error.errno == errno.EACCES:
+                try:
+                    parent = (path / rel).parent.lstat()
+                    if stat.S_ISDIR(parent.st_mode) and not parent.st_mode & 0o100:
+                        return "denied"
+                except Exception:
+                    pass
+            return None
         except Exception:
             return None
 
@@ -69,15 +81,23 @@ class ParkedProbe(ExitStack):
     def effects_failure(cls, home, rel):
         """Capture the failed file and repeat the effects reader's single-file read."""
         result = dict(observation=cls.observe(home, rel), state=cls.state(home, rel), reread_raises=False)
-        path = home / rel
         try:
-            if path.parent.is_symlink() or path.is_symlink():
-                raise ValueError("hermes_store_symlink")
-            if path.is_file():
-                path.read_text(encoding="utf-8")
-        except Exception:
+            read_hermes_file(home, rel)
+        except ValueError:
             result["reread_raises"] = True
+        except Exception:
+            pass
         return result
+
+    @staticmethod
+    def explained(file_state, receipts, *, effects=False):
+        """Readable bytes explain gaps; an unreadable entry needs its own matching receipt."""
+        if not file_state.get("observation", "unhashable:unknown").startswith("unhashable:"):
+            return not effects or file_state.get("reread_raises", False)
+        state = file_state.get("state")
+        cannot_read = state == "denied" or isinstance(state, dict) and (
+            state["kind"] != stat.S_IFREG or not state["mode"] & 0o400)
+        return cannot_read and any(r["after_state"] == state for r in receipts)
 
     @classmethod
     def hashes(cls, path, native):
@@ -114,7 +134,7 @@ class ParkedProbe(ExitStack):
                         self.evidence.parked_receipts.append(dict(session=self.index, surface=surface,
                             path=rel, before=before, after=after[rel], before_state=before_state, after_state=after_state,
                             proven=not any(v.startswith("unhashable:") for v in (before, after[rel]))
-                            or before_state != after_state))
+                            or before_state is not None and after_state is not None and before_state != after_state))
                 if surface == "workspace" and self.expected_hash is not None:
                     try:
                         differs = (after["."] != self.before[path]["."] or after["."].startswith("unhashable:")

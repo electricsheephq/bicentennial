@@ -445,6 +445,9 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
             diagnostics.update(phase)
             if "A4.gaps" in codes:
                 diagnostics["gap_paths"] = _gap_paths(report, rows, blobs)
+                diagnostics["gap_states"] = {p: dict(observation=ParkedProbe.observe(adapter.paths["hermes_home"], p),
+                    state=ParkedProbe.state(adapter.paths["hermes_home"], p))
+                    for p in diagnostics["gap_paths"] if p is not None}
         return result
     except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
         raise
@@ -870,14 +873,13 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     and r["path"] in dict(HERMES_FILES).values()]
         native = {r["path"] for r in receipts}
         failed_file = evidence.audit_phase.get("file_state", {})
-        unhashable = failed_file.get("observation", "unhashable:unknown").startswith("unhashable:")
-        explained = (not unhashable and failed_file.get("reread_raises") or unhashable and bool(failed_file)
-                     and any(r["path"] == evidence.audit_phase.get("path")
-                             and r["after_state"] == failed_file["state"] for r in receipts))
+        explained = ParkedProbe.explained(failed_file, [r for r in receipts
+            if r["path"] == evidence.audit_phase.get("path")], effects=True)
         if (leg is not None and arm == "system" and audited.get("status") != "OK" and native
                 and (set(audited.get("failures", ())) == {"A4.gaps"}
                      and evidence.audit_phase.get("gap_paths")
-                     and all(p in native for p in evidence.audit_phase["gap_paths"])
+                     and all(p in native and ParkedProbe.explained(evidence.audit_phase.get("gap_states", {}).get(p, {}),
+                         [r for r in receipts if r["path"] == p]) for p in evidence.audit_phase["gap_paths"])
                      or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
                      and evidence.audit_phase.get("other_failures") == [] and explained)):
             for iid in by_id:
