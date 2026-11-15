@@ -43,6 +43,7 @@ ENTRYPOINT = "acp_adapter.session.SessionManager in process (S6a fallback)"
 WORKER = Path(__file__).resolve().with_name("worker.py")
 DRAIN_QUIET_S, DRAIN_CAP_S, EXIT_TIMEOUT_S = 3.0, 240.0, 300
 STARTUP_TIMEOUT_S, OPEN_TIMEOUT_S, TURN_TIMEOUT_S, END_TIMEOUT_S = 300, 300, 3600, 300
+EOF_SETTLE_S = 5.0  # a worker that closed its pipe has this long to finish exiting before a kill counts as live
 _now = time.monotonic
 
 
@@ -141,9 +142,10 @@ def _session_reply(out, phase):
 
 
 class _Worker:
-    def __init__(self, argv, env, cwd, log, egress=None, system_plugin=False):
+    def __init__(self, argv, env, cwd, log, egress=None, system_plugin=False, on_kill=None):
         self._buffer, self._reaped, self.egress = b"", False, egress
         self._ready, self._system_plugin = False, system_plugin
+        self._on_kill, self._closed = on_kill, False
         self._cleanup_lock = Lock()
         own = os.getpriority(os.PRIO_PROCESS, 0)  # nice -n adds: only the gap to 19 (guard.py 86-91)
         prefix = ["nice", "-n", str(19 - own)] + (["taskpolicy", "-b"] if sys.platform == "darwin" else [])
@@ -192,10 +194,12 @@ class _Worker:
                         raise HarnessFailed(f"{phase}_timeout")
                     chunk = os.read(self.proc.stdout.fileno(), 65536)
                     if not chunk:
+                        self._closed = True
                         return None
                     self._buffer += chunk
             line, self._buffer = self._buffer.split(b"\n", 1)
         except OSError:
+            self._closed = True
             return None
         attributed = self._ready and self._system_plugin
         try:
@@ -212,6 +216,16 @@ class _Worker:
         with self._cleanup_lock:
             self._cleanup(clean)
 
+    def _running(self, grace):
+        """Whether the leader is still running, after up to `grace` s for it to finish an exit already under way.
+        A closed pipe precedes the exit itself, so a worker leaving by itself is not taken for a live one."""
+        deadline = time.monotonic() + grace
+        while os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+            if time.monotonic() >= deadline:
+                return True
+            time.sleep(0.01)
+        return False
+
     def _cleanup(self, clean):
         if self._reaped:
             return
@@ -223,6 +237,7 @@ class _Worker:
                     if time.monotonic() >= deadline:
                         raise subprocess.TimeoutExpired(self.proc.args, EXIT_TIMEOUT_S)
                     time.sleep(0.01)
+            live = not clean and self._running(EOF_SETTLE_S if self._closed else 0)
             try:
                 os.killpg(self.proc.pid, signal.SIGKILL)  # includes children even after the leader exits
             except ProcessLookupError:
@@ -234,6 +249,9 @@ class _Worker:
                 survivors = _group_survivors(self.proc.pid)
                 if survivors:
                     raise HarnessFailed("group_survivors:" + ",".join(map(str, sorted(survivors)))) from None
+            else:
+                if live and self._on_kill is not None:
+                    self._on_kill()
             self.proc.wait()
         self._reaped = True
         if self.egress is not None:
@@ -285,7 +303,7 @@ class HermesAdapter:
         self.volatile = next(s["volatile_paths"] for s in entry["surfaces"] if s["root"] == "HERMES_HOME")
         self.paths = layout(root, scratch)
         self.pids, self._worker, self._held, self._fired = [], None, None, set()
-        self.after_kill = False  # True from a spawn until that worker ends by itself (audit/source_damage.py)
+        self.after_kill = False  # the harness killed a live worker since the last clean end
         self.end_threads = None
         self._receipt_sessions = {}
         self.background_threads = []
@@ -447,10 +465,10 @@ class HermesAdapter:
                                                             scripted=self.scripted))
         t0 = _now()
         env = worker_env(self.paths, self.server.port, self.clock.path, self.checkout, self.extra_env)
-        self.after_kill = True  # until this worker ends by itself, a check may see a killed process's residue
         self._worker = _Worker(self.argv, env, str(self.paths["workspace"]),
                                self.paths["logs"] / f"worker-{len(self.pids) + 1}.stderr", self.egress,
-                               bool(self.plugin is not None or self.context_engine is not None or self.plugins_enabled))
+                               bool(self.plugin is not None or self.context_engine is not None or self.plugins_enabled),
+                               self._worker_killed)
         self.pids.append(self._worker.proc.pid)  # recorded before the check, as the memory host does
         assert_niced(self.pids[-1])
         t["spawn"].append(_ms(t0))
@@ -469,6 +487,9 @@ class HermesAdapter:
         t["open"].append(_ms(t0))
         return out["session_id"], out["history"], wiped
 
+    def _worker_killed(self):
+        self.after_kill = True
+
     def _end(self) -> tuple | None:
         out = self._worker.call(op="end")
         try:
@@ -476,7 +497,7 @@ class HermesAdapter:
         except subprocess.TimeoutExpired:
             self._worker.kill()
             raise HarnessFailed("exit_timeout") from None
-        self.after_kill = False  # the worker ended by itself
+        self.after_kill = False  # a clean end: from here on, what a check finds is the system's own
         if out is None or not out.get("ok"):
             raise HarnessFailed("end_failed")
         return tuple(sorted(out["alive_threads"])) if "alive_threads" in out else None
