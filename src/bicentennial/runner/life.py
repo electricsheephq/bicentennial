@@ -675,7 +675,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         track_state = leg is not None and genre == "G1"
                         absent_before = _act_state_absent(root) if track_state else False
                         observed = absent_before if track_state else None
-                        if track_state and probe and by_id[probe.item_ids[0]]["stage"] == "act":
+                        if track_state and probe:
                             stack.callback(move_workspace_replacement, paths["workspace"], clones[-1].parent,
                                            evidence.workspace_receipts, index)
                         result = adapter.run_session(index, sim_t_s=instant, lock_hash=lock_hash, attempt_id=attempt_id)

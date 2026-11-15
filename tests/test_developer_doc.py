@@ -305,3 +305,5 @@ def test_doc_public_text():
 def test_doc_workspace_root_replacement_covers_all_entries(guide):
     text = (REPO / "docs/developers" / guide).read_text()
     assert text.count("anything other than a directory (a file, a symbolic link or another entry)") == 2
+    assert text.count("during any live G1 probe session") == 2
+    assert "QA items keep their answer scores" in text

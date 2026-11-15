@@ -44,6 +44,11 @@ def act_probe(case):
     return next(p for p in case["compiled"].probes if items[p.item_ids[0]]["stage"] == "act")
 
 
+def qa_probe(case):
+    items = {i["item_id"]: i for i in case["items"]}
+    return next(p for p in case["compiled"].probes if all(items[iid]["stage"] != "act" for iid in p.item_ids))
+
+
 def damage_probe(monkeypatch, case, damage, *, session_index=None):
     probe, original, visited = act_probe(case), adapter.HermesAdapter.run_session, []
 
@@ -85,14 +90,17 @@ def expected(case):
         {name: False for name in case.checks}, window=case.window)
 
 
-@pytest.mark.parametrize("kind", ["file", "directory_link", "dangling_link", "self_link", "non_utf8_link"])
+@pytest.mark.parametrize("stage,kind", [
+    ("act", "file"), ("act", "directory_link"), ("act", "dangling_link"),
+    ("act", "self_link"), ("act", "non_utf8_link"), ("qa", "file"), ("qa", "dangling_link")])
 def test_live_workspace_root_replaced_scores_empty_and_restores(
-        lives, unit_sessions, tmp_path, monkeypatch, kind):
+        lives, unit_sessions, tmp_path, monkeypatch, kind, stage):
     case = lives["t1-g1", "B0"]
     clean = unit(case, tmp_path / "clean")
     assert not (tmp_path / "clean/out/unit_diagnostics.json").exists()
     assert not getattr(clean.runs[0], "workspace_receipts", [])
-    probe = act_probe(case)
+    probe = act_probe(case) if stage == "act" else qa_probe(case)
+    assert probe.index < case["compiled"].script["sessions"][-1]["index"]
     swap, read = life.swap_in, life.read_input
     originals, restored, reads, damaged = [], [], [], []
     target = tmp_path / "link-target"
@@ -136,19 +144,19 @@ def test_live_workspace_root_replaced_scores_empty_and_restores(
 
     monkeypatch.setattr(life, "swap_in", watch)
     monkeypatch.setattr(life, "read_input", record_read)
-    _, visited = damage_probe(monkeypatch, case, replace_root)
+    _, visited = damage_probe(monkeypatch, case, replace_root, session_index=probe.index)
     result = unit(case, tmp_path / "broken")
     assert result.attempts == 1 and result.stop is None  # base reruns after the failed root restore
     run, = result.runs
     assert not reads  # base follows directory links and tries every input under other replacements
     assert restored == originals and len(restored) == 1
     assert visited == [s["index"] for s in case["compiled"].script["sessions"]]
-    assert run.item_labels == {iid: "unreadable_state" for iid in probe.item_ids}
+    assert run.item_labels == ({iid: "unreadable_state" for iid in probe.item_ids} if stage == "act" else {})
     failed = tuple((p, "workspace_replaced") for p in sorted(PATHS.values()))
-    assert run.unreadable_paths == {iid: failed for iid in probe.item_ids}
+    assert run.unreadable_paths == ({iid: failed for iid in probe.item_ids} if stage == "act" else {})
     for iid, row in result.scores.items():
         assert not isinstance(row, Infra) and row["infra_reruns"] == 0
-        if iid in probe.item_ids:
+        if iid in probe.item_ids and stage == "act":
             assert run.act[iid] == {}
             scored = expected(case["cases"][iid])
             assert row["failure_class"] == scored.failure_class
@@ -287,10 +295,11 @@ def test_workspace_move_fault_redoes_without_deleting(lives, unit_sessions, tmp_
     assert entries[0][0].stat().st_ino == entries[0][1]
 
 
-@pytest.mark.parametrize("fault", ["restore", "before_session", "observation"])
-def test_workspace_harness_fault_still_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, fault):
+@pytest.mark.parametrize("fault,stage", [
+    ("restore", "act"), ("before_session", "act"), ("observation", "act"), ("restore", "qa")])
+def test_workspace_harness_fault_still_redoes_unit(lives, unit_sessions, tmp_path, monkeypatch, fault, stage):
     case, failed, armed = lives["t1-g1", "B0"], [], []
-    probe = act_probe(case)
+    probe = act_probe(case) if stage == "act" else qa_probe(case)
     swap, clone_tree, lstat = life.swap_in, life.clone_tree, Path.lstat
 
     @contextmanager
