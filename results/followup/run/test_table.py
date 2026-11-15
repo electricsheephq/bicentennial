@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import shutil
 from copy import deepcopy
 from fractions import Fraction
 from hashlib import sha256
@@ -376,6 +377,48 @@ def test_reference_uses_controls_and_tie_order(run, table):
     for k in arms:
         arms[k]["card"]["served_identity"] = "second" if k != "A.F1" else "first"
     assert table.reference_identity(arms, list(arms)) == "second"
+
+
+@pytest.mark.parametrize("first,second", (("A", "B"), ("B", "A")))
+def test_reference_tie_excludes_earliest_minority(run, table, first, second):
+    controls = [k for k in ORDER if ".H" not in k]
+    identities = dict(zip(controls, ["C", first, second] + [first] * 13 + [second] * 13 + ["C"], strict=True))
+    for label in ORDER:
+        identity = identities.get(label, "C")
+        edit(run.paths[label] / "card.json", lambda o, value=identity: o.update(served_identity=value))
+    code, out = run(flags=("--checks-only",))
+    assert code == 4
+    assert "reference identity " + table.short(first) + "\n" in out
+    for label in controls:
+        assert f"check 4 {label}: identity pass {identities[label] == first}\n" in out
+    for label in ORDER:
+        if ".H" in label:
+            assert f"check 4 {label}: identity pass False\n" in out
+
+
+@pytest.mark.parametrize("used_identity", ("A", "B"), ids=("used-position", "used-identity"))
+def test_reference_tie_uses_rerun_identity_and_position(run, table, used_identity):
+    controls = [k for k in ORDER if ".H" not in k and k != "A.F1"]
+    # The used arms tie 14:14; the earliest remaining control carries C, then B.
+    remaining_a = 14 - (used_identity == "A")
+    remaining_b = 14 - (used_identity == "B")
+    values = ["C", "B", "C"] + ["A"] * remaining_a + ["B"] * (remaining_b - 1)
+    identities = dict(zip(controls, values, strict=True))
+    for label in ORDER:
+        identity = identities.get(label, "A" if label == "A.F1" else "C")
+        edit(run.paths[label] / "card.json", lambda o, value=identity: o.update(served_identity=value))
+    first_attempt = run.paths["A.F1"]
+    used_attempt = first_attempt.with_name("A.F1.rerun")
+    shutil.copytree(first_attempt, used_attempt)
+    edit(used_attempt / "card.json", lambda o: o.update(served_identity=used_identity))
+    run.paths["A.F1"] = used_attempt
+    set_rerun_time(run, "A.F1")
+    code, out = run(flags=("--checks-only", "--reruns", "A.F1"), order=rerun_order("A.F1"),
+                    attempts=(*ORDER, "A.F1.rerun"))
+    assert code == 4
+    assert "reference identity " + table.short("B") + "\n" in out
+    assert f"check 4 A.F1: identity pass {used_identity == 'B'}\n" in out
+    assert json.loads((first_attempt / "card.json").read_bytes())["served_identity"] == "A"
 
 
 @pytest.mark.parametrize("value", ("drift", "absent"))
