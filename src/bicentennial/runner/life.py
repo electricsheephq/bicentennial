@@ -223,6 +223,8 @@ def _unreadable_reason(error):
 def _read_action_state(workspace, scratch, listing, *, absent_before=False):
     """Read each live action file with the pinned parser; omit only reader-made failures."""
     if workspace_replacement(workspace) is not None:
+        if absent_before and not _act_state_absent(scratch):
+            raise HarnessFailed("act_state_collision")
         return {}, True, tuple((p, "workspace_replaced") for p in sorted(PATHS.values()))
     state, failed, repairs = {}, [], set()
     baseline = {row["path"]: row for row in listing}

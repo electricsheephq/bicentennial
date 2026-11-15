@@ -5,6 +5,8 @@ import os
 import stat
 from pathlib import Path
 
+from bicentennial.audit.source_damage import _text
+
 
 def workspace_replacement(workspace):
     """Name an existing non-directory root without following it; observation faults propagate."""
@@ -24,7 +26,7 @@ def move_workspace_replacement(workspace, folder, receipts, session):
         return
     receipt = dict(session=session, kind=kind)
     if kind == "symlink":
-        receipt["target"] = os.readlink(workspace)
+        receipt.update(_text("target", os.readlink(workspace)))
     target = folder / "workspace-replaced"
     if os.path.lexists(target):
         raise FileExistsError("workspace replacement parking is occupied")

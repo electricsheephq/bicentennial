@@ -16,6 +16,7 @@ import test_probe_live as helpers
 from test_t2 import t2_scenario  # noqa: F401
 from test_t2lite import live_settings, scenario  # noqa: F401
 
+from bicentennial.canon import canon
 from bicentennial.contracts.run import validate
 from bicentennial.contracts.surfaces import tree_hash, tree_listing
 from bicentennial.genres.g1_software.diffs import PATHS, read_state, render
@@ -64,7 +65,7 @@ def damage_probe(monkeypatch, case, damage, *, session_index=None):
     return probe, visited
 
 
-def unit(case, tmp_path):
+def unit(case, tmp_path, *, arm="system", diagnostics=None):
     entry = helpers.ENTRY
     pins = build_lock(**json.loads((helpers.ROOT /
         "tests/fixtures/run/contracts.json").read_bytes())["contracts"]["lock"])
@@ -75,8 +76,8 @@ def unit(case, tmp_path):
         items={"B0": case["items"]}, records_b={"B0": case["records"]}, keys=case["keys"],
         cases=case["cases"], visible={}, meta={"honeypot_token": None},
         scoring={"evidence": {i["item_id"]: [] for i in case["items"]}})
-    return units._unit_attempts(ctx, pack, "B0", "system", tmp_path / "attempts",
-        units._Guard(helpers.FakeLive()), [], tmp_path / "out")
+    return units._unit_attempts(ctx, pack, "B0", arm, tmp_path / "attempts",
+        units._Guard(helpers.FakeLive()), [], tmp_path / "out", diagnostics=diagnostics)
 
 
 def expected(case):
@@ -84,7 +85,7 @@ def expected(case):
         {name: False for name in case.checks}, window=case.window)
 
 
-@pytest.mark.parametrize("kind", ["file", "directory_link", "dangling_link", "self_link"])
+@pytest.mark.parametrize("kind", ["file", "directory_link", "dangling_link", "self_link", "non_utf8_link"])
 def test_live_workspace_root_replaced_scores_empty_and_restores(
         lives, unit_sessions, tmp_path, monkeypatch, kind):
     case = lives["t1-g1", "B0"]
@@ -113,6 +114,8 @@ def test_live_workspace_root_replaced_scores_empty_and_restores(
             info = canonical.lstat()
             assert stat.S_ISDIR(info.st_mode)
             restored.append((info.st_dev, info.st_ino, tree_hash(tree_listing(canonical, []))))
+            assert not os.path.lexists(canonical.parent / "absent-target")
+            assert not os.path.lexists(canonical.parent / os.fsdecode(b"absent-\xff"))
             damaged.clear()
 
     def replace_root(workspace):
@@ -120,6 +123,8 @@ def test_live_workspace_root_replaced_scores_empty_and_restores(
         damaged.append(workspace)
         if kind == "file":
             workspace.write_text("reader replacement")
+        elif kind == "non_utf8_link":
+            os.symlink(b"absent-\xff", os.fsencode(workspace))
         else:
             workspace.symlink_to(target if kind == "directory_link" else
                                  "absent-target" if kind == "dangling_link" else workspace.name)
@@ -151,16 +156,106 @@ def test_live_workspace_root_replaced_scores_empty_and_restores(
         else:
             assert row == clean.scores[iid]
     receipt = dict(session=probe.index, kind="file" if kind == "file" else "symlink")
-    if kind != "file":
+    if kind == "non_utf8_link":
+        receipt.update(target="absent-\\xff", target_hex=b"absent-\xff".hex())
+    elif kind != "file":
         receipt["target"] = str(target) if kind == "directory_link" else (
             "absent-target" if kind == "dangling_link" else "workspace")
     assert run.workspace_receipts == [receipt]
+    assert json.loads(canon(run.workspace_receipts)) == [receipt]
     diagnostics = json.loads((tmp_path / "broken/out/unit_diagnostics.json").read_bytes())
     assert diagnostics["attempts"][0]["workspace_receipts"] == [receipt]
     assert not run.restore_failures and not run._root.exists()  # moved entry removed with the attempt
     assert (target.stat().st_dev, target.stat().st_ino) == (target_info.st_dev, target_info.st_ino)
     assert tree_hash(tree_listing(target, [])) == target_hash
-    assert not (tmp_path / "absent-target").exists()
+
+
+def test_replaced_root_keeps_act_state_collision(lives, unit_sessions, tmp_path, monkeypatch):
+    case = lives["t1-g1", "B0"]
+
+    def collide(workspace):
+        (workspace.parent.parent / "act-state").mkdir()
+        workspace.rename(tmp_path / "discarded-clone")
+        workspace.write_text("reader replacement")
+
+    probe, _ = damage_probe(monkeypatch, case, collide)
+    result = unit(case, tmp_path)
+    assert result.attempts == 1
+    run, = result.runs
+    assert run.stopped == ("SYSTEM_FAILURE", "act_state_collision", probe.index)
+    assert not run.item_labels
+    assert all(result.scores[iid]["failure_class"] == "SYSTEM_FAILURE" and
+               result.scores[iid]["infra_reruns"] == 0 for iid in probe.item_ids)
+
+
+def test_control_diagnostics_skip_replaced_workspace(lives, unit_sessions, tmp_path, monkeypatch):
+    case = lives["t1-g1", "B0"]
+    diag = Diagnostics(tmp_path / "diag", tmp_path / "synthetic-home")
+    monkeypatch.setattr(diag, "_needles", lambda: ())
+
+    def replace_root(workspace):
+        workspace.rename(tmp_path / "discarded-clone")
+        workspace.write_text("reader replacement")
+
+    probe, _ = damage_probe(monkeypatch, case, replace_root)
+    result = unit(case, tmp_path, arm="no_memory", diagnostics=diag)
+    assert result.attempts == 1 and result.stop is None
+    for iid in probe.item_ids:
+        top = f"{case['t'].life}/B0/0/{iid}/workspace"
+        assert dict(path=top, reason="workspace replaced") in diag.skips
+        assert not (diag.root / top).exists()
+        assert not any(p.startswith(top + "/") for p in diag.files)
+    assert not diag.failures
+
+
+@pytest.mark.parametrize("fault", ["occupied", "rename"])
+def test_workspace_move_fault_redoes_without_deleting(lives, unit_sessions, tmp_path, monkeypatch, fault):
+    case, entries, errors = lives["t1-g1", "B0"], [], []
+    clean = unit(case, tmp_path / "clean")
+    move, rename = life.move_workspace_replacement, Path.rename
+
+    def replace_root(workspace):
+        if not entries:
+            workspace.rename(tmp_path / "discarded-clone")
+            workspace.write_text("reader replacement")
+            entries.append((workspace, workspace.stat().st_ino))
+
+    def fail_rename(path, target):
+        if entries and path == entries[0][0] and Path(target).name == "workspace-replaced":
+            raise OSError("injected rename failure")
+        return rename(path, target)
+
+    def checked_move(workspace, folder, receipts, session):
+        if not entries or workspace != entries[0][0]:
+            return move(workspace, folder, receipts, session)
+        parked = folder / "workspace-replaced"
+        if fault == "occupied":
+            parked.write_text("existing parking entry")
+            inode = parked.stat().st_ino
+        with pytest.raises(FileExistsError if fault == "occupied" else OSError) as error:
+            move(workspace, folder, receipts, session)
+        errors.append(type(error.value).__name__)
+        assert workspace.stat().st_ino == entries[0][1]
+        assert workspace.read_text() == "reader replacement" and not receipts
+        if fault == "occupied":
+            assert parked.stat().st_ino == inode and parked.read_text() == "existing parking entry"
+        else:
+            assert not os.path.lexists(parked)
+        raise error.value
+
+    damage_probe(monkeypatch, case, replace_root)
+    monkeypatch.setattr(life, "move_workspace_replacement", checked_move)
+    if fault == "rename":
+        monkeypatch.setattr(Path, "rename", fail_rename)
+    monkeypatch.setattr(life.LifeRun, "cleanup", lambda self: None)
+    result = unit(case, tmp_path / "broken")
+    assert errors == ["FileExistsError" if fault == "occupied" else "OSError"]
+    assert result.attempts == 2 and result.stop is None
+    first, redo = result.runs
+    assert first.stopped[0] == "INFRA_FAILURE" and redo.stopped is None
+    assert not first.workspace_receipts and not first.source_receipts
+    assert result.scores == {iid: dict(row, infra_reruns=1) for iid, row in clean.scores.items()}
+    assert entries[0][0].stat().st_ino == entries[0][1]
 
 
 @pytest.mark.parametrize("fault", ["restore", "before_session", "observation"])
