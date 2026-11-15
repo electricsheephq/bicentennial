@@ -24,6 +24,7 @@ ORDER = tuple(f"{p}.{a}" for p, arms in (
     ("A", "F1 R1 O1 H1 H2 O2 R2 F2 O3 B1 G1 W1"),
     ("B", "F1 R1 O1 H1 H2 O2 R2 F2 O3 G1 W1 B1"),
     ("C", "F1 R1 O1 H1 H2 O2 R2 F2 O3 W1 B1 G1")) for a in arms.split())
+RERUN = "rerun once (§3, §4), then run again with --after-reruns"
 
 
 def module(name):
@@ -83,9 +84,9 @@ def make_packs(root, letter, records=None):
             write(sealed / "pack.json", dict(genre=genre, items=[i for _, i in mine], text="synthetic task text"))
             write(sealed / "scoring.json", {})
             write(sealed / "naive_rag.json", dict(arm=scripted(life, "naive_rag", letter)))
+            # Real life manifests carry no scoring-code pin; the pack index holds it.
             write(sealed.parent / "manifest.json", dict(pins=dict(zip(
-                ("controls_sha256", "reader_sha256", "scoring_code_sha256", "scorer_sha256"),
-                (c * 64 for c in "9abc"), strict=False))))
+                ("controls_sha256", "reader_sha256", "scorer_sha256"), (c * 64 for c in "9ac"), strict=True))))
     write(root / "index.json", dict(label=letter, pins=dict(scoring_code_sha256="b" * 64)))
     return root
 
@@ -206,12 +207,20 @@ def test_task_list_and_header(tasks, tmp_path, capsys):
         assert tasks.main(changed) == 3 and not out.exists()
 
 
-@pytest.mark.parametrize("fault", ("four_g1", "g2_target", "missing_twin", "two_pairs", "wrong_table",
-    "corrected_twice", "wrong_version", "nonaction", "no_bundle", "duplicate_key", "descriptive_twice", "desc_action", "desc_twin"))
+@pytest.mark.parametrize("fault", ("four_g1", "four_g2", "shared_life", "g2_target", "missing_twin", "two_pairs",
+    "wrong_table", "corrected_twice", "wrong_version", "nonaction", "no_bundle", "duplicate_key", "descriptive_twice",
+    "desc_action", "desc_twin"))
 def test_frozen_rows_refuse_each_fault(tasks, fault, tmp_path, capsys):
     records = deepcopy(layout())
     if fault == "four_g1":
         records = [x for x in records if x[1]["life"] != G1[-1]]
+    elif fault == "four_g2":
+        records = [x for x in records if x[1]["life"] != G2[-1]]
+    elif fault == "shared_life":
+        # Every record of one G2 life carries a G1 life's name, so each genre still counts five lives.
+        for genre, rec, _ in records:
+            if genre == "G2" and rec["life"] == G2[0]:
+                rec["life"] = G1[0]
     elif fault == "g2_target":
         records.append(("G2", dict(records[0][1], life=G2[0]), records[0][2]))
     elif fault == "missing_twin":
@@ -243,7 +252,15 @@ def test_frozen_rows_refuse_each_fault(tasks, fault, tmp_path, capsys):
     func = tasks.descriptive_rows if fault.startswith("desc") else tasks.target_rows
     rows, reason = func(records)
     assert rows is None and reason
-    packs = make_packs(tmp_path / "invalid", "A", records=records)
+    if fault in ("four_g2", "shared_life"):
+        assert reason == "pack composition must be five G1 and five G2 lives"
+    if fault == "shared_life":
+        # The fixture writer files records by their life; relabel the sealed G2 life in place instead.
+        packs = make_packs(tmp_path / "invalid", "A")
+        edit(packs / "pack/G2" / G2[0] / "7/sealed/records.json", lambda o: [r.update(life=G1[0]) for r in o])
+        assert tasks.target_rows(tasks.pack_records(packs))[1] == reason
+    else:
+        packs = make_packs(tmp_path / "invalid", "A", records=records)
     spec, draw = write(tmp_path / "spec.toml", {}), write(tmp_path / "draw.json", [])
     out = tmp_path / "tasks.json"
     code = tasks.main(["--pack", "A", "--packs", str(packs), "--spec", str(spec), "--draw", str(draw),
@@ -423,12 +440,19 @@ def test_reference_tie_uses_rerun_identity_and_position(run, table, used_identit
 
 @pytest.mark.parametrize("value", ("drift", "absent"))
 def test_identity_disclosure_required(run, value):
-    edit(run.paths["A.F1"] / "disclosures.json", lambda o: o["live"].update(identity_drift="changed")
+    disclosures = run.paths["A.F1"] / "disclosures.json"
+    original = disclosures.read_bytes()
+    edit(disclosures, lambda o: o["live"].update(identity_drift="changed")
          if value == "drift" else o["live"].pop("identity_drift"))
-    assert run()[0] == 4
+    code, out = run()
+    assert code == 4 and f"pending before any score: A.F1 - {RERUN}\n" in out
     if value == "absent":
+        # Restore the control arm first, so only H's missing disclosure can hold the scores.
+        disclosures.write_bytes(original)
         write(run.paths["A.H1"] / "disclosures.json", None)
-        assert run()[0] == 4
+        code, out = run()
+        assert code == 4 and f"pending before any score: A.H1 - {RERUN}\n" in out
+        assert "check 4 A.H1: identity pass False\n" in out
 
 
 @pytest.mark.parametrize("key", tuple(HASHES))
@@ -437,7 +461,8 @@ def test_h_commitment_hashes(run, key):
     assert run(flags=("--" + key.replace("_", "-"), "7" * 64))[0] == 4
 
 
-@pytest.mark.parametrize("fault", ("missing", "duplicate", "wrong_unit", "not_live", "own_failure", "neighbour_failure"))
+@pytest.mark.parametrize("fault", ("missing", "duplicate", "wrong_unit", "copied_unit", "not_live", "own_failure",
+                                   "neighbour_failure"))
 def test_h_probe_coverage_and_item_exception(run, fault):
     path = run.paths["A.H1"]
     probe = path / "system" / G1[0] / "B0/t2lite_probes.json"
@@ -448,6 +473,10 @@ def test_h_probe_coverage_and_item_exception(run, fault):
     elif fault == "wrong_unit":
         records = json.loads(probe.read_bytes())
         edit(probe, lambda o: o.pop(0))
+        edit(path / "system" / G1[1] / "B0/t2lite_probes.json", lambda o: o.append(records[0]))
+    elif fault == "copied_unit":
+        # The original stays in place, so coverage holds and only the misplaced copy fails.
+        records = json.loads(probe.read_bytes())
         edit(path / "system" / G1[1] / "B0/t2lite_probes.json", lambda o: o.append(records[0]))
     else:
         edit(probe, lambda o: o[0]["live"].update(served_by="scripted"))
@@ -460,6 +489,9 @@ def test_h_probe_coverage_and_item_exception(run, fault):
     code, out = run()
     assert code == (0 if fault == "own_failure" else 4)
     assert "check 7 A.H1:" in out
+    if fault == "copied_unit":
+        assert "check 7 A.H1: targets 40 covered_once 40 duplicated 0 misplaced 1 not_live_unexcused 0" in out
+        assert f"pending before any score: A.H1 - {RERUN}\n" in out
 
 
 @pytest.mark.parametrize("value,ok", ((None, True), ({"attempts": [{"attempt": 0, "stopped": None}]}, True),
@@ -498,6 +530,16 @@ def rerun_order(label):
 
 def set_rerun_time(run, label):
     edit(run.paths[label] / "units.json", lambda o: o.update(start_ms=400000, end_ms=401000))
+
+
+def after_reruns(run, labels, flags=()):
+    """Read with --after-reruns once each label's one rerun has run, after all 36 first attempts."""
+    for n, label in enumerate(labels):
+        edit(run.paths[label] / "units.json", lambda o, n=n: o.update(start_ms=400000 + n * 10000,
+                                                                      end_ms=401000 + n * 10000))
+    return run(flags=("--after-reruns", "--reruns", ",".join(labels), *flags),
+               order=tuple(k for k in ORDER if k not in labels) + tuple(labels),
+               attempts=(*ORDER, *(k + ".rerun" for k in labels)))
 
 
 @pytest.mark.parametrize("fault", ("block", "presence", "stop"))
@@ -599,7 +641,7 @@ def test_missing_data_preserves_independent_readings(run, lost, readings, room, 
     (run.paths[lost] / "card.json").unlink()
     code, pending = run()
     assert code == 4 and f"pending before any score: {lost} - rerun once (§3, §4), then run again with --after-reruns" in pending
-    code, out = run(flags=("--after-reruns",))
+    code, out = after_reruns(run, [lost])
     assert code == 0 and all(f"reading {t}: {readings}" in out for t in KINDS)
     assert f"Room: {room}" in out and f"Use: {use}" in out
     if lost == "A.W1":
@@ -618,7 +660,7 @@ def test_h_rerun_failure_does_not_suppress_controls(run):
 
 def test_unscored_pair_is_kind_local(run):
     edit(run.paths["A.W1"] / "outcomes.json", lambda o: next(iter(o.values())).update(score_milli=None))
-    code, out = run(flags=("--after-reruns",))
+    code, out = after_reruns(run, ["A.W1"])
     assert code == 0 and f"reading {KINDS[0]}: unresolved" in out
     assert all(f"reading {t}: ranking candidate" in out for t in KINDS[1:])
     assert "Room against W: unresolved" in out and "Room against R: holds" in out
@@ -626,7 +668,7 @@ def test_unscored_pair_is_kind_local(run):
 
 def test_h_incomplete_target_excludes_the_whole_arm(run):
     edit(run.paths["A.H1"] / "outcomes.json", lambda o: next(iter(o.values())).update(score_milli=None))
-    code, out = run(flags=("--after-reruns",))
+    code, out = after_reruns(run, ["A.H1"])
     assert code == 0 and "Use: unresolved" in out and "Room: holds" in out
     for kind in KINDS:
         assert f"pooled repeat H1 {kind} pairs 15 right 0 wrong 0 without_credit 0 non_result 15 points n/a incomplete" in out
@@ -753,7 +795,7 @@ def test_contrast_failure_precedes_unresolved_and_inconclusive(run):
         for repeat in ("R1", "R2"):
             edit(run.paths[f"{p}.{repeat}"] / "outcomes.json", lambda o: [v.update(score_milli=1000) for v in o.values()])
     (run.paths["A.W1"] / "card.json").unlink()
-    code, out = run(flags=("--after-reruns",))
+    code, out = after_reruns(run, ["A.W1"])
     assert code == 0 and "Room: does not hold" in out
     assert "Room against W: unresolved" in out and "Room against B: inconclusive" in out
 
@@ -774,7 +816,7 @@ def test_descriptive_points_and_unread_never_affect_output(run):
 
 def test_excluded_descriptive_arm_is_published_separately(run):
     edit(run.paths["A.H1"] / "card.json", lambda o: o.update(served_identity="different"))
-    code, out = run(flags=("--after-reruns",))
+    code, out = after_reruns(run, ["A.H1"])
     assert code == 0 and f"descriptive A.H1 {DESC[0]}: scored 5 not_scored 0 points 100" in out
     assert f"descriptive H {DESC[0]}: scored 25 not_scored 5 points 80" in out
 
@@ -796,7 +838,7 @@ def test_filter_rule_and_sections(table, run, tmp_path):
         assert sum(len(v["kept"]) for v in data[p]["templates"].values()) == 20
     edit(run.paths["A.O1"] / "card.json", lambda o: o.update(served_identity="excluded"))
     edit(run.paths["A.O3"] / "outcomes.json", lambda o: [v.update(score_milli=0) for v in o.values()])
-    assert run(flags=("--filter-out", str(path), "--after-reruns"))[0] == 0
+    assert after_reruns(run, ["A.O1"], flags=("--filter-out", str(path)))[0] == 0
     data = json.loads(path.read_bytes())
     assert data["A"]["o_excluded"] == ["A.O1"]
     assert all(len(v["unresolved"]) == 5 and not v["kept"] for v in data["A"]["templates"].values())
@@ -807,11 +849,10 @@ def test_output_discipline_and_sections(run, table, mode):
     flags = ()
     if mode in ("pending", "after"):
         (run.paths["A.H1"] / "card.json").unlink()
-        flags = ("--after-reruns",) if mode == "after" else ()
     elif mode == "ends":
         run.check3.write_text("exit 1")
         flags = ("--after-reruns",)
-    code, out = run(flags=flags)
+    code, out = after_reruns(run, ["A.H1"]) if mode == "after" else run(flags=flags)
     assert code == {"pass": 0, "pending": 4, "ends": 5, "after": 0}[mode]
     codes = [line for line in out.splitlines() if line.startswith("code ")]
     assert len(codes) == 4 and all(len(line.rsplit(" ", 1)[1]) == 12 for line in codes)
@@ -824,3 +865,71 @@ def test_output_discipline_and_sections(run, table, mode):
         assert "system units have no cache path" in out
         line = next(line for line in out.splitlines() if line.startswith("H minus F; no significance claimed:"))
         assert "holds" not in line and "inconclusive" not in line
+
+
+def first_kind_item(life):
+    return lambda o: next(v for k, v in o.items() if k.startswith(life + "/") and v["template_ref"] == KINDS[0])
+
+
+@pytest.mark.parametrize("fault", ("missing", "mismatch", "incomplete", "compacted", "h_checks"))
+def test_after_reruns_waits_for_each_owed_rerun(run, fault):
+    label = "A.H1" if fault == "h_checks" else "A.R1"
+    path = run.paths[label]
+    if fault == "missing":
+        (path / "card.json").unlink()
+    elif fault == "mismatch":
+        edit(path / "card.json", lambda o: o.update(served_identity="different"))
+    elif fault == "incomplete":
+        edit(path / "outcomes.json", lambda o: first_kind_item(G1[0])(o).update(score_milli=None))
+    elif fault == "compacted":
+        edit(path / "receipt.json", lambda o: o["tokens_by_role"][0].update(input=1))
+    else:
+        edit(path / "system" / G1[0] / "B0/t2lite_probes.json", lambda o: o[0]["live"].update(served_by="scripted"))
+    edit(run.paths["B.O1"] / "card.json", lambda o: o.update(served_identity="different"))
+    for owed, (code, out) in ((f"{label} B.O1", run(flags=("--after-reruns",))), (label, after_reruns(run, ["B.O1"]))):
+        # Every arm that has not had its rerun holds the scores; once B.O1's rerun is spent, only the other one.
+        assert code == 4 and f"pending before any score: {owed} - {RERUN}\n" in out
+        assert "== 3. Scores" not in out
+    code, out = after_reruns(run, [label, "B.O1"])
+    assert code == 0 and "== 3. Scores" in out
+
+
+def test_scripted_beside_live_uses_usable_repeats(run):
+    edit(run.paths["A.R2"] / "outcomes.json", lambda o: [v.update(score_milli=1000) for v in o.values()
+                                                         if v["template_ref"] == KINDS[0]])
+    code, out = run()
+    assert code == 0 and f"row R A {KINDS[0]} pairs 10 right 5 wrong 0 without_credit 5 non_result 0 points 50 (50.0) complete" in out
+    assert f"scripted beside live A R {KINDS[0]} scripted points 100 (100.0) live points 50 (50.0)\n" in out
+    # An excluded repeat is not the anchor's live score, whatever it scored.
+    edit(run.paths["A.R1"] / "outcomes.json", lambda o: [v.update(score_milli=-1000) for v in o.values()])
+    edit(run.paths["A.R1"] / "card.json", lambda o: o.update(served_identity="different"))
+    code, out = after_reruns(run, ["A.R1"])
+    assert code == 0 and f"row R A {KINDS[0]} pairs 5 right 5 wrong 0 without_credit 0 non_result 0 points 100 (100.0) incomplete" in out
+    assert f"scripted beside live A R {KINDS[0]} scripted points 100 (100.0) live points 100 (100.0)\n" in out
+    assert f"scripted beside live A R {KINDS[1]} scripted points 100 (100.0) live points 0 (0.0)\n" in out
+
+
+@pytest.mark.parametrize("fault", ("incomplete", "missing", "compacted", "mismatch"))
+def test_filter_keeps_an_incomplete_trials_scored_items(run, tmp_path, fault):
+    path = run.paths["A.O1"]
+    edit(run.paths["A.O3"] / "outcomes.json", lambda o: [v.update(score_milli=0) for v in o.values()])
+    if fault == "incomplete":
+        edit(path / "outcomes.json", lambda o: first_kind_item(G1[0])(o).update(score_milli=None))
+    elif fault == "missing":
+        (path / "card.json").unlink()
+    elif fault == "compacted":
+        edit(path / "receipt.json", lambda o: o["tokens_by_role"][0].update(input=1))
+    else:
+        edit(path / "card.json", lambda o: o.update(served_identity="different"))
+    receipt = tmp_path / "filter.json"
+    code, out = after_reruns(run, ["A.O1"], flags=("--filter-out", str(receipt)))
+    assert code == 0
+    data = json.loads(receipt.read_bytes())["A"]
+    for t in KINDS:
+        # O2 alone is at 1000 and O3 at 0: a pair is kept only where O1 is scored at 1000 on both twins.
+        kept = (4 if t == KINDS[0] else 5) if fault == "incomplete" else 0
+        assert f"filter A {t} kept {kept} dropped 0 unresolved {5 - kept}\n" in out
+        assert len(data["templates"][t]["kept"]) == kept and len(data["templates"][t]["unresolved"]) == 5 - kept
+    assert data["o_excluded"] == ([] if fault == "incomplete" else ["A.O1"])
+    left = {t: ["A.O1"] if fault != "incomplete" or t == KINDS[0] else [] for t in KINDS}
+    assert data["o_excluded_by_kind"] == left

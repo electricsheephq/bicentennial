@@ -8,22 +8,79 @@ from pathlib import Path
 
 import pytest
 
+from bicentennial.report.t2_card import _row_counts
+
 SCRIPT = Path(__file__).with_name("cut_cards.py")
+OUTCOME_COUNTS = ("kept_copies", "null_citation", "infra")
 
 
 def canon(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
 
 
+def keys():
+    found = [dict(life=f"invented-life-{n // 5}", branch=f"B{n % 2}", item_id=f"invented-item-{n}") for n in range(50)]
+    found[1]["item_id"] = found[0]["item_id"]
+    return found
+
+
+def entry(key, n, *, genre, stage, system):
+    """Five outcome shapes in turn: kept failure, blocked, unknown answer, cited answer, no envelope."""
+    shape = n % 5
+    score, failure = ((0, "SYSTEM_FAILURE"), (None, "BLOCKED"), (1000, None), (1000, None), (1000, None))[shape]
+    envelope = ({"type": "answer", "citation": None}, None, {"type": "unknown", "citation": None},
+                {"type": "answer", "citation": "invented-citation"}, None)[shape]
+    repro = "kept/" + "/".join(key.values()) if system and shape == 0 else None
+    return dict(key, genre=genre, stage=stage, score_milli=score, failure_class=failure, envelope=envelope, repro=repro)
+
+
+def outcome_counts(items):
+    """`_row_counts`'s two outcome counts and the runner's `infra` rule, applied to the given items."""
+    rows = _row_counts(dict(items=items, floor=dict(units={}), not_scored_live=[]))
+    return dict(kept_copies=rows["kept_copies"], null_citation=rows["null_citation"],
+                infra=sum(item["failure_class"] == "BLOCKED" for item in items))
+
+
+def full_card(found, *, system):
+    items = [entry(k, n, genre="G1" if n < 45 else "G2", stage="act" if n < 40 else "qa", system=system)
+             for n, k in enumerate(found)]
+    # Unread entries: a kept failure, a blocked row and an uncited answer, each with a visible score.
+    for n in range(3):
+        key = dict(life="unread", branch=f"B{n % 2}", item_id=f"unread-{n}")
+        item = entry(key, (0, 1, 0)[n], genre="G2", stage="qa", system=system)
+        if n == 1:
+            item["repro"] = None
+        if n == 2:
+            item.update(repro=None, failure_class=None, score_milli=987654321)
+        items.append(item)
+    units = {f"{i['life']}/{i['branch']}": dict(cached=False) for i in items}
+    counts = dict(units=len(units), lives=len({i["life"] for i in items}), floor_cached_units=0,
+                  not_scored_live=0, **outcome_counts(items))
+    for item in items:
+        counts[f"items.{item['genre']}.{item['stage']}"] = counts.get(f"items.{item['genre']}.{item['stage']}", 0) + 1
+    card = dict(items=items, counts=counts, floor=dict(units=units), not_scored_live=[],
+                groups=[["synthetic-cell", "act"]], controls_broken=[], other=dict(synthetic="preserved", count=73))
+    if not system:
+        card["control"] = "naive_rag"
+    return card
+
+
+def cut(tmp_path, card, *, label="A.F1", raw=None, out=None):
+    found = keys()
+    frozen = tmp_path / "tasks.json"
+    frozen.write_bytes(canon(dict(header=dict(pack="A"), rows=found[:40], descriptive=found[40:])))
+    run = tmp_path / "run"
+    run.mkdir(exist_ok=True)
+    (run / "card.json").write_bytes(canon(card) if raw is None else raw)
+    out = tmp_path / "cut" if out is None else out
+    result = subprocess.run([sys.executable, "-I", str(SCRIPT), str(frozen), str(out), f"{label}={run}"],
+                            capture_output=True, text=True)
+    return result, out
+
+
 @pytest.mark.parametrize("fault", (None, "noncanonical", "missing", "duplicate", "substitute", "pack"))
 def test_isolated_cutter(tmp_path, fault):
-    keys = [dict(life=f"invented-life-{n // 5}", branch=f"B{n % 2}", item_id=f"invented-item-{n}") for n in range(50)]
-    keys[1]["item_id"] = keys[0]["item_id"]
-    tasks = dict(header=dict(pack="A"), rows=keys[:40], descriptive=keys[40:])
-    frozen = tmp_path / "tasks.json"
-    frozen.write_bytes(canon(tasks))
-    card = dict(items=[dict(k, score_milli=1000) for k in keys] + [dict(life="unread", branch="B0", item_id="unread", score_milli=987654321)],
-                other=dict(synthetic="preserved", count=73))
+    card = full_card(keys(), system=True)
     if fault == "missing":
         card["items"].pop(0)
     elif fault == "duplicate":
@@ -31,20 +88,48 @@ def test_isolated_cutter(tmp_path, fault):
     elif fault == "substitute":
         card["items"][1] = card["items"][0]
     raw = json.dumps(card).encode() if fault == "noncanonical" else canon(card)
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "card.json").write_bytes(raw)
-    out = tmp_path / "cut"
     label = "B.F1" if fault == "pack" else "A.F1"
-    result = subprocess.run([sys.executable, "-I", str(SCRIPT), str(frozen), str(out), f"{label}={run}"],
-                            capture_output=True, text=True)
+    result, out = cut(tmp_path, card, label=label, raw=raw)
     if fault:
         assert result.returncode != 0 and (result.stdout + result.stderr).strip() == label
         assert not out.exists() or not list(out.iterdir())
     else:
         assert result.returncode == 0
         assert json.loads(result.stdout) == {label: sha256(raw).hexdigest()}
-        cut = json.loads((out / f"{label}.json").read_bytes())
-        assert len(cut["items"]) == 50 and b"987654321" not in (out / f"{label}.json").read_bytes()
-        assert canon(cut["other"]) == canon(card["other"])
-        assert (out / f"{label}.json").read_bytes() == canon(cut)
+        written = (out / f"{label}.json").read_bytes()
+        assert len(json.loads(written)["items"]) == 50 and b"987654321" not in written
+        assert canon(json.loads(written)["other"]) == canon(card["other"])
+        assert written == canon(json.loads(written))
+
+
+@pytest.mark.parametrize("system", (True, False), ids=("system", "control"))
+def test_cut_outcome_counts_describe_kept_items(tmp_path, system):
+    card = full_card(keys(), system=system)
+    result, out = cut(tmp_path, card)
+    assert result.returncode == 0
+    written = json.loads((out / "A.F1.json").read_bytes())
+    kept = [item for item in card["items"] if item["life"] != "unread"]
+    assert written["items"] == kept
+    want = outcome_counts(kept)
+    assert {k: written["counts"][k] for k in OUTCOME_COUNTS} == want
+    assert want["null_citation"] > 0 and want["infra"] > 0 and (want["kept_copies"] > 0) is system
+    # The unread entries' outcomes are not published as a difference from the full card's counts.
+    assert all(card["counts"][k] > want[k] for k in OUTCOME_COUNTS if system or k != "kept_copies")
+    # Structure stays as the full card has it.
+    for obj in (written, card):
+        obj.pop("items")
+        for k in OUTCOME_COUNTS:
+            obj["counts"].pop(k)
+    assert canon(written) == canon(card)
+
+
+def test_cut_refuses_existing_output_folder(tmp_path):
+    out = tmp_path / "cut"
+    out.mkdir()
+    (out / "earlier.json").write_bytes(b"{}")
+    result, _ = cut(tmp_path, full_card(keys(), system=True), out=out)
+    # Refused before any card is read, so no label is at fault.
+    assert result.returncode != 0 and (result.stdout + result.stderr).strip() == "card"
+    assert sorted(p.name for p in out.iterdir()) == ["earlier.json"]
+    result, _ = cut(tmp_path, full_card(keys(), system=True), out=tmp_path / "new" / "cut")
+    assert result.returncode == 0 and (tmp_path / "new/cut/A.F1.json").is_file()

@@ -386,6 +386,15 @@ def reading(ctx, t):
     return lines, result
 
 
+def pack_row(ctx, p, row, t):
+    """One pack's row for kind t: every repeat of the row on that pack usable for t, pooled."""
+    repeats = ROWS[row]
+    arms = [dict(outcomes={p + "/" + key: value for key, value in ctx["arms"][f"{p}.{k}"]["outcomes"].items()})
+            for k in repeats if f"{p}.{k}" not in ctx["left"][t]]
+    members = [b for b in ctx["members"][t] if b["pack"] == p]
+    return [bundle_score(arm["outcomes"], b) for arm in arms for b in members], len(arms) == len(repeats)
+
+
 def score_line(scores):
     count = Counter(scores)
     got = [s for s in scores if s is not None]
@@ -407,13 +416,12 @@ def scores(ctx):
                 usable = next((a for a in ctx["use"][t][row] if a["name"] == repeat), None)
                 values = [bundle_score(usable["outcomes"], b) if usable else None for b in ctx["members"][t]]
                 print("pooled repeat", repeat, t, score_line(values), "complete" if usable else "incomplete")
-            for p in (*frozen.PACKS, "pooled"):
-                members = [b for b in ctx["members"][t] if p == "pooled" or b["pack"] == p]
-                arms = (ctx["use"][t][row] if p == "pooled" else
-                        [dict(outcomes={p + "/" + key: value for key, value in ctx["arms"][f"{p}.{k}"]["outcomes"].items()})
-                         for k in repeats if f"{p}.{k}" not in ctx["left"][t]])
-                values = [bundle_score(arm["outcomes"], b) for arm in arms for b in members]
-                print("row", row, p, t, score_line(values), "complete" if len(arms) == len(repeats) else "incomplete")
+            for p in frozen.PACKS:
+                values, complete = pack_row(ctx, p, row, t)
+                print("row", row, p, t, score_line(values), "complete" if complete else "incomplete")
+            arms = ctx["use"][t][row]
+            values = [bundle_score(arm["outcomes"], b) for arm in arms for b in ctx["members"][t]]
+            print("row", row, "pooled", t, score_line(values), "complete" if len(arms) == len(repeats) else "incomplete")
     print("== 4. Readings")
     for t in KINDS:
         lines, result = reading(ctx, t)
@@ -545,10 +553,8 @@ def also(ctx):
                         for r in pack["tasks"]["rows"]}
             for t in KINDS:
                 members = [b for b in ctx["members"][t] if b["pack"] == p]
-                live = ctx["arms"].get(f"{p}.{row}1")
-                values = [dict(outcomes={p + "/" + k: v for k, v in live["outcomes"].items()})] if live else []
-                got = [bundle_score(a["outcomes"], b) for a in values for b in members]
-                scored = [v for v in got if v is not None]
+                # The live figure is section 3's row on this pack: its usable repeats, pooled (D19).
+                scored = [v for v in pack_row(ctx, p, row, t)[0] if v is not None]
                 live_pts = Fraction(sum(scored), len(scored)) / 10 if scored else None
                 print("scripted beside live", p, row, t, "scripted points", exact(pts([dict(outcomes=outcomes)], members)),
                       "live points", exact(live_pts))
@@ -588,14 +594,17 @@ def also(ctx):
 def oracle_filter(ctx):
     print("== 8. Oracle filter")
     output, total = {}, 0
+    excluded = ctx["invalid"] | ctx["mismatch"] | ctx["compacted"]
     for p, pack in ctx["packs"].items():
-        result, excluded, excluded_by_kind = {}, set(), {}
+        # Round 2's rule: a missing or excluded O arm's trial is unscored; an incomplete one keeps its scored items.
+        labels = [f"{p}.{k}" for k in ROWS["O"]]
+        unscored = [k for k in labels if k not in ctx["arms"] or k in excluded]
+        trials = [{} if k in unscored else {p + "/" + key: value for key, value in ctx["arms"][k]["outcomes"].items()}
+                  for k in labels]
+        print("filter", p, "trials unscored", " ".join(unscored) or "none")
+        result, excluded_by_kind = {}, {}
         for t in KINDS:
-            labels = [f"{p}.{k}" for k in ROWS["O"]]
             excluded_by_kind[t] = [k for k in labels if k in ctx["left"][t]]
-            excluded.update(excluded_by_kind[t])
-            trials = [{p + "/" + key: value for key, value in ctx["arms"][k]["outcomes"].items()}
-                      if k not in ctx["left"][t] else {} for k in labels]
             kept = dict(kept=[], dropped=[], unresolved=[])
             for b in (b for b in ctx["members"][t] if b["pack"] == p):
                 verdict = bundle_verdict([twin(trials, key)[1] for key in b["keys"]])
@@ -607,7 +616,9 @@ def oracle_filter(ctx):
         # Full outcome hashes bind the filter receipt; scores still come only from frozen rows.
         digests = {f"{p}.{k}": sha256((ctx["arms"][f"{p}.{k}"]["run"] / "outcomes.json").read_bytes()).hexdigest()
                    if f"{p}.{k}" in ctx["arms"] else None for k in ROWS["O"]}
-        output[p] = dict(tasks_sha256=pack["digest"], o_outcomes_sha256=digests, o_excluded=sorted(excluded), o_excluded_by_kind=excluded_by_kind, templates=result)
+        # o_excluded: the trials unscored here; o_excluded_by_kind: the O arms left out of each kind's readings.
+        output[p] = dict(tasks_sha256=pack["digest"], o_outcomes_sha256=digests, o_excluded=unscored,
+                         o_excluded_by_kind=excluded_by_kind, templates=result)
     print("filter total kept", total, "of 60")
     if ctx["args"].filter_out:
         raw = canon(output)
@@ -641,8 +652,10 @@ def finish(ctx):
     if not ctx["arms"]:
         if args.after_reruns:
             return 3
-    if pending and not args.after_reruns:
-        print("pending before any score:", " ".join(pending), "-", RERUN)
+    # An arm is published as it is only after its one rerun; any other pending arm is still owed it (§3, D12).
+    owed = [k for k in pending if not args.after_reruns or k not in args.reruns_list]
+    if owed:
+        print("pending before any score:", " ".join(owed), "-", RERUN)
         return 4
     if args.checks_only:
         return 0

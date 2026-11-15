@@ -15,12 +15,18 @@ python results/followup/run/tasks.py --pack A --packs PACKS_DIR --spec pack-A.to
 python3 -I results/followup/run/cut_cards.py TASKS-A.json OUT_DIR A.F1=RUN_DIR [A.R1=RUN_DIR ...]
 ```
 
-The cutter uses only the standard library. It requires canonical full cards,
-keeps each frozen ranking or descriptive key exactly once, preserves every
-other field and prints one JSON mapping from labels to full-card SHA-256 hashes.
-A fault names only its label and exits nonzero. Validate the resulting cut
-cards as publication artifacts; their preserved aggregate fields describe the
-full run.
+The cutter uses only the standard library. It refuses an output folder that
+already exists, and creates it. It requires canonical full cards and keeps each
+frozen ranking or descriptive key exactly once. Over the items it keeps, it
+recomputes three outcome counts: `counts.kept_copies` and
+`counts.null_citation` by the card builder's rules, and `counts.infra`, the
+number of kept items whose `failure_class` is `BLOCKED`, by the runner's, so
+no outcome count of a cut card tells anything of an unread item. Every other
+field stays as the full card has it: the structural counts (`units`, `lives`,
+`floor_cached_units`, `not_scored_live` and the `items.*` counts), `groups`,
+`floor` and `controls_broken` describe the full run. It prints one JSON
+mapping from labels to full-card SHA-256 hashes. A fault names only its label
+(`card` when no label is at fault) and exits nonzero.
 
 `table.py` verifies all three frozen lists against their own installed packs,
 recomputes scripted reports and applies the unchanged round-2 rule functions.
@@ -62,17 +68,26 @@ Sections appear in this order:
 4. Per-kind readings and flags, margins and repeat combinations.
 5. Room and Use, with exact life differences, sign-flip p and per-kind differences.
 6. The two descriptive kinds, per pack and pooled.
-7. H minus F, floor provenance, summariser tokens, scripted anchors and run metadata.
-8. Oracle filter counts; optional canonical receipt with a section per pack.
+7. H minus F, floor provenance, summariser tokens, each anchor's scripted score
+   beside its live score (the pack's row in section 3: its usable repeats,
+   pooled) and run metadata.
+8. Oracle filter counts by round 2's rule: a trial is unscored when its O arm is
+   missing, invalid, mismatched or compacted, and an O arm incomplete on a kind
+   keeps its scored items. The optional canonical receipt has a section per
+   pack, naming the unscored trials (`o_excluded`) and the O arms left out of
+   each kind's readings (`o_excluded_by_kind`).
 
 Sections 3–8 stay closed while a check is invalid, a rerun is pending or the
-run has ended. `--checks-only` prints sections 1–2 only.
+run has ended. With `--after-reruns`, a pending arm is published as it is only
+when `--reruns` names it; any other pending arm is still owed its one rerun,
+so the reader prints the pending line with those labels and exits 4.
+`--checks-only` prints sections 1–2 only.
 
 | Exit | Meaning |
 |---|---|
 | 0 | Scores printed, or checks-only with no pending arm |
 | 3 | Refused inputs, invalid control, order, pins, pack or check 3; also no arms after reruns |
-| 4 | Pending arms: rerun each once, then use `--after-reruns` |
+| 4 | Pending arms not yet rerun: rerun each once, then use `--after-reruns` |
 | 5 | A control rerun fails check 1, 2 or 7, or check 3 still fails after reruns |
 
 The freezer exits 3 on refusal and writes nothing. The reader prints only
