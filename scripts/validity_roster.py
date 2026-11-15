@@ -10,7 +10,8 @@ receipt when the dry run stops.
 With `--packs 3 --beacon`, draw derives thirty design seeds and forty-eight ordered spares from
 an already published beacon round and the blobs of the run commit (HEAD), read from Git's objects with
 no inherited GIT_ variable and no replace refs; verify recomputes its bytes at a checkout of the run
-commit named in the counted first post on #394; at any other commit the result is mismatch.
+commit named in the counted first post on #394; at another commit the result can be mismatch, as at any
+commit that holds the drawn list.
 `--rehearsal` uses fixed public integers. Place maps positions 1–10 to A, 11–20 to B and 21–30 to C. Within
 pack X, odd positions name t2-g1-1 through t2-g1-5 and even positions t2-g2-1 through t2-g2-5;
 each pack walks the public T2 row order. Packs share one ordered spare list, excluding every
@@ -419,7 +420,7 @@ def main(argv=None):
     drawing.add_argument("--beacon", type=Path, help="public beacon JSON for a real three-pack draw")
     verifying = sub.add_parser("verify", description=(
         "Run at a checkout of the run commit named in the counted first post on #394; "
-        "at any other commit the result is mismatch."))
+        "at another commit the result can be mismatch, as at any commit that holds the drawn list."))
     verifying.add_argument("--packs", type=int, choices=(3,), required=True)
     verifying.add_argument("--beacon", type=Path, help="public beacon JSON to recompute the draw")
     verifying.add_argument("--draw", required=True, type=Path)

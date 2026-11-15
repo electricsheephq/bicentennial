@@ -1233,7 +1233,7 @@ def test_verify_help_names_run_commit(capsys):
     captured = capsys.readouterr()
     help_text = " ".join(captured.out.split())
     assert "checkout of the run commit named in the counted first post on #394" in help_text
-    assert "at any other commit the result is mismatch" in help_text
+    assert "at another commit the result can be mismatch, as at any commit that holds the drawn list" in help_text
     assert captured.err == ""
     _no_seed_printed(captured.out + captured.err, _raw_candidates())
 
