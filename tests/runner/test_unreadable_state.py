@@ -268,6 +268,31 @@ def test_input_behind_a_baseline_link_is_never_charged(tmp_path):
                                   set()) == (None, "not_regular")
 
 
+def test_folder_read_bit_alone_is_not_the_cause(tmp_path, monkeypatch):
+    # Opening a known path needs search (execute) on its folders; their read bit only lists them. So when a folder lost
+    # only owner read, a denied open came from elsewhere (an LSM, an ACL, the harness) and stays infrastructure.
+    workspace = tmp_path / "w"
+    (workspace / "config").mkdir(parents=True)
+    (workspace / "config/flags.toml").write_text("a = 1\n")
+    baseline = {"config": {"kind": "dir", "mode": 0o755}, "config/flags.toml": {"kind": "file", "mode": 0o644}}
+
+    def denied(target):
+        raise PermissionError(errno.EACCES, "denied by a policy, not a mode")
+
+    monkeypatch.setattr(input_reads, "_read_regular", denied)
+    repairs = set()
+    try:
+        (workspace / "config").chmod(0o300)  # read removed, write and search kept
+        with pytest.raises(PermissionError):
+            input_reads.read_input(workspace, "config/flags.toml", baseline, repairs)
+        assert not repairs
+        (workspace / "config").chmod(0o600)  # search removed: this alone denies the open, so it is the reader's
+        assert input_reads.read_input(workspace, "config/flags.toml", baseline, repairs) == (None, "permission")
+        assert repairs == {workspace / "config"}
+    finally:
+        (workspace / "config").chmod(0o755)
+
+
 def test_read_regular_never_blocks_on_or_reads_a_fifo(tmp_path):
     # The race backstop: an input replaced by a FIFO after the first stat is opened without blocking and never read.
     path, result = tmp_path / "decisions.md", []

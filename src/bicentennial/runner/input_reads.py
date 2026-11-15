@@ -79,7 +79,9 @@ def read_input(workspace, path, baseline, repairs):
         for entry, mode in _parts(workspace, path):
             old = baseline.get(entry.relative_to(workspace).as_posix(), {}) if entry != workspace else {
                 "kind": "dir", "mode": 0o700}
-            bits = 0o500 if stat.S_ISDIR(mode) else 0o400 if stat.S_ISREG(mode) else 0
+            # Opening a known path needs search (execute) on each directory and read on the file; a directory's read
+            # bit only lets it be listed, so its loss alone cannot deny this open (#579's review).
+            bits = 0o100 if stat.S_ISDIR(mode) else 0o400 if stat.S_ISREG(mode) else 0
             if bits & old.get("mode", 0) & ~mode:
                 changed.append(entry)
         if changed:
