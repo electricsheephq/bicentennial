@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 ACTIONS = {"add", "patch", "replace", "remove"}
+HERMES_FILES = (("memory", "memories/MEMORY.md"), ("user", "memories/USER.md"))
 ENTRY_DELIMITER = "\n§\n"  # Hermes memory_tool_store, not an arbitrary line or paragraph boundary
 MEMORY_HEADER = re.compile(r"═{46}\n(MEMORY \(your personal notes\)|USER PROFILE \(who the user is\))[^\n]*\n═{46}\n")
 # Pinned Hermes agent/system_prompt.py:386,498,507,727,779-792, agent/prompt_builder.py:1153
@@ -283,14 +284,16 @@ def effects(calls, requests, stores, wire):
                 gaps=gaps, calls=reports, **counts)
 
 
-def hermes(home):
+def hermes(home, *, reading=None):
     """-> hook(calls, requests, wire). Reads only home/memories/MEMORY.md and USER.md, now; no symlinks."""
     home = Path(home)
     if not home.is_dir():
         raise ValueError("missing_hermes_home")
     stores = {}
-    for target, name in (("memory", "MEMORY.md"), ("user", "USER.md")):
-        path = home / "memories" / name
+    for target, relative in HERMES_FILES:
+        if reading is not None:
+            reading(relative)
+        path = home / relative
         if path.parent.is_symlink() or path.is_symlink():
             raise ValueError(f"hermes_store_symlink:{target}")
         stores[target] = path.read_text(encoding="utf-8") if path.is_file() else ""
