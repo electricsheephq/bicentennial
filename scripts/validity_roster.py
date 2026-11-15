@@ -7,12 +7,13 @@ respectively.
 commitment) and the counts. `place` freezes the validation spec from that draw, or writes a void
 receipt when the dry run stops.
 
-With `--packs 3`, draw writes thirty design seeds and forty-eight ordered spares; `--rehearsal`
-uses fixed public integers. Place maps positions 1–10 to A, 11–20 to B and 21–30 to C. Within
+With `--packs 3 --beacon`, draw derives thirty design seeds and forty-eight ordered spares from
+an already published beacon round and the clean checkout's tracked files; verify recomputes its bytes.
+`--rehearsal` uses fixed public integers. Place maps positions 1–10 to A, 11–20 to B and 21–30 to C. Within
 pack X, odd positions name t2-g1-1 through t2-g1-5 and even positions t2-g2-1 through t2-g2-5;
 each pack walks the public T2 row order. Packs share one ordered spare list, excluding every
 replacement attempted earlier, including failures. A stop in any pack voids the whole draw,
-writing only a receipt and no specs. Neither command prints a seed.
+writing only a receipt and no specs. No command prints a seed.
 """
 
 import argparse
@@ -23,6 +24,7 @@ import re
 import secrets
 import shutil
 import stat
+import subprocess
 import sys
 import tomllib
 from datetime import UTC, datetime
@@ -40,17 +42,79 @@ class Refused(ValueError):
     pass
 
 
-def collisions(seeds, root=ROOT):
-    """Seeds whose decimal text appears as a whole number in any regular file under `root` (outside .git)."""
+def collisions(seeds, root=ROOT, *, files=None):
+    """Whole-number matches in supplied paths, or regular files outside .git for legacy draws."""
     number = re.compile(rb"(?<![0-9])(" + b"|".join(str(n).encode() for n in seeds) + rb")(?![0-9])")
     found = set()
-    for folder, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        for name in files:
-            path = Path(folder) / name
-            if name != ".git" and stat.S_ISREG(path.lstat().st_mode):
-                found.update(int(n) for n in number.findall(path.read_bytes()))
+    if files is None:
+        files = []
+        for folder, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            for name in names:
+                path = Path(folder) / name
+                if name != ".git" and stat.S_ISREG(path.lstat().st_mode):
+                    files.append(path)
+    for path in files:
+        found.update(int(n) for n in number.findall(Path(path).read_bytes()))
     return found
+
+
+def _read_beacon(path):
+    if path is None:
+        raise Refused("--beacon is required")
+    try:
+        data = json.loads(Path(path).read_bytes().decode("utf-8"))
+        if not isinstance(data, dict) or set(data) != {"round", "randomness", "signature"}:
+            raise ValueError
+        if type(data["round"]) is not int or data["round"] <= 0:
+            raise ValueError
+        if not isinstance(data["randomness"], str) or not re.fullmatch(r"[0-9a-f]{64}", data["randomness"]):
+            raise ValueError
+        if not isinstance(data["signature"], str) or not re.fullmatch(r"[0-9a-f]+", data["signature"]):
+            raise ValueError
+        if hashlib.sha256(bytes.fromhex(data["signature"])).hexdigest() != data["randomness"]:
+            raise ValueError
+    except (OSError, ValueError, RecursionError):
+        raise Refused("malformed beacon") from None
+    return data
+
+
+def _candidates(randomness):
+    k = 0
+    while True:
+        yield int.from_bytes(hashlib.sha256(randomness + k.to_bytes(8, "big")).digest()[:8], "big") >> 1
+        k += 1
+
+
+def _beacon_draw(beacon, root):
+    data = _read_beacon(beacon)
+    clean = subprocess.run(["git", "-C", str(root), "diff", "--no-ext-diff", "--quiet", "HEAD", "--"],
+                           capture_output=True)
+    if clean.returncode != 0:
+        raise Refused("checkout differs from HEAD")
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True).stdout
+    files = [Path(root) / os.fsdecode(path) for path in tracked.split(b"\0") if path]
+    candidates = _candidates(bytes.fromhex(data["randomness"]))
+    seeds, seen = [], set()
+    while len(seeds) < 78:
+        batch = [next(candidates) for _ in range(78 - len(seeds))]
+        blocked = collisions(batch, root, files=files)
+        for seed in batch:
+            if seed in blocked or seed in seen:
+                continue
+            seeds.append(seed)
+            seen.add(seed)
+    drawn_at = datetime.fromtimestamp(1692803367 + (data["round"] - 1) * 3, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return canon(dict(design=seeds[:30], spares=seeds[30:], drawn_at=drawn_at)) + b"\n", data["round"]
+
+
+def verify(draw_path, beacon, *, root=ROOT):
+    expected, _ = _beacon_draw(beacon, root)
+    if Path(draw_path).read_bytes() != expected:
+        print("mismatch")
+        return 1
+    print(f"verified sha256 {hashlib.sha256(expected).hexdigest()}")
+    return 0
 
 
 def _write_new(path, data):
@@ -64,13 +128,22 @@ def _write_new(path, data):
     return hashlib.sha256(data).hexdigest()
 
 
-def draw(out, *, root=ROOT, packs=None, rehearsal=False):
+def draw(out, *, root=ROOT, packs=None, rehearsal=False, beacon=None):
+    if beacon is not None and (packs != 3 or rehearsal):
+        raise Refused("--beacon requires a real three-pack draw")
     if rehearsal and packs != 3:
         raise Refused("--rehearsal requires --packs 3")
     if Path(out).exists():
         raise Refused("draw output exists" if packs == 3 else f"{out} exists")
     if packs == 3 and not Path(out).parent.is_dir():
         raise Refused("draw output parent is not a directory")
+    if packs == 3 and not rehearsal:
+        raw, round_ = _beacon_draw(beacon, root)
+        digest = _write_new(out, raw)
+        print(f"sha256 {digest}")
+        print("design 30 spares 48")
+        print(f"round {round_}")
+        return 0
     design_count, spare_count = (30, 48) if packs == 3 else (DESIGN, SPARES)
     seeds = list(range(2001, 2079)) if rehearsal else [
         secrets.randbits(BITS) for _ in range(design_count + spare_count)]
@@ -285,6 +358,11 @@ def main(argv=None):
     drawing.add_argument("--out", required=True, type=Path)
     drawing.add_argument("--packs", type=int, choices=(3,), help="draw for three T2-shaped packs")
     drawing.add_argument("--rehearsal", action="store_true", help="use fixed public integers with --packs 3")
+    drawing.add_argument("--beacon", type=Path, help="public beacon JSON for a real three-pack draw")
+    verifying = sub.add_parser("verify")
+    verifying.add_argument("--packs", type=int, choices=(3,), required=True)
+    verifying.add_argument("--beacon", type=Path, help="public beacon JSON to recompute the draw")
+    verifying.add_argument("--draw", required=True, type=Path)
     placing = sub.add_parser("place")
     placing.add_argument("--round", type=int, choices=(1, 2))
     placing.add_argument("--draw", required=True, type=Path)
@@ -298,8 +376,10 @@ def main(argv=None):
         if args.out_dir is not None or args.spec_out is None or args.table_out is None:
             parser.error("single-pack place requires --spec-out and --table-out and does not accept --out-dir")
     try:
+        if args.command == "verify":
+            return verify(args.draw, args.beacon, root=ROOT)
         if args.command == "draw":
-            return draw(args.out, packs=args.packs, rehearsal=args.rehearsal)
+            return draw(args.out, packs=args.packs, rehearsal=args.rehearsal, beacon=args.beacon, root=ROOT)
         if args.packs == 3:
             if args.round is not None or args.spec_out is not None or args.table_out is not None:
                 raise Refused("--packs cannot be combined with --round, --spec-out or --table-out")

@@ -1,9 +1,13 @@
-"""The validity round's seed draw and roster placement (validity-1 declaration §2)."""
+"""The validity round's seed draw and roster placement (validity-1 declaration §2).
+
+PYTEST_DONT_REWRITE: keep seed values out of assertion failure messages.
+"""
 
 import hashlib
 import importlib.util
 import json
 import secrets
+import subprocess
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -515,45 +519,6 @@ def _expected_pack(design, index):
     return [dict(row, seed=seeds[row["life"]]) for row in PUBLIC]
 
 
-@pytest.mark.parametrize("case", ["ok", "duplicate", "collision"])
-def test_three_real_draw(tmp_path, monkeypatch, capsys, draw_tree, case):
-    import re
-
-    seeds = list(range(2 ** 62 + 100, 2 ** 62 + 178))
-    if case == "duplicate":
-        seeds[-1] = seeds[0]
-    elif case == "collision":
-        (draw_tree / "seeds.txt").write_text(str(seeds[-1]))
-    drawn = iter(seeds)
-    bits_seen = []
-
-    def randbits(bits):
-        bits_seen.append(bits)
-        return next(drawn)
-
-    monkeypatch.setattr(secrets, "randbits", randbits)
-    out = tmp_path / "DRAW.json"
-    assert roster.main(["draw", "--packs", "3", "--out", str(out)]) == (0 if case == "ok" else 2)
-    assert bits_seen == [63] * 78
-    captured = capsys.readouterr()
-    if case == "ok":
-        raw = out.read_bytes()
-        data = json.loads(raw)
-        assert raw == canon(data) + b"\n"
-        assert set(data) == {"design", "spares", "drawn_at"}
-        assert data["design"] == seeds[:30] and data["spares"] == seeds[30:]
-        assert len(set(seeds)) == 78 and all(0 <= n < 2 ** 63 for n in seeds)
-        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", data["drawn_at"])
-        assert captured.out.splitlines() == [f"sha256 {hashlib.sha256(raw).hexdigest()}", "design 30 spares 48"]
-        assert not captured.err
-        assert roster.main(["draw", "--packs", "3", "--out", str(out)]) == 2
-        assert out.read_bytes() == raw
-    else:
-        assert not out.exists() and captured.out == ""
-        assert captured.err.startswith("refused: ")
-    more = capsys.readouterr()
-    _no_seed_printed(captured.out + captured.err + more.out + more.err, seeds)
-
 
 def test_three_rehearsal_draw(tmp_path, monkeypatch, capsys, draw_tree):
     seeds = list(range(2001, 2079))
@@ -941,3 +906,280 @@ def test_three_work_output_collision(tmp_path, monkeypatch, capsys, case):
         assert list(work.iterdir()) == []
     captured = capsys.readouterr()
     _no_seed_printed(captured.out + captured.err, [*design, *spares])
+
+
+# Public quicknet record; candidate answers stay hex so they cannot collide as decimal text.
+BEACON = dict(
+    round=33965389,
+    randomness="6d39b70b3784b75426f8224fb33407cede1d9effe43407b6db1e013faeacbde4",
+    signature="827beb753f65fd8207d45238bedd316aafc2105494fdbe170824a53dc666dc0764b"
+              "42e862fe11613da074f0f548e1e44",
+)
+FIRST_FIVE_HEX = ("1f7c3dede7aa176a", "5ed306cfe83f462b", "600be0dc69165736",
+                  "039343fad7c4a0ae", "1e485bcc6a31ff3b")
+
+
+def _fixture_git(root, *args):
+    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-C", str(root), *args], check=True, capture_output=True).stdout
+
+
+@pytest.fixture
+def beacon_tree(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _fixture_git(root, "init", "-q")
+    (root / "tracked file\nname").write_bytes(b"synthetic committed text\n")
+    _fixture_git(root, "add", ".")
+    _fixture_git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", "fixture")
+    monkeypatch.setattr(roster, "ROOT", root)
+    original_collisions = roster.collisions
+    monkeypatch.setattr(roster, "collisions", lambda seeds, *_, **kwargs:
+                        original_collisions(seeds, root=root, **kwargs))
+    drawn = iter(range(2 ** 62 + 700, 2 ** 62 + 1000))
+    monkeypatch.setattr(secrets, "randbits", lambda _: next(drawn))
+    beacon = tmp_path / "beacon.json"
+    beacon.write_bytes(canon(BEACON))
+    return root, beacon
+
+
+def _beacon_args(command, path, beacon):
+    return [command, "--packs", "3", "--beacon", str(beacon),
+            "--out" if command == "draw" else "--draw", str(path)]
+
+
+def _raw_candidates(count=80):
+    randomness = bytes.fromhex(BEACON["randomness"])
+    return [int.from_bytes(hashlib.sha256(randomness + k.to_bytes(8, "big")).digest()[:8], "big") >> 1
+            for k in range(count)]
+
+
+def test_beacon_known_answer(capsys):
+    candidates = roster._candidates(bytes.fromhex(BEACON["randomness"]))
+    actual = [next(candidates) for _ in FIRST_FIVE_HEX]
+    assert tuple(f"{n:016x}" for n in actual) == FIRST_FIVE_HEX
+    captured = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err, actual)
+
+
+@pytest.mark.parametrize("case", ["ok", "collision", "repeat"])
+def test_three_real_draw(tmp_path, monkeypatch, capsys, beacon_tree, case):
+    root, beacon = beacon_tree
+    raw = _raw_candidates()
+    expected = raw[:78]
+    if case == "collision":
+        original = roster.collisions
+
+        def collision(seeds, *args, **kwargs):
+            return original(seeds, *args, **kwargs) | ({raw[3]} & set(seeds))
+
+        monkeypatch.setattr(roster, "collisions", collision)
+        expected = [*raw[:3], *raw[4:79]]
+    elif case == "repeat":
+        monkeypatch.setattr(roster, "_candidates", lambda _: iter([*raw[:3], raw[1], *raw[3:]]))
+    def forbidden(*args):
+        pytest.fail("beacon draw must not use entropy")
+    monkeypatch.setattr(secrets, "randbits", forbidden)
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    raw_bytes = out.read_bytes()
+    data = json.loads(raw_bytes)
+    assert data["design"] == expected[:30] and data["spares"] == expected[30:]
+    assert len({*data["design"], *data["spares"]}) == 78
+    assert all(0 <= n < 2 ** 63 for n in expected)
+    captured = capsys.readouterr()
+    assert not captured.err
+    assert captured.out.splitlines() == [f"sha256 {hashlib.sha256(out.read_bytes()).hexdigest()}",
+                                         "design 30 spares 48", f"round {BEACON['round']}"]
+    assert roster.main(_beacon_args("draw", out, beacon)) == 2
+    refused = capsys.readouterr()
+    assert out.read_bytes() == raw_bytes
+    assert refused.out == "" and refused.err.startswith("refused: ")
+    assert roster.main(_beacon_args("draw", tmp_path / "missing" / "draw.json", beacon)) == 2
+    more = capsys.readouterr()
+    assert more.out == "" and more.err.startswith("refused: ")
+    _no_seed_printed(captured.out + captured.err + refused.out + refused.err + more.out + more.err, raw)
+
+
+def test_beacon_tracked_only(tmp_path, capsys, beacon_tree):
+    root, beacon = beacon_tree
+    seeds = _raw_candidates()
+    untracked = root / "untracked"
+    untracked.write_text(str(seeds[3]))
+    tracked = root / "tracked file\nname"
+    # A longer decimal number is not a whole-number collision.
+    tracked.write_text(f"9{seeds[2]}0")
+    _fixture_git(root, "add", ".")
+    _fixture_git(root, "reset", "--", "untracked")
+    _fixture_git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", "longer number")
+    out = tmp_path / "one.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    assert json.loads(out.read_bytes())["design"] == seeds[:30]
+    tracked.write_text(str(seeds[3]))
+    _fixture_git(root, "add", "--", tracked.name)
+    _fixture_git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", "whole number")
+    out = tmp_path / "two.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    data = json.loads(out.read_bytes())
+    expected = [*seeds[:3], *seeds[4:79]]
+    assert data["design"] + data["spares"] == expected
+    captured = capsys.readouterr()
+    assert not captured.err
+    _no_seed_printed(captured.out + captured.err, seeds)
+
+
+BEACON_BAD_CASES = ["missing", "not-json", "utf16", "list", "extra", "absent-key", "round-bool",
+                    "round-string", "round-zero", "round-negative", "randomness-type", "randomness-short",
+                    "randomness-upper", "randomness-nonhex", "signature-type", "signature-empty",
+                    "signature-upper", "signature-odd", "signature-nonhex", "signature-space", "hash", "unstaged", "staged",
+                    "deleted", "rehearsal", "io"]
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+@pytest.mark.parametrize("case", BEACON_BAD_CASES)
+def test_beacon_refusals(tmp_path, monkeypatch, capsys, beacon_tree, command, case):
+    root, beacon = beacon_tree
+    data = dict(BEACON)
+    if case == "list":
+        data = []
+    elif case == "extra":
+        data["extra"] = True
+    elif case == "absent-key":
+        del data["signature"]
+    elif case.startswith("round-"):
+        data["round"] = {"bool": True, "string": "1", "zero": 0, "negative": -1}[case[6:]]
+    elif case.startswith("randomness-"):
+        data["randomness"] = {"type": 1, "short": "ab", "upper": BEACON["randomness"].upper(),
+                              "nonhex": "g" * 64}[case[11:]]
+    elif case.startswith("signature-"):
+        data["signature"] = {"type": 1, "empty": "", "upper": BEACON["signature"].upper(),
+                             "odd": "abc", "nonhex": "gg", "space": " " + BEACON["signature"]}[case[10:]]
+    elif case == "hash":
+        data["randomness"] = "ab" * 32
+    elif case in ("unstaged", "staged", "deleted"):
+        tracked = root / "tracked file\nname"
+        if case == "deleted":
+            tracked.unlink()
+        else:
+            tracked.write_text(str(_raw_candidates()[0]))
+        if case == "staged":
+            _fixture_git(root, "add", ".")
+    beacon.write_bytes(b"{" if case == "not-json" else canon(data).decode().encode("utf-16")
+                       if case == "utf16" else canon(data))
+    out = tmp_path / "draw.json"
+    before = canon(dict(design=_raw_candidates()[:30], spares=_raw_candidates()[30:78],
+                        drawn_at="2026-11-14T23:38:51Z")) + b"\n"
+    if command == "verify":
+        out.write_bytes(before)
+    args = _beacon_args(command, out, beacon)
+    if case == "missing":
+        args = [command, "--packs", "3", "--out" if command == "draw" else "--draw", str(out)]
+    elif case == "rehearsal":
+        if command == "verify":
+            # Verify still validates its beacon; rehearsal is a draw-only switch.
+            beacon.write_bytes(b"null")
+        else:
+            args.append("--rehearsal")
+    elif case == "io":
+        def fail(*args, **kwargs):
+            raise OSError(str(_raw_candidates()[0]))
+        monkeypatch.setattr(Path, "read_bytes", fail)
+    assert roster.main(args) == 2
+    if command == "verify":
+        with out.open("rb") as stream:
+            assert stream.read() == before
+    else:
+        assert not out.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err.startswith("refused: ")
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+def test_beacon_shape_time_verify(tmp_path, capsys, beacon_tree):
+    _, beacon = beacon_tree
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    raw = out.read_bytes()
+    data = json.loads(raw)
+    assert set(data) == {"design", "spares", "drawn_at"}
+    assert data["drawn_at"] == "2026-11-14T23:38:51Z"
+    assert raw == canon(data) + b"\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    assert roster.main(_beacon_args("verify", out, beacon)) == 0
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == f"verified sha256 {digest}" and not captured.err
+    out.write_bytes(raw + b" ")
+    assert roster.main(_beacon_args("verify", out, beacon)) == 1
+    mismatch = capsys.readouterr()
+    assert mismatch.out == "mismatch\n" and not mismatch.err
+    out.write_bytes(raw)
+    beacon.write_bytes(canon(dict(BEACON, round=BEACON["round"] + 1)))
+    assert roster.main(_beacon_args("verify", out, beacon)) == 1
+    changed_round = capsys.readouterr()
+    assert changed_round.out == "mismatch\n" and not changed_round.err
+    with pytest.raises(SystemExit) as caught:
+        roster.main(["verify", "--beacon", str(beacon), "--draw", str(out)])
+    assert caught.value.code == 2
+    missing_packs = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err + mismatch.out + mismatch.err +
+                     changed_round.out + changed_round.err + missing_packs.out + missing_packs.err,
+                     data["design"] + data["spares"])
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+@pytest.mark.parametrize("stage", ["git", "scan", "write", "draw-read"])
+def test_beacon_private_failures(tmp_path, monkeypatch, capsys, beacon_tree, command, stage):
+    _, beacon = beacon_tree
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    seeds = _raw_candidates()
+    if command == "draw":
+        out.unlink()
+    before = out.read_bytes() if out.exists() else None
+
+    def fail(*args, **kwargs):
+        raise OSError(str(seeds[0]))
+
+    if stage == "git":
+        monkeypatch.setattr(roster.subprocess, "run", fail)
+    elif stage == "scan":
+        monkeypatch.setattr(roster, "collisions", fail)
+    elif stage == "write":
+        if command == "verify":
+            monkeypatch.setattr(roster, "_beacon_draw", fail)
+        else:
+            monkeypatch.setattr(roster, "_write_new", fail)
+    else:
+        original = Path.read_bytes
+
+        def fail_draw(path):
+            return fail() if path == out else original(path)
+
+        if command == "draw":
+            monkeypatch.setattr(roster, "_read_beacon", fail)
+        else:
+            monkeypatch.setattr(Path, "read_bytes", fail_draw)
+    success = capsys.readouterr()
+    assert roster.main(_beacon_args(command, out, beacon)) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: three-pack operation failed\n"
+    if command == "draw":
+        assert not out.exists()
+    else:
+        assert out.exists()
+        # The draw-read mutant deliberately replaces read_bytes; read through an independent handle.
+        with out.open("rb") as stream:
+            assert stream.read() == before
+    _no_seed_printed(success.out + success.err + captured.out + captured.err, seeds)
+
+
+def test_beacon_requires_three(tmp_path, capsys, beacon_tree):
+    _, beacon = beacon_tree
+    out = tmp_path / "draw.json"
+    assert roster.main(["draw", "--beacon", str(beacon), "--out", str(out)]) == 2
+    assert not out.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err.startswith("refused: ")
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
