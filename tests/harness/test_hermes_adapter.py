@@ -571,7 +571,7 @@ def test_eperm_survivors_prevent_reap(monkeypatch):
 
     reaped, discarded = [], []
     worker = object.__new__(adapter._Worker)
-    worker._reaped, worker._cleanup_lock = False, Lock()
+    worker._reaped, worker._closed, worker._cleanup_lock = False, False, Lock()
     worker.egress = SimpleNamespace(discard=discarded.append)
     worker.proc = SimpleNamespace(pid=123, returncode=None, wait=lambda: reaped.append(True))
 
