@@ -9,7 +9,8 @@ receipt when the dry run stops.
 
 With `--packs 3 --beacon`, draw derives thirty design seeds and forty-eight ordered spares from
 an already published beacon round and the blobs of the run commit (HEAD), read from Git's objects with
-no inherited GIT_ variable and no replace refs; verify recomputes its bytes.
+no inherited GIT_ variable and no replace refs; verify recomputes its bytes at a checkout of the run
+commit named in the counted first post on #394; at any other commit the result is mismatch.
 `--rehearsal` uses fixed public integers. Place maps positions 1–10 to A, 11–20 to B and 21–30 to C. Within
 pack X, odd positions name t2-g1-1 through t2-g1-5 and even positions t2-g2-1 through t2-g2-5;
 each pack walks the public T2 row order. Packs share one ordered spare list, excluding every
@@ -95,9 +96,9 @@ def _git(root, *args, stdin=None):
                           input=stdin, env=env, capture_output=True)
 
 
-def _commit_blobs(root):
-    """Each blob of HEAD's tree, read from the object store; submodule entries are left out."""
-    listing = _git(root, "ls-tree", "-r", "-z", "--full-tree", "HEAD")
+def _commit_blobs(root, commit="HEAD"):
+    """Each blob of the given commit's tree, read from objects; submodule entries are left out."""
+    listing = _git(root, "ls-tree", "-r", "-z", "--full-tree", commit)
     listing.check_returncode()
     oids = []
     if listing.stdout and not listing.stdout.endswith(b"\0"):
@@ -144,10 +145,13 @@ def _beacon_draw(beacon, root):
             raise Refused("root is not the repository top level")
     except OSError:
         raise Refused("root is not the repository top level") from None
-    clean = _git(root, "diff", "--no-ext-diff", "--quiet", "HEAD", "--")
+    resolved = _git(root, "rev-parse", "--verify", "HEAD^{commit}")
+    resolved.check_returncode()
+    commit = resolved.stdout.decode("ascii").strip()
+    clean = _git(root, "diff", "--no-ext-diff", "--quiet", commit, "--")
     if clean.returncode != 0:  # guards only that this tool's own code is the commit's
         raise Refused("checkout differs from HEAD")
-    blobs = _commit_blobs(root)
+    blobs = _commit_blobs(root, commit)
     candidates = _candidates(bytes.fromhex(data["randomness"]))
     seeds, seen = [], set()
     while len(seeds) < 78:
@@ -159,15 +163,15 @@ def _beacon_draw(beacon, root):
             seeds.append(seed)
             seen.add(seed)
     drawn_at = datetime.fromtimestamp(1692803367 + (data["round"] - 1) * 3, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return canon(dict(design=seeds[:30], spares=seeds[30:], drawn_at=drawn_at)) + b"\n", data["round"]
+    return canon(dict(design=seeds[:30], spares=seeds[30:], drawn_at=drawn_at)) + b"\n", data["round"], commit
 
 
 def verify(draw_path, beacon, *, root=ROOT):
-    expected, _ = _beacon_draw(beacon, root)
+    expected, _, commit = _beacon_draw(beacon, root)
     if Path(draw_path).read_bytes() != expected:
-        print("mismatch")
+        print(f"mismatch at {commit}")
         return 1
-    print(f"verified sha256 {hashlib.sha256(expected).hexdigest()}")
+    print(f"verified sha256 {hashlib.sha256(expected).hexdigest()} at {commit}")
     return 0
 
 
@@ -192,7 +196,7 @@ def draw(out, *, root=ROOT, packs=None, rehearsal=False, beacon=None):
     if packs == 3 and not Path(out).parent.is_dir():
         raise Refused("draw output parent is not a directory")
     if packs == 3 and not rehearsal:
-        raw, round_ = _beacon_draw(beacon, root)
+        raw, round_, _ = _beacon_draw(beacon, root)
         digest = _write_new(out, raw)
         print(f"sha256 {digest}")
         print("design 30 spares 48")
@@ -413,7 +417,9 @@ def main(argv=None):
     drawing.add_argument("--packs", type=int, choices=(3,), help="draw for three T2-shaped packs")
     drawing.add_argument("--rehearsal", action="store_true", help="use fixed public integers with --packs 3")
     drawing.add_argument("--beacon", type=Path, help="public beacon JSON for a real three-pack draw")
-    verifying = sub.add_parser("verify")
+    verifying = sub.add_parser("verify", description=(
+        "Run at a checkout of the run commit named in the counted first post on #394; "
+        "at any other commit the result is mismatch."))
     verifying.add_argument("--packs", type=int, choices=(3,), required=True)
     verifying.add_argument("--beacon", type=Path, help="public beacon JSON to recompute the draw")
     verifying.add_argument("--draw", required=True, type=Path)
@@ -445,10 +451,13 @@ def main(argv=None):
         message = str(error) if args.packs is None or isinstance(error, Refused) else "output exists"
         print(f"refused: {message}", file=sys.stderr)
         return 2
-    except Exception:
+    except Exception as error:
         if args.packs != 3:
             raise
-        print("refused: three-pack operation failed", file=sys.stderr)
+        detail = type(error).__name__
+        if isinstance(error, subprocess.CalledProcessError):
+            detail += f", git exit {error.returncode}"
+        print(f"refused: three-pack operation failed ({detail})", file=sys.stderr)
         return 2
 
 

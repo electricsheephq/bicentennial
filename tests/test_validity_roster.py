@@ -885,8 +885,9 @@ def test_three_cli_failure_is_private(tmp_path, monkeypatch, capsys, case):
     assert not (tmp_path / "out").exists()
     captured = capsys.readouterr()
     assert captured.out == ""
+    error_name = "FileNotFoundError" if case == "read" else "PlacementError" if case == "unannotated" else "OSError"
     assert captured.err == ("refused: output exists\n" if case == "exists" else
-                            "refused: three-pack operation failed\n")
+                            f"refused: three-pack operation failed ({error_name})\n")
     _no_seed_printed(captured.out + captured.err, [*design, *spares])
 
 
@@ -1099,7 +1100,8 @@ def test_beacon_refusals(tmp_path, monkeypatch, capsys, beacon_tree, command, ca
 
 
 def test_beacon_shape_time_verify(tmp_path, capsys, beacon_tree):
-    _, beacon = beacon_tree
+    root, beacon = beacon_tree
+    commit = _fixture_git(root, "rev-parse", "HEAD").decode().strip()
     out = tmp_path / "draw.json"
     assert roster.main(_beacon_args("draw", out, beacon)) == 0
     raw = out.read_bytes()
@@ -1110,16 +1112,16 @@ def test_beacon_shape_time_verify(tmp_path, capsys, beacon_tree):
     digest = hashlib.sha256(raw).hexdigest()
     assert roster.main(_beacon_args("verify", out, beacon)) == 0
     captured = capsys.readouterr()
-    assert captured.out.splitlines()[-1] == f"verified sha256 {digest}" and not captured.err
+    assert captured.out.splitlines()[-1] == f"verified sha256 {digest} at {commit}" and not captured.err
     out.write_bytes(raw + b" ")
     assert roster.main(_beacon_args("verify", out, beacon)) == 1
     mismatch = capsys.readouterr()
-    assert mismatch.out == "mismatch\n" and not mismatch.err
+    assert mismatch.out == f"mismatch at {commit}\n" and not mismatch.err
     out.write_bytes(raw)
     beacon.write_bytes(canon(dict(BEACON, round=BEACON["round"] + 1)))
     assert roster.main(_beacon_args("verify", out, beacon)) == 1
     changed_round = capsys.readouterr()
-    assert changed_round.out == "mismatch\n" and not changed_round.err
+    assert changed_round.out == f"mismatch at {commit}\n" and not changed_round.err
     with pytest.raises(SystemExit) as caught:
         roster.main(["verify", "--beacon", str(beacon), "--draw", str(out)])
     assert caught.value.code == 2
@@ -1165,7 +1167,7 @@ def test_beacon_private_failures(tmp_path, monkeypatch, capsys, beacon_tree, com
     success = capsys.readouterr()
     assert roster.main(_beacon_args(command, out, beacon)) == 2
     captured = capsys.readouterr()
-    assert captured.out == "" and captured.err == "refused: three-pack operation failed\n"
+    assert captured.out == "" and captured.err == "refused: three-pack operation failed (OSError)\n"
     if command == "draw":
         assert not out.exists()
     else:
@@ -1191,6 +1193,100 @@ def _commit(root, message):
                  "-c", "commit.gpgsign=false", "commit", "-qm", message)
 
 
+@pytest.mark.parametrize("changed", [False, True], ids=["verified", "mismatch"])
+def test_verify_names_recomputed_commit(tmp_path, capsys, beacon_tree, changed):
+    root, beacon = beacon_tree
+    commit = _fixture_git(root, "rev-parse", "HEAD").decode().strip()
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    raw = out.read_bytes()
+    if changed:
+        out.write_bytes(raw + b" ")
+    capsys.readouterr()
+    assert roster.main(_beacon_args("verify", out, beacon)) == int(changed)
+    captured = capsys.readouterr()
+    expected = f"mismatch at {commit}\n" if changed else (
+        f"verified sha256 {hashlib.sha256(raw).hexdigest()} at {commit}\n")
+    assert captured.out == expected and captured.err == ""
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+def test_verify_after_committing_draw_names_later_commit(tmp_path, capsys, beacon_tree):
+    root, beacon = beacon_tree
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    (root / "published-draw.json").write_bytes(out.read_bytes())
+    _fixture_git(root, "add", ".")
+    _commit(root, "publish fixture draw")
+    commit = _fixture_git(root, "rev-parse", "HEAD").decode().strip()
+    capsys.readouterr()
+    assert roster.main(_beacon_args("verify", out, beacon)) == 1
+    captured = capsys.readouterr()
+    assert captured.out == f"mismatch at {commit}\n" and captured.err == ""
+    _no_seed_printed(captured.out + captured.err, _raw_candidates(200))
+
+
+def test_verify_help_names_run_commit(capsys):
+    with pytest.raises(SystemExit) as caught:
+        roster.main(["verify", "--help"])
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    help_text = " ".join(captured.out.split())
+    assert "checkout of the run commit named in the counted first post on #394" in help_text
+    assert "at any other commit the result is mismatch" in help_text
+    assert captured.err == ""
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+@pytest.mark.parametrize("kind", ["runtime", "git", "missing"])
+def test_three_failure_names_kind_without_message(tmp_path, monkeypatch, capsys, kind):
+    private = 876543210987654321
+    errors = {
+        "runtime": RuntimeError(f"synthetic failure {private}"),
+        "git": subprocess.CalledProcessError(128, ["git", "ls-tree"], output=str(private), stderr=str(private)),
+        "missing": FileNotFoundError(f"synthetic failure {private}"),
+    }
+    labels = {"runtime": "RuntimeError", "git": "CalledProcessError, git exit 128", "missing": "FileNotFoundError"}
+
+    def fail(*args, **kwargs):
+        raise errors[kind]
+
+    monkeypatch.setattr(roster, "_beacon_draw", fail)
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, tmp_path / "beacon.json")) == 2
+    captured = capsys.readouterr()
+    _no_seed_printed(captured.out + captured.err, [private])
+    assert captured.out == "" and captured.err == f"refused: three-pack operation failed ({labels[kind]})\n"
+    assert not out.exists()
+
+
+def test_verify_reads_the_commit_it_names(tmp_path, monkeypatch, capsys, beacon_tree):
+    root, beacon = beacon_tree
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    commit = _fixture_git(root, "rev-parse", "HEAD").decode().strip()
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    original = roster._git
+    calls = []
+
+    def advance(root, *args, **kwargs):
+        calls.append(args)
+        if args[0] == "ls-tree":
+            (root / "published-draw.json").write_bytes(out.read_bytes())
+            _fixture_git(root, "add", ".")
+            _commit(root, "advance fixture HEAD before tree read")
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(roster, "_git", advance)
+    capsys.readouterr()
+    assert roster.main(_beacon_args("verify", out, beacon)) == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"verified sha256 {digest} at {commit}\n" and captured.err == ""
+    assert calls.count(("rev-parse", "--verify", "HEAD^{commit}")) == 1
+    assert ("ls-tree", "-r", "-z", "--full-tree", commit) in calls
+    _no_seed_printed(captured.out + captured.err, _raw_candidates(200))
+
+
 def _clean_draw(tmp_path, root, beacon):
     """The bytes a third party draws from a fresh clone of the same commit."""
     clone = tmp_path / "fresh-clone"
@@ -1209,6 +1305,7 @@ def _skipped_draw(clean, skipped):
 
 
 def _draw_and_verify(tmp_path, capsys, beacon, clean, skipped):
+    commit = _fixture_git(roster.ROOT, "--git-dir=.git", "rev-parse", "HEAD").decode().strip()
     out = tmp_path / "draw.json"
     assert roster.main(_beacon_args("draw", out, beacon)) == 0
     assert out.read_bytes() == clean
@@ -1216,7 +1313,8 @@ def _draw_and_verify(tmp_path, capsys, beacon, clean, skipped):
     out.write_bytes(_skipped_draw(clean, skipped))
     assert roster.main(_beacon_args("verify", out, beacon)) == 1
     captured = capsys.readouterr()
-    assert captured.out.splitlines()[-2:] == [f"verified sha256 {hashlib.sha256(clean).hexdigest()}", "mismatch"]
+    assert captured.out.splitlines()[-2:] == [f"verified sha256 {hashlib.sha256(clean).hexdigest()} at {commit}",
+                                            f"mismatch at {commit}"]
     assert not captured.err
     _no_seed_printed(captured.out + captured.err, _raw_candidates(200))
 
@@ -1362,7 +1460,7 @@ def test_beacon_refuses_malformed_tree_listing(tmp_path, monkeypatch, capsys, be
     }
 
     def listing(root, *args, **kwargs):
-        if args == ("ls-tree", "-r", "-z", "--full-tree", "HEAD"):
+        if args == ("ls-tree", "-r", "-z", "--full-tree", _fixture_git(root, "rev-parse", "HEAD").decode().strip()):
             return subprocess.CompletedProcess(args, 0, stdout=listings[case])
         if case == "object" and args == ("cat-file", "--batch"):
             # Echo the requested short id, so only the listing's id-length check can refuse.
@@ -1397,7 +1495,8 @@ def test_beacon_accepts_exact_blob_replies_and_omits_commits(tmp_path, monkeypat
 
     def exact(root, *args, **kwargs):
         result = original(root, *args, **kwargs)
-        if args == ("ls-tree", "-r", "-z", "--full-tree", "HEAD"):
+        if args[:4] == ("ls-tree", "-r", "-z", "--full-tree"):
+            assert args[4] in ("HEAD", commit.decode())
             result.stdout += b"160000 commit " + commit + b"\tsub\0"
         elif args == ("cat-file", "--batch"):
             assert commit + b"\n" not in kwargs["stdin"]
@@ -1513,8 +1612,9 @@ def test_beacon_top_level_directory_identity(tmp_path, monkeypatch, capsys, beac
     captured = capsys.readouterr()
     if case == "symlink":
         digest = hashlib.sha256(clean).hexdigest()
+        commit = _fixture_git(root, "rev-parse", "HEAD").decode().strip()
         assert captured.out == (f"sha256 {digest}\ndesign 30 spares 48\nround {BEACON['round']}\n"
-                                if command == "draw" else f"verified sha256 {digest}\n")
+                                if command == "draw" else f"verified sha256 {digest} at {commit}\n")
         assert not captured.err
     else:
         assert captured.out == "" and captured.err == "refused: root is not the repository top level\n"
