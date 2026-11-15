@@ -209,6 +209,11 @@ def first_row(comment, records, seen_rounds, counted):
     row = {k: comment[k] for k in ("id", "created_at", "deletedAt", "first_seen")}
     row.update(round=None, commit=None, pull_request=None, merged_at=None, on_time=None,
                test=None, test_reason=None, counted=False, values={})
+    declaration = newest(records, "declaration")
+    if (comment["author"] == declaration["merging_id"]
+            and seconds(comment["created_at"]) <= seconds(declaration["merge_time"])):
+        row["reason"] = "not after the merge"
+        return row
     if comment["body"] is None:
         row["reason"] = "unrecoverable"
         return row
@@ -217,13 +222,10 @@ def first_row(comment, records, seen_rounds, counted):
                values={k: p["values"][k] for k in IDENTITY_FIELDS if k in p["values"]})
     if p["round"] is not None:
         row["on_time"] = seconds(comment["created_at"]) <= round_due(p["round"]) - 600
-    declaration = newest(records, "declaration")
     if p["reason"]:
         row["reason"] = "not a commitment post: " + p["reason"]
     elif comment["author"] != declaration["merging_id"]:
         row["reason"] = "not the merging account"
-    elif seconds(comment["created_at"]) <= seconds(declaration["merge_time"]):
-        row["reason"] = "not after the merge"
     else:
         test = saved_test(records, comment, p)
         if test is None:
@@ -256,7 +258,8 @@ def task_list_comments(records, counted):
         if c["body"] is None:
             continue
         p = parse_body(c["body"])
-        if p["kind"] == "tasks" and not p["repeated"] and p["round"] == counted["round"]:
+        if (p["kind"] == "tasks" and not p["repeated"] and p["round"] == counted["round"]
+                and seconds(c["created_at"]) >= round_due(counted["round"])):
             result.append(c)
     return result
 
@@ -892,9 +895,13 @@ def prepare_list(state):
         try:
             for kind, data in ensure_test(records, c):
                 append_record(state, kind, data)
-            records = load_records(state)
+        except Refused as exc:
+            failures[c["id"]] = ("undecided" if str(exc).endswith("undecided") else
+                                  "commitment evidence unavailable")
         except Exception:
             failures[c["id"]] = "commitment evidence unavailable"
+        finally:
+            records = load_records(state)
     result = evaluate_records(records)
     if result["counted"]:
         verify_reading(result["counted"]["commit"])

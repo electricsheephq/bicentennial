@@ -66,8 +66,9 @@ account, with the creation revision's `deletedAt` when known and the GitHub time
 of first sight. No later observation changes the first sight.
 
 A candidate is by the merging id, in a second strictly after the declaration's
-merge. Creation in the merge's second is `not after the merge`. First-line syntax
-is checked before author/time rules, then evidence calls in their order. A passing
+merge. A merging-account comment created at or before the merge is `not after the
+merge`, checked before body recovery or first-line syntax. For every other comment,
+first-line syntax is checked before the author rule, then evidence calls in their order. A passing
 commit has the unchanged declaration (hash and length) and a qualifying pull request
 to `main` with compare status `identical` or `ahead`. The default branch is read before
 and after the pulls call and both settings are recorded; either setting other than
@@ -79,7 +80,7 @@ comment; another status or another 422 refuses.
 
 Evidence records keep GitHub's time from before their first evidence call. The
 successfully fetched declaration bytes describe an immutable commit tree and decide
-at any fetch time. A 404 or no-commit response does not describe a fetched tree;
+at any fetch time when both default-branch readings are `main`. A 404 or no-commit response does not describe a fetched tree;
 it cannot negatively decide a later comment. Those failures decide only at or after the comment's creation. A positive
 qualifying main merge before the comment also decides at any fetch time. A negative pull/compare result decides only when that evidence time
 is at or after creation. An earlier negative snapshot never rejects a later post.
@@ -97,8 +98,9 @@ older GitHub behaviour; a later `evaluate --recheck` exposes that forced failure
 on-time, nonvoid commitment. Exactly 600 seconds before due is on time. Passing
 posts of one round are one post with the earliest's values. After a placement
 void it continues to the next round. Later candidates are tested only for the
-public list; a failed fetch there is `untested: <reason>` and cannot displace the
-counted post. `evaluate` never blocks. An unrecoverable comment changes no counted
+public list; an undecided fetch there is `untested: undecided`, while a failed fetch
+is `untested: commitment evidence unavailable`. Every saved record is used even
+when that attempt refuses, and no later post can displace the counted post. `evaluate` never blocks. An unrecoverable comment changes no counted
 draw, even if discovered later. Only `post first` is gated by an unrecoverable
 candidate from after the merge when nothing counts.
 
@@ -151,8 +153,9 @@ A candidate comment (the merging account's, created after the merge: the set
 `Follow-up draw: stop` counts as the stop only when it is created at or after the
 counted round's due time and no candidate comment comes before it in comment order
 (`comment_order`: created second, then id) whose first line is
-`Follow-up draw: task lists`, whose created body has no repeated value name, and
-whose `round` value is the counted round. A missing `run_commit` does not matter
+`Follow-up draw: task lists`, that is created at or after the counted round's due
+time, whose created body has no repeated value name, and whose `round` value is the
+counted round. A missing `run_commit` does not matter
 here: task-list bodies carry `round` and the six hashes, never a `run_commit`.
 A task-list comment with a repeated value name, with no round, or naming another
 round hides nothing. Any other stop comment is a marker: listed by `publish-list`,
@@ -224,7 +227,7 @@ All except `init` require a declaration record. Every refusal prints
 | `beacon --rehearsal [--fixture FILE]` | `rehearsal-beacon pass` or `rehearsal-beacon fail <reason>` | 0 or 10 |
 | `match second|tasks FILE` | `differs <id>` lines, then `matched <id>` or `none` | 0 or 10 |
 | `record-void --round n --receipt-sha256 H` | `void round <n>` | 0 |
-| `publish-list` | canonical JSON with `first_posts` and `markers` | 0 |
+| `publish-list` | canonical JSON with `first_posts`, `markers` and `other_comments` | 0 |
 | `publish-records OUT` | `published records` | 0 |
 
 `gh api -i` output is split at the first blank line, supporting LF and CRLF, and

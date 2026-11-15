@@ -748,7 +748,7 @@ def test_t11_list_reasons_order_identity_and_unrecoverable(h):
     data = json.loads(out)
     assert out.encode() == h.dr.canonical(data)
     rows = data["first_posts"]
-    assert [r["reason"] for r in rows] == ["not a commitment post: repeated value name", "not after the merge",
+    assert [r["reason"] for r in rows] == ["not after the merge", "not after the merge",
         "void round", "failed: not found", "counted", "same round as 5", "after the counted post", "unrecoverable", "late"]
     assert rows[4]["values"] == {n: "frozen" for n in h.dr.IDENTITY_FIELDS}
     assert rows[-2]["deletedAt"] == stamp(DUE - 798) and rows[-2]["first_seen"] == DUE - 900
@@ -1360,7 +1360,7 @@ def test_r3_stop_task_order(h, case, stopped):
         tasks += f"\nround {N}"
     if case == "no-round":
         tasks = tasks.replace(f"round {N}\n", "")
-    stop_time = DUE + (2 if case in ("after", "other-author", "other-round", "repeated", "no-round") else 0)
+    stop_time = DUE + (2 if case in ("after", "other-round", "repeated", "no-round") else 0)
     task_time = DUE + (0 if case.startswith("tie-") else 1)
     stop_id, task_id = (3, 2) if case == "tie-tasks-first" else (2, 3)
     cs = [comment(), comment(stop_id, when=stop_time, text=body("stop"),
@@ -1713,3 +1713,97 @@ def test_r3_recheck_undecided_not_unchanged(h):
     h.queue(steps)
     assert h.run("evaluate", "--recheck") == "undecided 1\n"
     assert h.data("recheck")[-1]["result"] is None and h.data("test") == before
+
+
+# Round 4: due-time task lists, pre-merge reasons and saved undecided evidence.
+@pytest.mark.parametrize("task_time,stopped", [(DUE - 1000, True), (DUE, False)])
+def test_r4_task_list_due_boundary(h, task_time, stopped):
+    h.seed([comment(), comment(2, when=task_time, text=task_body()),
+            comment(3, when=DUE + 1, text=body("stop"))])
+    assert h.run("evaluate", code=14 if stopped else 0).startswith(
+        "stopped 3" if stopped else "counted 1 ")
+
+
+@pytest.mark.parametrize("when", [MERGE - 1, MERGE, MERGE + 1])
+@pytest.mark.parametrize("author", [AUTHOR, AUTHOR + 1])
+@pytest.mark.parametrize("kind", ["unrecoverable", "malformed", "valid"])
+def test_r4_first_row_premerge_reason(h, when, author, kind):
+    c = comment(when=when, author=author)
+    if kind == "unrecoverable":
+        c.update(lastEditedAt=stamp(DUE), includesCreatedEdit=False)
+    elif kind == "malformed":
+        c["body"] = body(n=0, commit="invalid")
+    h.seed([c])
+    rs = h.dr.load_records(h.state)
+    fixed = h.dr.comment_set(rs)[0]
+    if author == AUTHOR and when <= MERGE:
+        expected = "not after the merge"
+    elif kind == "unrecoverable":
+        expected = "unrecoverable"
+    elif kind == "malformed":
+        expected = "not a commitment post: missing round"
+    elif author != AUTHOR:
+        expected = "not the merging account"
+    else:
+        expected = "failed: merge not before comment"
+    assert h.dr.first_row(fixed, rs, {}, None)["reason"] == expected
+    listing = json.loads(h.run("publish-list"))
+    if author == AUTHOR:
+        assert listing["first_posts"][0]["reason"] == expected
+    else:
+        assert listing["first_posts"] == [] and listing["other_comments"] == 1
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_r4_publish_list_undecided_reloads_saved_evidence(h, monkeypatch, side):
+    h.init()
+    h.save("read", [comment(), comment(2, when=DUE - 899, text=body(commit=OTHER))])
+    steps = evidence_steps()
+    steps[1 if side == "before" else 4] = http({"default_branch": "other"})
+    h.queue([*steps, *evidence_steps()])
+    original_ensure, original_publish = h.dr.ensure_test, h.dr.publish_list
+    attempts = []
+
+    def ensure(rs, c):
+        saved = [r["data"] for r in rs if r["kind"] == "evidence"]
+        assert saved == h.data("evidence")
+        attempts.append(c["id"])
+        yield from original_ensure(rs, c)
+
+    def publish(rs, failures):
+        assert [r["data"] for r in rs if r["kind"] == "evidence"] == h.data("evidence")
+        return original_publish(rs, failures)
+
+    monkeypatch.setattr(h.dr, "ensure_test", ensure)
+    monkeypatch.setattr(h.dr, "publish_list", publish)
+    listing = json.loads(h.run("publish-list"))
+    assert attempts == [1, 2]
+    assert listing["first_posts"][0]["reason"] == "untested: undecided"
+    assert listing["first_posts"][1]["reason"] == "undecided: an earlier post is untested"
+    assert len(h.data("evidence")) == 2
+    assert h.data("test")[0]["id"] == 2 and h.data("test")[0]["passed"]
+    assert len(h.calls()) == 12
+
+
+def test_r4_publish_list_failed_fetch(h):
+    h.init()
+    h.save("read", [comment()])
+    h.queue([*evidence_steps()[:2], http({}, status=502)])
+    listing = json.loads(h.run("publish-list"))
+    assert listing["first_posts"][0]["reason"] == "untested: commitment evidence unavailable"
+    assert not h.data("evidence") and not h.data("test")
+
+
+@pytest.mark.parametrize("failure", ["refused-middle", "exception-suffix"])
+def test_r4_publish_list_other_failures(h, monkeypatch, failure):
+    h.init()
+    h.save("read", [comment()])
+
+    def fetch(commit):
+        if failure == "refused-middle":
+            raise h.dr.Refused("undecided fetch failed")
+        raise RuntimeError("fetch undecided")
+
+    monkeypatch.setattr(h.dr, "fetch_evidence", fetch)
+    listing = json.loads(h.run("publish-list"))
+    assert listing["first_posts"][0]["reason"] == "untested: commitment evidence unavailable"
