@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from bicentennial.report.t2_card import _row_counts
+from bicentennial.report.t2_card import _row_counts, build_t2_card, validate_t2_card
 
 SCRIPT = Path(__file__).with_name("cut_cards.py")
 OUTCOME_COUNTS = ("kept_copies", "null_citation", "infra")
@@ -141,3 +141,48 @@ def test_cut_output_folder_fault_names_no_card(tmp_path):
     result, _ = cut(tmp_path, full_card(keys(), system=True), out=tmp_path / "parent" / "cut")
     assert result.returncode != 0 and (result.stdout + result.stderr).strip() == "card"
     assert (tmp_path / "parent").read_bytes() == b""
+
+
+def test_cut_card_is_not_a_t2_card(tmp_path):
+    fixture = SCRIPT.parents[3] / "tests/fixtures/scoring/contracts.json"
+    original = json.loads(fixture.read_bytes())["contracts"]["card_ring0"]
+    row = dict(original["items"][0], life="invented-g1", genre="G1", stage="act", repro=None,
+               base_verdict="PASS", accuracy_correct=True, envelope=None)
+    items = [dict(row, branch="B0", probe_point=5)]
+    items.append(dict(items[0], life="invented-g2", genre="G2", envelope=None, base_verdict=None,
+                      score_milli=None, worst_case_milli=None, accuracy_correct=None, tuesday_class=None,
+                      failure_class=None, stage_attribution=None, benign_extra=False, carry_over=False))
+    unscored = [[items[-1][k] for k in ("life", "branch", "item_id")]]
+    floor = dict(served_identity="invented-floor", units={
+        f"{i['life']}/{i['branch']}": dict(cache_key="d" * 64, cached=True) for i in items})
+    pin_names = ("benchmark_commit", "generator_commit", "director_commit", "scorer_commit",
+                 "harness_hash", "system_hash", "route_table_hash", "write_turn_package_hash")
+    pins = {k: original["pins"][k] for k in pin_names}
+    counts = dict(_row_counts(dict(items=items, floor=floor, not_scored_live=unscored)), infra=0)
+    card = build_t2_card(system="invented-system", pack_hash="a" * 64, seed_hash="b" * 64,
+                        pins=pins, model="invented-model", effort="medium", served_identity="invented-reader",
+                        aa_prime=False, items=items, counts=counts, answer_contract_sha256="c" * 64,
+                        not_scored_live=unscored, seed_source=dict(kind="public"),
+                        groups=[[row["cell_id"], "act"]], floor=floor, controls_broken=[])
+    assert validate_t2_card(card) is None
+    run = tmp_path / "run"
+    run.mkdir()
+    raw = canon(card)
+    (run / "card.json").write_bytes(raw)
+    tasks = tmp_path / "tasks.json"
+    tasks.write_bytes(canon(dict(header=dict(pack="A"), rows=[
+        {k: i[k] for k in ("life", "branch", "item_id")} for i in items[:1]], descriptive=[])))
+    out = tmp_path / "cut"
+    result = subprocess.run([sys.executable, "-I", str(SCRIPT), str(tasks), str(out), f"A.H1={run}"],
+                            capture_output=True, text=True)
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {"A.H1": sha256(raw).hexdigest()}
+    written = json.loads((out / "A.H1.json").read_bytes())
+    assert written["items"] == card["items"][:1] and written["not_scored_live"] == unscored
+    with pytest.raises(ValueError, match="^t2_card:not_scored_live$"):
+        validate_t2_card(written)
+
+
+def test_cutter_paragraph_explains_t2_validation():
+    paragraph = SCRIPT.with_name("README.md").read_text().split("The cutter uses", 1)[1].split("\n\n", 1)[0]
+    assert "validate_t2_card" in paragraph

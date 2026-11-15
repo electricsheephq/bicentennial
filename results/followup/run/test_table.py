@@ -593,6 +593,15 @@ def test_global_check_faults(run, fault):
     assert code == 3 and "== 3. Scores" not in out
 
 
+@pytest.mark.parametrize("label,pin,value", (("A.F1", "harness_hash", "4" * 64),
+                                           ("A.H1", "scorer_commit", "d" * 40)))
+def test_card_pin_drift_stays_global(run, label, pin, value):
+    edit(run.paths[label] / "card.json", lambda o: o["pins"].update({pin: value}))
+    code, out = run()
+    assert code == 3 and "fault: card pins\n" in out
+    assert "card pins equal pass False\n" in out and "== 3. Scores" not in out
+
+
 def test_also_printed_uses_runner_shapes(run):
     path = run.paths["A.H1"]
     units = json.loads((path / "card.json").read_bytes())["floor"]["units"]
@@ -656,6 +665,32 @@ def test_h_rerun_failure_does_not_suppress_controls(run):
                     attempts=(*ORDER, "C.H2.rerun"))
     assert code == 0 and "Use: unresolved" in out and "Room: holds" in out
     assert all(f"reading {t}: ranking candidate" in out for t in KINDS)
+
+
+@pytest.mark.parametrize("pin", tuple(HASHES))
+def test_h_commitment_outlier_is_arm_local(run, pin):
+    edit(run.paths["A.H1"] / "card.json", lambda o: o["pins"].update({pin: "4" * 64}))
+    code, out = run()
+    assert code == 4, out
+    assert "pending before any score: A.H1 - " + RERUN in out
+    assert "fault: card pins" not in out and "card pins equal pass True\n" in out
+    assert "== 3. Scores" not in out
+    code, out = after_reruns(run, ["A.H1"])
+    assert code == 0 and "check 4 A.H1: commitment hashes pass False\n" in out
+    assert "fault: card pins" not in out and "Use: unresolved" in out and "Room: holds" in out
+    assert all(f"reading {t}: ranking candidate" in out and "A.H1 (H checks)" in out for t in KINDS)
+
+
+def test_h_only_pin_reference_checks_shared_pins(run):
+    for label, path in run.paths.items():
+        if label[2] != "H":
+            (path / "card.json").unlink()
+    edit(run.paths["A.H1"] / "card.json", lambda o: o["pins"].update(harness_hash="4" * 64))
+    code, out = run()
+    assert code == 4 and "card pins equal pass True\n" in out and "fault: card pins" not in out
+    edit(run.paths["A.H2"] / "card.json", lambda o: o["pins"].update(scorer_commit="d" * 40))
+    code, out = run()
+    assert code == 3 and "card pins equal pass False\n" in out and "fault: card pins\n" in out
 
 
 def test_unscored_pair_is_kind_local(run):

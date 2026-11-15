@@ -279,8 +279,19 @@ def checks(args, packs, arms, order, reruns, place):
     if time_bad or overlaps:
         invalid.add("run order")
     print("run order times pass", not (time_bad or overlaps))
-    all_pins = [arm["card"].get("pins", {}) for arm in arms.values()]
-    same_pins = not all_pins or all(pin == all_pins[0] for pin in all_pins)
+    ordered = [arms[name] for name in order if name in arms]
+    reference = next((arm for arm in ordered if arm["row"] != "H"), ordered[0] if ordered else None)
+    reference_pins = reference["card"].get("pins", {}) if reference else {}
+
+    def pins_match(arm):
+        pins = arm["card"].get("pins", {})
+        if arm["row"] != "H":
+            return pins == reference_pins
+        # H's commitment hashes belong to that arm's check 4 alone.
+        return {k: v for k, v in pins.items() if k not in H_PINS} == {
+            k: v for k, v in reference_pins.items() if k not in H_PINS}
+
+    same_pins = all(pins_match(arm) for arm in ordered)
     if not same_pins:
         invalid.add("card pins")
     print("card pins equal pass", same_pins)

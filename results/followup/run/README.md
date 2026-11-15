@@ -24,7 +24,11 @@ number of kept items whose `failure_class` is `BLOCKED`, by the runner's, so
 no outcome count of a cut card tells anything of an unread item. Every other
 field stays as the full card has it: the structural counts (`units`, `lives`,
 `floor_cached_units`, `not_scored_live` and the `items.*` counts), `groups`,
-`floor` and `controls_broken` describe the full run. It prints one JSON
+`floor` and `controls_broken` describe the full run. A cut card is therefore
+not a valid T2 card (`validate_t2_card` refuses it because `not_scored_live`
+names items the cut drops), and is checked against the full card through the
+printed SHA-256; `floor_cached_units` records where the floor came from (a
+cached floor), not a score. It prints one JSON
 mapping from labels to full-card SHA-256 hashes. A fault names only its label
 (`card` when no label is at fault) and exits nonzero.
 
@@ -56,7 +60,8 @@ C.F1 C.R1 C.O1 C.H1 C.H2 C.O2 C.R2 C.F2 C.O3 C.W1 C.B1 C.G1
 reruns as `LABEL.rerun`, at most once per label, after all first attempts.
 `--reruns` names exactly those labels, comma-separated. `--order` lists their
 last attempts in chronological order. Times must not overlap. The three
-commitment hashes apply to every H arm. Check 3 is one verbose test receipt
+commitment hashes apply to every H arm. An H arm's commitment hashes are
+judged by check 4 for that arm alone. Check 3 is one verbose test receipt
 beginning with `commit SHA`, containing only passing outcomes for every test
 in round 2's `CHECK3_TESTS`, and ending with `exit 0`.
 
@@ -86,7 +91,7 @@ so the reader prints the pending line with those labels and exits 4.
 | Exit | Meaning |
 |---|---|
 | 0 | Scores printed, or checks-only with no pending arm |
-| 3 | Refused inputs, invalid control, order, pins, pack or check 3; also no arms after reruns |
+| 3 | Refused inputs, invalid control, order, shared code pins, pack or check 3; also no arms after reruns |
 | 4 | Pending arms not yet rerun: rerun each once, then use `--after-reruns` |
 | 5 | A control rerun fails check 1, 2 or 7, or check 3 still fails after reruns |
 
