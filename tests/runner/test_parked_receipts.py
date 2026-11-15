@@ -1,5 +1,6 @@
 """Parked-original attribution through the offline unit path."""
 
+import errno
 import json
 import os
 from contextlib import contextmanager
@@ -262,7 +263,9 @@ def test_unhashable_hermes(lives, unit_sessions, tmp_path, monkeypatch, kind):
         assert receipt["after"] == "unhashable:" + (
             "PermissionError" if kind == "unreadable" else "not_regular")
         if kind == "unreadable":
-            assert run.audit_phase == {"phase": "effects", "path": "memories/MEMORY.md", "other_failures": []}
+            assert run.audit_phase == {"phase": "effects", "path": "memories/MEMORY.md", "other_failures": [],
+                "file_state": {"observation": "unhashable:PermissionError", "state": receipt["after_state"],
+                               "reread_raises": True}}
 
 
 @pytest.mark.parametrize("kind", ["credential", "worker_protocol"])
@@ -485,3 +488,128 @@ def test_healthy_audit_bytes(lives, unit_sessions, tmp_path):
     assert canon(run.audit) == b'{"failures":[],"status":"OK"}'
     assert not run.audit_phase and not run.parked_receipts
     assert not (tmp_path / "out/unit_diagnostics.json").exists()
+
+
+@pytest.mark.parametrize("arm", ["effects", "gaps"])
+def test_r4_unchanged_io_fault_is_unproven(lives, unit_sessions, tmp_path, monkeypatch, arm):
+    case, fault_paths = lives["t1-g1", "B0"], set()
+    enter, opening = life.ParkedProbe.__enter__, Path.open
+
+    def baseline(stack):
+        for _, home, native in stack.targets:
+            if native:
+                path = home / "memories/MEMORY.md"
+                path.parent.mkdir(exist_ok=True)
+                path.write_text("unchanged")
+        return enter(stack)
+
+    def damage(workspace):
+        home = next(workspace.parent.glob(".hermes-home.original-*"))
+        fault_paths.update((home / "memories/MEMORY.md", workspace.parent / "hermes-home/memories/MEMORY.md"))
+
+    def fault(path, mode="r", *a, **kw):
+        if path in fault_paths and (arm == "effects" or "b" in mode):
+            raise OSError(errno.EIO, "injected storage fault")
+        return opening(path, mode, *a, **kw)
+
+    monkeypatch.setattr(life.ParkedProbe, "__enter__", baseline)
+    monkeypatch.setattr(Path, "open", fault)
+    damage_probe(monkeypatch, case, damage, session_index=case["compiled"].probes[-1].index)
+    if arm == "gaps":
+        a4_failure(monkeypatch, ("memory",))
+    result = unit(case, tmp_path)
+    assert result.attempts == 3
+    run = result.runs[0]
+    receipt, = [r for r in run.parked_receipts if r["path"] == "memories/MEMORY.md"]
+    assert receipt["after"] == "unhashable:OSError" and not receipt["proven"]
+    assert receipt["before_state"] == receipt["after_state"]
+    assert not run.classes
+    assert run.audit_phase["phase"] == ("effects" if arm == "effects" else "audit")
+    diag = json.loads((tmp_path / "out/unit_diagnostics.json").read_bytes())["attempts"][0]
+    assert diag["parked_receipts"] == run.parked_receipts
+    assert all(row["infra_reruns"] == 2 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("later", ["valid", "invalid", "mode"])
+def test_r4_effects_requires_current_explanation(lives, unit_sessions, tmp_path, monkeypatch, later):
+    case, changed, writes, reads = lives["t1-g1", "B0"], [], [], []
+    probe = case["compiled"].probes[-1 if later == "mode" else 0]
+    if later == "mode":
+        enter = life.ParkedProbe.__enter__
+
+        def baseline(stack):
+            for _, home, native in stack.targets:
+                if native:
+                    path = home / "memories/MEMORY.md"
+                    path.parent.mkdir(exist_ok=True)
+                    if not path.exists():
+                        path.write_text("readable baseline")
+            return enter(stack)
+
+        monkeypatch.setattr(life.ParkedProbe, "__enter__", baseline)
+
+    def damage(workspace):
+        path = next(workspace.parent.glob(".hermes-home.original-*")) / "memories/MEMORY.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"\xff")
+        if later == "mode":
+            path.chmod(0)
+        changed.extend((path, workspace.parent / "hermes-home/memories/MEMORY.md"))
+
+    damage_probe(monkeypatch, case, damage, session_index=probe.index)
+    session = helpers.adapter.HermesAdapter.run_session
+    replay = {s["index"] for s in case["compiled"].script["sessions"] if s["kind"] == "replay"}
+
+    def legitimate(self, index, **kw):
+        result = session(self, index, **kw)
+        path = self.paths["hermes_home"] / "memories/MEMORY.md"
+        if path in changed and index in replay and later != "mode":
+            path.write_bytes(b"later legitimate write" + (b"\xff" if later == "invalid" else b""))
+            writes.append(index)
+        return result
+
+    effects, read = life.hermes_effects, Path.read_text
+    active = []
+
+    def final_effects(home, **kw):
+        active[:] = [home / "memories/MEMORY.md", False]
+        return effects(home, **kw)
+
+    def transient(path, *a, **kw):
+        if active and path == active[0]:
+            reads.append(path)
+            if later == "valid" and not active[1]:
+                active[1] = True
+                raise OSError(errno.EIO, "final read only")
+        return read(path, *a, **kw)
+
+    monkeypatch.setattr(helpers.adapter.HermesAdapter, "run_session", legitimate)
+    monkeypatch.setattr(life, "hermes_effects", final_effects)
+    monkeypatch.setattr(Path, "read_text", transient)
+    try:
+        result = unit(case, tmp_path)
+    finally:
+        if later == "mode":
+            for path in changed:
+                if path.exists():
+                    path.chmod(0o600)
+    if later != "mode":
+        assert writes
+    assert result.attempts == (3 if later == "valid" else 1)
+    run = result.runs[0]
+    receipt, = [r for r in run.parked_receipts if r["path"] == "memories/MEMORY.md"]
+    assert receipt["proven"]
+    state = run.audit_phase["file_state"]
+    assert len(reads) == 2 * result.attempts
+    assert state["reread_raises"] == (later != "valid")
+    assert run.audit_phase["other_failures"] == []
+    if later == "mode":
+        assert state["observation"] == "unhashable:PermissionError"
+        assert state["state"] == receipt["after_state"]
+        assert state["state"]["mode"] == 0
+        assert receipt["before_state"] != receipt["after_state"]
+    else:
+        assert writes and not state["observation"].startswith("unhashable:")
+        assert state["observation"] not in (receipt["before"], receipt["after"])
+    assert set(run.classes.values()) == (set() if later == "valid" else {("SYSTEM_FAILURE", "system_audit_failure")})
+    assert all(row["infra_reruns"] == (2 if later == "valid" else 0) for row in result.scores.values())

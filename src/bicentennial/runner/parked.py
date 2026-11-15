@@ -56,6 +56,29 @@ class ParkedProbe(ExitStack):
         except Exception as error:
             return "unhashable:" + type(error).__name__
 
+    @staticmethod
+    def state(path, rel="."):
+        """The target's own kind and permissions, or unknown when lstat fails."""
+        try:
+            info = (path / rel).lstat()
+            return dict(kind=stat.S_IFMT(info.st_mode), mode=info.st_mode & 0o7777)
+        except Exception:
+            return None
+
+    @classmethod
+    def effects_failure(cls, home, rel):
+        """Capture the failed file and repeat the effects reader's single-file read."""
+        result = dict(observation=cls.observe(home, rel), state=cls.state(home, rel), reread_raises=False)
+        path = home / rel
+        try:
+            if path.parent.is_symlink() or path.is_symlink():
+                raise ValueError("hermes_store_symlink")
+            if path.is_file():
+                path.read_text(encoding="utf-8")
+        except Exception:
+            result["reread_raises"] = True
+        return result
+
     @classmethod
     def hashes(cls, path, native):
         rels = (".", *(rel for _, rel in HERMES_FILES)) if native else (".",)
@@ -63,6 +86,7 @@ class ParkedProbe(ExitStack):
 
     def __enter__(self):
         self.before = {p: self.hashes(p, native) for _, p, native in self.targets}
+        self.before_states = {p: {rel: self.state(p, rel) for rel in values} for p, values in self.before.items()}
         return super().__enter__()
 
     @contextmanager
@@ -85,9 +109,12 @@ class ParkedProbe(ExitStack):
                     continue
                 after = self.hashes(path, native)
                 for rel, before in self.before[path].items():
+                    before_state, after_state = self.before_states[path][rel], self.state(path, rel)
                     if before != after[rel]:
                         self.evidence.parked_receipts.append(dict(session=self.index, surface=surface,
-                            path=rel, before=before, after=after[rel]))
+                            path=rel, before=before, after=after[rel], before_state=before_state, after_state=after_state,
+                            proven=not any(v.startswith("unhashable:") for v in (before, after[rel]))
+                            or before_state != after_state))
                 if surface == "workspace" and self.expected_hash is not None:
                     try:
                         differs = (after["."] != self.before[path]["."] or after["."].startswith("unhashable:")

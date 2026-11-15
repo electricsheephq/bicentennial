@@ -450,6 +450,8 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
         raise
     except Exception:
         if phase["phase"] == "effects":
+            if phase.get("path") in dict(HERMES_FILES).values():
+                phase["file_state"] = ParkedProbe.effects_failure(adapter.paths["hermes_home"], phase["path"])
             try:
                 phase["other_failures"] = [c for c in failures(check(None)) if not c.startswith("A4.")]
             except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
@@ -864,14 +866,20 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         rows = tuple(adapter.records())
         audited = _audit(adapter, table, faults, script, items, records, plugin, arm,
                          probe_live=leg is not None, diagnostics=evidence.audit_phase)
-        native = {r["path"] for r in evidence.parked_receipts if r["surface"] == "HERMES_HOME/."
-                  and r["path"] in dict(HERMES_FILES).values()}
+        receipts = [r for r in evidence.parked_receipts if r["surface"] == "HERMES_HOME/." and r["proven"]
+                    and r["path"] in dict(HERMES_FILES).values()]
+        native = {r["path"] for r in receipts}
+        failed_file = evidence.audit_phase.get("file_state", {})
+        unhashable = failed_file.get("observation", "unhashable:unknown").startswith("unhashable:")
+        explained = (not unhashable and failed_file.get("reread_raises") or unhashable and bool(failed_file)
+                     and any(r["path"] == evidence.audit_phase.get("path")
+                             and r["after_state"] == failed_file["state"] for r in receipts))
         if (leg is not None and arm == "system" and audited.get("status") != "OK" and native
                 and (set(audited.get("failures", ())) == {"A4.gaps"}
                      and evidence.audit_phase.get("gap_paths")
                      and all(p in native for p in evidence.audit_phase["gap_paths"])
                      or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
-                     and evidence.audit_phase.get("other_failures") == [])):
+                     and evidence.audit_phase.get("other_failures") == [] and explained)):
             for iid in by_id:
                 if iid not in evidence.classes:
                     evidence.classes[iid] = ("SYSTEM_FAILURE", "system_audit_failure")
