@@ -3,7 +3,7 @@
 Every change to the pre-registration after a freeze makes a new version, recorded here. Every result discloses the version it used.
 
 ## Ring 0 erratum, 2026-11-15: score a workspace root the reader replaced as partial state, and restore the original (#565, #526)
-- **Partial state:** when a live G1 action reader replaces the workspace root with a file or a symbolic link, every input fails with `workspace_replaced` and the action items are scored once on an empty state as `unreadable_state`, never rerun. Other items keep their answer scores. The entry is never read through; a link's target is never followed or touched.
+- **Partial state:** when a live G1 action reader replaces the workspace root with anything other than a directory (a file, a symbolic link or another entry), every input fails with `workspace_replaced` and the action items are scored once on an empty state as `unreadable_state`, never rerun. Other items keep their answer scores. The entry is never read through; a link's target is never followed or touched. An `act-state` entry the reader made is still `SYSTEM_FAILURE`, cause `act_state_collision`; one it did not make stays infrastructure, as when the root is intact.
 - **Restoration and evidence:** before the probe swaps restore, the replacement entry is moved aside so the original workspace returns and later sessions run. Unit diagnostics record the entry's kind and, for a link, its target text; its content is not kept. Failed observations, moves and restores stay infrastructure, as does a workspace that is not a real directory before the system session. Scripted probes, clean-run bytes, scoring rules and all four code pins stay unchanged.
 No PREREG version change; PREREG-v0.5 remains frozen.
 
