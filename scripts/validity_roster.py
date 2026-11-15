@@ -100,24 +100,44 @@ def _commit_blobs(root):
     listing = _git(root, "ls-tree", "-r", "-z", "--full-tree", "HEAD")
     listing.check_returncode()
     oids = []
-    for entry in filter(None, listing.stdout.split(b"\0")):
-        _mode, kind, oid = entry.split(b"\t", 1)[0].split(b" ")
+    if listing.stdout and not listing.stdout.endswith(b"\0"):
+        raise Refused("invalid commit blob reply")
+    for entry in listing.stdout.split(b"\0")[:-1]:
+        match = re.fullmatch(rb"([0-7]{6}) ([a-z]+) ([0-9a-f]{40}(?:[0-9a-f]{24})?)\t[^\0]+", entry)
+        if match is None:
+            raise Refused("invalid commit blob reply")
+        mode, kind, oid = match.groups()
         if kind == b"blob":  # regular files, executables and symbolic links; mode 160000 is a commit
             oids.append(oid)
+        elif kind != b"commit" or mode != b"160000":
+            raise Refused("invalid commit blob reply")
     batch = _git(root, "cat-file", "--batch", stdin=b"".join(oid + b"\n" for oid in oids))
     batch.check_returncode()
     blobs, at = [], 0
-    for _ in oids:
-        header = batch.stdout.index(b"\n", at)
-        size = int(batch.stdout[at:header].split(b" ")[2])  # "<oid> blob <size>"
-        at = header + 1 + size
-        blobs.append(batch.stdout[header + 1:at])
-        at += 1
+    for oid in oids:
+        try:
+            header = batch.stdout.index(b"\n", at)
+            match = re.fullmatch(re.escape(oid) + rb" blob ([0-9]+)", batch.stdout[at:header])
+            if match is None:
+                raise ValueError
+            size = int(match[1])
+        except ValueError:
+            raise Refused("invalid commit blob reply") from None
+        end = header + 1 + size
+        if batch.stdout[end:end + 1] != b"\n":
+            raise Refused("invalid commit blob reply")
+        blobs.append(batch.stdout[header + 1:end])
+        at = end + 1
+    if at != len(batch.stdout):
+        raise Refused("invalid commit blob reply")
     return blobs
 
 
 def _beacon_draw(beacon, root):
     data = _read_beacon(beacon)
+    top = _git(root, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or top.stdout != os.fsencode(Path(root).resolve()) + b"\n":
+        raise Refused("root is not the repository top level")
     clean = _git(root, "diff", "--no-ext-diff", "--quiet", "HEAD", "--")
     if clean.returncode != 0:  # guards only that this tool's own code is the commit's
         raise Refused("checkout differs from HEAD")

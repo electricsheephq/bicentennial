@@ -1296,3 +1296,177 @@ def test_beacon_scan_counts_committed_blobs_only(tmp_path, capsys, beacon_tree):
     captured = capsys.readouterr()
     assert not captured.err
     _no_seed_printed(captured.out + captured.err, seeds)
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+@pytest.mark.parametrize("case", ["missing", "type", "id", "short-last", "missing-lf", "leftover",
+                                  "size", "signed-size", "header-lf", "wrong-lf", "size-limit"])
+def test_beacon_refuses_malformed_blob_reply(tmp_path, monkeypatch, capsys, beacon_tree, command, case):
+    root, beacon = beacon_tree
+    clean = _clean_draw(tmp_path, root, beacon)
+    original = roster._git
+    listing = original(root, "ls-tree", "-r", "-z", "--full-tree", "HEAD").stdout
+    oid = listing.split(b"\t", 1)[0].split(b" ")[2]
+    good = original(root, "cat-file", "--batch", stdin=oid + b"\n").stdout
+    replies = {
+        "missing": oid + b" missing\n",
+        "type": oid + b" tree 1\nx\n",
+        "id": b"0" * len(oid) + b" blob 1\nx\n",
+        "short-last": oid + b" blob 20\nx\n",
+        "missing-lf": good[:-1],
+        "leftover": good + b"extra",
+        "size": oid + b" blob x\nx\n",
+        "signed-size": oid + b" blob +1\nx\n",
+        "header-lf": oid + b" blob 1",
+        "wrong-lf": good[:-1] + b"x",
+        "size-limit": oid + b" blob " + b"9" * 5000 + b"\nx\n",
+    }
+
+    def reply(root, *args, **kwargs):
+        if args == ("cat-file", "--batch"):
+            assert kwargs["stdin"] == oid + b"\n"  # listing is real; replace only this call
+            return subprocess.CompletedProcess(args, 0, stdout=replies[case])
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(roster, "_git", reply)
+    out = tmp_path / "draw.json"
+    if command == "verify":
+        out.write_bytes(clean)
+    capsys.readouterr()
+    assert roster.main(_beacon_args(command, out, beacon)) == 2
+    assert out.read_bytes() == clean if command == "verify" else not out.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: invalid commit blob reply\n"
+    assert oid.decode() not in captured.err
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+@pytest.mark.parametrize("case", ["type", "malformed", "mode", "commit-mode", "empty-path", "no-nul", "empty-entry", "object"])
+def test_beacon_refuses_malformed_tree_listing(tmp_path, monkeypatch, capsys, beacon_tree, command, case):
+    root, beacon = beacon_tree
+    clean = _clean_draw(tmp_path, root, beacon)
+    original = roster._git
+    oid = _fixture_git(root, "rev-parse", "HEAD").strip()
+    listings = {
+        "type": b"040000 tree " + oid + b"\tsynthetic\0",
+        "malformed": b"100644 blob " + oid + b" synthetic\0",
+        "mode": b"invalid blob " + oid + b"\tsynthetic\0",
+        "commit-mode": b"100644 commit " + oid + b"\tsynthetic\0",
+        "empty-path": b"100644 blob " + oid + b"\t\0",
+        "no-nul": b"100644 blob " + oid + b"\tsynthetic",
+        "empty-entry": b"\0",
+        "object": b"100644 blob a\tsynthetic\0",
+    }
+
+    def listing(root, *args, **kwargs):
+        if args == ("ls-tree", "-r", "-z", "--full-tree", "HEAD"):
+            return subprocess.CompletedProcess(args, 0, stdout=listings[case])
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(roster, "_git", listing)
+    out = tmp_path / "draw.json"
+    if command == "verify":
+        out.write_bytes(clean)
+    capsys.readouterr()
+    assert roster.main(_beacon_args(command, out, beacon)) == 2
+    assert out.read_bytes() == clean if command == "verify" else not out.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: invalid commit blob reply\n"
+    assert oid.decode() not in captured.err
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+def test_beacon_accepts_exact_blob_replies_and_omits_commits(tmp_path, monkeypatch, capsys, beacon_tree):
+    root, beacon = beacon_tree
+    (root / "empty").touch()
+    (root / "binary").write_bytes(b"x\0\nx\n")
+    (root / "duplicate").write_bytes(b"x\0\nx\n")
+    _fixture_git(root, "add", ".")
+    _commit(root, "multiple blobs")
+    clean = _clean_draw(tmp_path, root, beacon)
+    original = roster._git
+    commit = _fixture_git(root, "rev-parse", "HEAD").strip()
+
+    def exact(root, *args, **kwargs):
+        result = original(root, *args, **kwargs)
+        if args == ("ls-tree", "-r", "-z", "--full-tree", "HEAD"):
+            result.stdout += b"160000 commit " + commit + b"\tsub\0"
+        elif args == ("cat-file", "--batch"):
+            assert commit + b"\n" not in kwargs["stdin"]
+            # Return the real, exact reply through the same stand-in used for corrupt replies.
+            return subprocess.CompletedProcess(args, 0, stdout=result.stdout)
+        return result
+
+    monkeypatch.setattr(roster, "_git", exact)
+    out = tmp_path / "draw.json"
+    assert roster.main(_beacon_args("draw", out, beacon)) == 0
+    assert out.read_bytes() == clean
+    assert roster.main(_beacon_args("verify", out, beacon)) == 0
+    captured = capsys.readouterr()
+    assert not captured.err
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+def test_beacon_refuses_export_inside_another_repository(tmp_path, monkeypatch, capsys, beacon_tree, command):
+    root, beacon = beacon_tree
+    clean = _clean_draw(tmp_path, root, beacon)
+    enclosing = tmp_path / "enclosing"
+    enclosing.mkdir()
+    _fixture_git(enclosing, "init", "-q")
+    (enclosing / "planted").write_text(str(_raw_candidates()[3]))
+    exported = enclosing / "export"
+    exported.mkdir()
+    # This fixture commit holds one ordinary file; export only its committed bytes, never .git.
+    name = "tracked file\nname"
+    (exported / name).write_bytes(_fixture_git(root, "show", f"HEAD:{name}"))
+    _fixture_git(enclosing, "add", ".")
+    _commit(enclosing, "enclosing tree")
+    assert _fixture_git(enclosing, "diff", "--quiet", "HEAD", "--") == b""
+    original = roster._git
+
+    calls = []
+
+    def before_clean(root, *args, **kwargs):
+        calls.append(args[0])
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(roster, "_git", before_clean)
+    monkeypatch.setattr(roster, "ROOT", exported)
+    out = tmp_path / "draw.json"
+    if command == "verify":
+        out.write_bytes(clean)
+    capsys.readouterr()
+    assert roster.main(_beacon_args(command, out, beacon)) == 2
+    assert out.read_bytes() == clean if command == "verify" else not out.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: root is not the repository top level\n"
+    assert "diff" not in calls  # top-level refusal precedes the clean-checkout check
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
+
+
+@pytest.mark.parametrize("command", ["draw", "verify"])
+@pytest.mark.parametrize("case", ["exit", "extra-output"])
+def test_beacon_refuses_invalid_top_level_reply(tmp_path, monkeypatch, capsys, beacon_tree, command, case):
+    root, beacon = beacon_tree
+    clean = _clean_draw(tmp_path, root, beacon)
+    original = roster._git
+
+    def top(root, *args, **kwargs):
+        if args == ("rev-parse", "--show-toplevel"):
+            return subprocess.CompletedProcess(args, 1 if case == "exit" else 0,
+                                               stdout=str(root.resolve()).encode() + b"\n" +
+                                               (b"extra\n" if case == "extra-output" else b""))
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(roster, "_git", top)
+    out = tmp_path / "draw.json"
+    if command == "verify":
+        out.write_bytes(clean)
+    capsys.readouterr()
+    assert roster.main(_beacon_args(command, out, beacon)) == 2
+    assert out.read_bytes() == clean if command == "verify" else not out.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "refused: root is not the repository top level\n"
+    _no_seed_printed(captured.out + captured.err, _raw_candidates())
