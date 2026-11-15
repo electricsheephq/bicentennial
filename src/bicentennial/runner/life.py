@@ -545,7 +545,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 if exc_type is not None and not isinstance(error, Exception):
                     return
                 source_receipt = source_receipt or session_baseline.receipt(
-                    getattr(adapter, "after_kill", False), evidence.restore_failures, live_swaps)
+                    getattr(adapter, "after_kill", False), evidence.restore_failures)
                 if source_receipt is not None:
                     if source_receipt not in evidence.source_receipts:
                         evidence.source_receipts.append(source_receipt)
@@ -578,7 +578,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     leg.check_session(previous_session)
                 previous_session = index
                 attempt_id, session_baseline, observed = None, baseline, None
-                live_swaps = set()
                 try:
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
                     if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
@@ -631,7 +630,6 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                     evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
                                 stack.enter_context(RestoreWatch(swap_in(clone, canonical), evidence.restore_failures))
-                                live_swaps.add(canonical)
                         if probe:
                             session_baseline = SourceBaseline(source_surfaces, baseline.excluded)
                         stack.push(check_sources)  # runs before any swap restores, including on exceptions

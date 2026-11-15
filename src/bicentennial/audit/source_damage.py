@@ -115,7 +115,7 @@ class SourceBaseline:
             except Exception:
                 pass
 
-    def receipt(self, after_kill=False, restore_failures=(), live_swaps=()):
+    def receipt(self, after_kill=False, restore_failures=()):
         """First proven damage; unreadable entries and possible harness residue charge nothing."""
         for root, (surface, before) in self.roots.items():
             rows = _scan(root)
@@ -129,9 +129,8 @@ class SourceBaseline:
                             before.get(parent) in ("unobserved", "unreadable_directory") for parent in path.parents):
                         continue  # an unobserved baseline entry or subtree was never proved absent
                     if rule == "absent" and before.get(root) in ("directory", "unreadable_directory"):
-                        journal = root.with_name(f".{root.name}.swap.json")
-                        if after_kill or restore_failures or (root not in live_swaps and os.path.lexists(journal)):
-                            continue
+                        if after_kill or restore_failures:
+                            continue  # only a harness kill or a recorded restore failure can explain a missing root
                         return dict(_path=root, surface=f"{surface['root']}/{surface['relative']}",
                                     path=".", rule="missing_root", kind="absent", label="invalid_surface")
                     if (path in sidecars and rule in ("link", "directory", "unreadable_directory", "unsupported_entry")

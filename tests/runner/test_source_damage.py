@@ -636,20 +636,23 @@ def test_failed_swap_restore_records_before_later_check(lives, unit_sessions, tm
     assert final.stopped is None
 
 
-@pytest.mark.parametrize("cover", ["kill", "journal", "restore"])
+@pytest.mark.parametrize("cover", ["kill", "restore"])
 def test_missing_root_harness_cover_expires(tmp_path, cover):
     root = tmp_path / "s"
     root.mkdir()
     baseline = surface(root)
     root.rmdir()
-    journal = root.with_name(".s.swap.json")
-    if cover == "journal":
-        journal.write_text("unrecovered swap")
     assert baseline.receipt(after_kill=cover == "kill", restore_failures=["OSError"] if cover == "restore" else []) is None
-    if cover == "journal":
-        assert baseline.receipt(live_swaps={root})["rule"] == "missing_root"
-        journal.unlink()
     assert baseline.receipt()["rule"] == "missing_root"  # judged again after a clean end
+
+
+def test_planted_swap_journal_gives_no_cover(tmp_path):
+    root = tmp_path / "s"
+    root.mkdir()
+    baseline = surface(root)
+    root.rmdir()
+    root.with_name(".s.swap.json").write_text("unrecovered swap")  # anyone can write a file by that name
+    assert baseline.receipt()["rule"] == "missing_root"
 
 
 @pytest.mark.parametrize("fault", ["listing", "entry", "root"])
