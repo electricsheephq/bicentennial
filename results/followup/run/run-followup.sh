@@ -49,11 +49,13 @@ readfile() { [[ -f $1 ]] && { local line; IFS= read -r line < "$1" || :; printf 
 hex64() { [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
 hex40() { [[ $1 =~ ^[0-9a-f]{40}$ ]]; }
 # A guard may consume only a checked record. Interrupted writes keep a partial.
-record() { local target=$1 value=$2 label=${3:-private} recorded
-  tool files printf '%s\n' "$value" > "$target.part" &&
+record_try() { local target=$1 value=$2 recorded format='%s\n'
+  [[ -n $value ]] || format='%s'
+  tool files printf "$format" "$value" > "$target.part" &&
     recorded=$(tool files cat "$target.part") && [[ $recorded == "$value" ]] &&
     tool files mv -f "$target.part" "$target" &&
-    recorded=$(tool files cat "$target") && [[ $recorded == "$value" ]] || refuse "$label record write failed"; }
+    recorded=$(tool files cat "$target") && [[ $recorded == "$value" ]]; }
+record() { record_try "$1" "$2" || refuse "${3:-private} record write failed"; }
 
 copy_record() { local source=$1 target=$2
   tool files cp "$source" "$target.part" && tool files cmp -s "$source" "$target.part" &&
@@ -86,7 +88,7 @@ clock_now() { tool clock "$BASEPY" -I -c 'import time; print(int(time.time()))';
 stamp() { tool stamp "$BASEPY" -I -c 'import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$(clock_now)"; }
 # Structured private records and JSON checks; no item, seed or text is printed.
 meta() { tool meta "$BASEPY" -I - "$@" <<'PY'
-import hashlib, importlib.util, json, os, re, shlex, sys
+import datetime, hashlib, importlib.util, json, os, re, shlex, sys
 from pathlib import Path
 op, *a = sys.argv[1:]
 def load(p): return json.loads(Path(p).read_bytes())
@@ -125,6 +127,12 @@ try:
     elif op=="import-commit":
         rows=[r for r in load(a[0])["first_posts"] if r.get("counted")]
         if len(rows)!=1 or rows[0].get("commit")!=a[1]: raise ValueError
+    elif op=="import-before-draw":
+        data=load(a[0]); row=next(r for r in data["first_posts"] if r.get("counted"))
+        created=datetime.datetime.fromisoformat(row["created_at"])
+        if any(r.get("after_merge") and r.get("first_line") in
+               ("Follow-up draw: second post","Follow-up draw: task lists") and
+               datetime.datetime.fromisoformat(r["created_at"])>created for r in data["markers"]): raise ValueError
     elif op=="lost-after-draw":
         if not any(r.get("after_merge") and r.get("first_line") in
                    ("Follow-up draw: second post","Follow-up draw: task lists") for r in load(a[0])["markers"]): sys.exit(1)
@@ -242,7 +250,7 @@ atcommit() { local wt=${1:-$S/wt} expected=${2:-$(readfile "$S/commit.txt")} nam
 assert pathlib.Path(bicentennial.__file__).resolve().is_relative_to(pathlib.Path(sys.argv[1]).resolve())' "$wt" >/dev/null 2>&1 || refuse "worktree Python imports another source"; }
 lock() { tool files mkdir "$S/lock" 2>/dev/null || refuse "another step holds lock"
   tool files mkdir "$S/lock/$$" || exit 2
-  trap 'tool files rm -f "$S/lock/$$/start"; tool files rmdir "$S/lock/$$" "$S/lock" >/dev/null 2>&1' EXIT
+  trap 'tool files rm -f "$S/lock/$$/start" "$S/lock/$$/start.part"; tool files rmdir "$S/lock/$$" "$S/lock" >/dev/null 2>&1' EXIT
   local owner_start; owner_start=$(tool ps ps -o lstart= -p "$$" 2>/dev/null)
   record "$S/lock/$$/start" "$owner_start" lock-owner-start
   [[ -s $S/lock/$$/start ]] || refuse "cannot record lock owner start"; }
@@ -390,14 +398,15 @@ fail_attempt() { local name=$1 code=$2 T=$P/tools/$1 prior="" entry
   echo "build attempt failed; rebuild is the next step" >&2; return "$code"; }
 # A completed tool is never replayed. Interrupted output is kept separately; a
 # live tool must finish before its records can be resumed.
-run_tool() { local name=$1; shift; local outputs=() path T pid x n current
+run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_failed=0
   while [[ $1 != -- ]]; do outputs+=("$1"); shift; done; shift
   T=$P/tools/$name; tool files mkdir -p "$P/tools" || exit 2
   if [[ -s $T.exit ]]; then return "$(readfile "$T.exit")"; fi
-  if [[ -e $T.pid ]]; then
-    pid=$(readfile "$T.pid")
+  if [[ -e $T.pid || -e $T.pid.part ]]; then
+    path=$T.pid; [[ -e $path ]] || path=$T.pid.part
+    pid=$(readfile "$path")
     if [[ ! -s $T.process-start ]]; then
-      old_enough "$T.pid" || refuse "recorded tool may be starting"
+      old_enough "$path" || refuse "recorded tool may be starting"
     else
       tool ps ps -o lstart= -p "$pid" > "$T.live" 2>/dev/null
       if [[ -s $T.live ]]; then
@@ -416,16 +425,17 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current
     for path in "${outputs[@]+"${outputs[@]}"}"; do
       [[ -e $path ]] || continue; [[ ! -e $path.cut-$n ]] || refuse "cut archive exists"
       tool files mv -n "$path" "$path.cut-$n" || exit 2; done
-    for path in start pid process-start out err; do [[ -e $T.$path ]] && tool files mv -n "$T.$path" "$T.cut-$n/$path"; done
+    for path in start pid pid.part process-start process-start.part start.part out err; do [[ -e $T.$path ]] && tool files mv -n "$T.$path" "$T.cut-$n/$path"; done
   fi
   meta disjoint "${outputs[@]+"${outputs[@]}"}" || refuse "tool output and work overlap"
   for path in "${outputs[@]+"${outputs[@]}"}"; do [[ ! -e $path && ! -L $path ]] || refuse "tool output or work already exists"; done
   ASYNC_TOOL=1 tool "$@" > "$T.out" 2> "$T.err" & pid=$!
-  record "$T.pid" "$pid" tool-pid
+  record_try "$T.pid" "$pid" || fork_failed=1
   current=$(tool ps ps -o lstart= -p "$pid" 2>/dev/null) || :
-  record "$T.process-start" "$current" tool-process-start
-  record "$T.start" "$(clock_now)" tool-start
+  record_try "$T.process-start" "$current" || fork_failed=1
+  record_try "$T.start" "$(clock_now)" || fork_failed=1
   wait "$pid"; x=$?; record "$T.exit" "$x" tool-exit; record "$T.end" "$(clock_now)" tool-end
+  [[ $fork_failed == 0 ]] || refuse "tool fork record write failed"
   return "$x"; }
 # A failed tool's diagnostics are private. Posts carry step, exit and log hashes.
 stop_run() { local reason=${1:-} x name code out err i=0 body failure
@@ -793,6 +803,7 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   else
     dr evaluate > "$P/prep-evaluate.out" 2> "$P/prep-evaluate.err" || refuse "import counted evaluation refused"
     meta import-commit "$P/prep-list.json" "$SHA" || refuse "import counted post must name the requested commit"
+    meta import-before-draw "$P/prep-list.json" || refuse "import refused: counted round draw already began"
   fi
   printf '%s\n' "${prs[@]}" > "$S/prerequisites"
   tool files ln -s private/rehearsal "$S/rehearsal" || refuse "rehearsal link creation failed"
@@ -915,7 +926,7 @@ stale_lock() { local owner="" f current age
     fi
     arm_alive && refuse "an arm process is still running"
     if [[ -n $owner ]]; then
-      tool files rm -f "$S/lock/$owner/start" 2>/dev/null || refuse "lock owner changed"
+      tool files rm -f "$S/lock/$owner/start" "$S/lock/$owner/start.part" 2>/dev/null || refuse "lock owner changed"
       tool files rmdir "$S/lock/$owner" 2>/dev/null || refuse "lock owner changed"; fi
     tool files rmdir "$S/lock" 2>/dev/null || refuse "stale lock changed"
     echo "removed stale lock"

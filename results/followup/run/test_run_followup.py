@@ -79,7 +79,7 @@ def inject(phase):
     if fault.get("empty"): (state_root/fault["empty"]).write_text("")
     if fault.get("unlink"): (state_root/fault["unlink"]).unlink(missing_ok=True)
     if fault.get("full"):
-        target=state_root/fault["full"]; target.symlink_to("/dev/full"); target.with_name(target.name+".part").symlink_to("/dev/full")
+        c["full_write"]=True; save()
     if fault.get("kill"):
         owners=list((state_root/"lock").iterdir())
         c.setdefault("dead_pids",[]).append(owners[0].name); save()
@@ -90,6 +90,8 @@ def inject(phase):
     if "stdout" in fault: print(fault["stdout"]); sys.exit(0)
     if fault.get("fail"): sys.exit(1)
 inject("before")
+if kind=="files" and argv[0]=="printf" and c.pop("full_write",False):
+    save(); print("synthetic write: No space left on device",file=sys.stderr); sys.exit(1)
 def option(flag): return argv[argv.index(flag)+1]
 def write(path, text):
     path=pathlib.Path(path); path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
@@ -141,7 +143,7 @@ if kind == "dr":
     if command=="publish-list":
         rows=[]
         if c.get("counted"):
-            rows.append(dict(id=1, round=c["round"], counted=True, reason="counted",commit=c.get("counted_commit", c["commit"]),values=c.get("h_values",dict.fromkeys(
+            rows.append(dict(id=1, created_at=c.get("counted_created_at","2026-01-02T00:00:00Z"), round=c["round"], counted=True, reason="counted",commit=c.get("counted_commit", c["commit"]),values=c.get("h_values",dict.fromkeys(
                 ("registry_entry_sha256","fresh_install_hash","artifact_sha256","system_hash","harness_hash","route_table_hash"), "a"*64))))
         rows.extend(dict(round=n, reason="void round", counted=False) for n in c.get("voids",[]))
         print(canonical(dict(first_posts=rows, markers=c.get("markers",[]),other_comments=0)),end=""); sys.exit(0)
@@ -187,6 +189,8 @@ if kind == "dr":
             write(out/"records"/"000001-void.json", canonical(dict(round=n,receipt_sha256=c["void_receipt"])))
         print("published records"); sys.exit(0)
 if kind=="ps":
+    if c.get("empty_tool_start") and not (state_root/"lock"/argv[-1]).is_dir():
+        print(""); sys.exit(0)
     if argv[-1] in c.get("dead_pids",[]): sys.exit(1)
     if c.get("process_live") or ("-o" in argv and argv[-1]!="99999999"):
         print(c.get("process_start","synthetic start")); sys.exit(0)
@@ -239,7 +243,7 @@ if kind=="install":
     p=pathlib.Path(argv[-1]).name[-1]
     print(dict(A="a"*64,B="b"*64,C="c"*64)[p]); sys.exit(c.get("install_exit",0))
 if kind=="tasks":
-    if c.get("tasks_exit",0): print("REFUSED: synthetic",file=sys.stderr); sys.exit(c["tasks_exit"])
+    if c.get("tasks_exit",0): print("REFUSED: synthetic"); sys.exit(3)
     p=option("--pack")
     payload=dict(header=dict(commit=option("--commit"),edition=3,pack=p,pack_hash=dict(A="a"*64,B="b"*64,C="c"*64)[p],draw_sha256=digest(option("--draw")),spec_sha256=digest(option("--spec"))),rows=[{}]*40,descriptive=[{}]*10)
     if c.get("task_fault")=="header": payload["header"]["commit"]="d"*40
@@ -247,6 +251,7 @@ if kind=="tasks":
     if c.get("task_fault")=="descriptive": payload["descriptive"].pop()
     write(option("--out"),canonical(payload)); print(p,"target items 40 descriptive items 10"); sys.exit(c.get("tasks_exit",0))
 if kind=="table":
+    if "--filter-out" in argv: write(option("--filter-out"),canonical(dict(packs={})))
     print(c.get("table_final_output") if "--after-reruns" in argv and c.get("table_final_output") else c.get("table_output","pending before any score: "+" ".join(c["order"])+" - rerun once (§3, §4), then run again with --after-reruns"))
     sys.exit(c.get("table_exit",4))
 if kind in ("check3","followup-tests","derivation-tests"):
@@ -2612,6 +2617,10 @@ def test_r3_release_every_void(harness, variant):
         else "void not reproduced: under §2 the earlier draw stands"
     )
     assert (h.state / "publish/rebuild-failed").read_text() == "synthetic failure\n"
+    if variant == "reproduced":
+        for name in ("BEACON", "DRAW.json", "placed-1/void.json", "placed-2/void.json"):
+            assert (h.state / f"publish/void-{number}" / name).is_file(), name
+        assert (h.state / f"publish/void-{number}/void-confirm-{number}").is_file()
 
 
 def test_r3_check3_exact_command(harness):
@@ -2920,7 +2929,15 @@ def test_r3_s4_refusal_at_each_call(harness, command, previous, step):
     h = harness
     through(h, previous)
     h.set(dr_refuse=command)
-    h.run(step, code=2)
+    result = h.run(step, code=2)
+    reason = {
+        "read": "draw-record read refused",
+        "evaluate": "draw-record evaluation refused",
+        "choose-round": "draw-record choose-round refused",
+        "post": "draw-record first post refused",
+        "match": "draw-record match refused",
+    }[command]
+    assert result.stderr == "refused: " + reason + "\n"
     assert not h.calls("arm")
 
 
@@ -2997,7 +3014,6 @@ def test_r3_release_blocked_verify_and_d19_files(harness):
     ):
         h.run(step)
     first_attempts(h)
-    (h.state / "private/FILTER-37.json").write_text("{}")
     h.set(table_exit=3, table_output="fault: pack code pins", verify_exit=1)
     h.run("table", code=3)
     h.run("release")
@@ -3227,3 +3243,243 @@ def test_r3_newest_invocation_is_numeric(harness):
     h.run("run", "A.F1")
     assert (h.state / "logs/A.F1.seq").read_text() == "10\n"
     assert (h.state / "logs/A.F1.exit").read_text() == "exit=0\n"
+
+
+# Round 4: the counted round owns its state; faults remain inside D3.
+@pytest.mark.parametrize(
+    "line", ["Follow-up draw: second post", "Follow-up draw: task lists"]
+)
+def test_r4_two_step_import_after_draw(harness, line):
+    h = harness
+    through(h, "post-draw")
+    old = h.state
+    other = fixture_commit(h)
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    record.write_text(str(old))
+    old.rename(old.with_name("retained-official"))
+    h.set(
+        markers=[
+            dict(after_merge=True, first_line=line, created_at="2026-01-02T00:00:01Z")
+        ]
+    )
+    lost = new_test_state(h, "release-only-r4")
+    h.run("prep", other, "1", "--import", "none")
+    assert (lost / "private/state-lost-after-draw").is_file()
+    before = record.read_bytes()
+    new_test_state(h, "restarted-r4")
+    result = h.run("prep", h.commit, "1", "--import", str(lost), code=None)
+    if result.returncode == 0:
+        # Base receipt: matching existing posts let the reset pipeline reach an arm.
+        for step in (
+            "rehearse",
+            "post-commit",
+            "beacon",
+            "draw",
+            "post-draw",
+            "place",
+            "build",
+            "tasks",
+            "post-tasks",
+            "check3",
+        ):
+            h.run(step)
+        h.run("run", "A.F1")
+        assert len(h.calls("arm")) == 1
+        print("base bypass: two-step import reached first arm with fresh budgets")
+    assert result.returncode == 2, (
+        "import accepted after the counted round's draw began"
+    )
+    assert "import refused: counted round draw already began" in result.stderr
+    assert record.read_bytes() == before
+    assert not (h.state / "private/settings").exists()
+
+
+@pytest.mark.parametrize("after_void", [False, True])
+def test_r4_d4_import_positive_controls(harness, after_void):
+    h = harness
+    through(h, "post-draw" if after_void else "rehearse")
+    old = h.state
+    if after_void:
+        h.set(place_exit=1)
+        h.run("place", code=1)
+        number = json.loads(h.scenario.read_text())["round"]
+    adopted = fixture_commit(h)
+    config = json.loads(h.scenario.read_text())
+    h.set(
+        commit=adopted,
+        place_exit=0,
+        round=config["round"] + int(after_void),
+        due=config["due"] + 3 * int(after_void),
+        counted=True,
+        counted_commit=adopted,
+        counted_created_at="2026-01-03T00:00:00Z",
+        markers=[
+            dict(
+                after_merge=True,
+                first_line="Follow-up draw: second post",
+                created_at="2026-01-02T00:00:01Z",
+            )
+        ]
+        if after_void
+        else [],
+    )
+    new_test_state(h, "d4-r4")
+    h.run("prep", adopted, "1", "--import", str(old))
+    assert not (h.state / "private/state-lost-after-draw").exists()
+    if after_void:
+        for p in (old / f"private/void-{number}").rglob("*"):
+            if p.is_file():
+                assert (h.state / p.relative_to(old)).read_bytes() == p.read_bytes()
+    h.run("rehearse")
+
+
+@pytest.mark.parametrize(
+    "after_merge,line",
+    [
+        (True, "Follow-up draw: stop"),
+        (False, "Follow-up draw: second post"),
+    ],
+)
+def test_r4_lost_state_marker_filters(harness, after_merge, line):
+    """Positive controls for tests F3: unrelated/pre-merge markers do not close prep."""
+    h = harness
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    record.write_text(str(h.state.with_name("lost-official")))
+    h.set(
+        markers=[
+            dict(
+                after_merge=after_merge,
+                first_line=line,
+                created_at="2026-01-01T00:00:00Z",
+            )
+        ]
+    )
+    h.run("prep", h.commit, "1", "--import", "none")
+    assert not (h.state / "private/state-lost-after-draw").exists()
+    h.run("rehearse")
+
+
+def test_r4_empty_lock_start_refuses(harness):
+    h = harness
+    h.run("prep", h.commit, "1")
+    h.set(process_start="")
+    result = h.run("rehearse", code=2)
+    assert result.stderr == "refused: cannot record lock owner start\n"
+    assert not (h.state / "lock").exists()
+    assert not h.calls("draw")
+
+
+@pytest.mark.parametrize("age", [59, 60])
+def test_r4_script_written_empty_tool_start_age(harness, age):
+    h = harness
+    through(h, "beacon")
+    h.set(
+        empty_tool_start=True,
+        inject=dict(
+            kind="clock", requires="private/tools/draw.process-start", kill=True
+        ),
+    )
+    h.run("draw", code=-9)
+    folder = h.state / "private/tools"
+    assert (folder / "draw.process-start").read_bytes() == b""
+    assert not (folder / "draw.exit").exists()
+    now = json.loads(h.scenario.read_text())["clock"]
+    os.utime(folder / "draw.pid", (now - age, now - age))
+    h.set(empty_tool_start=False, process_live=True)
+    h.run("abandon", "A.F1")
+    result = h.run("draw", code=2 if age < 60 else 0)
+    if age < 60:
+        assert "recorded tool may be starting" in result.stderr
+        assert not (folder / "draw.cuts").exists()
+    else:
+        assert (folder / "draw.cuts").read_text() == "1\n"
+        assert (folder / "draw.cut-1/process-start").read_bytes() == b""
+    assert len([c for c in h.calls("draw") if "--rehearsal" not in c["argv"]]) == (
+        1 if age < 60 else 2
+    )
+
+
+@pytest.mark.parametrize("fault", ["kill", "fail"])
+def test_r4_lock_partial_cleared(harness, fault):
+    h = harness
+    h.run("prep", h.commit, "1")
+    h.set(inject=dict(kind="files", match=["mv", "/start.part"], **{fault: True}))
+    result = h.run("rehearse", code=-9 if fault == "kill" else 2)
+    if fault == "kill":
+        owner = next((h.state / "lock").iterdir())
+        assert (owner / "start.part").is_file()
+        now = json.loads(h.scenario.read_text())["clock"]
+        os.utime(owner, (now - 60, now - 60))
+    else:
+        assert "lock-owner-start record write failed" in result.stderr
+        assert not (h.state / "lock").exists()
+    h.run("abandon", "A.F1")
+    assert not (h.state / "lock").exists()
+    h.run("rehearse")
+
+
+@pytest.mark.parametrize("record_name", ["pid", "process-start", "start"])
+def test_r4_failed_fork_record_waits_and_resumes(harness, record_name):
+    h = harness
+    through(h, "beacon")
+    h.set(
+        hold_draw=True,
+        inject=dict(
+            kind="files", match=["mv", f"/tools/draw.{record_name}.part"], fail=True
+        ),
+    )
+    result = h.run("draw", code=2)
+    folder = h.state / "private/tools"
+    assert (folder / "draw.exit").is_file(), (
+        "child exit was not recorded before refusing"
+    )
+    assert (folder / "draw.exit").read_text() == "0\n"
+    assert "tool fork record write failed" in result.stderr
+    assert (h.state / "private/DRAW.json").is_file()
+    h.run("draw")
+    assert len([c for c in h.calls("draw") if "--rehearsal" not in c["argv"]]) == 1
+    assert not (folder / "draw.cuts").exists()
+
+
+def test_r4_kill_with_only_pid_partial(harness):
+    h = harness
+    through(h, "beacon")
+    h.set(
+        hold_draw=True,
+        inject=dict(kind="files", match=["mv", "/tools/draw.pid.part"], kill=True),
+    )
+    h.run("draw", code=-9)
+    folder = h.state / "private/tools"
+    assert (folder / "draw.pid.part").read_text().strip().isdigit()
+    assert not (folder / "draw.pid").exists()
+    assert not (folder / "draw.start").exists()
+    now = json.loads(h.scenario.read_text())["clock"]
+    os.utime(folder / "draw.pid.part", (now, now))
+    h.run("abandon", "A.F1")
+    for _ in range(2):
+        result = h.run("draw", code=None)
+        count = len([c for c in h.calls("draw") if "--rehearsal" not in c["argv"]])
+        assert count == 1, "PID partial ignored: tool forked twice"
+        assert result.returncode == 2
+        assert "recorded tool may be starting" in result.stderr
+
+
+def test_r4_portable_full_write_fault(harness):
+    """ENOSPC stand-in fails the targeted write on BSD as well as other hosts."""
+    h = harness
+    through(h, "post-draw")
+    number = json.loads(h.scenario.read_text())["round"]
+    h.set(
+        place_exit=1,
+        inject=dict(
+            kind="sha",
+            match=["placed-1/void.json"],
+            full=f"private/void-confirm-{number}",
+        ),
+    )
+    result = h.run("place", code=2)
+    assert "No space left on device" in result.stderr
+    assert "void confirmation record write failed" in result.stderr
+    assert (h.state / f"private/void-confirm-{number}.part").read_bytes() == b""
+    assert not any("record-void" in c["argv"] for c in h.calls("dr"))
+    h.run("place", code=1)

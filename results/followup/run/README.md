@@ -208,8 +208,10 @@ When placement confirms a void, its exit 1 means the next step is `post-commit` 
 
 Import is only for the counted post naming a different commit. `prep SHA --import DIR`
 accepts only the recorded official source (a marked test source in tests), with no
-BEACON or arm records, after its own S4 reading counts SHA; it preserves the old
-step-2 records in `private/imported/` and publishes them at release. A refusal
+BEACON or arm records, after its own S4 reading counts SHA and finds no
+merging-account second-post or task-list marker after the merge newer than that
+counted first post; it preserves the old step-2 records in `private/imported/`
+and publishes them at release. A refusal
 leaves the official-directory record unchanged; move the unrecorded new directory
 aside before retrying.
 
@@ -217,8 +219,9 @@ aside before retrying.
 `old state lost`. Before any merging-account second-post or task-list marker
 after the merge it can prepare normally; after either marker it is permanently
 release-only: `state lost after the draw: no arm can run; readings unresolved
-(§10, missing data)`. This is missing data, not another §2 stop. A deleted counted
-post combined with fresh draw-record state is §10's disclosed limit: readers
+(§10, missing data)`. This is missing data, not another §2 stop. Deleting any draw
+post (the counted first post, second post or task lists) combined with fresh
+draw-record state is §10's disclosed limit: readers
 check the published list of posts against their own copies or a public archive.
 
 Beacon waits retry S4's round-not-due, GitHub transport/status/time/header,
@@ -230,7 +233,9 @@ every attempt, and its 24-hour cutoff is unchanged.
 After fixing a storage-write failure, repeat the refused step: checked record
 partials are rewritten, frozen task hashes are recovered only from a successful
 tasks exit and a rechecked list, and an interrupted rebuild finishes its archive
-before proceeding. If a wrapper was killed, first use `abandon TAG` to clear its
+before proceeding. A failed fork record waits for the tool and attempts to save
+its exit before refusing; repeat the step after fixing storage. If a wrapper was
+killed, first use `abandon TAG` to clear its
 dead lock; the next `run`, `rerun` or `abandon` for that label finishes any completed
 invocation's records or guard move without running that invocation again.
 An owner or tool without a start record is left alone for sixty seconds by the
