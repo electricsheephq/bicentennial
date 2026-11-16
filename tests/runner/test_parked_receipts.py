@@ -434,7 +434,7 @@ def test_effects_exception_keeps_other_failure(lives, unit_sessions, tmp_path, m
     assert canon(run.audit) == b'{"failures":["audit_exception"],"status":"INFRA_FAILURE"}'
 
 
-def a4_failure(monkeypatch, targets, codes=("A4.gaps",), results=None):
+def a4_failure(monkeypatch, targets, codes=("A4.gaps",), results=None, operations=None, no_calls=False):
     load = life.load_ledger
 
     def ledger(*a):
@@ -451,13 +451,18 @@ def a4_failure(monkeypatch, targets, codes=("A4.gaps",), results=None):
             calls = [dict(id=f"gap-{i}", record=rows[-1]["seq"], session=1,
                           arguments=json.dumps(dict(target=target, action="add", content=f"missing entry {i}")),
                           result=json.dumps(result)) for i, (target, result) in enumerate(zip(targets, results, strict=True))]
-            report = kw["effects"](calls, [], "chat")
+            requests = [(dict(seq=rows[-1]["seq"] + 1, cursor=dict(session=2, turn=1), role="replay_main"),
+                         dict(messages=[]))]
+            report = kw["effects"](calls, requests, "chat")
             assert report["gaps"] == [c["id"] for c in calls]
             assert [c["applied"] for c in report["calls"]] == [r.get("success") for r in results]
             assert all(not o["in_store"] for c in report["calls"] for o in c["operations"])
             return {"A4": report}
-        calls = [dict(call=f"gap-{i}", record=rows[-1]["seq"], applied=True) for i in range(len(targets))]
-        return {"A4": dict(gaps=[c["call"] for c in calls], calls=calls)}
+        ops = operations if operations is not None else [dict(
+            store_satisfied=False, next_session_satisfied=True, reasons=["absent_from_final_store"])]
+        calls = [dict(call=f"gap-{i}", record=rows[-1]["seq"], applied=True, operations=ops)
+                 for i in range(len(targets))]
+        return {"A4": dict(gaps=[c["call"] for c in calls], **({} if no_calls else dict(calls=calls)))}
 
     monkeypatch.setattr(life, "load_ledger", ledger)
     monkeypatch.setattr(life, "audit", audit)
@@ -523,9 +528,66 @@ def test_r7_gaps_require_applied_writes(lives, unit_sessions, tmp_path, monkeypa
     assert any(r["path"] == "memories/MEMORY.md" and r["proven"] for r in run.parked_receipts)
     assert run.audit == dict(status="INFRA_FAILURE", failures=["A4.gaps"])
     assert run.audit_phase["gap_paths"] == ["memories/MEMORY.md"]
-    assert run.audit_phase.get("gap_unclassified", []) == [f"gap-{i}" for i, r in enumerate(results) if "success" not in r]
+    assert run.audit_phase["gap_unexplained"] == [f"gap-{i}" for i, r in enumerate(results) if "success" not in r]
     assert set(run.classes.values()) == ({("SYSTEM_FAILURE", "system_audit_failure")} if attempts == 1 else set())
     assert all(row["infra_reruns"] == attempts - 1 for row in result.scores.values())
+
+
+@pytest.mark.parametrize("store_ok,next_ok,reasons,attempts", [
+    (False, False, ["entry_unidentifiable"], 3),
+    (True, None, ["no_next_session"], 3),
+    (False, None, ["no_next_session", "absent_from_final_store"], 3),
+    (False, True, ["future_audit_reason"], 3),
+    (False, True, [], 3),
+    (None, None, None, 3),
+    (True, True, ["absent_from_final_store"], 3),
+    (False, True, ["absent_from_final_store"], 1),
+    (True, False, ["absent_from_next_session"], 1),
+    (False, True, ["removed_content_still_present"], 1),
+    (False, True, ["replaced_span_still_present", "later_modified_or_removed"], 1),
+], ids=["entry_unidentifiable", "no_next_session", "no_next_and_store", "unknown_reason", "no_reason",
+        "no_operations", "none_failing", "final_store", "next_session", "removed_content", "replaced_span"])
+def test_r8_gap_reasons(lives, unit_sessions, tmp_path, monkeypatch, store_ok, next_ok, reasons, attempts):
+    case = lives["t1-g1", "B0"]
+
+    def damage(workspace):
+        path = next(workspace.parent.glob(".hermes-home.original-*")) / "memories/MEMORY.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"reader's proving bytes")
+
+    damage_probe(monkeypatch, case, damage, session_index=case["compiled"].probes[-1].index)
+    operations = [] if reasons is None else [dict(
+        store_satisfied=store_ok, next_session_satisfied=next_ok, reasons=reasons)]
+    a4_failure(monkeypatch, ("memory",), operations=operations)
+    result = unit(case, tmp_path)
+    assert result.attempts == attempts
+    run = result.runs[0]
+    assert any(r["path"] == "memories/MEMORY.md" and r["proven"] for r in run.parked_receipts)
+    assert run.audit == dict(status="INFRA_FAILURE", failures=["A4.gaps"])
+    assert run.audit_phase["gap_paths"] == ["memories/MEMORY.md"]
+    assert run.audit_phase.get("gap_unexplained", []) == (["gap-0"] if attempts == 3 else [])
+    assert set(run.classes.values()) == ({("SYSTEM_FAILURE", "system_audit_failure")} if attempts == 1 else set())
+    assert all(row["infra_reruns"] == attempts - 1 for row in result.scores.values())
+
+
+def test_r8_gaps_without_calls(lives, unit_sessions, tmp_path, monkeypatch):
+    case = lives["t1-g1", "B0"]
+
+    def damage(workspace):
+        path = next(workspace.parent.glob(".hermes-home.original-*")) / "memories/MEMORY.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"reader's proving bytes")
+
+    damage_probe(monkeypatch, case, damage, session_index=case["compiled"].probes[-1].index)
+    a4_failure(monkeypatch, ("memory",), no_calls=True)
+    result = unit(case, tmp_path)
+    run = result.runs[0]
+    assert run.audit == dict(status="INFRA_FAILURE", failures=["A4.gaps"])
+    assert run.audit_phase["gap_paths"] == [None]
+    assert run.audit_phase["gap_unexplained"] == "unknown"
+    assert result.attempts == 3 and not run.classes
+    assert any(r["path"] == "memories/MEMORY.md" and r["proven"] for r in run.parked_receipts)
+    assert all(row["infra_reruns"] == 2 for row in result.scores.values())
 
 
 @pytest.mark.parametrize("arm", ["effects", "gaps"])

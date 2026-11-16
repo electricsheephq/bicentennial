@@ -96,6 +96,11 @@ from bicentennial.world.targeted import expected_state
 ARMS = ("system", "wiped", "no_memory")
 STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
+GAP_EXPLAINED_REASONS = (
+    "absent_from_final_store", "remove_still_present", "removed_content_still_present",
+    "replaced_span_still_present", "absent_from_next_session", "remove_visible_next_session",
+    "removed_content_visible_next_session", "replaced_span_visible_next_session", "later_modified_or_removed",
+)
 
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
@@ -410,6 +415,29 @@ def _gap_paths(report, rows, blobs):
         return [None]
 
 
+def _gap_unexplained(report):
+    """Only applied writes with failed store or snapshot checks can explain gaps."""
+    a4 = report.get("A4") if isinstance(report, dict) else None
+    if not isinstance(a4, dict) or not isinstance(a4.get("calls"), list) or not isinstance(a4.get("gaps"), list):
+        return "unknown"
+    unexplained = []
+    for gap in a4["gaps"]:
+        calls = [c for c in a4["calls"] if isinstance(c, dict) and c.get("call") == gap]
+        if len(calls) != 1 or calls[0].get("applied") is not True:
+            unexplained.append(gap)
+            continue
+        operations = calls[0].get("operations")
+        if not isinstance(operations, list) or any(not isinstance(o, dict) for o in operations):
+            unexplained.append(gap)
+            continue
+        failed = [o for o in operations if o.get("store_satisfied") is not True
+                  or o.get("next_session_satisfied") is not True]
+        if not failed or any(not isinstance(o.get("reasons"), list) or not o["reasons"]
+                             or any(r not in GAP_EXPLAINED_REASONS for r in o["reasons"]) for o in failed):
+            unexplained.append(gap)
+    return unexplained
+
+
 def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=False, diagnostics=None):
     phase = dict(phase="ledger")
     try:
@@ -445,8 +473,7 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
             diagnostics.update(phase)
             if "A4.gaps" in codes:
                 diagnostics["gap_paths"] = _gap_paths(report, rows, blobs)
-                diagnostics["gap_unclassified"] = [c["call"] for c in report["A4"]["calls"]
-                    if c["call"] in report["A4"]["gaps"] and c["applied"] is None]
+                diagnostics["gap_unexplained"] = _gap_unexplained(report)
                 diagnostics["gap_states"] = {p: dict(observation=ParkedProbe.observe(adapter.paths["hermes_home"], p),
                     state=ParkedProbe.state(adapter.paths["hermes_home"], p))
                     for p in diagnostics["gap_paths"] if p is not None}
@@ -880,7 +907,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 and not evidence.restore_failures
                 and (set(audited.get("failures", ())) == {"A4.gaps"}
                      and evidence.audit_phase.get("gap_paths")
-                     and evidence.audit_phase.get("gap_unclassified") == []
+                     and evidence.audit_phase.get("gap_unexplained") == []
                      and all(p in native and ParkedProbe.explained(evidence.audit_phase.get("gap_states", {}).get(p, {}))
                              for p in evidence.audit_phase["gap_paths"])
                      or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
