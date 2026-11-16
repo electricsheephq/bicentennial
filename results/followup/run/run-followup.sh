@@ -42,12 +42,26 @@ PREPARING=0
 ASYNC_TOOL=0
 while IFS= read -r git_name; do unset "$git_name"; done < <(trap - EXIT; compgen -v GIT_)
 export PYTHONHASHSEED=0
-refuse() { printf 'refused: %s\n' "$*" >&2
+refuse() { local message="$*"; printf 'refused: %s\n' "${message#refused: }" >&2
   [[ $PREPARING == 1 ]] && printf '%s\n' 'move the unrecorded state directory aside before retrying' >&2
   exit 2; }
 readfile() { [[ -f $1 ]] && { local line; IFS= read -r line < "$1" || :; printf '%s' "$line"; }; }
 hex64() { [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
 hex40() { [[ $1 =~ ^[0-9a-f]{40}$ ]]; }
+# A guard may consume only a checked record. Interrupted writes keep a partial.
+record() { local target=$1 value=$2 label=${3:-private} recorded
+  tool files printf '%s\n' "$value" > "$target.part" &&
+    recorded=$(tool files cat "$target.part") && [[ $recorded == "$value" ]] &&
+    tool files mv -f "$target.part" "$target" &&
+    recorded=$(tool files cat "$target") && [[ $recorded == "$value" ]] || refuse "$label record write failed"; }
+
+copy_record() { local source=$1 target=$2
+  tool files cp "$source" "$target.part" && tool files cmp -s "$source" "$target.part" &&
+    tool files mv -f "$target.part" "$target" && tool files cmp -s "$source" "$target" || refuse "record copy failed"; }
+old_enough() { local current age
+  current=$(clock_now); age=$(tool files stat -f %m "$1") || refuse "cannot read record age"
+  (( current - age >= 60 )); }
+
 # Only this gateway starts a tool. A stand-in can never run in an official state.
 fake() { local official=""; [[ -f $OFFICIAL_RECORD ]] && official=$(readfile "$OFFICIAL_RECORD")
   [[ -n ${FOLLOWUP_STANDIN:-} && -f $S/$TEST_MARKER && $S != "$official" ]]; }
@@ -108,6 +122,12 @@ try:
         data=load(a[0])
         if any(r.get("reason")!="not after the merge" for r in data["first_posts"]): raise ValueError
         if any(r["after_merge"] for r in data["markers"]): raise ValueError
+    elif op=="import-commit":
+        rows=[r for r in load(a[0])["first_posts"] if r.get("counted")]
+        if len(rows)!=1 or rows[0].get("commit")!=a[1]: raise ValueError
+    elif op=="lost-after-draw":
+        if not any(r.get("after_merge") and r.get("first_line") in
+                   ("Follow-up draw: second post","Follow-up draw: task lists") for r in load(a[0])["markers"]): sys.exit(1)
     elif op=="counted":
         rows=[r for r in load(a[0])["first_posts"] if r.get("counted") and str(r["id"])==a[1]]
         if len(rows)!=1: raise ValueError
@@ -223,7 +243,8 @@ assert pathlib.Path(bicentennial.__file__).resolve().is_relative_to(pathlib.Path
 lock() { tool files mkdir "$S/lock" 2>/dev/null || refuse "another step holds lock"
   tool files mkdir "$S/lock/$$" || exit 2
   trap 'tool files rm -f "$S/lock/$$/start"; tool files rmdir "$S/lock/$$" "$S/lock" >/dev/null 2>&1' EXIT
-  tool ps ps -o lstart= -p "$$" > "$S/lock/$$/start" 2>/dev/null
+  local owner_start; owner_start=$(tool ps ps -o lstart= -p "$$" 2>/dev/null)
+  record "$S/lock/$$/start" "$owner_start" lock-owner-start
   [[ -s $S/lock/$$/start ]] || refuse "cannot record lock owner start"; }
 arm_alive() { tool pgrep pgrep -f 'bicentennial(\.cli)? t2( |$)' >/dev/null && return 0
   local lockf=$LOGIN/.t2lite.lock official=""; [[ -f $OFFICIAL_RECORD ]] && official=$(readfile "$OFFICIAL_RECORD")
@@ -238,7 +259,7 @@ check_identity() {
   [[ -n $S ]] || refuse "FOLLOWUP_STATE is required"
   [[ -f $OFFICIAL_RECORD ]] && official=$(readfile "$OFFICIAL_RECORD")
   if [[ $S == "$official" ]]; then
-    if [[ -e $S/$TEST_MARKER ]]; then : > "$P/official-tainted"; fi
+    if [[ -e $S/$TEST_MARKER ]]; then record "$P/official-tainted" tainted official-taint; fi
     [[ ! -e $P/official-tainted ]] || refuse "official state was marked as a test directory"
   elif [[ ! -e $S/$TEST_MARKER ]]; then refuse "unmarked state is not the recorded official directory"; fi
   [[ -s $P/settings && -f $S/mode ]] || refuse "prep is incomplete; move the unrecorded state directory aside"
@@ -261,28 +282,29 @@ next_number() { local n=0 f value
     if (( 10#$value > n )); then n=$((10#$value)); fi
   done
   n=$((n+1))
-  printf '%s\n' "$n" 2>/dev/null > "$S/counter" || refuse "sequence reservation failed"
+  record "$S/counter" "$n" sequence
   printf '%s' "$n"; }
 any_attempt() { local l; for l in "${ORDER[@]}"; do [[ -e $S/logs/$l.seq || -e $S/runs/$l || -e $S/runs/$l.rerun ]] && return 0; done; return 1; }
 all_attempts() { local l; for l in "${ORDER[@]}"; do [[ -e $S/runs/$l && -s $S/logs/$l.seq ]] || refuse "$l has no first attempt"; done; }
 check3_file() { C3=$P/check3-1.txt; [[ -e $P/check3-2.txt ]] && C3=$P/check3-2.txt; [[ -e $C3 ]]; }
-check3_failed_twice() { [[ -e $P/check3-2.txt && $(tool files tail -1 "$P/check3-2.txt") != 'exit 0' ]]; }
+check3_failed_twice() { [[ -e $P/check3-2.txt ]] && ! check3_matches "$P/check3-2.txt" 0; }
 frozen_tasks() { local p; for p in A B C; do
   [[ -f $P/TASKS-$p.json && -s $P/TASKS-$p.sha256 ]] || refuse "task list $p is not frozen"
   [[ $(sha "$P/TASKS-$p.json") == $(readfile "$P/TASKS-$p.sha256") ]] || refuse "task list $p differs from its frozen hash"; done; }
 posted_values() { local p; case $1 in
   draw) [[ -f $P/DRAW.json ]] || return 2; sha "$P/DRAW.json" ;;
-  tasks) for p in A B C; do printf '%s %s\n' "$(readfile "$S/pack-$p.hash")" "$(readfile "$P/TASKS-$p.sha256")"; done ;;
+  tasks) for p in A B C; do printf '%s %s\n' "$(readfile "$S/pack-$p.hash")" "$(readfile "$P/TASKS-$p.sha256")" || return 2; done ;;
   esac; }
-need_posted() { local kind=$1
+need_posted() { local kind=$1 values
   [[ -s $S/posted/$kind.rec ]] || refuse "$kind post is not recorded"
-  posted_values "$kind" > "$P/current-$kind.values"
+  values=$(posted_values "$kind") || refuse "current posted values unavailable"
+  record "$P/current-$kind.values" "$values" posted-values
   tool files cmp -s "$P/current-$kind.values" "$S/posted/$kind.values" || refuse "recorded $kind values differ from current values"; }
 new_worktree() { local prefix=$1 expected=${2:-$(readfile "$S/commit.txt")} n=1
   while [[ -e $S/worktrees/$prefix-$n ]]; do n=$((n+1)); done
   WT=$S/worktrees/$prefix-$n
   tool git-worktree git -C "$R" -c core.hooksPath=/dev/null worktree add --detach "$WT" "$expected" > "$P/worktree-$prefix-$n.log" 2>&1 || refuse "new worktree failed"
-  printf '%s\n' "$expected" > "$P/worktree-$prefix-$n.commit"
+  record "$P/worktree-$prefix-$n.commit" "$expected" worktree-commit
   atcommit "$WT" "$expected"; }
 dr() { local command=$1; shift; tool dr "$BASEPY" -I "$S/wt/$DR_PY" "$command" --state "$P/draw" "$@"; }
 # All reads of S4 state are commands or exported copies. Its record folder is opaque.
@@ -290,10 +312,10 @@ draw_status() { local x
   dr read > "$P/read.out" 2> "$P/read.err"; x=$?; [[ $x == 0 ]] || refuse "draw-record read refused"
   dr evaluate > "$P/evaluate.out" 2> "$P/evaluate.err"; EVAL=$?
   reconcile_voids
-  if [[ $EVAL == 14 ]]; then tool files cp "$P/evaluate.out" "$P/stopped"; refuse "draw stopped"; fi
+  if [[ $EVAL == 14 ]]; then copy_record "$P/evaluate.out" "$P/stopped"; refuse "draw stopped"; fi
   if [[ $EVAL == 2 ]]; then
     if [[ $STEP == post-commit ]] && tool files grep -qE '^refused: reading module (differs|unavailable) at [0-9a-f]{40}$' "$P/evaluate.err"; then
-      tool files cp "$P/evaluate.err" "$P/reading-commit-refusal"
+      copy_record "$P/evaluate.err" "$P/reading-commit-refusal"
       dr publish-list > "$P/counted-list.json" 2> "$P/counted-list.err" || refuse "counted list unavailable"
       local line; IFS= read -r line < "$P/evaluate.err"; refuse "$line"; fi
     refuse "draw-record evaluation refused"; fi
@@ -316,14 +338,15 @@ finish_void() { local number=$1 receipt=$2 V=$P/void-$1 f dest name
   any_attempt && return 0
   tool files mkdir -p "$V" || exit 2
   for name in BEACON DRAW.json draw.sha256 counted.json counted-round second.body second.match first.body first-post.out first-post.err \
-      beacon-cutoff placed-1 placed-2 place-consensus void-confirm-$number void-record.exit void-record.out void-record.err failure first-failure rebuild-used rebuild-failed rebuild-complete tools \
+      beacon-cutoff placed-1 placed-2 place-consensus void-confirm-$number void-record.exit void-record.out void-record.err failure first-failure rebuild-started rebuild-used rebuild-failed rebuild-complete tools \
       draw-worktree place-worktree-1 place-worktree-2 place-work-1 place-work-2 reproduced-DRAW.json \
       place-1.summary place-2.summary consensus-fixed placement-passed first-attempt counted-h.values h-differences \
       counted-other-commit reading-commit-refusal second.post second.post.err second.match.err second.read \
-      draw-list.json evaluate.out evaluate.err choose-round.out choose-round.err beacon.out beacon.err; do
+      draw-list.json evaluate.err choose-round.out choose-round.err beacon.out beacon.err; do
     f=$P/$name; dest=$V/$name
     if [[ -e $f ]]; then void_move "$f" "$dest"; fi
   done
+  [[ ! -f $P/evaluate.out ]] || copy_record "$P/evaluate.out" "$V/evaluate.out"
   for f in "$P"/TASKS-* "$P"/worktree-*.commit "$P"/worktree-*.log "$P"/current-*.values; do
     [[ -e $f ]] || continue; dest=$V/${f##*/}
     void_move "$f" "$dest"; done
@@ -334,7 +357,7 @@ finish_void() { local number=$1 receipt=$2 V=$P/void-$1 f dest name
     [[ -e $S/$name ]] || continue
     void_move "$S/$name" "$V/$name"; done
   [[ -e $V/BEACON && -e $V/DRAW.json && -e $V/placed-1/void.json && -e $V/placed-2/void.json ]] || refuse "void archive is missing inputs"
-  printf '%s %s\n' "$number" "$receipt" > "$V/complete"
+  record "$V/complete" "$number $receipt" void-complete
   echo "void archive complete; next: post-commit"; }
 reconcile_voids() { local number receipt check n confirm
   dr publish-list > "$P/draw-list.json" 2> "$P/draw-list.err" || refuse "draw-record publish-list refused"
@@ -342,25 +365,28 @@ reconcile_voids() { local number receipt check n confirm
   while IFS= read -r number; do
     [[ -e $P/void-$number/complete ]] && continue
     if any_attempt; then
-      printf '%s\n' 'void record not confirmed by step 6: under §2 the earlier draw stands' > "$P/void-unconfirmed"
+      record "$P/void-unconfirmed" 'void record not confirmed by step 6: under §2 the earlier draw stands' void-unconfirmed
       return 0
     fi
     confirm=$P/void-confirm-$number; [[ -e $confirm ]] || confirm=$P/void-$number/void-confirm-$number
     if [[ ! -s $confirm ]]; then
-      printf '%s\n' 'void record not confirmed by step 6: under §2 the earlier draw stands' > "$P/void-unconfirmed"; return 0; fi
+      record "$P/void-unconfirmed" 'void record not confirmed by step 6: under §2 the earlier draw stands' void-unconfirmed; return 0; fi
     n=1; while [[ -e $P/void-check-$number-$n ]]; do n=$((n+1)); done
     check=$P/void-check-$number-$n
     dr publish-records "$check" > "$P/void-check.out" 2> "$P/void-check.err" || refuse "void export refused"
     receipt=$(meta void-receipt "$check" "$number") || refuse "void receipt unavailable in export"
     if [[ $(readfile "$confirm") != "$number $receipt" ]]; then
-      printf '%s\n' 'void record not confirmed by step 6: under §2 the earlier draw stands' > "$P/void-unconfirmed"; return 0; fi
+      record "$P/void-unconfirmed" 'void record not confirmed by step 6: under §2 the earlier draw stands' void-unconfirmed; return 0; fi
     finish_void "$number" "$receipt"
   done < "$P/void-rounds"; }
-no_failed_attempt() { [[ ! -e $P/failure ]] || refuse "attempt failed; only rebuild continues the build path"; }
-fail_attempt() { local name=$1 code=$2 T=$P/tools/$1
+no_failed_attempt() { [[ ! -e $P/rebuild-started || -e $P/rebuild-used ]] || refuse "rebuild archive incomplete; only rebuild continues"
+  [[ ! -e $P/failure ]] || refuse "attempt failed; only rebuild continues the build path"; }
+fail_attempt() { local name=$1 code=$2 T=$P/tools/$1 prior="" entry
   meta failure-reason "$T.err" "$T.reason" "$code" "$T.cutoff-failure" || refuse "failure reason could not be recorded"
-  printf '%s %s %s %s\n' "$name" "$code" "$(sha "$T.out")" "$(sha "$T.err")" >> "$P/failure"
-  if [[ -e $P/rebuild-used ]]; then tool files cp "$P/failure" "$P/rebuild-failed"; stop_run build; fi
+  entry="$name $code $(sha "$T.out") $(sha "$T.err")"
+  if [[ -f $P/failure ]]; then prior=$(tool files cat "$P/failure") || refuse "failure record unreadable"; fi
+  record "$P/failure" "${prior:+$prior$'\n'}$entry" failure
+  if [[ -e $P/rebuild-used ]]; then copy_record "$P/failure" "$P/rebuild-failed"; stop_run build; fi
   echo "build attempt failed; rebuild is the next step" >&2; return "$code"; }
 # A completed tool is never replayed. Interrupted output is kept separately; a
 # live tool must finish before its records can be resumed.
@@ -368,18 +394,21 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current
   while [[ $1 != -- ]]; do outputs+=("$1"); shift; done; shift
   T=$P/tools/$name; tool files mkdir -p "$P/tools" || exit 2
   if [[ -s $T.exit ]]; then return "$(readfile "$T.exit")"; fi
-  if [[ -e $T.start ]]; then
+  if [[ -e $T.pid ]]; then
     pid=$(readfile "$T.pid")
-    tool ps ps -o lstart= -p "$pid" > "$T.live" 2>/dev/null
-    if [[ -s $T.live ]]; then
-      [[ -s $T.process-start ]] || refuse "recorded tool start is unavailable"
-      tool files cmp -s "$T.process-start" "$T.live"; current=$?
-      [[ $current != 0 ]] || refuse "recorded tool process still runs"
-      [[ $current == 1 ]] || refuse "recorded tool start cannot be compared"
+    if [[ ! -s $T.process-start ]]; then
+      old_enough "$T.pid" || refuse "recorded tool may be starting"
+    else
+      tool ps ps -o lstart= -p "$pid" > "$T.live" 2>/dev/null
+      if [[ -s $T.live ]]; then
+        tool files cmp -s "$T.process-start" "$T.live"; current=$?
+        [[ $current != 0 ]] || refuse "recorded tool process still runs"
+        [[ $current == 1 ]] || refuse "recorded tool start cannot be compared"
+      fi
     fi
-    n=$(readfile "$T.cuts"); n=$(( ${n:-0}+1 )); printf '%s\n' "$n" > "$T.cuts"
+    n=$(readfile "$T.cuts"); n=$(( ${n:-0}+1 )); record "$T.cuts" "$n" cutoff-count
     if (( n > 3 )); then
-      printf '1\n' > "$T.exit"; printf '%s\n' 'cut-off budget exhausted' > "$T.cutoff-failure"
+      record "$T.cutoff-failure" "cut-off budget exhausted" cutoff-failure; record "$T.exit" 1 tool-exit
       [[ -e $T.err ]] || : > "$T.err"
       [[ -e $T.out ]] || : > "$T.out"
       return 1; fi
@@ -392,45 +421,48 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current
   meta disjoint "${outputs[@]+"${outputs[@]}"}" || refuse "tool output and work overlap"
   for path in "${outputs[@]+"${outputs[@]}"}"; do [[ ! -e $path && ! -L $path ]] || refuse "tool output or work already exists"; done
   ASYNC_TOOL=1 tool "$@" > "$T.out" 2> "$T.err" & pid=$!
-  printf '%s\n' "$pid" > "$T.pid"
-  tool ps ps -o lstart= -p "$pid" > "$T.process-start" 2>/dev/null || :
-  clock_now > "$T.start"
-  wait "$pid"; x=$?; printf '%s\n' "$x" > "$T.exit"; clock_now > "$T.end"
+  record "$T.pid" "$pid" tool-pid
+  current=$(tool ps ps -o lstart= -p "$pid" 2>/dev/null) || :
+  record "$T.process-start" "$current" tool-process-start
+  record "$T.start" "$(clock_now)" tool-start
+  wait "$pid"; x=$?; record "$T.exit" "$x" tool-exit; record "$T.end" "$(clock_now)" tool-end
   return "$x"; }
 # A failed tool's diagnostics are private. Posts carry step, exit and log hashes.
-stop_run() { local reason=${1:-} x name code out err i=0
+stop_run() { local reason=${1:-} x name code out err i=0 body failure
   any_attempt && refuse "a draw stop is forbidden after an arm attempt"
   case $reason in
     beacon) [[ $(readfile "$P/beacon-cutoff") == "$ROUND 13" ]] || refuse "no cutoff for the counted round" ;;
     build) [[ -s $P/first-failure && -s $P/rebuild-failed && -e $P/rebuild-used ]] || refuse "build stop needs two failed attempts" ;;
     *) refuse "stop reason must be beacon or build" ;;
   esac
-  { printf 'Follow-up draw: stop\nreason %s\n' "$reason"
+  body=$({ printf 'Follow-up draw: stop\nreason %s\n' "$reason"
     if [[ $reason == build ]]; then
       for f in "$P/first-failure" "$P/rebuild-failed"; do
         while read -r name code out err; do i=$((i+1)); printf 'failed_step_%s %s\nexit_%s %s\nstdout_sha256_%s %s\nstderr_sha256_%s %s\n' "$i" "$name" "$i" "$code" "$i" "$out" "$i" "$err"; done < "$f"; done
     else printf 'failed_step_1 beacon\nexit_1 13\nstdout_sha256_1 %s\nstderr_sha256_1 %s\n' "$(sha "$P/beacon.out")" "$(sha "$P/beacon.err")"; fi
     printf '%s\n' "$ORIGIN_MARKER"
-  } > "$P/stop.body"
+  }) || refuse "stop body unavailable"
+  record "$P/stop.body" "$body" post-body
   if [[ $reason == build ]]; then
-    tool files cat "$P/first-failure" "$P/rebuild-failed" > "$P/stop-failure"
+    failure=$(tool files cat "$P/first-failure" "$P/rebuild-failed") || refuse "stop failure records unavailable"
+    record "$P/stop-failure" "$failure" stop-failure
     dr post stop --reason build --failure-sha256 "$(sha "$P/stop-failure")" "$P/stop.body" > "$P/stop.out" 2> "$P/stop.err"; x=$?
   else dr post stop --reason beacon "$P/stop.body" > "$P/stop.out" 2> "$P/stop.err"; x=$?; fi
   [[ $x == 0 ]] || refuse "draw-record stop refused"
-  printf '%s\n' "$reason" > "$P/stopped"; echo "draw stopped"; return 0; }
+  record "$P/stopped" "$reason" stopped; echo "draw stopped"; return 0; }
 record_counted() { local x key value old
   dr publish-list > "$P/counted-list.json" 2> "$P/counted-list.err" || refuse "counted values unavailable"
   meta counted "$P/counted-list.json" "$COUNT_ID" "$P/counted.json" || refuse "counted values unavailable"
   meta values "$P/counted.json" > "$P/counted-h.values" || refuse "counted values unreadable"
   [[ $COUNT_COMMIT == $(readfile "$S/commit.txt") ]] || {
-    tool files cp "$P/evaluate.out" "$P/counted-other-commit"; refuse "counted post requires prep and import $COUNT_COMMIT"; }
+    copy_record "$P/evaluate.out" "$P/counted-other-commit"; refuse "counted post requires prep and import $COUNT_COMMIT"; }
   : > "$P/h-differences"
   while read -r key value; do
     old=$(tool files awk -v key="$key" '$1==key {print $2}' "$S/rehearsal/h.values")
     [[ $value == "$old" ]] || printf '%s differs\n' "$key" >> "$P/h-differences"
   done < "$P/counted-h.values"
-  printf '%s\n' "$ROUND" > "$P/counted-round"
-  tool files cp "$P/evaluate.out" "$S/posted/commit.rec"
+  record "$P/counted-round" "$ROUND" counted-round
+  copy_record "$P/evaluate.out" "$S/posted/commit.rec"
   echo "counted commitment recorded"; }
 match_post() { local kind=$1 body=$2 x id after
   dr match "$kind" "$body" > "$P/$kind.match" 2> "$P/$kind.match.err"; x=$?
@@ -443,38 +475,52 @@ match_post() { local kind=$1 body=$2 x id after
     after=$(tool files sed -n 's/^matched //p' "$P/$kind.match")
     [[ $x == 0 && $after == "$id" ]] || refuse "posted comment was not matched"
   elif [[ $x != 0 ]]; then refuse "draw-record match refused"; fi
-  tool files cp "$P/$kind.match" "$S/posted/$([[ $kind == second ]] && printf draw || printf tasks).rec"
-  posted_values "$([[ $kind == second ]] && printf draw || printf tasks)" > "$S/posted/$([[ $kind == second ]] && printf draw || printf tasks).values"; }
-post_commit() { local x
+  local posted_kind=tasks; [[ $kind != second ]] || posted_kind=draw
+  local values; values=$(posted_values "$posted_kind") || refuse "posted values record failed"
+  record "$S/posted/$posted_kind.values" "$values" posted-values
+  copy_record "$P/$kind.match" "$S/posted/$posted_kind.rec"; }
+
+post_commit() { local x body
   [[ $(readfile "$S/rehearsal/passed") == $(readfile "$S/commit.txt") ]] || refuse "rehearse at this commit first"
   if [[ $EVAL == 0 ]]; then record_counted; return $?; fi
   dr choose-round > "$P/choose-round.out" 2> "$P/choose-round.err" || refuse "draw-record choose-round refused"
   read -r word ROUND dueword DUE choice < "$P/choose-round.out"
-  { printf 'Follow-up draw: first post\nround %s\nrun_commit %s\n' "$ROUND" "$(readfile "$S/commit.txt")"
-    tool files cat "$S/rehearsal/h.values"; printf '%s\n' "$ORIGIN_MARKER"; } > "$P/first.body"
+  body=$({ printf 'Follow-up draw: first post\nround %s\nrun_commit %s\n' "$ROUND" "$(readfile "$S/commit.txt")"
+    tool files cat "$S/rehearsal/h.values"; printf '%s\n' "$ORIGIN_MARKER"; }) || refuse "first body unavailable"
+  record "$P/first.body" "$body" post-body
   dr post first "$P/first.body" > "$P/first-post.out" 2> "$P/first-post.err"; x=$?
-  if [[ $x == 13 ]]; then tool files cp "$P/first-post.out" "$P/blocked"; refuse "first posting is blocked; release records"; fi
+  if [[ $x == 13 ]]; then copy_record "$P/first-post.out" "$P/blocked"; refuse "first posting is blocked; release records"; fi
   [[ $x == 0 ]] || refuse "draw-record first post refused"
   dr evaluate > "$P/evaluate.out" 2> "$P/evaluate.err"; EVAL=$?
   [[ $EVAL == 10 ]] && return 1
   [[ $EVAL == 0 ]] || refuse "draw-record post evaluation refused"
   read -r word COUNT_ID roundword ROUND dueword DUE commitword COUNT_COMMIT < "$P/evaluate.out"
   record_counted; }
-beacon_step() { local x now
+beacon_retry() { local line
+  line=$(readfile "$1")
+  case $line in
+    'refused: round not due'|'refused: GitHub timeout'|'refused: GitHub HTTP status'|'refused: GitHub GraphQL errors'|'refused: GitHub time unavailable'|'refused: missing HTTP status'|'refused: missing HTTP header block'|'refused: relay timeout'|'refused: clock skew exceeds 60 seconds') return 0 ;;
+    'refused: malformed or unavailable record')
+      (( MALFORMED < 2 )) || refuse "$line"; MALFORMED=$((MALFORMED+1)); return 0 ;;
+  esac
+  [[ $line =~ ^refused:\ reading\ module\ unavailable\ at\ [0-9a-f]{40}$ ]] && return 0
+  refuse "${line:-draw-record refusal has no reason}"; }
+beacon_step() { local x now MALFORMED=0
   need_counted
   [[ $# == 0 ]] || refuse "beacon takes the counted round only"
   ASYNC_TOOL=1 tool caffeinate caffeinate -i -w "$$" > "$P/caffeinate.out" 2> "$P/caffeinate.err" &
   while :; do
     dr now > "$P/now.out" 2> "$P/now.err"; x=$?
-    if [[ $x == 2 ]]; then tool sleep sleep 30; continue; fi
+    if [[ $x == 2 ]]; then beacon_retry "$P/now.err"; tool sleep sleep 30; continue; fi
     [[ $x == 0 ]] || refuse "unexpected draw-record clock result"
     read -r word now rest < "$P/now.out"
     if (( now < DUE )); then tool sleep sleep 30; continue; fi
     dr beacon --round "$ROUND" --out "$P/BEACON" > "$P/beacon.out" 2> "$P/beacon.err"; x=$?
     case $x in
       0) meta beacon-round "$P/BEACON" "$ROUND" || refuse "beacon is for another round"; echo "beacon accepted"; return 0 ;;
-      10|2) tool sleep sleep 30 ;;
-      13) printf '%s 13\n' "$ROUND" > "$P/beacon-cutoff"; stop_run beacon; return $? ;;
+      10) tool sleep sleep 30 ;;
+      2) beacon_retry "$P/beacon.err"; tool sleep sleep 30 ;;
+      13) record "$P/beacon-cutoff" "$ROUND 13" beacon-cutoff; stop_run beacon; return $? ;;
       *) refuse "unexpected draw-record beacon result" ;;
     esac
   done; }
@@ -483,16 +529,16 @@ draw_step() { local x
   [[ $# == 0 ]] || refuse "draw takes the counted round only"
   [[ -f $P/BEACON ]] || refuse "counted beacon is missing"
   meta beacon-round "$P/BEACON" "$ROUND" || refuse "beacon is for another round"
-  if [[ ! -s $P/draw-worktree ]]; then new_worktree draw; printf '%s\n' "$WT" > "$P/draw-worktree"; fi
+  if [[ ! -s $P/draw-worktree ]]; then new_worktree draw; record "$P/draw-worktree" "$WT" draw-worktree; fi
   WT=$(readfile "$P/draw-worktree"); atcommit "$WT"
   run_tool draw "$P/DRAW.json" -- draw "$PY" "$WT/scripts/validity_roster.py" draw --packs 3 --beacon "$P/BEACON" --out "$P/DRAW.json"; x=$?
   [[ $x == 0 ]] || { fail_attempt draw "$x"; return $?; }
   run_tool verify -- verify "$PY" "$WT/scripts/validity_roster.py" verify --packs 3 --beacon "$P/BEACON" --draw "$P/DRAW.json"; x=$?
   if [[ $x != 0 ]] || ! tool files grep -qx "verified sha256 $(sha "$P/DRAW.json") at $(readfile "$S/commit.txt")" "$P/tools/verify.out"; then
     [[ $x != 0 ]] || x=1; fail_attempt verify "$x"; return $?; fi
-  sha "$P/DRAW.json" > "$P/draw.sha256"
+  record "$P/draw.sha256" "$(sha "$P/DRAW.json")" draw-hash
   if [[ -s $S/posted/draw.values ]]; then
-    posted_values draw > "$P/current-draw.values"
+    record "$P/current-draw.values" "$(posted_values draw)" posted-values
     tool files cmp -s "$P/current-draw.values" "$S/posted/draw.values" || { fail_attempt verify 1; return 1; }; fi
   echo "draw verified"; }
 post_draw() { need_counted; [[ $# == 0 ]] || refuse "post-draw takes the counted round only"
@@ -511,7 +557,7 @@ place_step() { local x y i wt first_second=$P/place-first.summary second=$P/plac
     if [[ ! -s $P/place-worktree-$i ]]; then
       if [[ $i == 1 ]]; then WT=$(readfile "$P/draw-worktree"); [[ -n $WT && -d $WT ]] || refuse "draw worktree is missing"
       else new_worktree place-$i; fi
-      printf '%s\n' "$WT" > "$P/place-worktree-$i"
+      record "$P/place-worktree-$i" "$WT" place-worktree
     fi
     wt=$(readfile "$P/place-worktree-$i"); atcommit "$wt"
     if [[ $i == 2 && ${x:-0} == 1 ]]; then
@@ -527,7 +573,7 @@ place_step() { local x y i wt first_second=$P/place-first.summary second=$P/plac
   if [[ $x == 1 ]]; then
     [[ ! -e $P/consensus-fixed ]] || { fail_attempt place-2 1; return 1; }
     receipt=$(sha "$P/placed-1/void.json")
-    printf '%s %s\n' "$ROUND" "$receipt" > "$P/void-confirm-$ROUND"
+    record "$P/void-confirm-$ROUND" "$ROUND $receipt" "void confirmation"
     dr record-void --round "$ROUND" --receipt-sha256 "$receipt" > "$P/void-record.out" 2> "$P/void-record.err"; y=$?
     [[ $y == 0 ]] || refuse "void recording refused"
     printf '0\n' > "$P/void-record.exit"
@@ -535,8 +581,8 @@ place_step() { local x y i wt first_second=$P/place-first.summary second=$P/plac
   fi
   if [[ -e $P/consensus-fixed ]]; then
     tool files cmp -s "$P/consensus-fixed" "$P/place-1.summary" || { fail_attempt place-1 1; return 1; }
-  else tool files cp "$P/place-1.summary" "$P/consensus-fixed"; fi
-  printf 'placed\n' > "$P/placement-passed"; echo "placements agree"; }
+  else copy_record "$P/place-1.summary" "$P/consensus-fixed"; fi
+  record "$P/placement-passed" placed placement; echo "placements agree"; }
 build_step() { local p x wt
   need_counted; no_failed_attempt; need_posted draw
   [[ -e $P/placement-passed ]] || refuse "two placements have not agreed"
@@ -547,56 +593,69 @@ build_step() { local p x wt
     run_tool install-$p "$S/packs-$p" -- install caffeinate -i "$PY" -m bicentennial.packs.install install "$S/build-$p/T2" "$S/packs-$p"; x=$?
     [[ $x == 0 ]] || { fail_attempt install-$p "$x"; return $?; }
     hex64 "$(readfile "$P/tools/install-$p.out")" || { fail_attempt install-$p 1; return 1; }
-    tool files cp "$P/tools/install-$p.out" "$S/pack-$p.hash" || exit 2
+    copy_record "$P/tools/install-$p.out" "$S/pack-$p.hash" || exit 2
   done
   echo "three packs built and installed"; }
-tasks_step() { local p x wt partial
+tasks_step() { local p x wt partial digest
   need_counted; no_failed_attempt; need_posted draw
   any_attempt && refuse "an arm has an attempt; lists must be frozen before arm 1"
   wt=$(readfile "$P/place-worktree-1"); [[ -n $wt ]] || refuse "placement is missing"; atcommit "$wt"
   for p in A B C; do
     hex64 "$(readfile "$S/pack-$p.hash")" || refuse "pack $p is not built"
     if [[ -e $P/TASKS-$p.json ]]; then
+      if [[ ! -s $P/TASKS-$p.sha256 && $(readfile "$P/tools/tasks-$p.exit") == 0 ]]; then
+        meta tasks "$P/TASKS-$p.json" "$(readfile "$S/commit.txt")" "$p" "$(readfile "$S/pack-$p.hash")" "$P/DRAW.json" "$P/placed-1/pack-$p.toml" || refuse "task-list recovery check failed"
+        digest=$(sha "$P/TASKS-$p.json") && hex64 "$digest" || refuse "task-list hash failed"
+        record "$P/TASKS-$p.sha256" "$digest" task-hash
+      fi
       [[ -s $P/TASKS-$p.sha256 && $(sha "$P/TASKS-$p.json") == $(readfile "$P/TASKS-$p.sha256") ]] || refuse "frozen task list differs"; continue; fi
     partial=$P/TASKS-$p.json.part
     run_tool tasks-$p "$partial" -- tasks "$PY" "$wt/$TASKS_PY" --pack "$p" --packs "$S/packs-$p" --spec "$P/placed-1/pack-$p.toml" --draw "$P/DRAW.json" --commit "$(readfile "$S/commit.txt")" --edition 3 --out "$partial"; x=$?
     [[ $x == 0 ]] || { fail_attempt tasks-$p "$x"; return $?; }
     meta tasks "$partial" "$(readfile "$S/commit.txt")" "$p" "$(readfile "$S/pack-$p.hash")" "$P/DRAW.json" "$P/placed-1/pack-$p.toml" || { fail_attempt tasks-$p 1; return 1; }
+    digest=$(sha "$partial") && hex64 "$digest" || refuse "task-list hash failed"
+    record "$P/TASKS-$p.sha256" "$digest" task-hash
     tool files mv -n "$partial" "$P/TASKS-$p.json" || exit 2
     [[ ! -e $partial ]] || refuse "task-list rename is incomplete"
-    sha "$P/TASKS-$p.json" > "$P/TASKS-$p.sha256"
   done
   echo "three task lists frozen"; }
-post_tasks() { local p lower
+post_tasks() { local p lower body pair
   need_counted; need_posted draw; frozen_tasks
   for p in A B C; do hex64 "$(readfile "$S/pack-$p.hash")" || refuse "no pack hash"; done
-  { printf 'Follow-up draw: task lists\nround %s\n' "$ROUND"
-    for p in A B C; do case $p in A) lower=a ;; B) lower=b ;; C) lower=c ;; esac
+  body=$({ printf 'Follow-up draw: task lists\nround %s\n' "$ROUND"
+    for pair in A:a B:b C:c; do p=${pair%:*}; lower=${pair#*:}
       printf 'pack_hash_%s %s\ntasks_sha256_%s %s\n' "$lower" "$(readfile "$S/pack-$p.hash")" "$lower" "$(readfile "$P/TASKS-$p.sha256")"; done
-    printf '%s\n' "$ORIGIN_MARKER"; } > "$P/tasks.body"
+    printf '%s\n' "$ORIGIN_MARKER"; }) || refuse "tasks body unavailable"
+  record "$P/tasks.body" "$body" post-body
   match_post tasks "$P/tasks.body"; echo "task-list post recorded"; }
 rebuild_step() { local f name x old=$P/first-attempt
   need_counted; any_attempt && refuse "rebuild is forbidden after an arm attempt"
-  [[ -s $P/failure || -e $P/rebuild-used ]] || refuse "no failed attempt to rebuild"
+  [[ -s $P/failure || -e $P/rebuild-started || -e $P/rebuild-used ]] || refuse "no failed attempt to rebuild"
   [[ ! -e $P/rebuild-complete && ! -e $P/rebuild-failed ]] || refuse "the one rebuild has already been used"
   if [[ ! -e $P/rebuild-used ]]; then
-  tool files cp "$P/failure" "$P/first-failure" || exit 2
-  tool files mkdir "$old" || refuse "first attempt archive exists"
+  if [[ ! -e $P/rebuild-started ]]; then
+    copy_record "$P/failure" "$P/first-failure"
+    record "$P/rebuild-started" started rebuild-started
+  fi
+  tool files mkdir -p "$old" || refuse "first attempt archive unavailable"
   for name in tools DRAW.json draw.sha256 draw-worktree reproduced-DRAW.json placed-1 placed-2 place-work-1 place-work-2 place-worktree-1 place-worktree-2 placement-passed place-1.summary place-2.summary failure; do
     [[ ! -e $P/$name ]] || tool files mv -n "$P/$name" "$old/$name" || exit 2; done
   for f in "$P"/TASKS-*; do [[ ! -e $f ]] || tool files mv -n "$f" "$old/${f##*/}" || exit 2; done
   for name in build-A build-B build-C packs-A packs-B packs-C pack-A.hash pack-B.hash pack-C.hash; do
     [[ ! -e $S/$name ]] || tool files mv -n "$S/$name" "$old/$name" || exit 2; done
-  printf 'used\n' > "$P/rebuild-used"
+  record "$P/rebuild-used" used rebuild-used
   fi
   draw_step; x=$?; [[ $x == 0 ]] || return "$x"
   [[ -s $S/posted/draw.rec ]] || post_draw || return $?
   place_step; x=$?; [[ $x == 0 ]] || return "$x"
   build_step || return $?
   tasks_step; x=$?; [[ $x == 0 ]] || return "$x"
-  printf 'complete\n' > "$P/rebuild-complete"; }
-check3_cmd() { tool check3 python3 "$SLOT" -- env PYTHONPATH="$S/wt/src" nice -n 19 "$PY" -m pytest -v -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$1" tests/runner/test_control_arms.py tests/test_developer_doc.py; }
-rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value
+  record "$P/rebuild-complete" complete rebuild-complete; }
+check3_matches() { local file=$1 code=$2
+  [[ $(readfile "$file") == "commit $(readfile "$S/commit.txt")" && $(tool files tail -1 "$file") == "exit $code" ]]; }
+check3_receipt() { check3_matches "$1" "$2" || refuse "check 3 receipt write failed"; }
+check3_cmd() { tool check3 python3 "$SLOT" -- env PYTHONPATH="$S/wt/src" nice -n 19 "$PY" -m pytest -v -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$1" tests/runner/test_control_arms.py; }
+rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes=""
   [[ ! -e $P/BEACON ]] || refuse "real beacon saved; rehearsal is too late"
   [[ ! -e $Rh/passed ]] || refuse "already rehearsed at this commit"
   if [[ -e $Rh ]]; then
@@ -615,7 +674,6 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value
   tool gate "$PY" "$wt/results/followup/run/gate_prepare.py" --packs "$Rh/packs-A" --pack-hash "$(readfile "$Rh/pack-A.hash")" --hermes "$H" > "$Rh/gate.out" 2> "$Rh/gate.err" || refuse "rehearsal preparation refused"
   tool files grep -qx "benchmark_commit $(readfile "$S/commit.txt")" "$Rh/gate.out" || refuse "rehearsal preparation names another commit"
   tool pins "$S/venv/bin/bicentennial" pins --system hermes-native --hermes "$H" > "$Rh/pins.out" 2> "$Rh/pins.err" || refuse "rehearsal install pins refused"
-  : > "$Rh/h.values"
   for hashname in registry_entry_sha256 fresh_install_hash artifact_sha256 system_hash harness_hash route_table_hash; do
     case $hashname in
       fresh_install_hash) value=$(tool files awk '$1=="fresh_install_hash" {print $2}' "$Rh/pins.out") ;;
@@ -623,8 +681,9 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value
       *) value=$(tool files awk -v key="$hashname" '$1==key {print $2}' "$Rh/gate.out") ;;
     esac
     hex64 "$value" || refuse "rehearsal hash is missing or malformed"
-    printf '%s %s\n' "$hashname" "$value" >> "$Rh/h.values"
+    hashes="$hashes$hashname $value"$'\n'
   done
+  record "$Rh/h.values" "${hashes%$'\n'}" rehearsal-hashes
   for p in A B C; do
     tool tasks "$PY" "$wt/$TASKS_PY" --pack "$p" --packs "$Rh/packs-$p" --spec "$Rh/placed/pack-$p.toml" --draw "$Rh/DRAW.json" --commit "$(readfile "$S/commit.txt")" --edition 3 --out "$Rh/TASKS-$p.json" > "$Rh/tasks-$p.out" 2> "$Rh/tasks-$p.err" || refuse "rehearsal task list refused"
     meta tasks "$Rh/TASKS-$p.json" "$(readfile "$S/commit.txt")" "$p" "$(readfile "$Rh/pack-$p.hash")" "$Rh/DRAW.json" "$Rh/placed/pack-$p.toml" || refuse "rehearsal task list check failed"
@@ -637,13 +696,14 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value
   tool table "$PY" "$wt/$TABLE" "${args[@]}" > "$Rh/table.out" 2> "$Rh/table.err"; x=$?
   [[ $x == 4 ]] || refuse "rehearsal no-arms reading must exit 4"
   { printf 'commit %s\n' "$(readfile "$S/commit.txt")"; check3_cmd "$Rh/check3-tmp"; x=$?; printf 'exit %s\n' "$x"; } > "$Rh/check3.txt" 2>&1
+  check3_receipt "$Rh/check3.txt" "$x"
   [[ $x == 0 ]] || refuse "rehearsal check 3 failed"
   tool followup-tests python3 "$SLOT" -- env PYTHONPATH="$wt/src" nice -n 19 "$PY" -m pytest -q -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$Rh/followup-tmp" results/followup/run/test_*.py tests/test_developer_doc.py > "$Rh/followup-tests.log" 2>&1 || refuse "rehearsal follow-up tests failed"
   tool derivation-tests python3 "$SLOT" -- env PYTHONPATH="$wt/src" nice -n 19 "$PY" -m pytest -q -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$Rh/derivation-tmp" tests/test_validity_roster.py tests/test_developer_doc.py > "$Rh/derivation-tests.log" 2>&1 || refuse "rehearsal derivation tests failed"
   tool dr "$BASEPY" -I "$wt/$DR_PY" init --state "$Rh/draw" > "$Rh/dr-init.out" 2> "$Rh/dr-init.err" || refuse "rehearsal draw-record init refused"
   tool dr "$BASEPY" -I "$wt/$DR_PY" beacon --state "$Rh/draw" --rehearsal > "$Rh/beacon.out" 2> "$Rh/beacon.err"; x=$?
   [[ $x == 0 ]] && tool files grep -qx 'rehearsal-beacon pass' "$Rh/beacon.out" || refuse "rehearsal beacon derivation failed"
-  printf '%s\n' "$(readfile "$S/commit.txt")" > "$Rh/passed"
+  record "$Rh/passed" "$(readfile "$S/commit.txt")" rehearsal-pass
   printf 'run_commit %s\n' "$(readfile "$S/commit.txt")"; tool files cat "$Rh/h.values"; echo "rehearsal passed"; }
 prep_step() { local SHA=${1:-} import="" mode=official pr merge path official="" entries name value required=() prs=()
   [[ -n $SHA ]] || refuse "prep needs a main commit and prerequisite pull requests"; shift
@@ -659,7 +719,7 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   [[ $ORIGIN_MARKER == '<!-- agent-origin:v1 '* && $ORIGIN_MARKER == *' -->' && $ORIGIN_MARKER != *$'\n'* ]] || refuse "ORIGIN_MARKER has the wrong form"
   [[ -f $OFFICIAL_RECORD ]] && official=$(readfile "$OFFICIAL_RECORD")
   if [[ $S == "$official" && -e $S/$TEST_MARKER ]]; then
-    [[ ! -d $P ]] || : > "$P/official-tainted"
+    [[ ! -d $P ]] || record "$P/official-tainted" tainted official-taint
     refuse "official state was marked as a test directory"
   fi
   if [[ -e $S ]]; then
@@ -672,13 +732,29 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   tool files mkdir -p "$S/runs" "$S/logs" "$S/diag" "$S/posted" "$S/worktrees" "$P" || exit 2
   tool files chmod 700 "$S" "$P" || exit 2
   if [[ -n $import && $import != none ]]; then
+    if [[ $mode == test ]]; then
+      [[ -f $import/$TEST_MARKER && $import != "$official" ]] || refuse "import source is not a test directory"
+    else [[ -n $official && $import == "$official" ]] || refuse "import source is not the recorded official directory"; fi
+    [[ $(readfile "$import/commit.txt") != "$SHA" ]] || refuse "import commit must differ from the old commit"
+    [[ ! -e $import/private/BEACON ]] || refuse "import has a beacon"
+    [[ -z $(tool files ls -A "$import/runs") ]] || refuse "import has arm records"
+    for path in "$import"/logs/*.seq; do [[ ! -e $path ]] || refuse "import has arm sequence records"; done
     [[ -d $import/private/draw ]] || refuse "import has no draw-record folder"
     tool files cp -R "$import/private/draw" "$P/draw" || refuse "draw-record copy failed"
     for path in "$import"/private/void-*; do [[ -d $path ]] || continue
       case ${path##*/} in void-check-*) continue ;; esac
       tool files cp -R "$path" "$P/${path##*/}" || refuse "void copy failed"; done
-    printf 'copied\n' > "$P/import.record"
-  elif [[ $import == none ]]; then printf 'old state lost\n' > "$P/import.record"; fi
+    tool files mkdir -p "$P/imported" || refuse "import record directory failed"
+    for path in "$import"/private/*; do
+      [[ -f $path ]] || continue
+      case ${path##*/} in counted-other-commit|reading-commit-refusal|blocked|counted-list.*|read.*|evaluate.*|first-post.*|draw-list.*)
+        copy_record "$path" "$P/imported/${path##*/}" ;; esac
+    done
+    record "$P/import.record" copied import
+  elif [[ $import == none ]]; then
+    [[ -n $official && ! -e $official ]] || refuse "old state directory still exists or is not recorded"
+    record "$P/import.record" "old state lost" import
+  fi
   tool gh env -i PATH="$PATH" HOME="$HOME" gh auth status > "$P/auth.out" 2> "$P/auth.err" || refuse "stored gh login required: S4 removes every GH_ variable"
   tool git-fetch git -C "$R" fetch -q origin main > "$P/fetch.out" 2> "$P/fetch.err" || refuse "main fetch failed"
   tool git git -C "$R" merge-base --is-ancestor "$SHA" origin/main >/dev/null 2>&1 || refuse "run commit is not on main"
@@ -695,13 +771,13 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
     tool gh gh pr view "$pr" --repo "$REPO" --json state,mergeCommit > "$P/pr-$pr.json" 2> "$P/pr-$pr.err" || refuse "prerequisite pull request cannot be read"
     merge=$(meta pr "$P/pr-$pr.json") || refuse "prerequisite pull request is not merged"
     tool git git -C "$R" merge-base --is-ancestor "$merge" "$SHA" >/dev/null 2>&1 || refuse "prerequisite merge is outside the run history"
-    [[ $pr != 573 ]] || printf '%s\n' "$merge" > "$P/declaration.commit"
+    [[ $pr != 573 ]] || record "$P/declaration.commit" "$merge" declaration-commit
   done
   tool git git -C "$R" show "$SHA:results/followup/DECLARATION.md" > "$P/declaration.run"
   tool git git -C "$R" show "$(readfile "$P/declaration.commit"):results/followup/DECLARATION.md" > "$P/declaration.merged" || refuse "merged declaration unavailable"
   tool files cmp -s "$P/declaration.run" "$P/declaration.merged" || refuse "run declaration differs from the merged declaration"
   tool git-worktree git -C "$R" -c core.hooksPath=/dev/null worktree add --detach "$S/wt" "$SHA" > "$P/prep-worktree.log" 2>&1 || refuse "run worktree could not be created"
-  printf '%s\n' "$SHA" > "$S/commit.txt"
+  record "$S/commit.txt" "$SHA" run-commit
   tool venv "$BASEPY" -m venv "$S/venv" > "$P/venv.log" 2>&1 || refuse "venv creation failed"
   tool pip nice -n 19 "$PY" -m pip install -q -e "$S/wt[dev]" > "$P/pip.log" 2>&1 || refuse "venv install failed"
   tool pytest-import "$PY" -c 'import pytest' > "$P/pytest-import.log" 2>&1 || refuse "pytest is missing from the venv"
@@ -709,12 +785,20 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   dr init > "$P/init.out" 2> "$P/init.err" || refuse "draw-record init refused"
   dr read > "$P/prep-read.out" 2> "$P/prep-read.err" || refuse "draw-record read refused"
   dr publish-list > "$P/prep-list.json" 2> "$P/prep-list.err" || refuse "draw-record list refused"
-  if [[ -z $import ]]; then meta new-directory "$P/prep-list.json" || refuse "draw already began in another state directory"; fi
+  if [[ -z $import ]]; then meta new-directory "$P/prep-list.json" || refuse "draw already began in another state directory"
+  elif [[ $import == none ]]; then
+    meta lost-after-draw "$P/prep-list.json"; local lost=$?
+    [[ $lost == 0 || $lost == 1 ]] || refuse "lost-state draw list unavailable"
+    if [[ $lost == 0 ]]; then record "$P/state-lost-after-draw" "state lost after the draw: no arm can run; readings unresolved (§10, missing data)" lost-state; fi
+  else
+    dr evaluate > "$P/prep-evaluate.out" 2> "$P/prep-evaluate.err" || refuse "import counted evaluation refused"
+    meta import-commit "$P/prep-list.json" "$SHA" || refuse "import counted post must name the requested commit"
+  fi
   printf '%s\n' "${prs[@]}" > "$S/prerequisites"
   tool files ln -s private/rehearsal "$S/rehearsal" || refuse "rehearsal link creation failed"
-  printf '%s\n' "$mode" > "$S/mode"
+  record "$S/mode" "$mode" mode
   meta settings "$P/settings" "${setting_names[@]}" || refuse "settings could not be fixed"
-  if [[ $mode == official ]]; then printf '%s\n' "$S" > "$OFFICIAL_RECORD"; fi
+  if [[ $mode == official ]]; then record "$OFFICIAL_RECORD" "$S" official-state; fi
   PREPARING=0
   echo "prepared run commit"; }
 # One sequence counter orders attempts and readings. Refused invocations retain
@@ -740,13 +824,31 @@ arm_cmd() { local out=$1 diag=$2 control=$3 pack=$4 cache=$5 args=()
   args=(caffeinate -i /bin/bash "$ENVW" "$S/venv/bin/bicentennial" t2 --system hermes-native --packs "$S/packs-$pack" --pack-hash "$(readfile "$S/pack-$pack.hash")" --hermes "$H" --login-home "$LOGIN" --max-sends "$CAP" --out "$out")
   if [[ -n $control ]]; then args+=(--control "$control" --diagnostics "$diag"); else args+=(--cache "$cache"); fi
   tool arm "${args[@]}"; }
+finish_invocation() { local tag=$1 I="" f n newest=0 out=$S/runs/$1 diag=$S/diag/$1 part
+  [[ ! -s $S/logs/$tag.seq ]] || return 0
+  for f in "$S"/logs/"$tag".inv-*.start; do
+    [[ -e $f ]] || continue; n=${f##*.inv-}; n=${n%.start}
+    if (( n > newest )); then newest=$n; I=${f%.start}; fi
+  done
+  [[ -n $I && -s $I.exit ]] || return 0
+  if [[ -e $I.guard-out ]] || { [[ $(readfile "$I.exit") == exit=3 ]] && guard_refused "$out" "$diag"; }; then
+    [[ ! -e $out ]] || tool files mv -n "$out" "$I.guard-out" || refuse "guard output move failed"
+    [[ ! -e $diag ]] || tool files mv -n "$diag" "$I.guard-diag" || refuse "guard diagnostics move failed"
+  elif [[ -e $out ]]; then
+    for part in start end exit killed; do
+      [[ ! -f $I.$part ]] || copy_record "$I.$part" "$S/logs/$tag.$part"
+    done
+    copy_record "$I.seq" "$S/logs/$tag.seq"
+  fi
+}
 arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cache="" k=1 I seq x s f official=""
   [[ -n $label ]] || refuse "arm label is required"
   tool files printf '%s\n' "${ORDER[@]}" | tool files grep -Fqx -- "$label" || refuse "unknown arm label"
   p=${label%%.*}; arm=${label#*.}; control=$(control_of "$arm") || [[ $arm == H1 || $arm == H2 ]] || refuse "unknown arm label"
+  finish_invocation "$label"; finish_invocation "$label.rerun"
   need_counted; frozen_tasks; need_posted draw; need_posted tasks
   [[ $(readfile "$S/posted/commit.rec") == "$(readfile "$P/evaluate.out")" ]] || refuse "counted post record differs"
-  check3_file && [[ $(tool files tail -1 "$C3") == 'exit 0' ]] || refuse "check 3 must pass before an arm"
+  check3_file && check3_matches "$C3" 0 || refuse "check 3 must pass before an arm"
   check3_failed_twice && refuse "check 3 failed twice; run ended"
   if [[ $mode == run ]]; then
     for l in "${ORDER[@]}"; do [[ $l == "$label" ]] && break
@@ -778,16 +880,13 @@ arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cach
   idle
   while [[ -e $S/logs/$tag.inv-$k.start ]]; do k=$((k+1)); done
   seq=$(next_number) || refuse "sequence reservation failed"; I=$S/logs/$tag.inv-$k
-  printf '%s\n' "$seq" > "$I.seq"; clock_now > "$I.start"
+  record "$I.seq" "$seq" "invocation sequence"; record "$I.start" "$(clock_now)" invocation-start
+  [[ $(readfile "$I.seq") == "$seq" ]] || refuse "invocation sequence record write failed"
   arm_cmd "$out" "$diag" "$control" "$p" "$cache" > "$I.out" 2> "$I.err"; x=$?
-  clock_now > "$I.end"; printf 'exit=%s\n' "$x" > "$I.exit"
-  if [[ $x == 3 ]] && guard_refused "$out" "$diag"; then
-    tool files mv -n "$out" "$I.guard-out" || exit 2
-    [[ ! -e $diag ]] || tool files mv -n "$diag" "$I.guard-diag" || exit 2
-    echo "machine guard refused before any unit: invocation kept, not an attempt"; return "$x"; fi
-  if [[ -e $out ]]; then
-    for s in seq start end exit; do tool files cp -n "$I.$s" "$S/logs/$tag.$s" || exit 2; done
-    echo "$tag attempt recorded"
+  record "$I.end" "$(clock_now)" invocation-end; record "$I.exit" "exit=$x" invocation-exit
+  finish_invocation "$tag"
+  if [[ -e $I.guard-out ]]; then echo "machine guard refused before any unit: invocation kept, not an attempt"
+  elif [[ -e $out ]]; then echo "$tag attempt recorded"
   else echo "invocation refused before output: not an attempt"; fi
   return "$x"; }
 check3_step() { local n=1 x
@@ -796,8 +895,9 @@ check3_step() { local n=1 x
   while [[ -e $P/check3-$n.txt ]]; do n=$((n+1)); done
   (( n <= 2 )) || refuse "check 3 has run twice"
   if (( n == 2 )); then
-    [[ $(tool files tail -1 "$P/check3-1.txt") != 'exit 0' ]] || refuse "check 3 already passed"; fi
+    ! check3_matches "$P/check3-1.txt" 0 || refuse "check 3 already passed"; fi
   { printf 'commit %s\n' "$(readfile "$S/commit.txt")"; check3_cmd "$S/check3-tmp-$n"; x=$?; printf 'exit %s\n' "$x"; } > "$P/check3-$n.txt" 2>&1
+  check3_receipt "$P/check3-$n.txt" "$x"
   printf 'check 3 attempt %s exit %s\n' "$n" "$x"; return "$x"; }
 stale_lock() { local owner="" f current age
   if [[ -d $S/lock ]]; then
@@ -808,7 +908,7 @@ stale_lock() { local owner="" f current age
       if [[ -s $S/lock/$owner/start ]]; then
         tool ps ps -o lstart= -p "$owner" > "$P/lock-owner-probe" 2>/dev/null
         if [[ -s $P/lock-owner-probe ]] && tool files cmp -s "$S/lock/$owner/start" "$P/lock-owner-probe"; then refuse "a step still holds the lock"; fi
-      else tool ps ps -p "$owner" >/dev/null 2>&1 && refuse "a step still holds the lock"; fi
+      else old_enough "$S/lock/$owner" || refuse "lock owner may be starting"; fi
     else
       current=$(clock_now); age=$(tool files stat -f %m "$S/lock") || refuse "cannot read lock age"
       (( current - age >= 60 )) || refuse "ownerless lock may be starting"
@@ -823,27 +923,30 @@ stale_lock() { local owner="" f current age
 abandon_step() { local tag=${1:-} f open="" s
   [[ $tag =~ ^[ABC]\.(F[12]|R[12]|O[123]|H[12]|B1|G1|W1)(\.rerun)?$ ]] || refuse "unknown invocation label"
   arm_alive && refuse "an arm process is still running"
+  finish_invocation "$tag"
   for f in "$S"/logs/"$tag".inv-*.start; do [[ -e $f && ! -e ${f%.start}.exit ]] && open=${f%.start}; done
   [[ -n $open ]] || { echo "no open invocation; stale lock checked"; return 0; }
-  clock_now > "$open.end"; tool files cp "$open.end" "$open.killed"
-  printf 'exit=abandoned\n' > "$open.exit"
-  if [[ -e $S/runs/$tag ]]; then
-    for s in seq start end exit killed; do tool files cp -n "$open.$s" "$S/logs/$tag.$s" || exit 2; done
+  if [[ ! -e $S/runs/$tag && -f $open.seq ]] && ! [[ $(readfile "$open.seq") =~ ^[0-9]{1,18}$ ]]; then
+    tool files mv -n "$open.seq" "$open.seq.failed" && [[ ! -e $open.seq ]] || refuse "unstarted sequence archive failed"
   fi
+  record "$open.end" "$(clock_now)" abandoned-end
+  copy_record "$open.end" "$open.killed"
+  record "$open.exit" exit=abandoned abandoned-exit
+  finish_invocation "$tag"
   echo "abandoned invocation recorded"; }
 table_once() { local suffix=$1; shift; local n x
   n=$(next_number) || refuse "sequence reservation failed"; T=$S/logs/table-$n
   [[ $suffix != pre ]] || T=$T.pre
-  printf '%s\n' "$n" > "$T.seq"
-  printf '%s\n' "$@" > "$T.flags"
+  record "$T.seq" "$n" table-sequence
+  tool files printf '%s\n' "$@" > "$T.flags" || refuse "table flags record write failed"
   tool table "$PY" "$S/wt/$TABLE" "$@" --filter-out "$P/FILTER-$n.json" > "$T.txt" 2> "$T.err"; x=$?
-  if [[ $suffix == pre ]]; then printf '%s\n' "$x" > "${T%.pre}.pre-exit"
-  else printf '%s\n' "$x" > "$T.exit"; fi
+  if [[ $suffix == pre ]]; then record "${T%.pre}.pre-exit" "$x" table-exit
+  else record "$T.exit" "$x" table-exit; fi
   # The reader's own output is public-safe; no private command line is echoed.
   tool files cat "$T.txt"
   return "$x"; }
 table_step() { local after="" p l tag seq f b order attempts reruns="" x pre pending
-  local args=() labels=() used=() every=()
+  local args=() labels=() used=() every=() used_records="" all_records=""
   need_counted; all_attempts; frozen_tasks
   check3_file || refuse "check 3 receipt is missing"
   for f in "$S"/logs/*.inv-*.start; do [[ -e $f && ! -e ${f%.start}.exit ]] && refuse "abandon open invocation first"; done
@@ -852,16 +955,17 @@ table_step() { local after="" p l tag seq f b order attempts reruns="" x pre pen
   for p in A B C; do args+=(--pack "$p" "$S/packs-$p" "$P/TASKS-$p.json" "$(readfile "$P/TASKS-$p.sha256")"); done
   meta h-hashes "$P/counted.json" "$P/h-hash-faults.json" > "$P/h-hash-options" || refuse "counted H values unavailable"
   while read -r f b; do args+=("$f" "$b"); done < "$P/h-hash-options"
-  : > "$P/used-sequences"; : > "$P/all-sequences"
   for l in "${ORDER[@]}"; do
     tag=$l
     if [[ -e $S/runs/$l.rerun ]]; then tag=$l.rerun; reruns="$reruns,$l"; fi
     [[ -s $S/logs/$tag.seq ]] || refuse "used attempt lacks its sequence"
-    printf '%s %s\n' "$(readfile "$S/logs/$tag.seq")" "$l" >> "$P/used-sequences"
+    used_records="$used_records$(readfile "$S/logs/$tag.seq") $l"$'\n'
     labels+=("$l=$S/runs/$tag")
-    printf '%s %s\n' "$(readfile "$S/logs/$l.seq")" "$l" >> "$P/all-sequences"
-    if [[ $tag != "$l" ]]; then printf '%s %s\n' "$(readfile "$S/logs/$tag.seq")" "$tag" >> "$P/all-sequences"; fi
+    all_records="$all_records$(readfile "$S/logs/$l.seq") $l"$'\n'
+    if [[ $tag != "$l" ]]; then all_records="$all_records$(readfile "$S/logs/$tag.seq") $tag"$'\n'; fi
   done
+  record "$P/used-sequences" "${used_records%$'\n'}" reading-order
+  record "$P/all-sequences" "${all_records%$'\n'}" reading-attempts
   order=$(tool files sort -n "$P/used-sequences" | tool files awk '{print $2}' | tool files paste -sd, -)
   attempts=$(tool files sort -n "$P/all-sequences" | tool files awk '{print $2}' | tool files paste -sd, -)
   args+=(--order "$order" --attempts "$attempts" --check3 "$C3")
@@ -915,17 +1019,18 @@ cards_step() { local p label replaced
     cut_group "$p" used; replaced=""
     for label in "${ORDER[@]}"; do [[ ${label%%.*} == "$p" && -e $S/runs/$label.rerun ]] && replaced=1; done
     [[ -z $replaced ]] || cut_group "$p" first
-    printf 'recorded\n' > "$P/cards-$p.done"
+    record "$P/cards-$p.done" recorded cards
   done
   echo "card outcomes recorded"; }
-release_allowed() { local f x
-  [[ -e $P/stopped || -e $P/blocked || -e $P/void-unconfirmed ]] && return 0
+release_allowed() { local f x output
+  [[ -e $P/stopped || -e $P/blocked || -e $P/void-unconfirmed || -e $P/state-lost-after-draw ]] && return 0
   check3_failed_twice && return 0
   [[ -e $P/cards-A.done && -e $P/cards-B.done && -e $P/cards-C.done ]] && return 0
-  for f in "$S"/logs/table-*.exit; do
+  for f in "$S"/logs/table-*.exit "$S"/logs/table-*.pre-exit; do
     [[ -e $f ]] || continue; x=$(readfile "$f")
+    output=${f%.exit}.txt; [[ $f != *.pre-exit ]] || output=${f%.pre-exit}.pre.txt
     [[ $x == 5 ]] && return 0
-    [[ $x == 3 ]] && tool files grep -qE '^fault: (run order|card pins|pack code pins)$' "${f%.exit}.txt" && return 0
+    [[ $x == 3 ]] && tool files grep -qE '^fault: (run order|card pins|pack code pins)$' "$output" && return 0
   done
   return 1; }
 publish_file() { local source=$1 target=$S/publish/$2 candidate=$P/public-candidate n=1 original
@@ -938,7 +1043,12 @@ publish_file() { local source=$1 target=$S/publish/$2 candidate=$P/public-candid
   tool files mkdir -p "${target%/*}" || refuse "publication directory failed"
   tool files cp -n "$candidate" "$target" || refuse "publication copy failed"
   [[ $target == "$original" ]] || echo "published difference"; }
-release_draw() { local folder=$1 name=$2 commit wt x number second y draw rel index=0
+release_draw() { local folder=$1 name=$2 is_void=${3:-0} commit wt x number second y draw rel index=0
+  if [[ $is_void == 1 && ( ! -f $folder/BEACON || ! -f $folder/DRAW.json || ! -f $folder/placed-1/void.json || ! -f $folder/placed-2/void.json ) ]]; then
+    record "$P/void-release.outcome" 'void not reproduced: under §2 the earlier draw stands' void-outcome
+    publish_file "$P/void-release.outcome" "$name/void.outcome"
+    echo 'void not reproduced: under §2 the earlier draw stands'; return 0
+  fi
   [[ -f $folder/BEACON ]] || return 0
   next_folder "$P/release-beacon-$name"; local check=$FOLDER
   tool files mkdir -p "$check"
@@ -965,20 +1075,21 @@ release_draw() { local folder=$1 name=$2 commit wt x number second y draw rel in
     publish_file "$check/verify-$index.out" "$rel.txt"; publish_file "$check/verify-$index.exit" "$rel.exit"
     [[ $x == 0 ]] || echo "draw verification disagrees; still published"
   done < <(trap - EXIT; tool files find "$folder" -type f \( -name '*DRAW*.json' -o -name '*DRAW*.json.cut-*' \) -print0)
-  [[ -f $folder/DRAW.json && -e $folder/complete && -e $folder/placed-1/void.json ]] || return 0
+  [[ $is_void == 1 ]] || return 0
   (new_worktree void-release-$name "$commit"; wt=$WT
     tool draw "$PY" "$wt/scripts/validity_roster.py" draw --packs 3 --beacon "$folder/BEACON" --out "$check/DRAW.json" || exit $?
     tool files cmp -s "$folder/DRAW.json" "$check/DRAW.json" || exit 1
     tool place "$PY" "$wt/scripts/validity_roster.py" place --packs 3 --draw "$check/DRAW.json" --work "$check/place-work" --out-dir "$check/placed" > "$check/place.out" 2> "$check/place.err"; y=$?
     [[ $y == 1 ]] || exit 1
-    tool files cmp -s "$folder/placed-1/void.json" "$check/placed/void.json") > "$check/reproduce.out" 2> "$check/reproduce.err"; x=$?
+    tool files cmp -s "$folder/placed-1/void.json" "$check/placed/void.json" &&
+    tool files cmp -s "$folder/placed-2/void.json" "$check/placed/void.json") > "$check/reproduce.out" 2> "$check/reproduce.err"; x=$?
   if [[ $x == 0 ]]; then printf 'void reproduced\n' > "$check/void.outcome"
   else printf 'void not reproduced: under §2 the earlier draw stands\n' > "$check/void.outcome"; echo 'void not reproduced: under §2 the earlier draw stands'; fi
   publish_file "$check/void.outcome" "$name/void.outcome"; }
 release_step() { local x f rel folder n name
   dr read > "$P/release-read.out" 2> "$P/release-read.err" || refuse "release draw read refused"
   dr evaluate > "$P/release-evaluate.out" 2> "$P/release-evaluate.err"; x=$?
-  [[ $x != 14 ]] || tool files cp "$P/release-evaluate.out" "$P/stopped"
+  [[ $x != 14 ]] || copy_record "$P/release-evaluate.out" "$P/stopped"
   # A void discovered before the usual evaluation refused must also be publishable.
   reconcile_voids
   release_allowed || refuse "release needs a declared terminal event or all card outcomes"
@@ -998,8 +1109,9 @@ release_step() { local x f rel folder n name
   while IFS= read -r -d '' f; do
     rel=${f#"$P/"}
     case $rel in
-      draw/*|rehearsal*|*place-work*|*build-*|*packs-*|*tools*|*release-beacon*|*.log|*.err|*void-check*) continue ;;
-      *DRAW.json*|*/BEACON|*/DRAW.json|*/draw.sha256|*/TASKS-*|*/placed-*/*|worktree-*.commit|*/worktree-*.commit|BEACON|DRAW.json|draw.sha256|TASKS-*|FILTER-*|placed-*/*|void-*/*|*counted*|*reading-commit*|*blocked*|*differences*|import.record|*confirm*|*unconfirmed*|check3-*|*.body|*match*|*stop*|first-failure|rebuild-failed|consensus-fixed) publish_file "$f" "$rel" ;;
+      imported/*) publish_file "$f" "$rel"; continue ;;
+      draw/*|rehearsal*|*place-work*|build-[ABC]|build-[ABC]/*|*/build-[ABC]|*/build-[ABC]/*|*packs-*|*tools*|*release-beacon*|*.log|*.err|*void-check*) continue ;;
+      *DRAW.json*|*/BEACON|*/DRAW.json|*/draw.sha256|*/TASKS-*|*/placed-*/*|worktree-*.commit|*/worktree-*.commit|BEACON|DRAW.json|draw.sha256|TASKS-*|FILTER-*|placed-*/*|void-*/*|*counted*|*reading-commit*|*blocked*|*differences*|import.record|state-lost-after-draw|*confirm*|*unconfirmed*|check3-*|*.body|*match*|*stop*|first-failure|rebuild-failed|consensus-fixed) publish_file "$f" "$rel" ;;
     esac
   done < <(trap - EXIT; tool files find "$P" -type f -print0)
   : > "$P/log-hashes"
@@ -1017,10 +1129,10 @@ release_step() { local x f rel folder n name
   publish_file "$P/tool-log-hashes" tool-log-hashes.txt
   [[ ! -f $P/log-hashes ]] || publish_file "$P/log-hashes" log-hashes.txt
   release_draw "$P" current
-  for folder in "$P"/void-*; do
-    [[ -d $folder && -f $folder/complete ]] || continue
-    release_draw "$folder" "${folder##*/}"
-  done
+  meta voids "$P/publish-list.json" > "$P/release-void-rounds" || refuse "release void rounds unavailable"
+  while IFS= read -r number; do
+    release_draw "$P/void-$number" "void-$number" 1
+  done < "$P/release-void-rounds"
   echo "publication recorded"; }
 case $STEP in
   prep) prep_step "$@"; exit $? ;;
@@ -1028,6 +1140,7 @@ case $STEP in
   *) echo "usage: run-followup.sh prep|rehearse|post-commit|beacon|draw|post-draw|place|build|tasks|rebuild|post-tasks|check3|run|table|rerun|abandon|cards|stop|release"; exit 2 ;;
 esac
 check_identity
+if [[ $STEP != release && -e $P/state-lost-after-draw ]]; then refuse "$(readfile "$P/state-lost-after-draw")"; fi
 if [[ ( $STEP == run || $STEP == rerun ) && -e $S/$TEST_MARKER && -z ${FOLLOWUP_STANDIN:-} ]]; then
   refuse "real arms require the recorded official directory"
 fi

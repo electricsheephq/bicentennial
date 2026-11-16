@@ -59,23 +59,44 @@ def test_r11_public_text_and_bash_syntax():
 # operations and repository reads are forwarded; modeled operations retain all
 # arguments and their environment so tests can inspect commands without sends.
 STANDIN = r"""#!/usr/bin/env python3
-import hashlib, json, os, pathlib, subprocess, sys
+import hashlib, json, os, pathlib, signal, subprocess, sys, time
 here = pathlib.Path(__file__).resolve().parent
 config_file = here / "scenario.json"
 c = json.loads(config_file.read_text())
 kind, *argv = sys.argv[1:]
 with (here / "calls.jsonl").open("a") as stream:
     stream.write(json.dumps(dict(kind=kind, argv=argv, pid=os.getpid(), locked=pathlib.Path(os.environ["FOLLOWUP_STATE"],"lock").is_dir(), cwd=os.getcwd(),
-        hashseed=os.environ.get("PYTHONHASHSEED"),
+        hashseed=os.environ.get("PYTHONHASHSEED"), cache_empty=(not any(pathlib.Path(argv[argv.index("--cache")+1]).iterdir())) if kind=="arm" and "--cache" in argv else None,
         git=sorted(k for k in os.environ if k.startswith("GIT_")))) + "\n")
 def save(): config_file.write_text(json.dumps(c))
+state_root=pathlib.Path(os.environ["FOLLOWUP_STATE"])
+def inject(phase):
+    fault=c.get("inject",{})
+    if fault.get("kind")!=kind or fault.get("phase","before")!=phase: return
+    if not all(part in " ".join(argv) for part in fault.get("match",[])): return
+    if fault.get("requires") and not (state_root/fault["requires"]).exists(): return
+    c.pop("inject"); save()
+    if fault.get("empty"): (state_root/fault["empty"]).write_text("")
+    if fault.get("unlink"): (state_root/fault["unlink"]).unlink(missing_ok=True)
+    if fault.get("full"):
+        target=state_root/fault["full"]; target.symlink_to("/dev/full"); target.with_name(target.name+".part").symlink_to("/dev/full")
+    if fault.get("kill"):
+        owners=list((state_root/"lock").iterdir())
+        c.setdefault("dead_pids",[]).append(owners[0].name); save()
+        if fault.get("young"):
+            os.utime(state_root/fault["young"],(c["clock"],c["clock"]))
+        os.kill(int(owners[0].name),signal.SIGKILL)
+        sys.exit(1)
+    if "stdout" in fault: print(fault["stdout"]); sys.exit(0)
+    if fault.get("fail"): sys.exit(1)
+inject("before")
 def option(flag): return argv[argv.index(flag)+1]
 def write(path, text):
     path=pathlib.Path(path); path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
 def digest(path): return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 def canonical(x): return json.dumps(x, sort_keys=True, separators=(",", ":"))+"\n"
 if kind==c.get("fail_kind"): sys.exit(1)
-if kind in c.get("real_tools",[]):
+if kind in c.get("real_tools",[]) or kind=="import-check" and "dr" in c.get("real_tools",[]):
     if kind=="gh": pass
     elif kind=="build":
         program="from pathlib import Path; import sys; from bicentennial.packs.build import build_tier; from bicentennial.systems.registry import REGISTRY,load; build_tier('T2',Path(sys.argv[1]),spec_path=Path(sys.argv[2]),harness_artifacts=[load(REGISTRY/'hermes-native.toml')['artifact']],edition=3); print('built rehearsal pack')"
@@ -129,7 +150,7 @@ if kind == "dr":
         codes=c.get("now_exits",[])
         if codes:
             code=codes.pop(0); save()
-            if code: print("refused: synthetic",file=sys.stderr); sys.exit(code)
+            if code: print("refused: "+c.get("now_reason","GitHub timeout"),file=sys.stderr); sys.exit(code)
         print("github",c["clock"],"skew 0"); sys.exit(0)
     if command=="beacon":
         if "--rehearsal" in args:
@@ -140,7 +161,9 @@ if kind == "dr":
             write(args[args.index("--out")+1],canonical(dict(round=n,signature=signature,randomness=hashlib.sha256(bytes.fromhex(signature)).hexdigest())))
             print("accepted round",n)
         elif code==13: print("cutoff round",c["round"])
-        else: print("not-accepted synthetic" if code==10 else "refused: synthetic")
+        else:
+            reasons=c.get("beacon_reasons",[]); reason=reasons.pop(0) if reasons else c.get("beacon_reason","GitHub timeout"); save()
+            print("not-accepted synthetic" if code==10 else "refused: "+reason,file=sys.stderr if code==2 else sys.stdout)
         sys.exit(code)
     if command=="post":
         k=args[0]
@@ -164,6 +187,7 @@ if kind == "dr":
             write(out/"records"/"000001-void.json", canonical(dict(round=n,receipt_sha256=c["void_receipt"])))
         print("published records"); sys.exit(0)
 if kind=="ps":
+    if argv[-1] in c.get("dead_pids",[]): sys.exit(1)
     if c.get("process_live") or ("-o" in argv and argv[-1]!="99999999"):
         print(c.get("process_start","synthetic start")); sys.exit(0)
     sys.exit(1)
@@ -181,12 +205,16 @@ if kind=="gate":
 if kind=="pins":
     print("fresh_install_hash","a"*64); print("artifact.sha256","a"*64); print("entry hermes-native"); sys.exit(0)
 if kind=="draw":
+    if c.get("hold_draw"): time.sleep(3)
+    if c.get("draw_exit",0):
+        print(c.get("draw_refusal","refused: synthetic"),file=sys.stderr); sys.exit(c["draw_exit"])
     write(option("--out"),canonical(dict(design=list(range(8001,8031)),spares=list(range(8031,8079)),drawn_at="changed" if c.get("draw_variant") else "synthetic")))
     if c.get("draw_refusal"): print(c["draw_refusal"],file=sys.stderr)
     print("sha256",digest(option("--out"))); print("design 30 spares 48"); sys.exit(c.get("draw_exit",0))
 if kind=="verify":
     print("verified sha256",c.get("verify_hash",digest(option("--draw"))),"at",c.get("verify_commit",c["commit"])); sys.exit(c.get("verify_exit",0))
 if kind=="place":
+    if c.get("place_exit",0)==2: print("refused: synthetic",file=sys.stderr); sys.exit(2)
     out=pathlib.Path(option("--out-dir")); out.mkdir()
     d=digest(option("--draw")); n=c.get("place_calls",0)+1; c["place_calls"]=n; save()
     code=c.get("place_exit",0)
@@ -211,6 +239,7 @@ if kind=="install":
     p=pathlib.Path(argv[-1]).name[-1]
     print(dict(A="a"*64,B="b"*64,C="c"*64)[p]); sys.exit(c.get("install_exit",0))
 if kind=="tasks":
+    if c.get("tasks_exit",0): print("REFUSED: synthetic",file=sys.stderr); sys.exit(c["tasks_exit"])
     p=option("--pack")
     payload=dict(header=dict(commit=option("--commit"),edition=3,pack=p,pack_hash=dict(A="a"*64,B="b"*64,C="c"*64)[p],draw_sha256=digest(option("--draw")),spec_sha256=digest(option("--spec"))),rows=[{}]*40,descriptive=[{}]*10)
     if c.get("task_fault")=="header": payload["header"]["commit"]="d"*40
@@ -218,7 +247,7 @@ if kind=="tasks":
     if c.get("task_fault")=="descriptive": payload["descriptive"].pop()
     write(option("--out"),canonical(payload)); print(p,"target items 40 descriptive items 10"); sys.exit(c.get("tasks_exit",0))
 if kind=="table":
-    print(c.get("table_output","pending before any score: "+" ".join(c["order"])+" - rerun once (§3, §4), then run again with --after-reruns"))
+    print(c.get("table_final_output") if "--after-reruns" in argv and c.get("table_final_output") else c.get("table_output","pending before any score: "+" ".join(c["order"])+" - rerun once (§3, §4), then run again with --after-reruns"))
     sys.exit(c.get("table_exit",4))
 if kind in ("check3","followup-tests","derivation-tests"):
     print("synthetic PASSED"); sys.exit(c.get(kind+"_exit",0))
@@ -227,7 +256,10 @@ if kind=="arm":
     if c.get("no_output"): sys.exit(code)
     out.mkdir(parents=True)
     if c.get("guard_refusal"):
-        write(out/"refusal.json",json.dumps(dict(code="roots_below_min"))); sys.exit(3)
+        write(out/"refusal.json",json.dumps(dict(code="roots_below_min")))
+        if "--diagnostics" in argv:
+            write(pathlib.Path(option("--diagnostics"))/"manifest.json",canonical(dict(commit=None,files=[],failures=[],skips=[])))
+        sys.exit(3)
     write(out/"card.json","{}")
     if "--diagnostics" in argv: pathlib.Path(option("--diagnostics")).mkdir(parents=True)
     if "--cache" in argv: write(pathlib.Path(option("--cache"))/"synthetic.t2-floor.json","{}")
@@ -241,7 +273,9 @@ if kind=="cutter":
 # All remaining calls, including metadata, venv and file probes, execute their
 # real argv unless they are explicitly modeled installation operations.
 if kind in ("venv", "pip", "pytest-import"): sys.exit(0)
-sys.exit(subprocess.call(argv))
+code=subprocess.call(argv)
+inject("after")
+sys.exit(code)
 """
 
 
@@ -287,6 +321,7 @@ def make_harness(tmp_path):
     env = dict(
         os.environ,
         HOME=str(home),
+        PYTHONHASHSEED="random",
         PATH=f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
         TMPDIR=str(tmp_path),
         GIT_CONFIG_GLOBAL=os.devnull,
@@ -339,14 +374,17 @@ def make_harness(tmp_path):
     prefix = (
         '#!/bin/bash\nexport FOLLOWUP_TEST_BIN="${0%/*}"\n'
         'printf "%s\\0" "$@" >> "$FOLLOWUP_TEST_BIN/allcalls.raw"\n'
-        'case $1 in files|meta|stamp|sha) shift; exec "$@" ;; esac\n'
-        "exec " + sys.executable + " - \"$@\" <<'STANDIN_PY'\n"
+        'case $1 in files|meta|stamp|sha) if [[ ! -f $FOLLOWUP_TEST_BIN/inject-enabled ]]; then shift; exec "$@"; fi ;; esac\n'
+        "exec "
+        + shlex.quote(sys.executable)
+        + ' "$FOLLOWUP_TEST_BIN/standin.py" "$@"\n'
     )
     body = STANDIN.split("\n", 1)[1].replace(
         "here = pathlib.Path(__file__).resolve().parent",
         'here = pathlib.Path(os.environ["FOLLOWUP_TEST_BIN"])',
     )
-    standin.write_text(prefix + body + "\nSTANDIN_PY\n")
+    (bin_dir / "standin.py").write_text(body)
+    standin.write_text(prefix)
     standin.chmod(0o755)
     state = tmp_path / "state"
     state.mkdir()
@@ -370,6 +408,8 @@ def make_harness(tmp_path):
         def set(self, **changes):
             value = json.loads(scenario.read_text())
             value.update(changes)
+            if "inject" in changes:
+                (bin_dir / "inject-enabled").touch()
             scenario.write_text(json.dumps(value))
 
         def run(self, *args, code=0):
@@ -380,7 +420,7 @@ def make_harness(tmp_path):
                 text=True,
                 timeout=900,
             )
-            assert result.returncode == code, (
+            assert code is None or result.returncode == code, (
                 f"step {args[0]} returned {result.returncode}: {result.stdout} {result.stderr}"
             )
             output = result.stdout + result.stderr
@@ -568,7 +608,17 @@ def test_r4_counted_post_posts_nothing_and_other_h_values(harness):
     h.set(counted=True, h_values=dict(system_hash="d" * 64))
     h.run("post-commit")
     assert not json.loads(h.scenario.read_text()).get("posts")
-    assert any("difference" in p.name for p in (h.state / "private").rglob("*"))
+    assert (h.state / "private/h-differences").read_text().splitlines() == [
+        name + " differs"
+        for name in (
+            "registry_entry_sha256",
+            "fresh_install_hash",
+            "artifact_sha256",
+            "system_hash",
+            "harness_hash",
+            "route_table_hash",
+        )
+    ]
 
 
 def test_r4_late_then_counted_and_exact_bodies(harness):
@@ -656,7 +706,12 @@ def test_r13_clock_retries_and_cutoff(harness):
     h.run("prep", h.commit, "1")
     h.run("rehearse")
     h.run("post-commit")
-    h.set(now_exits=[2, 0], beacon_exits=[10, 2, 0])
+    h.set(
+        now_exits=[2, 0],
+        now_reason="GitHub timeout",
+        beacon_exits=[10, 2, 0],
+        beacon_reason="relay timeout",
+    )
     h.run("beacon")
     assert (h.state / "private/BEACON").exists()
     assert len(h.calls("sleep")) >= 3
@@ -675,6 +730,9 @@ def test_r8_guard_refusal_not_an_attempt(harness, control):
     h.run("run", label, code=3)
     assert not (h.state / "runs" / label).exists()
     assert not (h.state / "logs" / f"{label}.seq").exists()
+    if control:
+        assert (h.state / "logs" / f"{label}.inv-1.guard-diag/manifest.json").exists()
+        assert not (h.state / "diag" / label).exists()
     h.set(guard_refusal=False)
     h.run("run", label)
 
@@ -703,7 +761,8 @@ def test_r7_r9_rerun_uses_fresh_reading_and_posted_hashes(harness):
     arms = h.calls("arm")
     assert len(arms) == 2
     caches = [c["argv"][c["argv"].index("--cache") + 1] for c in arms]
-    assert caches[0] != caches[1]
+    assert caches == [str(h.state / "cache-A-H1-rerun"), str(h.state / "cache-A")]
+    assert arms[0]["cache_empty"] is True
     h.run("table", "--after-reruns", code=2)
     h.run("table", code=4)
     table = h.calls("table")[-1]["argv"]
@@ -926,8 +985,9 @@ def integration_repo(tmp_path_factory):
             ["git", "-c", "core.hooksPath=" + os.devnull, *args], env=env, text=True
         ).strip()
 
-    git("clone", "--quiet", "--shared", "--no-checkout", str(ROOT), str(repo))
-    source_commit = git("-C", str(ROOT), "rev-parse", "HEAD")
+    source = Path(os.environ.get("FOLLOWUP_TEST_SOURCE_REPO", str(ROOT)))
+    git("clone", "--quiet", "--shared", "--no-checkout", str(source), str(repo))
+    source_commit = git("-C", str(source), "rev-parse", "HEAD")
     git("-C", str(repo), "checkout", "--quiet", "--detach", source_commit)
     for name in (
         "run-followup.sh",
@@ -980,7 +1040,7 @@ def integrate(h, integration_repo):
         decl_commit=decl_commit,
         repo=str(repo),
         merge_time=1812800000,
-        real_tools=["gh", "dr", "draw", "verify"],
+        real_tools=["gh", "dr", "draw", "verify", "import-check"],
     )
     return h
 
@@ -1038,7 +1098,19 @@ def test_i3_real_void_record_and_next_round(integrated):
     old = json.loads(h.scenario.read_text())["round"]
     assert (h.state / f"private/void-{old}/complete").is_file()
     h.run("post-commit")
-    assert len(json.loads(h.scenario.read_text())["comments"]) == 3
+    comments = json.loads(h.scenario.read_text())["comments"]
+    assert len(comments) == 3
+    assert comments[2]["body"].splitlines()[0] == "Follow-up draw: first post"
+    assert (
+        int(
+            next(
+                line.split()[1]
+                for line in comments[2]["body"].splitlines()
+                if line.startswith("round ")
+            )
+        )
+        != old
+    )
     assert not (h.state / "private/BEACON").exists()
 
 
@@ -1091,7 +1163,30 @@ def test_i7_real_beacon_cutoff_stops(integrated):
     due = 1692803367 + (c["round"] - 1) * 3
     h.set(clock=due + 86400, relay_unavailable=True)
     h.run("beacon")
-    h.run("draw", code=2)
+    for step in (
+        "rehearse",
+        "post-commit",
+        "beacon",
+        "draw",
+        "post-draw",
+        "place",
+        "build",
+        "tasks",
+        "rebuild",
+        "post-tasks",
+        "check3",
+        "run",
+        "rerun",
+        "table",
+        "cards",
+        "stop",
+    ):
+        result = (
+            h.run(step, "A.F1", code=2)
+            if step in ("run", "rerun")
+            else h.run(step, code=2)
+        )
+        assert "draw stopped" in result.stderr
     h.run("release")
     comments = json.loads(h.scenario.read_text())["comments"]
     assert comments[-1]["body"].startswith("Follow-up draw: stop\nreason beacon\n")
@@ -1171,6 +1266,7 @@ def real_rehearsal(tmp_path_factory, integration_repo):
             "install",
             "tasks",
             "table",
+            "import-check",
         ]
     )
     through(h, "rehearse")
@@ -1608,25 +1704,10 @@ def test_r12_import_copies_before_init_and_preserves_old(harness):
     h = harness
     through(h, "post-draw")
     old = h.state
-    void = old / "private/void-7"
-    void.mkdir()
-    (void / "complete").write_text("synthetic")
-    before = {
-        str(p.relative_to(old)): p.read_bytes()
-        for p in old.rglob("*")
-        if p.is_file() and not p.is_symlink()
-    }
-    new = old.with_name("imported")
-    new.mkdir()
-    (new / MARKER).touch()
-    h.state = new
-    h.env["FOLLOWUP_STATE"] = str(new)
-    h.set(markers=[dict(after_merge=True)])
-    h.run("prep", h.commit, "1", "--import", str(old))
-    assert (new / "private/void-7/complete").read_text() == "synthetic"
-    assert all((old / name).read_bytes() == raw for name, raw in before.items())
-    h.run("rehearse")
-    assert (new / "private/rehearsal/passed").exists()
+    new_test_state(h, "same-commit")
+    result = h.run("prep", h.commit, "1", "--import", str(old), code=2)
+    assert "import commit must differ" in result.stderr
+    assert not (h.state / "private/settings").exists()
 
 
 @pytest.mark.parametrize(
@@ -2244,6 +2325,8 @@ def test_r14_live_pid_without_start_is_not_abandoned(harness):
     tools.mkdir()
     (tools / "draw.start").write_text("100")
     (tools / "draw.pid").write_text("99999999")
+    now = json.loads(h.scenario.read_text())["clock"]
+    os.utime(tools / "draw.pid", (now, now))
     h.set(process_live=True)
     prior = len(h.calls("draw"))
     h.run("draw", code=2)
@@ -2284,3 +2367,863 @@ def test_r6_draw_record_refusals_fail_rehearsal(harness, change):
     h.set(**change)
     h.run("rehearse", code=2)
     assert not (h.state / "private/rehearsal/passed").exists()
+
+
+# Round 3: every fault uses synthetic state and the existing D3 gateway.
+def new_test_state(h, name):
+    target = h.state.with_name(name)
+    target.mkdir()
+    (target / MARKER).touch()
+    h.state = target
+    h.env["FOLLOWUP_STATE"] = str(target)
+    return target
+
+
+def fixture_commit(h, *, side=False):
+    args = ["git", "-C", str(h.repo)]
+    if side:
+        subprocess.run(
+            [*args, "checkout", "-qb", "side"],
+            env=h.env,
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        [
+            *args,
+            "-c",
+            "core.hooksPath=" + os.devnull,
+            "commit",
+            "--allow-empty",
+            "--no-gpg-sign",
+            "-qm",
+            "synthetic successor",
+        ],
+        env=h.env,
+        check=True,
+        capture_output=True,
+    )
+    commit = subprocess.check_output(
+        [*args, "rev-parse", "HEAD"], env=h.env, text=True
+    ).strip()
+    subprocess.run(
+        [*args, "checkout", "-q", "main"]
+        if side
+        else [*args, "update-ref", "refs/remotes/origin/main", commit],
+        env=h.env,
+        check=True,
+        capture_output=True,
+    )
+    return commit
+
+
+@pytest.mark.parametrize(
+    "source", ["unrecorded", "beacon", "run", "sequence", "official-for-test"]
+)
+def test_r3_import_source_guards(harness, source):
+    h = harness
+    through(h, "rehearse")
+    old = h.state
+    adopted = fixture_commit(h)
+    h.set(counted=True, counted_commit=adopted)
+    if source == "unrecorded":
+        (old / MARKER).unlink()
+    elif source == "official-for-test":
+        (old / MARKER).unlink()
+        (Path(h.env["HOME"]) / ".bicentennial-followup-official").write_text(str(old))
+    elif source == "beacon":
+        (old / "private/BEACON").write_text("{}")
+    elif source == "run":
+        (old / "runs/A.F1").mkdir()
+    else:
+        (old / "logs/A.F1.seq").write_text("1")
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    before = record.read_bytes() if record.exists() else None
+    new_test_state(h, "rejected-import")
+    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
+    assert (
+        "import source"
+        if source in ("unrecorded", "official-for-test")
+        else "import has"
+    ) in result.stderr
+    assert (record.read_bytes() if record.exists() else None) == before
+
+
+def test_r3_import_counted_commit_and_published_records(harness):
+    h = harness
+    through(h, "rehearse")
+    old = h.state
+    adopted = fixture_commit(h)
+    for name in (
+        "counted-other-commit",
+        "reading-commit-refusal",
+        "blocked",
+        "counted-list.json",
+        "evaluate.out",
+        "evaluate.err",
+        "first-post.out",
+        "first-post.err",
+    ):
+        (old / "private" / name).write_text("synthetic step-2 record\n")
+    # The old files deliberately name nothing: only S4's fresh reading authorizes adoption.
+    h.set(counted=True, counted_commit=adopted)
+    before = {
+        p.relative_to(old): p.read_bytes()
+        for p in old.rglob("*")
+        if p.is_file() and not p.is_symlink()
+    }
+    new_test_state(h, "adopted-r3")
+    h.run("prep", adopted, "1", "--import", str(old))
+    assert all((old / name).read_bytes() == raw for name, raw in before.items())
+    h.set(blocked=True)
+    (h.state / "private/blocked").write_text("blocked 9\n")
+    h.run("release")
+    for name in (
+        "counted-other-commit",
+        "reading-commit-refusal",
+        "blocked",
+        "counted-list.json",
+        "evaluate.out",
+        "evaluate.err",
+        "first-post.out",
+        "first-post.err",
+    ):
+        assert (
+            h.state / "publish/imported" / name
+        ).read_text() == "synthetic step-2 record\n"
+
+
+def test_r3_import_requires_s4_commit(harness):
+    h = harness
+    through(h, "rehearse")
+    old = h.state
+    adopted = fixture_commit(h)
+    (old / "private/counted-other-commit").write_text(adopted)
+    h.set(counted=True, counted_commit=h.commit)
+    new_test_state(h, "wrong-counted")
+    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
+    assert "import counted post must name" in result.stderr
+
+
+@pytest.mark.parametrize("exists", [True, False])
+def test_r3_lost_state_before_draw(harness, exists):
+    h = harness
+    old = h.state.with_name("old-official")
+    if exists:
+        old.mkdir()
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    record.write_text(str(old))
+    h.run("prep", h.commit, "1", "--import", "none", code=2 if exists else 0)
+    assert record.read_text() == str(old)
+    if exists:
+        assert not (h.state / "private/settings").exists()
+    else:
+        assert (h.state / "private/import.record").read_text() == "old state lost\n"
+        h.run(
+            "rehearse"
+        )  # Positive control: before the draw the operating path remains open.
+
+
+@pytest.mark.parametrize(
+    "line", ["Follow-up draw: second post", "Follow-up draw: task lists"]
+)
+def test_r3_lost_state_after_draw_release_only(harness, line):
+    h = harness
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    record.write_text(str(h.state.with_name("lost-official")))
+    h.set(markers=[dict(after_merge=True, first_line=line)])
+    h.run("prep", h.commit, "1", "--import", "none")
+    message = "state lost after the draw: no arm can run; readings unresolved (§10, missing data)"
+    for step in (
+        "rehearse",
+        "post-commit",
+        "beacon",
+        "draw",
+        "post-draw",
+        "place",
+        "build",
+        "tasks",
+        "rebuild",
+        "post-tasks",
+        "check3",
+        "run",
+        "rerun",
+        "abandon",
+        "table",
+        "cards",
+        "stop",
+    ):
+        result = (
+            h.run(step, "A.F1", code=2)
+            if step in ("run", "rerun", "abandon")
+            else h.run(step, code=2)
+        )
+        assert message in result.stderr
+    h.run("release")
+    assert (h.state / "publish/state-lost-after-draw").read_text().strip() == message
+    assert (h.state / "publish/import.record").read_text() == "old state lost\n"
+    assert (h.state / "publish/draw-record-1/records").is_dir()
+    assert not (h.state / "private/stopped").exists()
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "reproduced",
+        "differs",
+        "missing-beacon",
+        "missing-draw",
+        "missing-first",
+        "missing-second",
+        "missing-folder",
+        "second-differs",
+    ],
+)
+def test_r3_release_every_void(harness, variant):
+    h = harness
+    through(h, "post-draw")
+    h.set(place_exit=1)
+    h.run("place", code=1)
+    c = json.loads(h.scenario.read_text())
+    number = c["round"]
+    folder = h.state / f"private/void-{number}"
+    if variant.startswith("missing-"):
+        names = dict(
+            beacon="BEACON",
+            draw="DRAW.json",
+            first="placed-1/void.json",
+            second="placed-2/void.json",
+        )
+        if variant == "missing-folder":
+            folder.rename(folder.with_name("retained-void"))
+        else:
+            (folder / names[variant.removeprefix("missing-")]).unlink()
+    if variant == "second-differs":
+        (folder / "placed-2/void.json").write_text("{}")
+    if variant == "differs":
+        h.set(place_exit=0)
+    (h.state / "private/blocked").write_text("blocked 9\n")
+    (h.state / "private/rebuild-failed").write_text("synthetic failure\n")
+    h.run("release")
+    outcome = (h.state / f"publish/void-{number}/void.outcome").read_text().strip()
+    assert outcome == (
+        "void reproduced"
+        if variant == "reproduced"
+        else "void not reproduced: under §2 the earlier draw stands"
+    )
+    assert (h.state / "publish/rebuild-failed").read_text() == "synthetic failure\n"
+
+
+def test_r3_check3_exact_command(harness):
+    h = harness
+    through(h, "check3")
+    for call in h.calls("check3"):
+        args = call["argv"]
+        assert args[:3] == ["python3", h.env["FOLLOWUP_SLOT"], "--"]
+        assert args[args.index("-m") + 1 : args.index("-m") + 4] == [
+            "pytest",
+            "-v",
+            "-p",
+        ]
+        assert [
+            a for a in args if a.endswith(".py") and a != h.env["FOLLOWUP_SLOT"]
+        ] == ["tests/runner/test_control_arms.py"]
+
+
+@pytest.mark.parametrize("fault", ["run order", "card pins", "pack code pins"])
+def test_r3_release_after_prerun_fault(harness, fault):
+    h = harness
+    h.ready()
+    first_attempts(h)
+    h.set(table_exit=3, table_output="fault: " + fault)
+    h.run("table", "--after-reruns", code=2)
+    assert not list((h.state / "logs").glob("table-*.exit"))
+    h.run("release")
+    assert list((h.state / "publish/records").glob("table-*.pre-exit"))
+
+
+def test_r3_reading_refusal_prefix(harness):
+    h = harness
+    through(h, "rehearse")
+    h.set(reading_refusal="unavailable", counted_commit="c" * 40)
+    result = h.run("post-commit", code=2)
+    assert result.stderr == "refused: reading module unavailable at " + "c" * 40 + "\n"
+
+
+TRANSIENTS = [
+    "round not due",
+    "GitHub timeout",
+    "GitHub HTTP status",
+    "GitHub GraphQL errors",
+    "GitHub time unavailable",
+    "missing HTTP status",
+    "missing HTTP header block",
+    "relay timeout",
+    "clock skew exceeds 60 seconds",
+    "reading module unavailable at " + "c" * 40,
+]
+
+
+@pytest.mark.parametrize("where", ["now", "beacon"])
+@pytest.mark.parametrize(
+    "reason",
+    TRANSIENTS
+    + [
+        "malformed or unavailable record",
+        "draw stopped",
+        "beacon timing receipt missing",
+    ],
+)
+def test_r3_beacon_retry_classification(harness, where, reason):
+    """Transient cases are positive controls; permanent/catch-all cases fail the base."""
+    h = harness
+    through(h, "post-commit")
+    h.due()
+    catchall = reason == "malformed or unavailable record"
+    terminal = reason in ("draw stopped", "beacon timing receipt missing") or catchall
+    count = 4 if catchall else 1
+    h.set(**{where + "_exits": [2] * count + [0], where + "_reason": reason})
+    before = len(h.calls("sleep"))
+    result = h.run("beacon", code=2 if terminal else 0)
+    calls = [
+        call
+        for call in h.calls("dr")
+        if where in call["argv"] and "--rehearsal" not in call["argv"]
+    ]
+    assert len(calls) == (3 if catchall else 1 if terminal else 2)
+    assert len(h.calls("sleep")) - before == (2 if catchall else 0 if terminal else 1)
+    if terminal:
+        assert result.stderr == "refused: " + reason + "\n"
+    else:
+        assert (h.state / "private/BEACON").exists()
+
+
+def test_r3_kill_after_fork_before_start(harness):
+    h = harness
+    through(h, "beacon")
+    h.set(
+        hold_draw=True,
+        inject=dict(
+            kind="ps",
+            requires="private/tools/draw.pid",
+            young="private/tools/draw.pid",
+            kill=True,
+        ),
+    )
+    h.run("draw", code=-9)
+    assert not (h.state / "private/tools/draw.start").exists()
+    h.run("abandon", "A.F1")
+    result = h.run("draw", code=2)
+    assert "recorded tool may be starting" in result.stderr
+    assert len([c for c in h.calls("draw") if "--rehearsal" not in c["argv"]]) == 1
+
+
+def test_r3_kill_task_hash_after_rename(harness):
+    h = harness
+    through(h, "build")
+    h.set(
+        inject=dict(
+            kind="files",
+            match=["mv", "TASKS-A.json"],
+            phase="after",
+            unlink="private/TASKS-A.sha256",
+            kill=True,
+        )
+    )
+    h.run("tasks", code=-9)
+    assert (h.state / "private/TASKS-A.json").exists()
+    assert not (h.state / "private/TASKS-A.sha256").exists()
+    h.run("abandon", "A.F1")
+    h.run("tasks")
+    assert (
+        len(
+            [
+                c
+                for c in h.calls("tasks")
+                if "A" in c["argv"] and not any("/rehearsal/" in a for a in c["argv"])
+            ]
+        )
+        == 1
+    )
+    assert len((h.state / "private/TASKS-A.sha256").read_text().strip()) == 64
+
+
+@pytest.mark.parametrize("phase", ["before", "after"])
+def test_r3_kill_mid_rebuild_archive(harness, phase):
+    h = harness
+    through(h, "place")
+    h.set(build_exit=1)
+    h.run("build", code=1)
+    h.set(
+        build_exit=0,
+        inject=dict(kind="files", match=["mv", "/failure"], phase=phase, kill=True),
+    )
+    h.run("rebuild", code=-9)
+    assert (h.state / "private/rebuild-started").read_text() == "started\n"
+    h.run("abandon", "A.F1")
+    assert "rebuild archive incomplete" in h.run("draw", code=2).stderr
+    h.run("rebuild")
+    assert (h.state / "private/first-attempt/failure").exists()
+    assert (h.state / "private/rebuild-complete").exists()
+    h.run("rebuild", code=2)
+
+
+@pytest.mark.parametrize("resume", ["run", "rerun", "abandon"])
+@pytest.mark.parametrize("guard", [False, True])
+def test_r3_kill_after_arm_exit_before_copy(harness, resume, guard):
+    h = harness
+    h.ready()
+    h.set(
+        guard_refusal=guard,
+        inject=dict(
+            kind="files",
+            match=["mv" if guard else "cp", "A.F1.inv-1."],
+            requires="logs/A.F1.inv-1.exit",
+            kill=True,
+        ),
+    )
+    h.run("run", "A.F1", code=-9)
+    assert (h.state / "logs/A.F1.inv-1.exit").exists()
+    assert not (h.state / "logs/A.F1.seq").exists()
+    h.run("abandon", "A.R1")  # Clear only the stale wrapper lock.
+    if guard:
+        h.set(guard_refusal=False)
+    h.run(
+        resume,
+        "A.F1",
+        code=2 if resume in ("run", "rerun") and not guard or resume == "rerun" else 0,
+    )
+    if guard:
+        assert (h.state / "logs/A.F1.inv-1.guard-diag/manifest.json").exists()
+    else:
+        assert (h.state / "logs/A.F1.seq").read_text() == (
+            h.state / "logs/A.F1.inv-1.seq"
+        ).read_text()
+    assert len(h.calls("arm")) == (2 if guard and resume == "run" else 1)
+
+
+def test_r3_failed_void_confirmation_write(harness):
+    h = harness
+    through(h, "post-draw")
+    number = json.loads(h.scenario.read_text())["round"]
+    h.set(
+        place_exit=1,
+        inject=dict(
+            kind="sha",
+            match=["placed-1/void.json"],
+            full=f"private/void-confirm-{number}",
+        ),
+    )
+    result = h.run("place", code=2)
+    assert "void confirmation record" in result.stderr
+    assert not any("record-void" in call["argv"] for call in h.calls("dr"))
+    assert not json.loads(h.scenario.read_text()).get("voids")
+
+
+def test_r3_failed_invocation_sequence_write(harness):
+    h = harness
+    h.ready()
+    h.set(
+        inject=dict(
+            kind="clock", requires="logs/A.F1.inv-1.seq", empty="logs/A.F1.inv-1.seq"
+        )
+    )
+    result = h.run("run", "A.F1", code=2)
+    assert "invocation sequence" in result.stderr
+    assert not h.calls("arm")
+    h.run("abandon", "A.F1")
+    assert (h.state / "logs/A.F1.inv-1.seq.failed").exists()
+    h.run("run", "A.F1")
+    assert len(h.calls("arm")) == 1
+
+
+@pytest.mark.parametrize("age", [59, 60])
+@pytest.mark.parametrize("shape", ["ownerless", "empty-owner", "empty-tool"])
+def test_r3_missing_start_age(harness, age, shape):
+    h = harness
+    through(h, "beacon")
+    now = json.loads(h.scenario.read_text())["clock"]
+    if shape == "empty-tool":
+        folder = h.state / "private/tools"
+        folder.mkdir()
+        path = folder / "draw.pid"
+        path.write_text("99999999")
+        (folder / "draw.process-start").touch()
+        os.utime(path, (now - age, now - age))
+        h.set(process_live=True)
+        result = h.run("draw", code=2 if age < 60 else 0)
+    else:
+        path = h.state / "lock"
+        path.mkdir()
+        if shape == "empty-owner":
+            path = path / "99999999"
+            path.mkdir()
+            (path / "start").touch()
+        os.utime(path, (now - age, now - age))
+        h.set(process_live=True)
+        result = h.run("abandon", "A.F1", code=2 if age < 60 else 0)
+    if age < 60:
+        assert "may be starting" in result.stderr
+    elif shape != "empty-tool":
+        assert not (h.state / "lock").exists()
+
+
+def test_r3_void_archive_preserves_counted_evaluation(harness):
+    h = harness
+    through(h, "post-draw")
+    h.set(place_exit=1, dr_refuse="record-void")
+    h.run("place", code=2)
+    number = json.loads(h.scenario.read_text())["round"]
+    receipt = (h.state / f"private/void-confirm-{number}").read_text().split()[1]
+    h.set(
+        dr_refuse=None,
+        voids=[number],
+        void_receipt=receipt,
+        counted=True,
+        round=number + 1,
+    )
+    # S4 counts a later on-time post while finishing the previous void's archive.
+    h.run("post-commit")
+    assert (h.state / "private/evaluate.out").exists()
+    assert (h.state / f"private/void-{number}/evaluate.out").exists()
+
+
+@pytest.mark.parametrize(
+    "step,previous,reason",
+    [
+        ("place", "draw", "draw post is not recorded"),
+        ("build", "post-draw", "two placements"),
+        ("tasks", "place", "not built"),
+        ("post-tasks", "build", "not frozen"),
+        ("check3", "tasks", "tasks post is not recorded"),
+    ],
+)
+def test_r3_immediate_prerequisite(harness, step, previous, reason):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    through(h, previous)
+    assert reason in h.run(step, code=2).stderr
+
+
+@pytest.mark.parametrize(
+    "command,previous,step",
+    [
+        ("read", "rehearse", "post-commit"),
+        ("evaluate", "rehearse", "post-commit"),
+        ("choose-round", "rehearse", "post-commit"),
+        ("post", "rehearse", "post-commit"),
+        ("match", "draw", "post-draw"),
+    ],
+)
+def test_r3_s4_refusal_at_each_call(harness, command, previous, step):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    through(h, previous)
+    h.set(dr_refuse=command)
+    h.run(step, code=2)
+    assert not h.calls("arm")
+
+
+@pytest.mark.parametrize("step", ["beacon", "post-draw"])
+@pytest.mark.parametrize("field", ["round", "counted_commit"])
+def test_r3_counted_identity_changes(harness, step, field):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    through(h, "draw" if step == "post-draw" else "post-commit")
+    c = json.loads(h.scenario.read_text())
+    h.set(**{field: c["round"] + 1 if field == "round" else "c" * 40})
+    assert ("round differs" if field == "round" else "counted commit differs") in h.run(
+        step, code=2
+    ).stderr
+
+
+def test_r3_exact_table_sequence_options(harness):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    h.ready()
+    first_attempts(h)
+    for number, label in enumerate(reversed(ORDER), 1):
+        (h.state / "logs" / (label + ".seq")).write_text(str(number))
+    (h.state / "runs/A.F1.rerun").mkdir()
+    (h.state / "logs/A.F1.rerun.seq").write_text("37")
+    h.run("table", code=4)
+    argv = h.calls("table")[-1]["argv"]
+    assert argv[argv.index("--order") + 1] == ",".join([*reversed(ORDER[1:]), "A.F1"])
+    assert argv[argv.index("--attempts") + 1] == ",".join(
+        [*reversed(ORDER), "A.F1.rerun"]
+    )
+    assert argv[argv.index("--check3") + 1] == str(h.state / "private/check3-1.txt")
+    assert argv[argv.index("--filter-out") + 1] == str(
+        h.state / "private/FILTER-38.json"
+    )
+
+
+def test_r3_rerun_immediately_after_after_reruns_pending(harness):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    h.ready()
+    first_attempts(h)
+    h.set(
+        table_output="pending before any score: A.H1 - rerun once (§3, §4), then run again with --after-reruns"
+    )
+    h.run("table", code=4)
+    h.run("rerun", "A.H1")
+    h.set(
+        table_final_output="pending before any score: A.H2 - rerun once (§3, §4), then run again with --after-reruns"
+    )
+    h.run("table", "--after-reruns", code=4)
+    h.run("rerun", "A.H2")
+
+
+def test_r3_release_blocked_verify_and_d19_files(harness):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    through(h, "rehearse")
+    h.set(blocked=True)
+    h.run("post-commit", code=2)
+    h.run("release")
+    assert (h.state / "publish/blocked").exists()
+    h.set(blocked=False)
+    for step in (
+        "post-commit",
+        "beacon",
+        "draw",
+        "post-draw",
+        "place",
+        "build",
+        "tasks",
+        "post-tasks",
+        "check3",
+    ):
+        h.run(step)
+    first_attempts(h)
+    (h.state / "private/FILTER-37.json").write_text("{}")
+    h.set(table_exit=3, table_output="fault: pack code pins", verify_exit=1)
+    h.run("table", code=3)
+    h.run("release")
+    published = h.state / "publish"
+    for name in [
+        "BEACON",
+        "DRAW.json",
+        "draw.sha256",
+        "counted.json",
+        "h-differences",
+        "FILTER-37.json",
+        *[
+            f"{stem}-{p}.{suffix}"
+            for p in "ABC"
+            for stem, suffix in (("TASKS", "json"), ("TASKS", "sha256"))
+        ],
+        *[
+            f"placed-{i}/{stem}-{p}.{suffix}"
+            for i in (1, 2)
+            for p in "ABC"
+            for stem, suffix in (("pack", "toml"), ("placement", "json"))
+        ],
+    ]:
+        assert (published / name).is_file(), name
+    for suffix in ("txt", "flags", "exit", "seq"):
+        assert (published / f"records/table-37.{suffix}").is_file()
+    assert (published / "draw-check-current.exit").read_text() == "exit 1\n"
+
+
+def test_r3_real_non573_pr_outside_history(harness):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    outside = fixture_commit(h, side=True)
+    h.set(pr_merge_overrides={"1": outside})
+    result = h.run("prep", h.commit, "1", code=2)
+    assert "prerequisite merge is outside the run history" in result.stderr
+    assert not (h.state / "private/settings").exists()
+
+
+def test_r3_new_worktree_environment(harness):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = harness
+    through(h, "place")
+    calls = [call for call in h.calls() if "/worktrees/" in call["cwd"]]
+    assert {call["kind"] for call in calls} >= {
+        "draw",
+        "verify",
+        "place",
+        "import-check",
+    }
+    assert all(call["hashseed"] == "0" and call["git"] == [] for call in calls)
+    assert (h.state / "private/h-differences").read_text() == ""
+
+
+def test_r3_real_s4_first_post_blocks_new_directory(integrated):
+    """Positive control: exercise an already-correct round-2 path."""
+    h = integrated
+    dr = by_path("r3_first", SCRIPT.with_name("draw_record.py"))
+    c = json.loads(h.scenario.read_text())
+    h.set(
+        comments=[
+            dict(
+                id=77,
+                author=71,
+                created_at=dr.stamp(c["clock"]),
+                body=f"Follow-up draw: first post\nround {c['round']}\nrun_commit {h.commit}\n",
+            )
+        ]
+    )
+    assert "draw already began" in h.run("prep", h.commit, "1", code=2).stderr
+
+
+def test_r3_official_import_source_before_external_tools(harness):
+    h = harness
+    through(h, "rehearse")
+    old = h.state
+    adopted = fixture_commit(h)
+    called = blocking_python(h)
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    record.write_text(str(old.with_name("authorized-source")))
+    h.state = old.with_name("unmarked-target")
+    h.env["FOLLOWUP_STATE"] = str(h.state)
+    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
+    assert "import source is not the recorded official directory" in result.stderr
+    assert not called.exists()
+    assert record.read_text() == str(old.with_name("authorized-source"))
+
+
+def test_r3_record_copy_failure_resumes(harness):
+    h = harness
+    h.ready()
+    h.set(inject=dict(kind="files", match=["cp", "A.F1.inv-1.start"], fail=True))
+    h.run("run", "A.F1", code=2)
+    assert not (h.state / "logs/A.F1.seq").exists()
+    assert len(h.calls("arm")) == 1
+    h.run("abandon", "A.F1")
+    assert (h.state / "logs/A.F1.seq").exists()
+    assert len(h.calls("arm")) == 1
+
+
+def test_r3_check3_receipt_write_failure(harness):
+    h = harness
+    through(h, "post-tasks")
+    # The open receipt already has its commit line. Truncate it inside check3,
+    # independently of whether the caller later validates that receipt.
+    h.set(inject=dict(kind="check3", empty="private/check3-1.txt"))
+    result = h.run("check3", code=None)
+    assert not (h.state / "private/check3-1.txt").read_text().startswith("commit ")
+    assert result.returncode == 2
+    assert "check 3 receipt write failed" in result.stderr
+    assert not h.calls("arm")
+    assert "check 3 must pass" in h.run("run", "A.F1", code=2).stderr
+    h.run("check3")
+    h.run("run", "A.F1")
+    assert len(h.calls("arm")) == 1
+
+
+def test_r3_second_check3_receipt_write_failure_releases(harness):
+    h = harness
+    through(h, "post-tasks")
+    h.set(check3_exit=1)
+    h.run("check3", code=1)
+    h.set(check3_exit=0, inject=dict(kind="check3", empty="private/check3-2.txt"))
+    result = h.run("check3", code=None)
+    assert result.returncode == 2
+    assert "check 3 receipt write failed" in result.stderr
+    assert "check 3 must pass" in h.run("run", "A.F1", code=2).stderr
+    assert "check 3 has run twice" in h.run("check3", code=2).stderr
+    h.run("release")
+    assert (h.state / "publish/check3-2.txt").is_file()
+    assert not h.calls("arm")
+
+
+def test_r3_same_commit_import_before_beacon(harness):
+    h = harness
+    through(h, "post-commit")
+    old = h.state
+    new_test_state(h, "same-before-beacon")
+    result = h.run("prep", h.commit, "1", "--import", str(old), code=2)
+    assert "import commit must differ" in result.stderr
+
+
+def test_r3_import_requires_successful_evaluate(harness):
+    h = harness
+    through(h, "rehearse")
+    old = h.state
+    adopted = fixture_commit(h)
+    h.set(counted=True, counted_commit=adopted, reading_refusal="unavailable")
+    new_test_state(h, "unavailable-import")
+    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
+    assert "import counted evaluation refused" in result.stderr
+
+
+@pytest.mark.parametrize("fault", ["write", "hash-format"])
+def test_r3_task_hash_checked_before_rename(harness, fault):
+    h = harness
+    through(h, "build")
+    injection = (
+        dict(kind="files", match=["mv", "TASKS-A.sha256"], fail=True)
+        if fault == "write"
+        else dict(kind="sha", match=["TASKS-A.json.part"], stdout="invalid")
+    )
+    h.set(inject=injection)
+    h.run("tasks", code=2)
+    assert not (h.state / "private/TASKS-A.json").exists()
+    assert (h.state / "private/TASKS-A.json.part").exists()
+    h.run("tasks")
+    assert (
+        len(
+            [
+                call
+                for call in h.calls("tasks")
+                if "A" in call["argv"]
+                and not any("/rehearsal/" in arg for arg in call["argv"])
+            ]
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("fault", ["header", "exit"])
+def test_r3_task_hash_recovery_rechecks(harness, fault):
+    # Positive controls: the new recovery must retain the old refusal for bad data.
+    h = harness
+    through(h, "tasks")
+    (h.state / "private/TASKS-A.sha256").unlink()
+    if fault == "exit":
+        (h.state / "private/tools/tasks-A.exit").write_text("3")
+    else:
+        path = h.state / "private/TASKS-A.json"
+        payload = json.loads(path.read_text())
+        payload["header"]["commit"] = "c" * 40
+        path.write_text(json.dumps(payload))
+    h.run("tasks", code=2)
+    assert not (h.state / "private/TASKS-A.sha256").exists()
+
+
+def test_r3_kill_between_guard_moves(harness):
+    h = harness
+    h.ready()
+    h.set(
+        guard_refusal=True,
+        inject=dict(
+            kind="files", match=["mv", "A.F1.inv-1.guard-out"], phase="after", kill=True
+        ),
+    )
+    h.run("run", "A.F1", code=-9)
+    assert (h.state / "logs/A.F1.inv-1.guard-out").exists()
+    h.run("abandon", "A.R1")
+    h.set(guard_refusal=False)
+    h.run("run", "A.F1")
+    assert (h.state / "logs/A.F1.inv-1.guard-diag/manifest.json").exists()
+    assert len(h.calls("arm")) == 2
+
+
+def test_r3_newest_invocation_is_numeric(harness):
+    """Positive control: completing invocation ten must retain its own records."""
+    h = harness
+    h.ready()
+    for n in range(1, 10):
+        prefix = h.state / f"logs/A.F1.inv-{n}"
+        prefix.with_suffix(prefix.suffix + ".start").write_text("1")
+        prefix.with_suffix(prefix.suffix + ".exit").write_text("exit=3")
+        prefix.with_suffix(prefix.suffix + ".seq").write_text(str(n))
+        prefix.with_suffix(prefix.suffix + ".guard-out").mkdir()
+    (h.state / "counter").write_text("9")
+    h.run("run", "A.F1")
+    assert (h.state / "logs/A.F1.seq").read_text() == "10\n"
+    assert (h.state / "logs/A.F1.exit").read_text() == "exit=0\n"

@@ -160,7 +160,7 @@ Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 | `prep SHA PR [PR ...] [--import DIR\|none]` | A main commit and merged prerequisites; fixes settings, detached worktree, venv and declaration record. Import copies the prior draw records and voids before initialization; `none` records lost state. |
 | `rehearse` | No real BEACON; places, builds and installs three public-integer packs, prepares H without sends, freezes lists, checks the no-arms reading, check 3, follow-up tests and known-answer derivation. Keeps failed rehearsals. |
 | `post-commit` | Rehearsal passed at the run commit; adopts the counted post or posts round, commit and H's six values. Posted values govern H's checks even if they differ from rehearsal. |
-| `beacon` | Counted commitment; waits under caffeinate, retries both relay reads and clock refusals every thirty seconds, saves accepted BEACON or posts the cutoff stop. |
+| `beacon` | Counted commitment; waits under caffeinate, retries relay reads and only the transient S4 refusals every thirty seconds, saves accepted BEACON or posts the cutoff stop. |
 | `draw` | Accepted counted BEACON; fresh clean worktree, recorded draw and exact hash-and-commit verification. |
 | `post-draw` | Verified draw; matches or posts round, draw hash, draw time and randomness. |
 | `place` | Recorded second post; two independent placements agree, or a reproduced void is confirmed, recorded and archived. |
@@ -168,7 +168,7 @@ Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 | `tasks` | Installed packs, no attempts; validates and freezes all three task lists. |
 | `rebuild` | A recorded failed build attempt; repeats draw, two placements, three builds and lists once, from fresh worktrees, preserving the first attempt. Failure posts the build stop. |
 | `post-tasks` | Three frozen lists and packs; matches or posts their hashes and the round. |
-| `check3` | Task-list post, no arm attempt; keeps one passing attempt or at most two attempts, with commit and exit. A second failure ends the run. |
+| `check3` | Task-list post, no arm attempt; keeps one passing attempt or at most two attempts, with commit and exit. A missing or damaged receipt consumes that attempt; retry if one remains, otherwise release. A second failure ends the run. |
 | `run LABEL` | All posts still match, passing check 3, preceding first attempts; runs the next of thirty-six arms with the frozen send bound. |
 | `table [--after-reruns]` | All first attempts, frozen lists and check 3; preserves each reading, flags, exit and sequence. The flag first recomputes which arms are pending. |
 | `rerun LABEL` | All first attempts and the latest reading naming the label; one whole rerun with the same command and send bound, then another reading. |
@@ -205,3 +205,40 @@ it under the rerun rule. No release step commits or posts results: maintainers
 review and commit its publication folder beside the result.
 
 When placement confirms a void, its exit 1 means the next step is `post-commit` for a new round; a failed placement instead requires `rebuild`. Every cutoff keeps its partial logs, and the saved tool PID and process start distinguish a live invocation from a reused PID.
+
+Import is only for the counted post naming a different commit. `prep SHA --import DIR`
+accepts only the recorded official source (a marked test source in tests), with no
+BEACON or arm records, after its own S4 reading counts SHA; it preserves the old
+step-2 records in `private/imported/` and publishes them at release. A refusal
+leaves the official-directory record unchanged; move the unrecorded new directory
+aside before retrying.
+
+`--import none` requires the recorded old directory to be absent and records
+`old state lost`. Before any merging-account second-post or task-list marker
+after the merge it can prepare normally; after either marker it is permanently
+release-only: `state lost after the draw: no arm can run; readings unresolved
+(§10, missing data)`. This is missing data, not another §2 stop. A deleted counted
+post combined with fresh draw-record state is §10's disclosed limit: readers
+check the published list of posts against their own copies or a public archive.
+
+Beacon waits retry S4's round-not-due, GitHub transport/status/time/header,
+GraphQL, relay-timeout, clock-skew and unavailable-reading-module refusals;
+`malformed or unavailable record` gets at most two further attempts. Any other
+refusal returns immediately; run `beacon` again after fixing its cause. S4 keeps
+every attempt, and its 24-hour cutoff is unchanged.
+
+After fixing a storage-write failure, repeat the refused step: checked record
+partials are rewritten, frozen task hashes are recovered only from a successful
+tasks exit and a rechecked list, and an interrupted rebuild finishes its archive
+before proceeding. If a wrapper was killed, first use `abandon TAG` to clear its
+dead lock; the next `run`, `rerun` or `abandon` for that label finishes any completed
+invocation's records or guard move without running that invocation again.
+An owner or tool without a start record is left alone for sixty seconds by the
+recorded clock; a PID alone never proves it live. Check 3 runs only
+`tests/runner/test_control_arms.py`, verbose, through the slot, at rehearsal and
+on each attempt. Release also accepts a terminal pin/order fault from an
+`--after-reruns` pre-run and reports every S4 void round, including missing inputs.
+
+If a sequence write is refused before an arm starts, `abandon LABEL` preserves
+that no-output invocation's invalid sequence as `.seq.failed`, then the same
+`run` or `rerun` can be retried. A produced arm is never discarded by this recovery.
