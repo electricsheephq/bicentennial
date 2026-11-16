@@ -68,6 +68,7 @@ kind, *argv = sys.argv[1:]
 with (here / "calls.jsonl").open("a") as stream:
     stream.write(json.dumps(dict(kind=kind, argv=argv, pid=os.getpid(), locked=pathlib.Path(os.environ["FOLLOWUP_STATE"],"lock").is_dir(), cwd=os.getcwd(),
         hashseed=os.environ.get("PYTHONHASHSEED"), cache_empty=(not any(pathlib.Path(argv[argv.index("--cache")+1]).iterdir())) if kind=="arm" and "--cache" in argv else None,
+        pytest_env={k:os.environ[k] for k in ("PYTEST_ADDOPTS","PYTEST_PLUGINS","PYTEST_DISABLE_PLUGIN_AUTOLOAD") if k in os.environ} if kind=="check3" else None,
         git=sorted(k for k in os.environ if k.startswith("GIT_")))) + "\n")
 def save(): config_file.write_text(json.dumps(c))
 state_root=pathlib.Path(os.environ["FOLLOWUP_STATE"])
@@ -76,6 +77,8 @@ def inject(phase):
     if fault.get("kind")!=kind or fault.get("phase","before")!=phase: return
     if not all(part in " ".join(argv) for part in fault.get("match",[])): return
     if fault.get("requires") and not (state_root/fault["requires"]).exists(): return
+    if fault.get("skip",0):
+        fault["skip"]-=1; save(); return
     c.pop("inject"); save()
     if fault.get("empty"): (state_root/fault["empty"]).write_text("")
     if fault.get("unlink"): (state_root/fault["unlink"]).unlink(missing_ok=True)
@@ -272,7 +275,16 @@ if kind=="table":
     if "--filter-out" in argv and c.get("table_exit",4)==0: write(option("--filter-out"),canonical({p:{} for p in "ABC"}))
     print(c.get("table_final_output") if "--after-reruns" in argv and c.get("table_final_output") else c.get("table_output","pending before any score: "+" ".join(c["order"])+" - rerun once (§3, §4), then run again with --after-reruns"))
     sys.exit(c.get("table_exit",4))
-if kind in ("check3","followup-tests","derivation-tests"):
+if kind=="check3-rule":
+    sys.exit(subprocess.call([sys.executable,*argv[1:]]))
+if kind=="check3":
+    for test in c["check3_tests"]:
+        if test!=c.get("check3_missing"):
+            print("tests/runner/test_control_arms.py::"+test+" PASSED")
+    if c.get("check3_other"):
+        print("tests/runner/test_control_arms.py::"+c["check3_tests"][0]+" "+c["check3_other"])
+    sys.exit(c.get("check3_exit",0))
+if kind in ("followup-tests","derivation-tests"):
     print("synthetic PASSED"); sys.exit(c.get(kind+"_exit",0))
 if kind=="arm":
     code=c.get("arm_exit",0); out=pathlib.Path(option("--out"))
@@ -339,6 +351,14 @@ def make_harness(tmp_path):
         "run-followup.sh",
     ):
         files["results/followup/run/" + name] = "synthetic\n"
+    # The synthetic worktree exposes the reader's real rule objects, not a copy.
+    files["results/followup/run/table.py"] = (
+        "import importlib.util, sys\n"
+        f"sys.path.insert(0, {str(ROOT / 'src')!r})\n"
+        f"spec = importlib.util.spec_from_file_location('fixture_reader', {str(SCRIPT.with_name('table.py'))!r})\n"
+        "reader = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(reader)\n"
+        "rules = reader.rules\n"
+    )
     for name, text in files.items():
         target = repo / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -356,11 +376,12 @@ def make_harness(tmp_path):
         GIT_COMMITTER_NAME="Synthetic",
         GIT_COMMITTER_EMAIL="synthetic@example.invalid",
     )
-    located = subprocess.run(
-        ["xcrun", "--find", "git"], env=env, capture_output=True, text=True, timeout=10
-    )
-    if located.returncode == 0:
-        (bin_dir / "git").symlink_to(located.stdout.strip())
+    if shutil.which("xcrun"):
+        located = subprocess.run(
+            ["xcrun", "--find", "git"], env=env, capture_output=True, text=True, timeout=10
+        )
+        if located.returncode == 0:
+            (bin_dir / "git").symlink_to(located.stdout.strip())
     for args in (
         ("init", "-q", "--template=", "--initial-branch=main"),
         ("add", "."),
@@ -392,6 +413,7 @@ def make_harness(tmp_path):
         due=1812803364,
         clock=1812802464,
         order=list(ORDER),
+        check3_tests=list(by_path("fixture_check3_rules", SCRIPT.with_name("table.py")).rules.CHECK3_TESTS),
     )
     scenario = bin_dir / "scenario.json"
     scenario.write_text(json.dumps(config))
@@ -1812,7 +1834,7 @@ def test_r10_real_arm_refused_in_marked_directory(integrated):
     binary.symlink_to(sys.executable)
     h.env.pop("FOLLOWUP_STANDIN")
     answer = h.run("run", "A.F1", code=2)
-    assert "real arms require" in answer.stderr
+    assert "a non-official folder runs only through its stand-in" in answer.stderr
     assert not (h.state / "runs/A.F1").exists()
 
 
@@ -3802,3 +3824,191 @@ def test_r7_prep_same_path_after_failed_prep(harness):
     h.run("prep", h.commit, "1")
     assert (h.state / "private/settings").is_file()
     assert (held / "wt/.git").is_file()
+
+
+# Round 8: the declared publication and pre-arm gates.
+@pytest.mark.parametrize(
+    "args",
+    [("post-commit",), ("post-draw",), ("post-tasks",), ("stop", "build"),
+     ("beacon",), ("build",)],
+)
+def test_r8_nonofficial_steps_require_standin(integrated, args):
+    h = integrated
+    through(h, "post-tasks")
+    (h.state / "private/rebuild-used").write_text("used\n")
+    binary = h.state / "venv/bin/python"
+    binary.parent.mkdir(parents=True)
+    binary.symlink_to(sys.executable)
+    called = h.scenario.parent / "gh-called"
+    gh = h.scenario.parent / "gh"
+    gh.write_text('#!/bin/sh\nprintf called >> "${0}-called"\nexit 1\n')
+    ps = h.scenario.parent / "ps"
+    ps.write_text("#!/bin/sh\nprintf 'synthetic start\\n'\n")
+    ps.chmod(0o755)
+    h.env.pop("FOLLOWUP_STANDIN")
+    answer = h.run(*args, code=2)
+    assert "a non-official folder runs only through its stand-in" in answer.stderr
+    assert not called.exists(), "non-official state reached gh"
+
+
+def test_r8_directory_marker_requires_standin(harness):
+    h = harness
+    through(h, "post-tasks")
+    (h.state / MARKER).unlink()
+    (h.state / MARKER).mkdir()
+    before = (h.scenario.parent / "allcalls.raw").read_bytes()
+    answer = h.run("post-tasks", code=2)
+    assert "a non-official folder runs only through its stand-in" in answer.stderr
+    assert (h.scenario.parent / "allcalls.raw").read_bytes() == before
+
+
+@pytest.mark.parametrize("other", [None, "FAILED", "SKIPPED"])
+def test_r8_check3_zero_exit_requires_reader_pass(harness, other):
+    h = harness
+    through(h, "post-tasks")
+    required = by_path("required_check3", SCRIPT.with_name("table.py")).rules.CHECK3_TESTS
+    h.set(**(dict(check3_missing=required[0]) if other is None else dict(check3_other=other)))
+    answer = h.run("check3", code=1)
+    assert "check 3 attempt 1 exit 0" in answer.stdout
+    assert "check 3 did not pass" in answer.stderr
+    assert (h.state / "private/check3-1.txt").read_text().endswith("exit 0\n")
+    assert "check 3 must pass before an arm" in h.run("run", "A.F1", code=2).stderr
+    assert not h.calls("arm")
+    h.run("check3", code=1)
+    assert "check 3 has run twice" in h.run("check3", code=2).stderr
+    h.run("release")
+    assert (h.state / "publish/check3-2.txt").is_file()
+
+
+def test_r8_check3_all_required_pass(harness):
+    h = harness
+    through(h, "post-tasks")
+    h.run("check3")
+    reader = by_path("passing_check3", SCRIPT.with_name("table.py"))
+    lines = (h.state / "private/check3-1.txt").read_text().splitlines()
+    assert lines[0] == f"commit {h.commit}" and lines[-1] == "exit 0"
+    assert all(reader.rules.outcomes_of(lines, t)["PASSED"] >= 1 for t in reader.rules.CHECK3_TESTS)
+    assert "check 3 already passed" in h.run("check3", code=2).stderr
+    h.run("run", "A.F1")
+    assert (h.state / "runs/A.F1").is_dir()
+
+
+def test_r8_rehearsal_requires_reader_pass(harness):
+    h = harness
+    h.run("prep", h.commit, "1")
+    h.set(check3_missing=json.loads(h.scenario.read_text())["check3_tests"][0])
+    answer = h.run("rehearse", code=2)
+    assert "rehearsal check 3 failed" in answer.stderr
+    assert not (h.state / "private/rehearsal/passed").exists()
+    assert (h.state / "private/rehearsal/check3.txt").read_text().endswith("exit 0\n")
+
+
+def test_r8_check3_clears_pytest_environment(harness):
+    h = harness
+    through(h, "post-tasks")
+    h.env.update(PYTEST_ADDOPTS="-k absent", PYTEST_PLUGINS="synthetic_plugin",
+                 PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
+    h.run("check3")
+    assert h.calls("check3")[-1]["pytest_env"] == {}
+
+
+def test_r8_check3_path_free_output_flags(harness):
+    h = harness
+    through(h, "post-tasks")
+    h.run("check3")
+    for call in h.calls("check3"):
+        args = call["argv"][call["argv"].index("-m") + 2:]
+        assert "--no-header" in args and "--disable-warnings" in args
+
+
+@pytest.mark.parametrize("extension,card", [
+    ("missing", True), ("faulted", True), ("outcome", True), ("outcome", False),
+    ("hashes", True), ("fault", True),
+])
+def test_r8_card_cut_write_failure_refuses(harness, monkeypatch, extension, card, first=False):
+    h = harness
+    through(h, "post-tasks")
+    (h.state / "logs/table-1.exit").write_text("0\n")
+    if card:
+        run = h.state / "runs/A.F1"
+        run.mkdir()
+        (run / "card.json").write_text("{}")
+    if first:
+        rerun = h.state / "runs/A.F1.rerun"
+        rerun.mkdir()
+        (rerun / "card.json").write_text("{}")
+    group = "first" if first else "used"
+    # Inject a redirection failure after name selection, before any cut write.
+    original = Path(os.environ.get("FOLLOWUP_SCRIPT", str(SCRIPT))).read_text()
+    site = '    next_folder "$root"; out=$FOLDER\n'
+    assert original.count(site) == 1
+    injected = h.scenario.parent / "write-fault.sh"
+    injected.write_text(original.replace(site, site +
+        f'    if [[ ! -e $S/write-fault-used && $group == {group} ]]; then mkdir "$out.{extension}"; touch "$S/write-fault-used"; fi\n'))
+    monkeypatch.setenv("FOLLOWUP_SCRIPT", str(injected))
+    answer = h.run("cards", code=2)
+    assert "card cut records failed; run cards again" in answer.stderr
+    assert not (h.state / "private/cards-A.done").exists()
+    before = {p: p.read_bytes() for p in (h.state / "publish").rglob("*") if p.is_file()}
+    h.run("cards")
+    assert (h.state / "private/cards-A.done").is_file()
+    root = "cards-A-first" if first else "cards-A"
+    assert (h.state / "publish" / f"{root}-1.outcome").is_file()
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+
+
+def test_r8_first_card_record_write_failure(harness, monkeypatch):
+    test_r8_card_cut_write_failure_refuses(harness, monkeypatch, "outcome", True, first=True)
+
+
+@pytest.mark.parametrize("extension", ["missing", "faulted", "fault"])
+def test_r8_card_cut_names_preserve_existing_records(harness, extension):
+    h = harness
+    through(h, "post-tasks")
+    (h.state / "logs/table-1.exit").write_text("0\n")
+    publish = h.state / "publish"
+    publish.mkdir()
+    earlier = publish / f"cards-A.{extension}"
+    earlier.write_bytes(b"earlier record\n")
+    h.run("cards")
+    assert (publish / "cards-A-1.outcome").is_file()
+    assert earlier.read_bytes() == b"earlier record\n"
+
+
+def test_r8_cut_logs_precede_start_records(harness):
+    h = harness
+    through(h, "beacon")
+    folder = h.state / "private/tools"
+    folder.mkdir(exist_ok=True)
+    for name, text in {"intent": "intent", "pid": "123456789", "out": "partial stdout\n", "err": "partial stderr\n"}.items():
+        path = folder / f"draw.{name}"
+        path.write_text(text)
+        os.utime(path, (0, 0))
+    h.set(inject=dict(kind="files", match=["mv", "/draw.cut-1/"], phase="after", skip=1, kill=True))
+    h.run("draw", code=-9)
+    h.run("abandon", "A.F1")
+    h.run("draw")
+    for name, raw in (("out", b"partial stdout\n"), ("err", b"partial stderr\n")):
+        assert any(p.read_bytes() == raw for p in folder.glob(f"draw.cut-*/{name}")), "cut lost a log"
+    assert (folder / "draw.cut-2").is_dir(), "remaining start records must trigger another cut"
+
+
+@pytest.mark.parametrize("name", ["out", "err", "intent", "output"])
+def test_r8_cut_move_failure_refuses(harness, name):
+    h = harness
+    through(h, "beacon")
+    folder = h.state / "private/tools"
+    folder.mkdir(exist_ok=True)
+    for suffix in ("intent", "out", "err"):
+        path = folder / f"draw.{suffix}"
+        path.write_text("partial\n")
+        os.utime(path, (0, 0))
+    if name == "output":
+        (h.state / "private/DRAW.json").write_text("{}")
+        match = ["mv", "/DRAW.json.cut-1"]
+    else:
+        match = ["mv", f"/draw.cut-1/{name}"]
+    h.set(inject=dict(kind="files", match=match, fail=True))
+    answer = h.run("draw", code=2)
+    assert "cut archive move failed" in answer.stderr
+    assert not h.calls("draw")[1:], "failed archive must not start the real draw"

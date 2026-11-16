@@ -302,7 +302,7 @@ next_number() { local n=0 f value
 any_attempt() { local l; for l in "${ORDER[@]}"; do [[ -e $S/logs/$l.seq || -e $S/runs/$l || -e $S/runs/$l.rerun ]] && return 0; done; return 1; }
 all_attempts() { local l; for l in "${ORDER[@]}"; do [[ -e $S/runs/$l && -s $S/logs/$l.seq ]] || refuse "$l has no first attempt"; done; }
 check3_file() { C3=$P/check3-1.txt; [[ -e $P/check3-2.txt ]] && C3=$P/check3-2.txt; [[ -e $C3 ]]; }
-check3_failed_twice() { [[ -e $P/check3-2.txt ]] && ! check3_matches "$P/check3-2.txt" 0; }
+check3_failed_twice() { [[ -e $P/check3-2.txt ]] && ! check3_passed "$P/check3-2.txt"; }
 frozen_tasks() { local p; for p in A B C; do
   [[ -f $P/TASKS-$p.json && -s $P/TASKS-$p.sha256 ]] || refuse "task list $p is not frozen"
   [[ $(sha "$P/TASKS-$p.json") == $(readfile "$P/TASKS-$p.sha256") ]] || refuse "task list $p differs from its frozen hash"; done; }
@@ -436,8 +436,10 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_
     tool files mkdir "$T.cut-$n" || exit 2
     for path in "${outputs[@]+"${outputs[@]}"}"; do
       [[ -e $path ]] || continue; [[ ! -e $path.cut-$n ]] || refuse "cut archive exists"
-      tool files mv -n "$path" "$path.cut-$n" || exit 2; done
-    for path in intent intent.part start pid pid.part process-start process-start.part start.part out err; do [[ -e $T.$path ]] && tool files mv -n "$T.$path" "$T.cut-$n/$path"; done
+      tool files mv -n "$path" "$path.cut-$n" && [[ ! -e $path ]] || refuse "cut archive move failed"; done
+    for path in out err intent intent.part start pid pid.part process-start process-start.part start.part; do
+      [[ -e $T.$path ]] || continue
+      tool files mv -n "$T.$path" "$T.cut-$n/$path" && [[ ! -e $T.$path ]] || refuse "cut archive move failed"; done
   fi
   meta disjoint "${outputs[@]+"${outputs[@]}"}" || refuse "tool output and work overlap"
   for path in "${outputs[@]+"${outputs[@]}"}"; do [[ ! -e $path && ! -L $path ]] || refuse "tool output or work already exists"; done
@@ -697,10 +699,19 @@ rebuild_step() { local f name x old=$P/first-attempt
   build_step || return $?
   tasks_step; x=$?; [[ $x == 0 ]] || return "$x"
   record "$P/rebuild-complete" complete rebuild-complete; }
-check3_matches() { local file=$1 code=$2
+check3_recorded() { local file=$1 code=$2
   [[ $(readfile "$file") == "commit $(readfile "$S/commit.txt")" && $(tool files tail -1 "$file") == "exit $code" ]]; }
-check3_receipt() { check3_matches "$1" "$2" || refuse "check 3 receipt write failed"; }
-check3_cmd() { tool check3 python3 "$SLOT" -- env PYTHONPATH="$S/wt/src" nice -n 19 "$PY" -m pytest -v -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$1" tests/runner/test_control_arms.py; }
+check3_receipt() { check3_recorded "$1" "$2" || refuse "check 3 receipt write failed"; }
+check3_passed() { check3_recorded "$1" 0 && tool check3-rule "$PY" -c 'import importlib.util,sys
+from pathlib import Path
+path=Path(sys.argv[1]); sys.path.insert(0,str(path.resolve().parents[3]/"src"))
+spec=importlib.util.spec_from_file_location("followup_reader",path)
+reader=importlib.util.module_from_spec(spec); spec.loader.exec_module(reader)
+rules=reader.rules; lines=Path(sys.argv[2]).read_text().splitlines()
+observed=[rules.outcomes_of(lines,t) for t in rules.CHECK3_TESTS]
+sys.exit(0 if all(c["PASSED"]>=1 and sum(c.values())==c["PASSED"] for c in observed) else 1)' "$S/wt/$TABLE" "$1" >/dev/null 2>&1; }
+check3_cmd() { (unset PYTEST_ADDOPTS PYTEST_PLUGINS PYTEST_DISABLE_PLUGIN_AUTOLOAD
+  tool check3 python3 "$SLOT" -- env PYTHONPATH="$S/wt/src" nice -n 19 "$PY" -m pytest -v -p no:cacheprovider --no-header --disable-warnings -o tmp_path_retention_policy=failed --basetemp="$1" tests/runner/test_control_arms.py); }
 rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes=""
   [[ ! -e $P/BEACON ]] || refuse "real beacon saved; rehearsal is too late"
   [[ ! -e $Rh/passed ]] || refuse "already rehearsed at this commit"
@@ -743,7 +754,7 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes
   [[ $x == 4 ]] || refuse "rehearsal no-arms reading must exit 4"
   { printf 'commit %s\n' "$(readfile "$S/commit.txt")"; check3_cmd "$Rh/check3-tmp"; x=$?; printf 'exit %s\n' "$x"; } > "$Rh/check3.txt" 2>&1
   check3_receipt "$Rh/check3.txt" "$x"
-  [[ $x == 0 ]] || refuse "rehearsal check 3 failed"
+  check3_passed "$Rh/check3.txt" || refuse "rehearsal check 3 failed"
   tool followup-tests python3 "$SLOT" -- env PYTHONPATH="$wt/src" nice -n 19 "$PY" -m pytest -q -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$Rh/followup-tmp" results/followup/run/test_*.py tests/test_developer_doc.py > "$Rh/followup-tests.log" 2>&1 || refuse "rehearsal follow-up tests failed"
   tool derivation-tests python3 "$SLOT" -- env PYTHONPATH="$wt/src" nice -n 19 "$PY" -m pytest -q -p no:cacheprovider -o tmp_path_retention_policy=failed --basetemp="$Rh/derivation-tmp" tests/test_validity_roster.py tests/test_developer_doc.py > "$Rh/derivation-tests.log" 2>&1 || refuse "rehearsal derivation tests failed"
   tool dr "$BASEPY" -I "$wt/$DR_PY" init --state "$Rh/draw" > "$Rh/dr-init.out" 2> "$Rh/dr-init.err" || refuse "rehearsal draw-record init refused"
@@ -869,7 +880,7 @@ finish_invocation() { local tag=$1 I="" f n newest=0 out=$S/runs/$1 diag=$S/diag
   if [[ ! -e $out && -e $diag ]]; then
     tool files mv -n "$diag" "$I.orphan-diag" || refuse "orphan diagnostics move failed"; fi
 }
-arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cache="" k=1 I seq x s f official=""
+arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cache="" k=1 I seq x s f
   [[ -n $label ]] || refuse "arm label is required"
   tool files printf '%s\n' "${ORDER[@]}" | tool files grep -Fqx -- "$label" || refuse "unknown arm label"
   p=${label%%.*}; arm=${label#*.}; control=$(control_of "$arm") || [[ $arm == H1 || $arm == H2 ]] || refuse "unknown arm label"
@@ -882,7 +893,7 @@ arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cach
       [[ ! -e $S/runs/$tag || -s $S/logs/$tag.seq ]] || refuse "attempt lacks its sequence: $tag"; done; done
   need_counted; frozen_tasks; need_posted draw; need_posted tasks
   [[ $(readfile "$S/posted/commit.rec") == "$(readfile "$P/evaluate.out")" ]] || refuse "counted post record differs"
-  check3_file && check3_matches "$C3" 0 || refuse "check 3 must pass before an arm"
+  check3_file && check3_passed "$C3" || refuse "check 3 must pass before an arm"
   check3_failed_twice && refuse "check 3 failed twice; run ended"
   if [[ $mode == run ]]; then
     for l in "${ORDER[@]}"; do [[ $l == "$label" ]] && break
@@ -899,8 +910,6 @@ arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cach
   fi
   out=$S/runs/$tag; diag=$S/diag/$tag
   [[ ! -e $diag ]] || refuse "diagnostics exist without their attempt"
-  [[ -f $OFFICIAL_RECORD ]] && official=$(readfile "$OFFICIAL_RECORD")
-  fake || [[ $S == "$official" && ! -e $S/$TEST_MARKER ]] || refuse "real arms require the recorded official directory"
   arm_alive && refuse "an arm process is already running"
   if [[ -z $control ]]; then
     cache=$S/cache-$p
@@ -928,10 +937,13 @@ check3_step() { local n=1 x
   while [[ -e $P/check3-$n.txt ]]; do n=$((n+1)); done
   (( n <= 2 )) || refuse "check 3 has run twice"
   if (( n == 2 )); then
-    ! check3_matches "$P/check3-1.txt" 0 || refuse "check 3 already passed"; fi
+    ! check3_passed "$P/check3-1.txt" || refuse "check 3 already passed"; fi
   { printf 'commit %s\n' "$(readfile "$S/commit.txt")"; check3_cmd "$S/check3-tmp-$n"; x=$?; printf 'exit %s\n' "$x"; } > "$P/check3-$n.txt" 2>&1
   check3_receipt "$P/check3-$n.txt" "$x"
-  printf 'check 3 attempt %s exit %s\n' "$n" "$x"; return "$x"; }
+  printf 'check 3 attempt %s exit %s\n' "$n" "$x"
+  if [[ $x == 0 ]] && ! check3_passed "$P/check3-$n.txt"; then
+    echo "check 3 did not pass" >&2; return 1; fi
+  return "$x"; }
 stale_lock() { local owner="" f current age
   if [[ -d $S/lock ]]; then
     [[ ! -L $S/lock ]] || refuse "lock shape is invalid"
@@ -1025,7 +1037,7 @@ table_step() { local after="" p l tag seq f b order attempts reruns="" x pre pen
 score_opened() { local f
   for f in "$S"/logs/table-*.exit; do [[ -e $f && $(readfile "$f") == 0 ]] && return 0; done; return 1; }
 next_folder() { local root=$1 n=1; FOLDER=$root
-  while [[ -e $FOLDER || -e $FOLDER.hashes || -e $FOLDER.outcome ]]; do FOLDER=$root-$n; n=$((n+1)); done; }
+  while [[ -e $FOLDER || -e $FOLDER.hashes || -e $FOLDER.outcome || -e $FOLDER.missing || -e $FOLDER.faulted || -e $FOLDER.fault ]]; do FOLDER=$root-$n; n=$((n+1)); done; }
 cut_group() { local p=$1 group=$2 label tag root out x fault f n args=() remaining=() missing=() faults=()
   root=$S/publish/cards-$p; [[ $group != first ]] || root=$root-first
   for label in "${ORDER[@]}"; do
@@ -1037,11 +1049,12 @@ cut_group() { local p=$1 group=$2 label tag root out x fault f n args=() remaini
   done
   while :; do
     next_folder "$root"; out=$FOLDER
-    printf '%s\n' "${missing[@]+"${missing[@]}"}" > "$out.missing"
-    printf '%s\n' "${faults[@]+"${faults[@]}"}" > "$out.faulted"
-    if (( ${#args[@]} == 0 )); then printf 'no cards\n' > "$out.outcome"; return 0; fi
-    tool cutter python3 -I "$S/wt/results/followup/run/cut_cards.py" "$P/TASKS-$p.json" "$out" "${args[@]}" > "$out.hashes" 2> "$out.fault"; x=$?
-    printf 'exit %s\n' "$x" > "$out.outcome"
+    printf '%s\n' "${missing[@]+"${missing[@]}"}" > "$out.missing" || return 1
+    printf '%s\n' "${faults[@]+"${faults[@]}"}" > "$out.faulted" || return 1
+    if (( ${#args[@]} == 0 )); then printf 'no cards\n' > "$out.outcome" || return 1; return 0; fi
+    { tool cutter python3 -I "$S/wt/results/followup/run/cut_cards.py" "$P/TASKS-$p.json" "$out" "${args[@]}" >&3 2>&4; x=$?;
+    } 3> "$out.hashes" 4> "$out.fault" || return 1
+    printf 'exit %s\n' "$x" > "$out.outcome" || return 1
     [[ $x != 3 ]] && return 0
     fault=$(readfile "$out.fault")
     [[ $fault != card ]] || return 0
@@ -1056,9 +1069,10 @@ cards_step() { local p label replaced
   score_opened || refuse "cards needs a table exit 0"
   frozen_tasks; tool files mkdir -p "$S/publish"
   for p in A B C; do
-    cut_group "$p" used; replaced=""
+    cut_group "$p" used || refuse "card cut records failed; run cards again"
+    replaced=""
     for label in "${ORDER[@]}"; do [[ ${label%%.*} == "$p" && -e $S/runs/$label.rerun ]] && replaced=1; done
-    [[ -z $replaced ]] || cut_group "$p" first
+    if [[ -n $replaced ]]; then cut_group "$p" first || refuse "card cut records failed; run cards again"; fi
     record "$P/cards-$p.done" recorded cards
   done
   echo "card outcomes recorded"; }
@@ -1178,6 +1192,7 @@ case $STEP in
   rehearse|post-commit|beacon|draw|post-draw|place|build|tasks|rebuild|post-tasks|check3|run|rerun|abandon|table|cards|stop|release) ;;
   *) echo "usage: run-followup.sh prep|rehearse|post-commit|beacon|draw|post-draw|place|build|tasks|rebuild|post-tasks|check3|run|table|rerun|abandon|cards|stop|release"; exit 2 ;;
 esac
+[[ -f $OFFICIAL_RECORD && $S == "$(readfile "$OFFICIAL_RECORD")" ]] || fake || refuse "a non-official folder runs only through its stand-in"
 check_identity
 if [[ $STEP != release && $STEP != abandon && -e $P/counted-not-own ]]; then refuse "counted first post was not made by this directory"; fi
 if [[ $STEP != release && -e $P/state-lost-after-draw ]]; then refuse "$(readfile "$P/state-lost-after-draw")"; fi

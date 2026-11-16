@@ -150,7 +150,8 @@ only a test dispatcher: it works solely in a directory already holding
 `.followup-test-dir` before `prep`; prep never creates that marker. A real arm
 can only run in the official directory named by the record
 `.bicentennial-followup-official` in the operator's home. Marking an official
-directory permanently disables its steps. A failed `prep` leaves an
+directory permanently disables its steps. After `prep`, a non-official folder runs only through its stand-in.
+A failed `prep` leaves an
 unrecorded folder that must be moved aside; it posts nothing. After a failed prep,
 move its folder aside and re-run `prep` at the same path; prep prunes only missing
 worktree registrations before adding its checkout. That prune also forgets any other
@@ -264,12 +265,27 @@ units ran, it removes its output folder and creates it again; an arm killed in t
 instant between those two leaves no output, so that invocation counts as no attempt and
 the arm can run again. Its start, end and exit records are published.
 An owner or tool without a start record is left alone for sixty seconds by the
-recorded clock; a PID alone never proves it live. A tool killed between its start intent and PID record is treated as dead after 60 seconds; a duplicate start ends in a refusal or failure because tools refuse existing output, the draw is re-verified, placement needs two agreeing runs, and task lists are validated.
+recorded clock; a PID alone never proves it live. A tool killed between its start
+and its process record is treated as dead after 60 seconds. If it still runs,
+its outputs are moved aside and a second copy starts. The second copy fails on
+the first copy's output or paths the first copy renames or removes. This counts
+as a failed attempt: it uses the one rebuild, or, after the rebuild, the build
+stop ends the run. After any kill, before re-running the step, wait until no
+process using the state folder remains (`pgrep -fl -- "$FOLLOWUP_STATE"` prints nothing).
 Check 3 runs only
 `tests/runner/test_control_arms.py`, verbose, through the slot, at rehearsal and
-on each attempt. Release also accepts a terminal pin/order fault from an
+on each attempt. It passes only when its receipt shows every required test passed, by the reading script's rule.
+A failing receipt can still carry local paths in tracebacks; `release` then replaces
+it by its sha256 and a note, as D19 requires. Release also accepts a terminal pin/order fault from an
 `--after-reruns` pre-run and reports every S4 void round, including missing inputs.
 
 If a sequence write is refused before an arm starts, `abandon LABEL` preserves
 that no-output invocation's invalid sequence as `.seq.failed`, then the same
 `run` or `rerun` can be retried. A produced arm is never discarded by this recovery.
+
+If every remaining arm is permanently refused before output, for example because
+the model endpoint is retired, the run can never reach a release event. It ends
+with every reading unresolved, and `release` refuses. The maintainers then
+publish the state's records by hand, following D19's list
+([#590](https://github.com/electricsheephq/bicentennial/issues/590)). A dead login
+is cleared by logging in again and is not this case.
