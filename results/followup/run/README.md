@@ -175,7 +175,7 @@ Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 | `abandon TAG` | Dead wrapper and no arm process; removes a stale lock and records invocation start and kill times, counting existing output as an attempt. |
 | `cards` | Table exit 0; cuts used cards and replaced first attempts per pack, preserving hashes, missing labels, faults and every repeated cut. |
 | `stop beacon\|build` | Recorded cutoff, or first failure plus failed rebuild, before any arm; posts only the declaration's reason, exits and log hashes. |
-| `release` | Cards complete, stop, blocked first post, unconfirmed void, terminal reading fault or second failed check 3; publishes all extant draw and attempt evidence with versioned exports and recomputation checks. |
+| `release` | Cards complete, stop, blocked first post, unconfirmed void, `counted-not-own`, `state-lost-after-draw`, terminal reading fault or second failed check 3; publishes all extant draw and attempt evidence with versioned exports and recomputation checks. |
 
 Invocations refused before output, or refused by the machine guard before any
 unit, are kept but are not attempts; every other invocation that creates output
@@ -196,10 +196,10 @@ anyone can repeat it with `python scripts/validity_roster.py draw --packs 3
 three-field object and WORK and OUT are new. A void that does not reproduce
 there leaves the earlier draw standing under §2, which `release` reports.
 
-A counted post naming a commit at which these tools cannot run is recorded and
-refused; once §2's stop condition holds, the merging account posts its stop by
-hand and `release` publishes it, including unavailable or different reading
-module status. `release` also publishes every abandoned invocation's start and
+A counted post naming another commit is recorded as `counted-not-own` and
+refused. Once that record exists, `release` is allowed directly and publishes
+the records, including unavailable or different reading module status.
+`release` also publishes every abandoned invocation's start and
 kill times; a killed attempt is rerun once only when the latest reading names
 it under the rerun rule. No release step commits or posts results: maintainers
 review and commit its publication folder beside the result.
@@ -224,8 +224,9 @@ publishes the records: GitHub accepts the first post but S4 cannot save the
 response (a timeout recorded as `post-unknown`, or a kill or reboot between the
 201 and its record); the directory is lost after its first post; or a commitment
 post made by hand counts. A `counted-not-own` record permits only release and
-abandon. A hand copy of a state directory, on this machine or another, is outside
-what the script can detect, like a hand-edited record.
+abandon. A hand copy of a state directory, on this machine or another, a
+hand-edited record, or a gh or network path that alters GitHub's responses is
+outside what the script can detect.
 
 `--import none` requires the recorded old directory to be absent and records
 `old state lost`. Before any merging-account second-post or task-list marker

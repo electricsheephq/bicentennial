@@ -416,7 +416,7 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_
   if [[ -e $T.pid || -e $T.pid.part ]]; then
     path=$T.pid; [[ -e $path ]] || path=$T.pid.part
     pid=$(readfile "$path")
-    if [[ $path == $T.pid.part || ! $pid =~ ^[0-9]+$ || ! -s $T.process-start ]]; then
+    if [[ $path == "$T.pid.part" || ! $pid =~ ^[0-9]+$ || ! -s $T.process-start ]]; then
       old_enough "$path" || refuse "recorded tool may be starting"
     else
       tool ps ps -o lstart= -p "$pid" > "$T.live" 2>/dev/null
@@ -478,7 +478,7 @@ own_post() { local kind=$1 wanted=${2:-} n=1 folder
   while [[ -e $P/exports/$n || -e $P/exports/$n.out || -e $P/exports/$n.err ]]; do n=$((n+1)); done
   folder=$P/exports/$n
   dr publish-records "$folder" > "$folder.out" 2> "$folder.err" || refuse "own post records unavailable"
-  OWN_ID=$(meta own-post "$folder" "$kind" "$ROUND" "$wanted") 2> "$folder.parse.err" || refuse "own post records unavailable"; }
+  OWN_ID=$(meta own-post "$folder" "$kind" "$ROUND" "$wanted" 2> "$folder.parse.err") || refuse "own post records unavailable"; }
 record_counted() { local x key value old
   own_post first "$COUNT_ID"
   if [[ -z $OWN_ID ]]; then

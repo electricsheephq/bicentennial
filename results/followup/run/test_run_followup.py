@@ -903,6 +903,9 @@ def test_r15_cards_missing_replaced_and_repeated(harness):
     assert not any(a.startswith("A.F1=") for c in calls for a in c["argv"])
     assert any("cards-A-first" in a for c in calls for a in c["argv"])
     h.run("release")
+    assert (h.state / "publish/FILTER-38.json").read_bytes() == (
+        h.state / "private/FILTER-38.json"
+    ).read_bytes()
 
 
 # S4's subprocesses deliberately do not use the operator gateway: these local
@@ -1217,7 +1220,7 @@ def test_i7_real_beacon_cutoff_stops(integrated):
 
 
 @pytest.mark.parametrize("variant", ["unavailable", "differs"])
-def test_i8_other_commit_reader_then_hand_stop_publishes(integrated, variant):
+def test_i8_other_commit_release_and_hand_stop_marker(integrated, variant):
     h = integrated
     through(h, "rehearse")
     dr = by_path("dr_i8", SCRIPT.with_name("draw_record.py"))
@@ -1250,25 +1253,6 @@ def test_i8_other_commit_reader_then_hand_stop_publishes(integrated, variant):
         )
     )
     h.set(comments=c["comments"], clock=due)
-    for step in (
-        "rehearse",
-        "post-commit",
-        "beacon",
-        "draw",
-        "post-draw",
-        "place",
-        "build",
-        "tasks",
-        "rebuild",
-        "post-tasks",
-        "check3",
-        "run",
-        "rerun",
-        "table",
-        "cards",
-        "stop",
-    ):
-        h.run(step, "A.F1", code=2) if step in ("run", "rerun") else h.run(step, code=2)
     h.run("release")
     listing = json.loads((h.state / "publish/draw-list.json").read_text())
     assert listing["reading_module"] == variant + " at " + other
@@ -3403,7 +3387,7 @@ def test_r5_first_export_failure_is_retryable(integrated, fault):
     h.set(export_fault=fault)
     result = h.run("post-commit", code=None)
     assert result.returncode == 2, "failed own-post export was ignored"
-    assert result.stderr.endswith("refused: " + EXPORT_UNAVAILABLE + "\n")
+    assert result.stderr == "refused: " + EXPORT_UNAVAILABLE + "\n"
     assert not (h.state / "private/counted-not-own").exists()
     assert not (h.state / "private/counted.json").exists()
     assert len(json.loads(h.scenario.read_text())["comments"]) == 1
@@ -3500,7 +3484,7 @@ def test_r5_match_export_failure_posts_nothing(integrated, kind, fault):
     assert result.returncode == 2, (
         "match adopted without an available own-post export (new guard)"
     )
-    assert result.stderr.endswith("refused: " + EXPORT_UNAVAILABLE + "\n")
+    assert result.stderr == "refused: " + EXPORT_UNAVAILABLE + "\n"
     assert len(json.loads(h.scenario.read_text())["comments"]) == before
     h.run(step)
     assert len(json.loads(h.scenario.read_text())["comments"]) == before + 1
@@ -3553,6 +3537,9 @@ def test_r5_import_directory_refuses_before_any_write(harness, mode, source):
 @pytest.mark.parametrize("age", [59, 60])
 def test_r5_partial_or_invalid_pid_uses_age(harness, record, pid, age):
     h = harness
+    bracketed = h.state.with_name("state[1]")
+    h.state.rename(bracketed)
+    h.state, h.env["FOLLOWUP_STATE"] = bracketed, str(bracketed)
     through(h, "beacon")
     folder = h.state / "private/tools"
     folder.mkdir(exist_ok=True)
@@ -3604,3 +3591,59 @@ def test_r5_restart_own_match_positive_control(integrated, kind):
     h.run(step)
     assert len(json.loads(h.scenario.read_text())["comments"]) == len(comments)
     assert f"matched {own}\n" in rec.read_text()
+
+
+def test_r6_void_then_hand_first_is_not_own(integrated):
+    """Positive control: old own posts do not authorize the next counted id."""
+    h = integrated
+    through(h, "post-draw")
+    old = json.loads((h.state / "private/counted.json").read_text())["round"]
+    h.set(place_exit=1)
+    h.run("place", code=1)
+    assert (h.state / f"private/void-{old}/complete").is_file()
+    records = h.state / "private/draw/records"  # Test inspects S4; script does not.
+    own_ids = {json.loads(p.read_text())["id"] for p in records.glob("*-post.json")}
+    assert own_ids, "void must retain the directory's own post records"
+    c = json.loads(h.scenario.read_text())
+    dr = by_path("r6_stamp", SCRIPT.with_name("draw_record.py"))
+    number = (c["clock"] + 900 - 1692803367 + 2) // 3 + 1
+    assert number > old
+    hand_id = max(n["id"] for n in c["comments"]) + 1
+    c["comments"].append(
+        dict(
+            id=hand_id,
+            author=71,
+            created_at=dr.stamp(c["clock"]),
+            body=(
+                f"Follow-up draw: first post\nround {number}\nrun_commit {h.commit}\n"
+                + (h.state / "private/rehearsal/h.values").read_text()
+            ),
+        )
+    )
+    assert hand_id not in own_ids
+    h.set(comments=c["comments"])
+    result = h.run("post-commit", code=None)
+    assert result.returncode == 2, "old own posts authorized a hand-made next first post"
+    assert result.stderr == "refused: " + NOT_OWN + "\n"
+    p = h.state / "private"
+    assert (p / "evaluate.out").read_text().startswith(f"counted {hand_id} round {number} ")
+    assert (p / "counted-not-own").read_bytes() == (p / "evaluate.out").read_bytes()
+    assert not (p / "counted.json").exists()
+    assert not h.calls("arm")
+
+
+def test_r6_same_commit_reading_unavailable_is_retryable(harness):
+    """Positive control: a transient fault at the run commit is not terminal."""
+    h = harness
+    through(h, "rehearse")
+    h.set(reading_refusal="unavailable", counted_commit=h.commit)
+    result = h.run("post-commit", code=2)
+    assert result.stderr == f"refused: reading module unavailable at {h.commit}\n"
+    p = h.state / "private"
+    assert not (p / "counted-not-own").exists(), "same-commit refusal became terminal"
+    assert not (p / "counted.json").exists()
+    assert not h.calls("arm")
+    h.set(reading_refusal=None)
+    h.run("post-commit")
+    assert json.loads((p / "counted.json").read_text())["commit"] == h.commit
+    assert not (p / "counted-not-own").exists()
