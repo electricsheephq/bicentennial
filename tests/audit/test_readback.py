@@ -1512,3 +1512,39 @@ def test_rewritten_later_history_ids_do_not_add_execution_findings(wire, role, h
     report = run(data, wire)
     assert report["A3"]["failures"] == []
     assert rb.failures(report) == []
+
+
+
+def test_r5_hermes_lstat_fault_raises(tmp_path, monkeypatch):
+    import errno
+
+    home = tmp_path / "home"
+    path = home / "memories/MEMORY.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("valid bytes")
+    lstat, is_file, is_link = Path.lstat, Path.is_file, Path.is_symlink
+
+    def failing(p, *a, **kw):
+        if p == path:
+            raise OSError(errno.EIO, "injected store lstat fault")
+        return lstat(p, *a, **kw)
+
+    monkeypatch.setattr(Path, "lstat", failing)
+    # Model the 3.14 predicates: they swallow stat errors instead of raising.
+    monkeypatch.setattr(Path, "is_file", lambda p: False if p == path else is_file(p))
+    monkeypatch.setattr(Path, "is_symlink", lambda p: False if p == path else is_link(p))
+    with pytest.raises(OSError) as raised:
+        ef.hermes(home)
+    assert raised.value.errno == errno.EIO
+
+
+@pytest.mark.parametrize("entry", ["absent_store", "absent_memories", "file_memories"])
+def test_r5_hermes_absence_is_empty(tmp_path, monkeypatch, entry):
+    home = tmp_path / "home"
+    home.mkdir()
+    if entry == "absent_store":
+        (home / "memories").mkdir()
+    elif entry == "file_memories":
+        (home / "memories").write_text("not a directory")
+    monkeypatch.setattr(ef, "effects", lambda calls, requests, stores, wire: stores)
+    assert ef.hermes(home)([], [], "chat") == {"memory": "", "user": ""}

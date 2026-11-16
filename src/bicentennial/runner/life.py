@@ -2,10 +2,11 @@
 
 import json
 import shutil
-from contextlib import ExitStack, closing
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from bicentennial.audit.effects import HERMES_FILES
 from bicentennial.audit.effects import hermes as hermes_effects
 from bicentennial.audit.readback import (
     audit,
@@ -19,7 +20,7 @@ from bicentennial.audit.readback import (
 from bicentennial.audit.readback import (
     load as load_ledger,
 )
-from bicentennial.audit.source_damage import RestoreWatch, SourceBaseline, keep_sidecars
+from bicentennial.audit.source_damage import SourceBaseline, keep_sidecars
 from bicentennial.canon import canon, sha256_canon
 from bicentennial.contracts.items import reader_view
 from bicentennial.contracts.surfaces import tree_hash, tree_listing
@@ -62,6 +63,7 @@ from bicentennial.runner.input_reads import (
     workspace_replacement,
 )
 from bicentennial.runner.lock import LockMismatch
+from bicentennial.runner.parked import ParkedProbe
 from bicentennial.runner.probe_live import (
     LiveCredentialStop,
     ProbeLiveLeg,
@@ -94,11 +96,17 @@ from bicentennial.world.targeted import expected_state
 ARMS = ("system", "wiped", "no_memory")
 STEP_S = 60
 PROBE_INFRA_CODES = ("error_recalltoolmissing", "error_plantoolmissing")
+GAP_EXPLAINED_REASONS = (
+    "absent_from_final_store", "remove_still_present", "removed_content_still_present",
+    "replaced_span_still_present", "absent_from_next_session", "remove_visible_next_session",
+    "removed_content_visible_next_session", "replaced_span_visible_next_session", "later_modified_or_removed",
+)
 
 SEGMENTS = (("seg0", "bicentennial-main"), ("seg1", "bicentennial-swap"))
 CAUSES = tuple((label, "SYSTEM_FAILURE") for label in (
     "turn_failed", "final_mismatch", "resume_failed", "plugin_inactive", "engine_inactive", "end_failed", "exit_timeout",
-    "turn_timeout", "end_timeout", "act_state_collision", "worker_protocol", "invalid_store", "invalid_surface")) + tuple(
+    "turn_timeout", "end_timeout", "act_state_collision", "worker_protocol", "invalid_store", "invalid_surface",
+    "system_audit_failure")) + tuple(
     (label, "INFRA_FAILURE") for label in (
         "director_stopped", "director_inflight", "write_failure", "held_kill_missed", "open_failed", "drain_timeout",
         "startup_timeout", "open_timeout", "worker_start", "checkpoint_busy", "admission_deadline"))
@@ -129,6 +137,8 @@ class LifeRun:
     infra_item_labels: tuple = ()
     source_receipts: list = field(default_factory=list)
     workspace_receipts: list = field(default_factory=list)
+    parked_receipts: list = field(default_factory=list)
+    audit_phase: dict = field(default_factory=dict)
     restore_failures: list = field(default_factory=list)
     retention_failures: list = field(default_factory=list)
     superseded_causes: list = field(default_factory=list)
@@ -386,14 +396,64 @@ def _pair_inputs(root, rows, kill, genre):
     return tuple(sorted(ids)), tuple(requests)
 
 
-def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=False):
+def _gap_paths(report, rows, blobs):
+    """Resolve every gapped call to its native file; unreadable evidence stays unknown."""
+    try:
+        paths = set()
+        for gap in report["A4"]["gaps"]:
+            call, = [c for c in report["A4"]["calls"] if c["call"] == gap]
+            row, = [r for r in rows if r["seq"] == call["record"]]
+            served, = [c for c in output(blobs[row["resp"]], "chat")[0] if c["id"] == gap]
+            args = json.loads(served["arguments"])
+            target = args.get("target", "memory")
+            path = dict(HERMES_FILES).get(target) if isinstance(target, str) else None
+            if path is None:
+                return [None]
+            paths.add(path)
+        return sorted(paths) or [None]
+    except Exception:
+        return [None]
+
+
+def _gap_unexplained(report):
+    """Only applied writes with failed store or snapshot checks can explain gaps."""
+    a4 = report.get("A4") if isinstance(report, dict) else None
+    if not isinstance(a4, dict) or not isinstance(a4.get("calls"), list) or not isinstance(a4.get("gaps"), list):
+        return "unknown"
+    unexplained = []
+    for gap in a4["gaps"]:
+        calls = [c for c in a4["calls"] if isinstance(c, dict) and c.get("call") == gap]
+        if len(calls) != 1 or calls[0].get("applied") is not True:
+            unexplained.append(gap)
+            continue
+        operations = calls[0].get("operations")
+        if not isinstance(operations, list) or any(not isinstance(o, dict) for o in operations):
+            unexplained.append(gap)
+            continue
+        failed = [o for o in operations if o.get("store_satisfied") is not True
+                  or o.get("next_session_satisfied") is not True]
+        if not failed or any(not isinstance(o.get("reasons"), list) or not o["reasons"]
+                             or any(r not in GAP_EXPLAINED_REASONS for r in o["reasons"]) for o in failed):
+            unexplained.append(gap)
+    return unexplained
+
+
+def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=False, diagnostics=None):
+    phase = dict(phase="ledger")
     try:
         rows, blobs, _ = load_ledger(adapter.paths["root"] / "ledger", "kit")
+        phase = dict(phase="audit")
         model_for, mode = route_models(table, adapter.entry["name"], faults)
-        report = audit(rows, blobs, turns_from_script(script), "chat", fmt="kit", model_for=model_for,
-                       suffix=None, write_tools=tuple(t["tool"] for t in adapter.entry["write_tools"]),
-                       id_needles=life_ids({"items": list(items), "records": list(records)}),
-                       effects=None if plugin else hermes_effects(adapter.paths["hermes_home"]), probe_live=probe_live)
+        def check(effects):
+            return audit(rows, blobs, turns_from_script(script), "chat", fmt="kit", model_for=model_for,
+                         suffix=None, write_tools=tuple(t["tool"] for t in adapter.entry["write_tools"]),
+                         id_needles=life_ids({"items": list(items), "records": list(records)}),
+                         effects=effects, probe_live=probe_live)
+
+        phase = dict(phase="effects")
+        effects = None if plugin else hermes_effects(adapter.paths["hermes_home"], reading=lambda p: phase.update(path=p))
+        phase = dict(phase="audit")
+        report = check(effects)
         codes = failures(report)
         ignored = ("A4.no_effects_hook",) if plugin else ()
         if arm == "wiped":
@@ -409,10 +469,29 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
                 result["a4_gaps"] = "expected: the wiped arm restores the fresh install at every wake"
             else:
                 result["a4_unclassified"] = unclassified
+        if status != "OK" and diagnostics is not None:
+            diagnostics.update(phase)
+            if "A4.gaps" in codes:
+                diagnostics["gap_paths"] = _gap_paths(report, rows, blobs)
+                diagnostics["gap_unexplained"] = _gap_unexplained(report)
+                diagnostics["gap_states"] = {p: dict(observation=ParkedProbe.observe(adapter.paths["hermes_home"], p),
+                    state=ParkedProbe.state(adapter.paths["hermes_home"], p))
+                    for p in diagnostics["gap_paths"] if p is not None}
         return result
     except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
         raise
     except Exception:
+        if phase["phase"] == "effects":
+            if phase.get("path") in dict(HERMES_FILES).values():
+                phase["file_state"] = ParkedProbe.effects_failure(adapter.paths["hermes_home"], phase["path"])
+            try:
+                phase["other_failures"] = [c for c in failures(check(None)) if not c.startswith("A4.")]
+            except (SystemRefused, PinMismatch, LockMismatch, GateRefused):
+                raise
+            except Exception:
+                phase["other_failures"] = ["audit_exception"]
+        if diagnostics is not None:
+            diagnostics.update(phase)
         return {"status": "INFRA_FAILURE", "failures": ["audit_exception"]}
 
 
@@ -618,6 +697,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                     lock_hash, attempt_id = gate.start_session(current_lock(), arm, life["life"], branch, index, attempt)
                     if genre == "G1" and (probe is None or probe.checkpoint not in checkpoints):
                         m = _now()
+                        if probe and any(r["surface"] == "workspace" for r in evidence.parked_receipts):
+                            repair_permissions(paths["workspace"], {paths["workspace"]})
                         shutil.rmtree(paths["workspace"])
                         boundary = end_boundary(schedule, probe.checkpoint) if probe else start_boundary(schedule, index)
                         materialize(db, schedule, branch=branch, boundary=boundary, root=paths["workspace"])
@@ -628,7 +709,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                         repro.restore(surfaces, paths["workspace"], int(adapter.director.run_values["director_port"]))
                     instant = probe.sim_t_s if probe else schedule.sessions[index - 1].turn_t[0] - TURN_S
                     clock.set_session(instant, step_s=STEP_S if probe else TURN_S)
-                    with ExitStack() as stack:
+                    with ParkedProbe(surfaces, paths["workspace"], probe, index, evidence, checkpoints,
+                            expected[probe.checkpoint]["repo_tree_hash"] if probe and genre == "G1" else None) as stack:
                         clones = []
                         if probe:
                             checkpoints.append(probe.checkpoint)
@@ -667,7 +749,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                                 evidence.retained_roots[iid] = (
                                     evidence.pre_probe[iid].roots if pre_probe_attribution else tuple(clones[:-1]))
                             for clone, canonical in zip(clones, [*(p for _, p in surfaces), paths["workspace"]], strict=True):
-                                stack.enter_context(RestoreWatch(swap_in(clone, canonical), evidence.restore_failures))
+                                stack.enter_context(stack.watch(swap_in(clone, canonical), canonical))
                         if probe:
                             session_baseline = SourceBaseline(source_surfaces, baseline.excluded)
                         stack.push(check_sources)  # runs before any swap restores, including on exceptions
@@ -814,6 +896,26 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 leg.write_records(root, compiled, items, evidence, (), life_dir, branch, db, cases)
             return replace(evidence, stopped=stopped)
         rows = tuple(adapter.records())
+        audited = _audit(adapter, table, faults, script, items, records, plugin, arm,
+                         probe_live=leg is not None, diagnostics=evidence.audit_phase)
+        receipts = [r for r in evidence.parked_receipts if r["surface"] == "HERMES_HOME/." and r["proven"]
+                    and r["path"] in dict(HERMES_FILES).values()]
+        native = {r["path"] for r in receipts}
+        failed_file = evidence.audit_phase.get("file_state", {})
+        explained = ParkedProbe.explained(failed_file, effects=True)
+        if (leg is not None and arm == "system" and audited.get("status") != "OK" and native
+                and not evidence.restore_failures
+                and (set(audited.get("failures", ())) == {"A4.gaps"}
+                     and evidence.audit_phase.get("gap_paths")
+                     and evidence.audit_phase.get("gap_unexplained") == []
+                     and all(p in native and ParkedProbe.explained(evidence.audit_phase.get("gap_states", {}).get(p, {}))
+                             for p in evidence.audit_phase["gap_paths"])
+                     or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
+                     and evidence.audit_phase.get("other_failures") == [] and explained)):
+            for iid in by_id:
+                if iid not in evidence.classes:
+                    evidence.classes[iid] = ("SYSTEM_FAILURE", "system_audit_failure")
+                    evidence.item_labels[iid] = "system_audit_failure"
         if leg is not None:
             leg.write_records(root, compiled, items, evidence, rows, life_dir, branch, db, cases)
             transforms.extend(sorted(leg.transforms))
@@ -828,7 +930,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
         return replace(evidence, results=dict(sorted(results.results().items())), transforms=tuple(sorted(transforms)),
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
             post_restart_requests=requests,
-            audit=_audit(adapter, table, faults, script, items, records, plugin, arm, probe_live=leg is not None),
+            audit=audited,
             sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
             egress=egress, timings=timings, background_records=tuple(adapter.background_records()),
