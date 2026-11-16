@@ -148,7 +148,7 @@ The environment's live-settings wrapper is responsible for live model settings;
 none is printed or copied into the public run script. `FOLLOWUP_STANDIN` is
 only a test dispatcher: it works solely in a directory already holding
 `.followup-test-dir` before `prep`; prep never creates that marker. A real arm
-can only run in the official directory named by the machine-wide record
+can only run in the official directory named by the record
 `.bicentennial-followup-official` in the operator's home. Marking an official
 directory permanently disables its steps. A failed `prep` leaves an
 unrecorded folder that must be moved aside; it posts nothing.
@@ -157,7 +157,7 @@ Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 
 | Step, in operating order | Needs; leaves |
 |---|---|
-| `prep SHA PR [PR ...] [--import DIR\|none]` | A main commit and merged prerequisites; fixes settings, detached worktree, venv and declaration record. Import copies the prior draw records and voids before initialization; `none` records lost state. |
+| `prep SHA PR [PR ...] [--import none]` | A main commit and merged prerequisites; fixes settings, detached worktree, venv and declaration record. State-directory imports are refused; `none` records lost state. |
 | `rehearse` | No real BEACON; places, builds and installs three public-integer packs, prepares H without sends, freezes lists, checks the no-arms reading, check 3, follow-up tests and known-answer derivation. Keeps failed rehearsals. |
 | `post-commit` | Rehearsal passed at the run commit; adopts the counted post or posts round, commit and H's six values. Posted values govern H's checks even if they differ from rehearsal. |
 | `beacon` | Counted commitment; waits under caffeinate, retries relay reads and only the transient S4 refusals every thirty seconds, saves accepted BEACON or posts the cutoff stop. |
@@ -206,14 +206,26 @@ review and commit its publication folder beside the result.
 
 When placement confirms a void, its exit 1 means the next step is `post-commit` for a new round; a failed placement instead requires `rebuild`. Every cutoff keeps its partial logs, and the saved tool PID and process start distinguish a live invocation from a reused PID.
 
-Import is only for the counted post naming a different commit. `prep SHA --import DIR`
-accepts only the recorded official source (a marked test source in tests), with no
-BEACON or arm records, after its own S4 reading counts SHA and finds no
-merging-account second-post or task-list marker after the merge newer than that
-counted first post; it preserves the old step-2 records in `private/imported/`
-and publishes them at release. A refusal
-leaves the official-directory record unchanged; move the unrecorded new directory
-aside before retrying.
+A directory runs only the draw it posted: its own S4 `post` record must name
+that draw's counted first post. The script reads those records only through
+fresh numbered exports under `private/exports/`. Reading or matching #394 never
+grants authority. A matching second post or task-list post is adopted only if
+its id is also in the directory's own post records; otherwise it posts its own.
+An export failure refuses `own post records unavailable`; fix storage or the
+export failure and repeat the step. Release exports S4's records independently
+and skips these private copies.
+
+`prep SHA --import DIR` is unsupported and refuses before creating or recording
+anything. A commit change before or after a void is unsupported, so that run
+ends without arms, with readings unresolved under §10's missing-data line.
+
+These fail-closed windows also end the follow-up without arms, and release
+publishes the records: GitHub accepts the first post but S4 cannot save the
+response (a timeout recorded as `post-unknown`, or a kill or reboot between the
+201 and its record); the directory is lost after its first post; or a commitment
+post made by hand counts. A `counted-not-own` record permits only release and
+abandon. A hand copy of a state directory, on this machine or another, is outside
+what the script can detect, like a hand-edited record.
 
 `--import none` requires the recorded old directory to be absent and records
 `old state lost`. Before any merging-account second-post or task-list marker

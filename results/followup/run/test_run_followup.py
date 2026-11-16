@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -79,7 +80,7 @@ def inject(phase):
     if fault.get("empty"): (state_root/fault["empty"]).write_text("")
     if fault.get("unlink"): (state_root/fault["unlink"]).unlink(missing_ok=True)
     if fault.get("full"):
-        c["full_write"]=True; save()
+        c["full_write"]=fault["full"]; save()
     if fault.get("kill"):
         owners=list((state_root/"lock").iterdir())
         c.setdefault("dead_pids",[]).append(owners[0].name); save()
@@ -90,14 +91,22 @@ def inject(phase):
     if "stdout" in fault: print(fault["stdout"]); sys.exit(0)
     if fault.get("fail"): sys.exit(1)
 inject("before")
-if kind=="files" and argv[0]=="printf" and c.pop("full_write",False):
-    save(); print("synthetic write: No space left on device",file=sys.stderr); sys.exit(1)
+if kind=="files" and argv[0]=="printf" and c.get("full_write") and (state_root/(c["full_write"]+".part")).exists() and os.path.samestat(os.stat(state_root/(c["full_write"]+".part")),os.fstat(1)):
+    c.pop("full_write"); save(); print("synthetic write: No space left on device",file=sys.stderr); sys.exit(1)
 def option(flag): return argv[argv.index(flag)+1]
 def write(path, text):
     path=pathlib.Path(path); path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
 def digest(path): return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 def canonical(x): return json.dumps(x, sort_keys=True, separators=(",", ":"))+"\n"
 if kind==c.get("fail_kind"): sys.exit(1)
+if kind=="dr" and "publish-records" in argv and c.get("export_fault"):
+    fault=c.pop("export_fault"); save()
+    if fault=="exit": sys.exit(2)
+    code=subprocess.call(argv)
+    if code: sys.exit(code)
+    if fault=="exit-after": sys.exit(2)
+    (pathlib.Path(argv[-1])/"records"/"999999-post.json").write_text("{")
+    sys.exit(0)
 if kind in c.get("real_tools",[]) or kind=="import-check" and "dr" in c.get("real_tools",[]):
     if kind=="gh": pass
     elif kind=="build":
@@ -175,10 +184,15 @@ if kind == "dr":
             save(); print("blocked 9"); sys.exit(13)
         if k=="first" and not c.get("late"): c["counted"]=True
         if k=="stop": c["stopped"]=True
-        c.setdefault("matched",[]).append(k); save(); print("posted 2 synthetic"); sys.exit(0)
+        id=1 if k=="first" else 2
+        c.setdefault("own_posts",[1] if c.get("counted") else []).append(id)
+        c.setdefault("matched",[]).append(k); save(); print("posted",id,"synthetic"); sys.exit(0)
     if command=="match":
         k=args[0]
-        if k in c.get("matched",[]): print("matched",c.get("match_id",2)); sys.exit(0)
+        if k in c.get("matched",[]):
+            id=c.get("match_id",2)
+            c.setdefault("match_records",[]).append(dict(kind=k,round=c["round"],matches=[id])); save()
+            print("matched",id); sys.exit(0)
         print("none"); sys.exit(10)
     if command=="record-void":
         n=int(args[args.index("--round")+1]); c.setdefault("voids",[]).append(n)
@@ -187,6 +201,10 @@ if kind == "dr":
         out=pathlib.Path(args[-1]); (out/"records").mkdir(parents=True)
         for n in c.get("voids",[]):
             write(out/"records"/"000001-void.json", canonical(dict(round=n,receipt_sha256=c["void_receipt"])))
+        for i,id in enumerate(c.get("own_posts",[1] if c.get("counted") else []),10):
+            write(out/"records"/(f"{i:06d}-post.json"),canonical(dict(id=id)))
+        for i,row in enumerate(c.get("match_records",[]),100):
+            write(out/"records"/(f"{i:06d}-match.json"),canonical(row))
         print("published records"); sys.exit(0)
 if kind=="ps":
     if c.get("empty_tool_start") and not (state_root/"lock"/argv[-1]).is_dir():
@@ -251,7 +269,7 @@ if kind=="tasks":
     if c.get("task_fault")=="descriptive": payload["descriptive"].pop()
     write(option("--out"),canonical(payload)); print(p,"target items 40 descriptive items 10"); sys.exit(c.get("tasks_exit",0))
 if kind=="table":
-    if "--filter-out" in argv: write(option("--filter-out"),canonical(dict(packs={})))
+    if "--filter-out" in argv and c.get("table_exit",4)==0: write(option("--filter-out"),canonical({p:{} for p in "ABC"}))
     print(c.get("table_final_output") if "--after-reruns" in argv and c.get("table_final_output") else c.get("table_output","pending before any score: "+" ".join(c["order"])+" - rerun once (§3, §4), then run again with --after-reruns"))
     sys.exit(c.get("table_exit",4))
 if kind in ("check3","followup-tests","derivation-tests"):
@@ -940,8 +958,9 @@ if "/commits/" in endpoint:
 if "/compare/" in endpoint: http(dict(status="identical"))
 if endpoint.endswith("/issues/394/comments") and "POST" in args:
     body=next(a[5:] for a in args if a.startswith("body="))
-    item=dict(id=len(c.get("comments",[]))+1,author=71,body=body,created_at=stamp(c["clock"]))
+    item=dict(id=max([n["id"] for n in c.get("comments",[])],default=0)+1,author=71,body=body,created_at=stamp(c["clock"]))
     c.setdefault("comments",[]).append(item); save()
+    if c.pop("post_unknown",False): save(); sys.exit(1)
     http(dict(id=item["id"],body=body,created_at=item["created_at"],user=dict(id=71,login="synthetic")),201)
 if endpoint=="repos/electricsheephq/bicentennial": http(dict(default_branch="main"))
 http({},404)
@@ -1218,7 +1237,8 @@ def test_i8_other_commit_reader_then_hand_stop_publishes(integrated, variant):
     )
     refused = h.run("post-commit", code=2)
     assert other in refused.stdout + refused.stderr
-    h.run("release", code=2)
+    h.run("release")
+    assert (h.state / "publish/counted-not-own").is_file()
     due = 1692803367 + (c["round"] - 1) * 3
     c = json.loads(h.scenario.read_text())
     c["comments"].append(
@@ -1703,16 +1723,6 @@ def test_r10_resolved_tools_are_frozen(harness, name):
         path.chmod(0o755)
         h.env["PATH"] = str(alt) + ":" + h.env["PATH"]
     h.run("rehearse", code=2)
-
-
-def test_r12_import_copies_before_init_and_preserves_old(harness):
-    h = harness
-    through(h, "post-draw")
-    old = h.state
-    new_test_state(h, "same-commit")
-    result = h.run("prep", h.commit, "1", "--import", str(old), code=2)
-    assert "import commit must differ" in result.stderr
-    assert not (h.state / "private/settings").exists()
 
 
 @pytest.mark.parametrize(
@@ -2224,73 +2234,6 @@ def test_r6_idle_failure_keeps_rehearsal(harness):
     assert (h.state / "private/rehearsal.failed-1").exists()
 
 
-def test_r12_real_import_adopts_counted_commit(integrated):
-    h = integrated
-    through(h, "rehearse")
-    old_commit = h.commit
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(h.repo),
-            "-c",
-            "core.hooksPath=" + os.devnull,
-            "commit",
-            "--allow-empty",
-            "--no-gpg-sign",
-            "-qm",
-            "synthetic second run commit",
-        ],
-        env=h.env,
-        check=True,
-        capture_output=True,
-    )
-    adopted = subprocess.check_output(
-        ["git", "-C", str(h.repo), "rev-parse", "HEAD"], env=h.env, text=True
-    ).strip()
-    subprocess.run(
-        ["git", "-C", str(h.repo), "update-ref", "refs/remotes/origin/main", adopted],
-        env=h.env,
-        check=True,
-        capture_output=True,
-    )
-    c = json.loads(h.scenario.read_text())
-    dr = by_path("import_stamp", SCRIPT.with_name("draw_record.py"))
-    body = (
-        "Follow-up draw: first post\nround "
-        + str(c["round"])
-        + "\nrun_commit "
-        + adopted
-        + "\n"
-        + (h.state / "private/rehearsal/h.values").read_text()
-    )
-    h.set(comments=[dict(id=91, author=71, created_at=dr.stamp(c["clock"]), body=body)])
-    refused = h.run("post-commit", code=2)
-    assert adopted in refused.stderr and adopted != old_commit
-    old = h.state
-    before = {
-        str(p.relative_to(old)): p.read_bytes()
-        for p in old.rglob("*")
-        if p.is_file() and not p.is_symlink()
-    }
-    target = old.with_name("adopted")
-    target.mkdir()
-    (target / MARKER).touch()
-    h.state = target
-    h.commit = adopted
-    h.env["FOLLOWUP_STATE"] = str(target)
-    h.set(commit=adopted)
-    h.run("prep", adopted, "1", "--import", str(old))
-    assert all((old / name).read_bytes() == raw for name, raw in before.items())
-    h.run("rehearse")
-    assert (target / "private/rehearsal/passed").read_text().strip() == adopted
-    h.run("post-commit")
-    h.due()
-    h.run("beacon")
-    h.run("rehearse", code=2)
-    assert len(json.loads(h.scenario.read_text())["comments"]) == 1
-
-
 def test_r5_first_placement_uses_draw_worktree(harness):
     h = harness
     through(h, "place")
@@ -2420,94 +2363,6 @@ def fixture_commit(h, *, side=False):
         capture_output=True,
     )
     return commit
-
-
-@pytest.mark.parametrize(
-    "source", ["unrecorded", "beacon", "run", "sequence", "official-for-test"]
-)
-def test_r3_import_source_guards(harness, source):
-    h = harness
-    through(h, "rehearse")
-    old = h.state
-    adopted = fixture_commit(h)
-    h.set(counted=True, counted_commit=adopted)
-    if source == "unrecorded":
-        (old / MARKER).unlink()
-    elif source == "official-for-test":
-        (old / MARKER).unlink()
-        (Path(h.env["HOME"]) / ".bicentennial-followup-official").write_text(str(old))
-    elif source == "beacon":
-        (old / "private/BEACON").write_text("{}")
-    elif source == "run":
-        (old / "runs/A.F1").mkdir()
-    else:
-        (old / "logs/A.F1.seq").write_text("1")
-    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
-    before = record.read_bytes() if record.exists() else None
-    new_test_state(h, "rejected-import")
-    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
-    assert (
-        "import source"
-        if source in ("unrecorded", "official-for-test")
-        else "import has"
-    ) in result.stderr
-    assert (record.read_bytes() if record.exists() else None) == before
-
-
-def test_r3_import_counted_commit_and_published_records(harness):
-    h = harness
-    through(h, "rehearse")
-    old = h.state
-    adopted = fixture_commit(h)
-    for name in (
-        "counted-other-commit",
-        "reading-commit-refusal",
-        "blocked",
-        "counted-list.json",
-        "evaluate.out",
-        "evaluate.err",
-        "first-post.out",
-        "first-post.err",
-    ):
-        (old / "private" / name).write_text("synthetic step-2 record\n")
-    # The old files deliberately name nothing: only S4's fresh reading authorizes adoption.
-    h.set(counted=True, counted_commit=adopted)
-    before = {
-        p.relative_to(old): p.read_bytes()
-        for p in old.rglob("*")
-        if p.is_file() and not p.is_symlink()
-    }
-    new_test_state(h, "adopted-r3")
-    h.run("prep", adopted, "1", "--import", str(old))
-    assert all((old / name).read_bytes() == raw for name, raw in before.items())
-    h.set(blocked=True)
-    (h.state / "private/blocked").write_text("blocked 9\n")
-    h.run("release")
-    for name in (
-        "counted-other-commit",
-        "reading-commit-refusal",
-        "blocked",
-        "counted-list.json",
-        "evaluate.out",
-        "evaluate.err",
-        "first-post.out",
-        "first-post.err",
-    ):
-        assert (
-            h.state / "publish/imported" / name
-        ).read_text() == "synthetic step-2 record\n"
-
-
-def test_r3_import_requires_s4_commit(harness):
-    h = harness
-    through(h, "rehearse")
-    old = h.state
-    adopted = fixture_commit(h)
-    (old / "private/counted-other-commit").write_text(adopted)
-    h.set(counted=True, counted_commit=h.commit)
-    new_test_state(h, "wrong-counted")
-    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
-    assert "import counted post must name" in result.stderr
 
 
 @pytest.mark.parametrize("exists", [True, False])
@@ -3024,7 +2879,6 @@ def test_r3_release_blocked_verify_and_d19_files(harness):
         "draw.sha256",
         "counted.json",
         "h-differences",
-        "FILTER-37.json",
         *[
             f"{stem}-{p}.{suffix}"
             for p in "ABC"
@@ -3086,22 +2940,6 @@ def test_r3_real_s4_first_post_blocks_new_directory(integrated):
     assert "draw already began" in h.run("prep", h.commit, "1", code=2).stderr
 
 
-def test_r3_official_import_source_before_external_tools(harness):
-    h = harness
-    through(h, "rehearse")
-    old = h.state
-    adopted = fixture_commit(h)
-    called = blocking_python(h)
-    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
-    record.write_text(str(old.with_name("authorized-source")))
-    h.state = old.with_name("unmarked-target")
-    h.env["FOLLOWUP_STATE"] = str(h.state)
-    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
-    assert "import source is not the recorded official directory" in result.stderr
-    assert not called.exists()
-    assert record.read_text() == str(old.with_name("authorized-source"))
-
-
 def test_r3_record_copy_failure_resumes(harness):
     h = harness
     h.ready()
@@ -3145,26 +2983,6 @@ def test_r3_second_check3_receipt_write_failure_releases(harness):
     h.run("release")
     assert (h.state / "publish/check3-2.txt").is_file()
     assert not h.calls("arm")
-
-
-def test_r3_same_commit_import_before_beacon(harness):
-    h = harness
-    through(h, "post-commit")
-    old = h.state
-    new_test_state(h, "same-before-beacon")
-    result = h.run("prep", h.commit, "1", "--import", str(old), code=2)
-    assert "import commit must differ" in result.stderr
-
-
-def test_r3_import_requires_successful_evaluate(harness):
-    h = harness
-    through(h, "rehearse")
-    old = h.state
-    adopted = fixture_commit(h)
-    h.set(counted=True, counted_commit=adopted, reading_refusal="unavailable")
-    new_test_state(h, "unavailable-import")
-    result = h.run("prep", adopted, "1", "--import", str(old), code=2)
-    assert "import counted evaluation refused" in result.stderr
 
 
 @pytest.mark.parametrize("fault", ["write", "hash-format"])
@@ -3265,72 +3083,12 @@ def test_r4_two_step_import_after_draw(harness, line):
     lost = new_test_state(h, "release-only-r4")
     h.run("prep", other, "1", "--import", "none")
     assert (lost / "private/state-lost-after-draw").is_file()
-    before = record.read_bytes()
     new_test_state(h, "restarted-r4")
     result = h.run("prep", h.commit, "1", "--import", str(lost), code=None)
-    if result.returncode == 0:
-        # Base receipt: matching existing posts let the reset pipeline reach an arm.
-        for step in (
-            "rehearse",
-            "post-commit",
-            "beacon",
-            "draw",
-            "post-draw",
-            "place",
-            "build",
-            "tasks",
-            "post-tasks",
-            "check3",
-        ):
-            h.run(step)
-        h.run("run", "A.F1")
-        assert len(h.calls("arm")) == 1
-        print("base bypass: two-step import reached first arm with fresh budgets")
-    assert result.returncode == 2, (
-        "import accepted after the counted round's draw began"
-    )
-    assert "import refused: counted round draw already began" in result.stderr
-    assert record.read_bytes() == before
+    assert result.returncode == 2, "state-directory import was accepted"
+    assert IMPORT_REFUSAL in result.stderr
+    # Effective D3 write-order proxy: settings precede the official-record write.
     assert not (h.state / "private/settings").exists()
-
-
-@pytest.mark.parametrize("after_void", [False, True])
-def test_r4_d4_import_positive_controls(harness, after_void):
-    h = harness
-    through(h, "post-draw" if after_void else "rehearse")
-    old = h.state
-    if after_void:
-        h.set(place_exit=1)
-        h.run("place", code=1)
-        number = json.loads(h.scenario.read_text())["round"]
-    adopted = fixture_commit(h)
-    config = json.loads(h.scenario.read_text())
-    h.set(
-        commit=adopted,
-        place_exit=0,
-        round=config["round"] + int(after_void),
-        due=config["due"] + 3 * int(after_void),
-        counted=True,
-        counted_commit=adopted,
-        counted_created_at="2026-01-03T00:00:00Z",
-        markers=[
-            dict(
-                after_merge=True,
-                first_line="Follow-up draw: second post",
-                created_at="2026-01-02T00:00:01Z",
-            )
-        ]
-        if after_void
-        else [],
-    )
-    new_test_state(h, "d4-r4")
-    h.run("prep", adopted, "1", "--import", str(old))
-    assert not (h.state / "private/state-lost-after-draw").exists()
-    if after_void:
-        for p in (old / f"private/void-{number}").rglob("*"):
-            if p.is_file():
-                assert (h.state / p.relative_to(old)).read_bytes() == p.read_bytes()
-    h.run("rehearse")
 
 
 @pytest.mark.parametrize(
@@ -3441,7 +3199,8 @@ def test_r4_failed_fork_record_waits_and_resumes(harness, record_name):
     assert not (folder / "draw.cuts").exists()
 
 
-def test_r4_kill_with_only_pid_partial(harness):
+@pytest.mark.parametrize("age", [0, 60])
+def test_r4_kill_with_only_pid_partial(harness, age):
     h = harness
     through(h, "beacon")
     h.set(
@@ -3454,8 +3213,22 @@ def test_r4_kill_with_only_pid_partial(harness):
     assert not (folder / "draw.pid").exists()
     assert not (folder / "draw.start").exists()
     now = json.loads(h.scenario.read_text())["clock"]
-    os.utime(folder / "draw.pid.part", (now, now))
+    os.utime(folder / "draw.pid.part", (now - age, now - age))
     h.run("abandon", "A.F1")
+    if age == 60:
+        # Advancing D3's clock does not finish a stand-in's real-time sleep.
+        # Model the older, dead fork before resuming and cutting its output.
+        deadline = time.monotonic() + 10
+        while (
+            not (h.state / "private/DRAW.json").exists() and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert (h.state / "private/DRAW.json").is_file()
+    if age == 60:
+        h.run("draw")
+        assert (folder / "draw.cut-1/pid.part").read_text().strip().isdigit()
+        assert (folder / "draw.cuts").read_text() == "1\n"
+        return
     for _ in range(2):
         result = h.run("draw", code=None)
         count = len([c for c in h.calls("draw") if "--rehearsal" not in c["argv"]])
@@ -3472,8 +3245,8 @@ def test_r4_portable_full_write_fault(harness):
     h.set(
         place_exit=1,
         inject=dict(
-            kind="sha",
-            match=["placed-1/void.json"],
+            kind="ps",
+            match=["-o"],
             full=f"private/void-confirm-{number}",
         ),
     )
@@ -3483,3 +3256,351 @@ def test_r4_portable_full_write_fault(harness):
     assert (h.state / f"private/void-confirm-{number}.part").read_bytes() == b""
     assert not any("record-void" in c["argv"] for c in h.calls("dr"))
     h.run("place", code=1)
+
+
+# Round 5: public matches restrict; only this directory's own POST grants authority.
+NOT_OWN = "counted first post was not made by this directory"
+EXPORT_UNAVAILABLE = "own post records unavailable"
+IMPORT_REFUSAL = (
+    "import of a state directory is not supported: "
+    "a directory runs only the draw it posted"
+)
+
+
+def assert_not_own_steps(h):
+    for step in (
+        "rehearse",
+        "post-commit",
+        "beacon",
+        "draw",
+        "post-draw",
+        "place",
+        "build",
+        "tasks",
+        "rebuild",
+        "post-tasks",
+        "check3",
+        "run",
+        "rerun",
+        "table",
+        "cards",
+        "stop",
+    ):
+        args = (step, "A.F1") if step in ("run", "rerun") else (step,)
+        assert h.run(*args, code=2).stderr == "refused: " + NOT_OWN + "\n"
+    assert not h.calls("arm")
+
+
+def test_r5_second_home_cannot_run_another_directory_draw(integrated):
+    h = integrated
+    first, home1 = h.state, h.env["HOME"]
+    through(h, "rehearse")
+    second = new_test_state(h, "second-home-state")
+    home2 = first.with_name("second-home")
+    home2.mkdir()
+    h.env["HOME"] = str(home2)
+    through(h, "rehearse")  # Both directories exist before any public post.
+    h.state, h.env["FOLLOWUP_STATE"], h.env["HOME"] = first, str(first), home1
+    for step in ("post-commit", "beacon", "draw", "post-draw"):
+        if step == "beacon":
+            h.due()
+        h.run(step)
+    h.state, h.env["FOLLOWUP_STATE"], h.env["HOME"] = second, str(second), str(home2)
+    result = h.run("post-commit", code=None)
+    if result.returncode == 0:
+        for step in (
+            "beacon",
+            "draw",
+            "post-draw",
+            "place",
+            "build",
+            "tasks",
+            "post-tasks",
+            "check3",
+        ):
+            h.run(step)
+        h.run("run", "A.F1")
+        print(
+            "base bypass: second HOME reached first arm; arm_calls="
+            + str(len(h.calls("arm")))
+        )
+    assert result.returncode == 2, "second HOME adopted another directory's first post"
+    assert result.stderr == "refused: " + NOT_OWN + "\n"
+    assert (second / "private/counted-not-own").read_bytes() == (
+        second / "private/evaluate.out"
+    ).read_bytes()
+    assert_not_own_steps(h)
+    h.run("abandon", "A.F1")
+    h.run("release")
+    assert (second / "publish/counted-not-own").is_file()
+
+
+def hand_first(h, commit=None):
+    c = json.loads(h.scenario.read_text())
+    dr = by_path("r5_stamp", SCRIPT.with_name("draw_record.py"))
+    h.set(
+        comments=[
+            dict(
+                id=91,
+                author=71,
+                created_at=dr.stamp(c["clock"]),
+                body=(
+                    f"Follow-up draw: first post\nround {c['round']}\nrun_commit {commit or h.commit}\n"
+                    + (h.state / "private/rehearsal/h.values").read_text()
+                ),
+            )
+        ]
+    )
+
+
+def test_r5_hand_first_refuses(integrated):
+    h = integrated
+    through(h, "rehearse")
+    hand_first(h)
+    result = h.run("post-commit", code=None)
+    assert result.returncode == 2, "hand first post was adopted"
+    assert result.stderr == "refused: " + NOT_OWN + "\n"
+    assert_not_own_steps(h)
+
+
+def test_r5_post_unknown_refuses_after_wait(integrated):
+    h = integrated
+    through(h, "rehearse")
+    h.set(post_unknown=True)
+    h.run("post-commit", code=2)
+    records = h.state / "private/draw/records"  # Test inspects S4; script does not.
+    assert list(records.glob("*-post-unknown.json"))
+    assert not list(records.glob("*-post.json"))
+    c = json.loads(h.scenario.read_text())
+    h.set(clock=c["clock"] + 121)
+    result = h.run("post-commit", code=None)
+    assert result.returncode == 2, "unknown first POST was adopted without its response"
+    assert result.stderr == "refused: " + NOT_OWN + "\n"
+    assert len(json.loads(h.scenario.read_text())["comments"]) == 1
+
+
+@pytest.mark.parametrize("variant", ["differs", "unavailable"])
+def test_r5_other_commit_is_terminal_and_published(integrated, variant):
+    h = integrated
+    through(h, "rehearse")
+    other = "c" * 40
+    hand_first(h, other)
+    h.set(other_commit=other, module_variant=variant)
+    result = h.run("post-commit", code=2)
+    assert f"reading module {variant} at {other}" in result.stderr
+    terminal = h.state / "private/counted-not-own"
+    assert terminal.exists(), "other-commit reading refusal was not terminal"
+    assert terminal.read_bytes() == (h.state / "private/evaluate.err").read_bytes()
+    assert_not_own_steps(h)
+    h.run("release")
+    assert (h.state / "publish/counted-not-own").read_bytes() == terminal.read_bytes()
+
+
+@pytest.mark.parametrize("fault", ["exit", "exit-after", "malformed"])
+def test_r5_first_export_failure_is_retryable(integrated, fault):
+    h = integrated
+    through(h, "rehearse")
+    h.set(export_fault=fault)
+    result = h.run("post-commit", code=None)
+    assert result.returncode == 2, "failed own-post export was ignored"
+    assert result.stderr.endswith("refused: " + EXPORT_UNAVAILABLE + "\n")
+    assert not (h.state / "private/counted-not-own").exists()
+    assert not (h.state / "private/counted.json").exists()
+    assert len(json.loads(h.scenario.read_text())["comments"]) == 1
+    h.run("post-commit")
+    assert len(json.loads(h.scenario.read_text())["comments"]) == 1
+    assert (h.state / "private/exports/2/records").is_dir()
+
+
+def test_r5_release_skips_private_exports(integrated):
+    h = integrated
+    through(h, "post-commit")
+    exports = h.state / "private/exports"
+    # Positive control on the base: stop creates a release terminal independently.
+    if not exports.exists():
+        exports.mkdir()
+    (exports / "partial.match").write_text("partial exported match\n")
+    h.due()
+    c = json.loads(h.scenario.read_text())
+    h.set(clock=c["clock"] + 86400, relay_unavailable=True)
+    h.run("beacon")
+    h.run("release")
+    assert not (h.state / "publish/exports").exists(), "private export was published"
+    assert (h.state / "publish/draw-record-1/records").is_dir()
+
+
+def test_r5_restart_own_first_positive_control(integrated):
+    h = integrated
+    through(h, "post-commit")
+    p = h.state / "private"
+    retained = {"draw", "first.body", "settings", "declaration.commit", "rehearsal"}
+    for path in p.iterdir():
+        if path.name in retained:
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    (h.state / "posted/commit.rec").unlink()
+    h.run("post-commit")
+    assert len(json.loads(h.scenario.read_text())["comments"]) == 1
+    h.due()
+    h.run("beacon")
+
+
+def matching_hand_post(h, kind):
+    step = "post-draw" if kind == "second" else "post-tasks"
+    # Obtain the exact body without posting; keep the real S4 untouched.
+    h.set(inject=dict(kind="dr", match=["match", kind], fail=True))
+    h.run(step, code=2)
+    body = (h.state / "private" / (kind + ".body")).read_text()
+    c = json.loads(h.scenario.read_text())
+    dr = by_path("r5_match_stamp", SCRIPT.with_name("draw_record.py"))
+    id = max(n["id"] for n in c["comments"]) + 1
+    c["comments"].append(
+        dict(id=id, author=71, created_at=dr.stamp(c["clock"]), body=body)
+    )
+    h.set(comments=c["comments"])
+    return id
+
+
+@pytest.mark.parametrize("kind", ["second", "tasks"])
+def test_r5_matching_hand_post_requires_own_post(integrated, kind):
+    h = integrated
+    through(h, "draw" if kind == "second" else "tasks")
+    hand = matching_hand_post(h, kind)
+    step, posted = (
+        ("post-draw", "draw") if kind == "second" else ("post-tasks", "tasks")
+    )
+    h.run(step)
+    comments = json.loads(h.scenario.read_text())["comments"]
+    own = comments[-1]["id"]
+    assert own != hand, "matching hand comment was adopted"
+    assert comments[-1]["body"] == comments[-2]["body"]
+    rec = h.state / "posted" / (posted + ".rec")
+    assert rec.read_text().endswith(f"own {own}\n")
+    assert f"matched {hand}\n" in rec.read_text()  # Printed first != adopted own.
+    count = len(comments)
+    rec.unlink()
+    h.run(step)
+    assert len(json.loads(h.scenario.read_text())["comments"]) == count
+    assert rec.read_text().endswith(f"own {own}\n")
+
+
+@pytest.mark.parametrize("kind", ["second", "tasks"])
+@pytest.mark.parametrize("fault", ["exit", "exit-after", "malformed"])
+def test_r5_match_export_failure_posts_nothing(integrated, kind, fault):
+    h = integrated
+    through(h, "draw" if kind == "second" else "tasks")
+    matching_hand_post(h, kind)
+    before = len(json.loads(h.scenario.read_text())["comments"])
+    h.set(export_fault=fault)
+    step = "post-draw" if kind == "second" else "post-tasks"
+    result = h.run(step, code=None)
+    assert result.returncode == 2, (
+        "match adopted without an available own-post export (new guard)"
+    )
+    assert result.stderr.endswith("refused: " + EXPORT_UNAVAILABLE + "\n")
+    assert len(json.loads(h.scenario.read_text())["comments"]) == before
+    h.run(step)
+    assert len(json.loads(h.scenario.read_text())["comments"]) == before + 1
+
+
+@pytest.mark.parametrize("kind", ["second", "tasks"])
+def test_r5_posted_id_must_be_in_latest_matches(integrated, kind):
+    """Positive control: a matching hand post races an unmatched POST response."""
+    h = integrated
+    through(h, "draw" if kind == "second" else "tasks")
+    service = h.scenario.parent / "gh"
+    text = service.read_text().replace(
+        'body=next(a[5:] for a in args if a.startswith("body="))',
+        'expected=next(a[5:] for a in args if a.startswith("body="))\n'
+        '    c.setdefault("comments",[]).append(dict(id=max([n["id"] for n in c.get("comments",[])],default=0)+1,author=71,body=expected,created_at=stamp(c["clock"])))\n'
+        '    body=expected+"extra synthetic\\n"',
+    )
+    service.write_text(text)
+    step, posted = (
+        ("post-draw", "draw") if kind == "second" else ("post-tasks", "tasks")
+    )
+    result = h.run(step, code=2)
+    assert "posted comment was not matched" in result.stderr
+    assert not (h.state / "posted" / (posted + ".rec")).exists()
+
+
+@pytest.mark.parametrize("mode", ["test", "official"])
+@pytest.mark.parametrize("source", ["old-directory", ""])
+def test_r5_import_directory_refuses_before_any_write(harness, mode, source):
+    h = harness
+    if mode == "official":
+        (h.state / MARKER).unlink()
+        h.state.rmdir()
+    record = Path(h.env["HOME"]) / ".bicentennial-followup-official"
+    record.write_text("synthetic old directory\n")
+    before = record.read_bytes()
+    result = h.run("prep", h.commit, "1", "--import", source, code=None)
+    assert result.returncode == 2, "state-directory import accepted"
+    assert result.stderr == "refused: " + IMPORT_REFUSAL + "\n"
+    assert (
+        record.read_bytes() == before
+    )  # Can fail: a real pre-existing stand-in record.
+    assert not (h.state / "private").exists()
+    assert not h.calls()
+
+
+@pytest.mark.parametrize(
+    "record,pid", [("pid.part", ""), ("pid.part", "99999999"), ("pid", "bad")]
+)
+@pytest.mark.parametrize("age", [59, 60])
+def test_r5_partial_or_invalid_pid_uses_age(harness, record, pid, age):
+    h = harness
+    through(h, "beacon")
+    folder = h.state / "private/tools"
+    folder.mkdir(exist_ok=True)
+    (folder / ("draw." + record)).write_text(pid)
+    (folder / "draw.process-start").write_text("synthetic start\n")
+    (folder / "draw.start.part").write_text("partial\n")
+    (folder / "draw.process-start.part").write_text("partial\n")
+    now = json.loads(h.scenario.read_text())["clock"]
+    os.utime(folder / ("draw." + record), (now - age, now - age))
+    # A partial numeric PID could look live. An empty/invalid PID is absent to ps.
+    h.set(dead_pids=[pid] if pid != "99999999" else [], process_live=pid == "99999999")
+    result = h.run("draw", code=None)
+    if age < 60:
+        assert result.returncode == 2
+        assert "recorded tool may be starting" in result.stderr
+        assert not (folder / "draw.cuts").exists()
+    else:
+        assert result.returncode == 0, "old partial PID did not clear by a cut"
+        assert (folder / "draw.cuts").read_text() == "1\n"
+        assert (folder / ("draw.cut-1/" + record)).read_text() == pid
+        for name in ("process-start.part", "start.part"):
+            assert (folder / "draw.cut-1" / name).is_file()
+
+
+@pytest.mark.parametrize("code", [0, 3, 4])
+def test_r5_table_standin_filter_only_on_success(harness, code):
+    h = harness
+    out = h.state / "FILTER.json"
+    h.set(table_exit=code)
+    subprocess.run(
+        [h.env["FOLLOWUP_STANDIN"], "table", "table", "--filter-out", str(out)],
+        env=h.env,
+        check=False,
+    )
+    assert out.exists() == (code == 0)
+
+
+@pytest.mark.parametrize("kind", ["second", "tasks"])
+def test_r5_restart_own_match_positive_control(integrated, kind):
+    h = integrated
+    through(h, "post-draw" if kind == "second" else "post-tasks")
+    step, posted = (
+        ("post-draw", "draw") if kind == "second" else ("post-tasks", "tasks")
+    )
+    comments = json.loads(h.scenario.read_text())["comments"]
+    own = comments[-1]["id"]
+    rec = h.state / "posted" / (posted + ".rec")
+    rec.unlink()
+    h.run(step)
+    assert len(json.loads(h.scenario.read_text())["comments"]) == len(comments)
+    assert f"matched {own}\n" in rec.read_text()

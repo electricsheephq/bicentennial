@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fresh-seed follow-up: run each step at the recorded commit.
-# prep <sha> <PR> [...] [--import DIR|none]  fix local settings and prerequisites.
+# prep <sha> <PR> [...] [--import none]  fix local settings and prerequisites.
 # rehearse                              exercise the committed tools before a beacon.
 # post-commit                           adopt or post the counted commitment.
 # beacon                                wait for the counted round through the draw record.
@@ -124,15 +124,22 @@ try:
         data=load(a[0])
         if any(r.get("reason")!="not after the merge" for r in data["first_posts"]): raise ValueError
         if any(r["after_merge"] for r in data["markers"]): raise ValueError
-    elif op=="import-commit":
-        rows=[r for r in load(a[0])["first_posts"] if r.get("counted")]
-        if len(rows)!=1 or rows[0].get("commit")!=a[1]: raise ValueError
-    elif op=="import-before-draw":
-        data=load(a[0]); row=next(r for r in data["first_posts"] if r.get("counted"))
-        created=datetime.datetime.fromisoformat(row["created_at"])
-        if any(r.get("after_merge") and r.get("first_line") in
-               ("Follow-up draw: second post","Follow-up draw: task lists") and
-               datetime.datetime.fromisoformat(r["created_at"])>created for r in data["markers"]): raise ValueError
+    elif op=="own-post":
+        folder,kind,round_number,wanted=a
+        posts=set(); matches=[]
+        for path in sorted((Path(folder)/"records").iterdir()):
+            m=re.fullmatch(r"([0-9]{6})-([a-z][a-z-]*)\.(json|body)",path.name)
+            if not m or m[3]!="json": continue
+            row=load(path)
+            if m[2]=="post":
+                if type(row["id"]) is not int: raise ValueError
+                posts.add(str(row["id"]))
+            elif m[2]=="match":
+                if not isinstance(row["matches"],list) or any(type(i) is not int for i in row["matches"]): raise ValueError
+                if row["kind"]==kind and row["round"]==int(round_number): matches=row["matches"]
+        eligible=posts if kind=="first" else posts.intersection(map(str,matches))
+        if wanted: eligible.intersection_update([wanted])
+        if eligible: print(min(eligible,key=int))
     elif op=="lost-after-draw":
         if not any(r.get("after_merge") and r.get("first_line") in
                    ("Follow-up draw: second post","Follow-up draw: task lists") for r in load(a[0])["markers"]): sys.exit(1)
@@ -324,8 +331,12 @@ draw_status() { local x
   if [[ $EVAL == 2 ]]; then
     if [[ $STEP == post-commit ]] && tool files grep -qE '^refused: reading module (differs|unavailable) at [0-9a-f]{40}$' "$P/evaluate.err"; then
       copy_record "$P/evaluate.err" "$P/reading-commit-refusal"
+      local line; IFS= read -r line < "$P/evaluate.err"
+      if [[ ${line##* } != $(readfile "$S/commit.txt") ]]; then
+        record "$P/counted-not-own" "$line" counted-not-own
+      fi
       dr publish-list > "$P/counted-list.json" 2> "$P/counted-list.err" || refuse "counted list unavailable"
-      local line; IFS= read -r line < "$P/evaluate.err"; refuse "$line"; fi
+      refuse "$line"; fi
     refuse "draw-record evaluation refused"; fi
   [[ $EVAL == 0 || $EVAL == 10 ]] || refuse "unexpected draw-record evaluation"
   if [[ $EVAL == 0 ]]; then
@@ -337,7 +348,7 @@ draw_status() { local x
   [[ ! -e $P/stopped ]] || refuse "draw stopped"; }
 need_counted() { [[ $EVAL == 0 && -s $P/counted.json ]] || refuse "post-commit has not recorded a counted post"
   [[ $(readfile "$P/counted-round") == "$ROUND" ]] || refuse "round differs from the counted post"
-  [[ $COUNT_COMMIT == $(readfile "$S/commit.txt") ]] || refuse "counted commit differs; prep and import $COUNT_COMMIT"; }
+  [[ $COUNT_COMMIT == $(readfile "$S/commit.txt") ]] || refuse "counted commit differs from the run commit"; }
 void_move() { local source=$1 target=$2 original=$2 n=1
   while [[ -e $target ]]; do target=$original.resume-$n; n=$((n+1)); done
   tool files mv -n "$source" "$target" || exit 2
@@ -405,7 +416,7 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_
   if [[ -e $T.pid || -e $T.pid.part ]]; then
     path=$T.pid; [[ -e $path ]] || path=$T.pid.part
     pid=$(readfile "$path")
-    if [[ ! -s $T.process-start ]]; then
+    if [[ $path == $T.pid.part || ! $pid =~ ^[0-9]+$ || ! -s $T.process-start ]]; then
       old_enough "$path" || refuse "recorded tool may be starting"
     else
       tool ps ps -o lstart= -p "$pid" > "$T.live" 2>/dev/null
@@ -460,12 +471,25 @@ stop_run() { local reason=${1:-} x name code out err i=0 body failure
   else dr post stop --reason beacon "$P/stop.body" > "$P/stop.out" 2> "$P/stop.err"; x=$?; fi
   [[ $x == 0 ]] || refuse "draw-record stop refused"
   record "$P/stopped" "$reason" stopped; echo "draw stopped"; return 0; }
+# Every ownership decision uses a fresh export. Even a failed export consumes its
+# number through its output files; S4 itself creates the numbered folder.
+own_post() { local kind=$1 wanted=${2:-} n=1 folder
+  tool files mkdir -p "$P/exports" || refuse "own post records unavailable"
+  while [[ -e $P/exports/$n || -e $P/exports/$n.out || -e $P/exports/$n.err ]]; do n=$((n+1)); done
+  folder=$P/exports/$n
+  dr publish-records "$folder" > "$folder.out" 2> "$folder.err" || refuse "own post records unavailable"
+  OWN_ID=$(meta own-post "$folder" "$kind" "$ROUND" "$wanted") 2> "$folder.parse.err" || refuse "own post records unavailable"; }
 record_counted() { local x key value old
+  own_post first "$COUNT_ID"
+  if [[ -z $OWN_ID ]]; then
+    copy_record "$P/evaluate.out" "$P/counted-not-own"
+    refuse "counted first post was not made by this directory"
+  fi
   dr publish-list > "$P/counted-list.json" 2> "$P/counted-list.err" || refuse "counted values unavailable"
   meta counted "$P/counted-list.json" "$COUNT_ID" "$P/counted.json" || refuse "counted values unavailable"
   meta values "$P/counted.json" > "$P/counted-h.values" || refuse "counted values unreadable"
   [[ $COUNT_COMMIT == $(readfile "$S/commit.txt") ]] || {
-    copy_record "$P/evaluate.out" "$P/counted-other-commit"; refuse "counted post requires prep and import $COUNT_COMMIT"; }
+    copy_record "$P/evaluate.out" "$P/counted-other-commit"; refuse "counted commit differs from the run commit"; }
   : > "$P/h-differences"
   while read -r key value; do
     old=$(tool files awk -v key="$key" '$1==key {print $2}' "$S/rehearsal/h.values")
@@ -474,21 +498,27 @@ record_counted() { local x key value old
   record "$P/counted-round" "$ROUND" counted-round
   copy_record "$P/evaluate.out" "$S/posted/commit.rec"
   echo "counted commitment recorded"; }
-match_post() { local kind=$1 body=$2 x id after
+match_post() { local kind=$1 body=$2 x id word rest
   dr match "$kind" "$body" > "$P/$kind.match" 2> "$P/$kind.match.err"; x=$?
-  if [[ $x == 10 ]]; then
+  OWN_ID=""
+  if [[ $x == 0 ]]; then
+    own_post "$kind"
+  elif [[ $x != 10 ]]; then refuse "draw-record match refused"; fi
+  if [[ -z $OWN_ID ]]; then
     dr post "$kind" "$body" > "$P/$kind.post" 2> "$P/$kind.post.err"; x=$?
     [[ $x == 0 ]] || refuse "draw-record post refused"
     read -r word id rest < "$P/$kind.post"
     dr read > "$P/$kind.read" 2> "$P/$kind.read.err" || refuse "draw-record readback refused"
     dr match "$kind" "$body" > "$P/$kind.match" 2> "$P/$kind.match.err"; x=$?
-    after=$(tool files sed -n 's/^matched //p' "$P/$kind.match")
-    [[ $x == 0 && $after == "$id" ]] || refuse "posted comment was not matched"
-  elif [[ $x != 0 ]]; then refuse "draw-record match refused"; fi
+    [[ $x == 0 ]] || refuse "posted comment was not matched"
+    own_post "$kind" "$id"
+    [[ -n $OWN_ID ]] || refuse "posted comment was not matched"
+  fi
   local posted_kind=tasks; [[ $kind != second ]] || posted_kind=draw
-  local values; values=$(posted_values "$posted_kind") || refuse "posted values record failed"
+  local values matched; values=$(posted_values "$posted_kind") || refuse "posted values record failed"
   record "$S/posted/$posted_kind.values" "$values" posted-values
-  copy_record "$P/$kind.match" "$S/posted/$posted_kind.rec"; }
+  matched=$(tool files cat "$P/$kind.match") || refuse "match record unavailable"
+  record "$S/posted/$posted_kind.rec" "$matched"$'\n'"own $OWN_ID" posted-match; }
 
 post_commit() { local x body
   [[ $(readfile "$S/rehearsal/passed") == $(readfile "$S/commit.txt") ]] || refuse "rehearse at this commit first"
@@ -720,7 +750,9 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   hex40 "$SHA" || refuse "main commit must be forty lowercase hex characters"
   while (( $# )); do
     case $1 in
-      --import) (( $# >= 2 )) || refuse "import needs an old state or none"; import=$2; shift 2 ;;
+      --import) (( $# >= 2 )) || refuse "import needs an old state or none"
+        [[ $2 == none ]] || refuse "import of a state directory is not supported: a directory runs only the draw it posted"
+        import=$2; shift 2 ;;
       *) [[ $1 =~ ^[1-9][0-9]*$ ]] || refuse "prerequisites must be pull-request numbers"; prs+=("$1"); shift ;;
     esac
   done
@@ -741,27 +773,7 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   PREPARING=1
   tool files mkdir -p "$S/runs" "$S/logs" "$S/diag" "$S/posted" "$S/worktrees" "$P" || exit 2
   tool files chmod 700 "$S" "$P" || exit 2
-  if [[ -n $import && $import != none ]]; then
-    if [[ $mode == test ]]; then
-      [[ -f $import/$TEST_MARKER && $import != "$official" ]] || refuse "import source is not a test directory"
-    else [[ -n $official && $import == "$official" ]] || refuse "import source is not the recorded official directory"; fi
-    [[ $(readfile "$import/commit.txt") != "$SHA" ]] || refuse "import commit must differ from the old commit"
-    [[ ! -e $import/private/BEACON ]] || refuse "import has a beacon"
-    [[ -z $(tool files ls -A "$import/runs") ]] || refuse "import has arm records"
-    for path in "$import"/logs/*.seq; do [[ ! -e $path ]] || refuse "import has arm sequence records"; done
-    [[ -d $import/private/draw ]] || refuse "import has no draw-record folder"
-    tool files cp -R "$import/private/draw" "$P/draw" || refuse "draw-record copy failed"
-    for path in "$import"/private/void-*; do [[ -d $path ]] || continue
-      case ${path##*/} in void-check-*) continue ;; esac
-      tool files cp -R "$path" "$P/${path##*/}" || refuse "void copy failed"; done
-    tool files mkdir -p "$P/imported" || refuse "import record directory failed"
-    for path in "$import"/private/*; do
-      [[ -f $path ]] || continue
-      case ${path##*/} in counted-other-commit|reading-commit-refusal|blocked|counted-list.*|read.*|evaluate.*|first-post.*|draw-list.*)
-        copy_record "$path" "$P/imported/${path##*/}" ;; esac
-    done
-    record "$P/import.record" copied import
-  elif [[ $import == none ]]; then
+  if [[ $import == none ]]; then
     [[ -n $official && ! -e $official ]] || refuse "old state directory still exists or is not recorded"
     record "$P/import.record" "old state lost" import
   fi
@@ -800,10 +812,6 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
     meta lost-after-draw "$P/prep-list.json"; local lost=$?
     [[ $lost == 0 || $lost == 1 ]] || refuse "lost-state draw list unavailable"
     if [[ $lost == 0 ]]; then record "$P/state-lost-after-draw" "state lost after the draw: no arm can run; readings unresolved (§10, missing data)" lost-state; fi
-  else
-    dr evaluate > "$P/prep-evaluate.out" 2> "$P/prep-evaluate.err" || refuse "import counted evaluation refused"
-    meta import-commit "$P/prep-list.json" "$SHA" || refuse "import counted post must name the requested commit"
-    meta import-before-draw "$P/prep-list.json" || refuse "import refused: counted round draw already began"
   fi
   printf '%s\n' "${prs[@]}" > "$S/prerequisites"
   tool files ln -s private/rehearsal "$S/rehearsal" || refuse "rehearsal link creation failed"
@@ -1034,7 +1042,7 @@ cards_step() { local p label replaced
   done
   echo "card outcomes recorded"; }
 release_allowed() { local f x output
-  [[ -e $P/stopped || -e $P/blocked || -e $P/void-unconfirmed || -e $P/state-lost-after-draw ]] && return 0
+  [[ -e $P/stopped || -e $P/blocked || -e $P/void-unconfirmed || -e $P/state-lost-after-draw || -e $P/counted-not-own ]] && return 0
   check3_failed_twice && return 0
   [[ -e $P/cards-A.done && -e $P/cards-B.done && -e $P/cards-C.done ]] && return 0
   for f in "$S"/logs/table-*.exit "$S"/logs/table-*.pre-exit; do
@@ -1120,8 +1128,7 @@ release_step() { local x f rel folder n name
   while IFS= read -r -d '' f; do
     rel=${f#"$P/"}
     case $rel in
-      imported/*) publish_file "$f" "$rel"; continue ;;
-      draw/*|rehearsal*|*place-work*|build-[ABC]|build-[ABC]/*|*/build-[ABC]|*/build-[ABC]/*|*packs-*|*tools*|*release-beacon*|*.log|*.err|*void-check*) continue ;;
+      exports/*|draw/*|rehearsal*|*place-work*|build-[ABC]|build-[ABC]/*|*/build-[ABC]|*/build-[ABC]/*|*packs-*|*tools*|*release-beacon*|*.log|*.err|*void-check*) continue ;;
       *DRAW.json*|*/BEACON|*/DRAW.json|*/draw.sha256|*/TASKS-*|*/placed-*/*|worktree-*.commit|*/worktree-*.commit|BEACON|DRAW.json|draw.sha256|TASKS-*|FILTER-*|placed-*/*|void-*/*|*counted*|*reading-commit*|*blocked*|*differences*|import.record|state-lost-after-draw|*confirm*|*unconfirmed*|check3-*|*.body|*match*|*stop*|first-failure|rebuild-failed|consensus-fixed) publish_file "$f" "$rel" ;;
     esac
   done < <(trap - EXIT; tool files find "$P" -type f -print0)
@@ -1151,6 +1158,7 @@ case $STEP in
   *) echo "usage: run-followup.sh prep|rehearse|post-commit|beacon|draw|post-draw|place|build|tasks|rebuild|post-tasks|check3|run|table|rerun|abandon|cards|stop|release"; exit 2 ;;
 esac
 check_identity
+if [[ $STEP != release && $STEP != abandon && -e $P/counted-not-own ]]; then refuse "counted first post was not made by this directory"; fi
 if [[ $STEP != release && -e $P/state-lost-after-draw ]]; then refuse "$(readfile "$P/state-lost-after-draw")"; fi
 if [[ ( $STEP == run || $STEP == rerun ) && -e $S/$TEST_MARKER && -z ${FOLLOWUP_STANDIN:-} ]]; then
   refuse "real arms require the recorded official directory"
