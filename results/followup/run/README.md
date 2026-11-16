@@ -267,10 +267,12 @@ the arm can run again. Its start, end and exit records are published.
 An owner or tool without a start record is left alone for sixty seconds by the
 recorded clock; a PID alone never proves it live. A tool killed between its start
 and its process record is treated as dead after 60 seconds. If it still runs,
-its outputs are moved aside and a second copy starts. The second copy fails on
-the first copy's output or paths the first copy renames or removes. This counts
-as a failed attempt: it uses the one rebuild, or, after the rebuild, the build
-stop ends the run. After any kill, before re-running the step, wait until no
+its outputs are moved aside and a second copy starts. In the cases traced, the
+second copy fails on the first copy's output or on paths the first copy renames
+or removes; it could succeed only by finishing before a copy that started at
+least 60 seconds earlier. A failure counts as a failed attempt: it uses the one
+rebuild, or, after the rebuild, the build stop ends the run. The step below
+prevents both outcomes: after any kill, before re-running the step, wait until no
 process using the state folder remains (`pgrep -fl -- "$FOLLOWUP_STATE"` prints nothing).
 Check 3 runs only
 `tests/runner/test_control_arms.py`, verbose, through the slot, at rehearsal and
