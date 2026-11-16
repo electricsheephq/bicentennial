@@ -276,6 +276,8 @@ if kind in ("check3","followup-tests","derivation-tests"):
     print("synthetic PASSED"); sys.exit(c.get(kind+"_exit",0))
 if kind=="arm":
     code=c.get("arm_exit",0); out=pathlib.Path(option("--out"))
+    if c.get("orphan_diag") and c.get("no_output"):
+        pathlib.Path(option("--diagnostics")).mkdir(parents=True)
     if c.get("no_output"): sys.exit(code)
     out.mkdir(parents=True)
     if c.get("guard_refusal"):
@@ -3647,3 +3649,156 @@ def test_r6_same_commit_reading_unavailable_is_retryable(harness):
     h.run("post-commit")
     assert json.loads((p / "counted.json").read_text())["commit"] == h.commit
     assert not (p / "counted-not-own").exists()
+
+
+@pytest.mark.parametrize("fault", ["end", "kill", "seq"])
+def test_r7_cross_label_rerun_requires_new_reading(harness, fault):
+    h = harness
+    h.ready()
+    first_attempts(h)
+    h.set(table_output="pending before any score: A.R1 B.F2 - rerun once (§3, §4), then run again with --after-reruns")
+    h.run("table", code=4)
+    match = ["mv", "A.R1.rerun.inv-1.end.part"] if fault != "seq" else ["cp", "/logs/A.R1.rerun.seq.part"]
+    h.set(inject=dict(kind="files", match=match, **({"kill": True} if fault == "kill" else {"fail": True})))
+    h.run("rerun", "A.R1", code=-9 if fault == "kill" else 2)
+    logs = h.state / "logs"
+    assert (h.state / "runs/A.R1.rerun/card.json").exists()
+    assert (logs / "A.R1.rerun.inv-1.exit").exists() == (fault == "seq")
+    assert not (logs / "A.R1.rerun.seq").exists()
+    h.run("abandon", "B.F2")
+    assert not (h.state / "lock").exists()
+    refused = h.run("rerun", "B.F2", code=2)
+    assert ("abandon open invocation A.R1.rerun first" if fault != "seq" else "latest reading predates an attempt") in refused.stderr
+    assert len(h.calls("arm")) == 1
+    h.run("abandon", "A.R1.rerun")
+    assert "latest reading predates an attempt" in h.run("rerun", "B.F2", code=2).stderr
+    h.set(table_output="pending before any score: B.F2 - rerun once (§3, §4), then run again with --after-reruns")
+    h.run("table", code=4)
+    h.run("rerun", "B.F2")
+    assert len(h.calls("arm")) == 2
+
+
+@pytest.mark.parametrize("mode", ["run", "rerun"])
+@pytest.mark.parametrize("shape", ["open", "unrecorded"])
+def test_r7_cross_label_unfinished_blocks_both_modes(harness, mode, shape):
+    h = harness
+    h.ready()
+    if mode == "rerun":
+        first_attempts(h)
+        h.run("table", code=4)
+    tag = "B.F2.rerun"
+    if shape == "open":
+        (h.state / f"logs/{tag}.inv-1.start").write_text("synthetic start")
+        reason = f"abandon open invocation {tag} first"
+    else:
+        (h.state / f"runs/{tag}").mkdir()
+        reason = f"attempt lacks its sequence: {tag}"
+    result = h.run(mode, "A.F1", code=2)
+    assert reason in result.stderr
+    assert not h.calls("arm")
+
+
+def test_r7_failed_rebuild_copy_can_stop(harness):
+    h = harness
+    through(h, "place")
+    h.set(build_exit=1)
+    h.run("build", code=1)
+    h.set(inject=dict(kind="files", match=["cp", "/rebuild-failed.part"], fail=True))
+    h.run("rebuild", code=2)
+    p = h.state / "private"
+    assert (p / "rebuild-used").exists() and (p / "failure").is_file()
+    assert not (p / "rebuild-failed").exists()
+    refused = h.run("rebuild", code=2)
+    h.run("stop", "build")
+    assert "the one rebuild failed; stop build is next" in refused.stderr
+    assert (p / "rebuild-failed").read_bytes() == (p / "failure").read_bytes()
+    assert (p / "stopped").exists()
+    posts = json.loads(h.scenario.read_text())["posts"]
+    assert sum(body.startswith("Follow-up draw: stop\nreason build\n") for body in posts) == 1
+
+
+@pytest.mark.parametrize("output", [False, True])
+def test_r7_orphan_diagnostics_only_without_output(harness, output):
+    h = harness
+    h.ready()
+    h.set(orphan_diag=True, no_output=not output, arm_exit=70)
+    h.run("run", "A.F1", code=70)
+    archive = h.state / "logs/A.F1.inv-1.orphan-diag"
+    assert (h.state / "diag/A.F1").is_dir() == output
+    assert (h.state / "logs/A.F1.seq").exists() == output
+    if not output:
+        h.set(orphan_diag=False, no_output=False, arm_exit=0)
+        h.run("run", "A.F1")
+        assert archive.is_dir()
+        assert (h.state / "logs/A.F1.inv-2.exit").read_text() == "exit=0\n"
+        assert len(h.calls("arm")) == 2
+    else:
+        h.run("abandon", "A.F1")
+        assert not archive.exists()
+        assert (h.state / "runs/A.F1/card.json").is_file()
+
+
+@pytest.mark.parametrize("age", [59, 60])
+def test_r7_tool_intent_without_pid_uses_age(harness, age):
+    h = harness
+    through(h, "beacon")
+    folder = h.state / "private/tools"
+    folder.mkdir()
+    intent = folder / "draw.intent"
+    intent.write_text("synthetic intent\n")
+    now = json.loads(h.scenario.read_text())["clock"]
+    os.utime(intent, (now - age, now - age))
+    before = len(h.calls("draw"))
+    result = h.run("draw", code=2 if age < 60 else 0)
+    if age < 60:
+        assert "recorded tool may be starting" in result.stderr
+        assert len(h.calls("draw")) == before
+        assert not (folder / "draw.cuts").exists()
+    else:
+        assert (folder / "draw.cut-1/intent").read_text() == "synthetic intent\n"
+        assert (folder / "draw.cuts").read_text() == "1\n"
+        assert len(h.calls("draw")) == before + 1
+
+
+def test_r7_tool_intent_precedes_fork(harness):
+    h = harness
+    through(h, "beacon")
+    before = len(h.calls("draw"))
+    h.set(inject=dict(kind="files", match=["mv", "/tools/draw.intent.part"], fail=True))
+    assert "tool-intent record write failed" in h.run("draw", code=2).stderr
+    assert len(h.calls("draw")) == before
+    assert not (h.state / "private/tools/draw.pid").exists()
+
+
+def test_r7_release_publishes_relative_table_flags(harness):
+    h = harness
+    h.ready()
+    first_attempts(h)
+    h.set(table_exit=5, table_output="RUN ENDS: synthetic (§4); no score is opened")
+    h.run("table", code=5)
+    call = h.calls("table")[-1]["argv"]
+    assert str(h.state / "packs-A") in call  # Execution retains the original paths.
+    h.run("release")
+    flags = (h.state / "publish/records/table-37.flags").read_text().splitlines()
+    assert "--pack" in flags and "packs-A" in flags and "private/TASKS-A.json" in flags
+    assert "A.F1=runs/A.F1" in flags and "private/check3-1.txt" in flags
+    assert all(not Path(flag.split("=", 1)[-1]).is_absolute() for flag in flags)
+    assert not any(str(h.state) in flag or "withheld" in flag for flag in flags)
+
+
+def test_r7_prep_same_path_after_failed_prep(harness):
+    h = harness
+    h.set(fail_kind="venv")
+    assert "venv creation failed" in h.run("prep", h.commit, "1", code=2).stderr
+    assert (h.state / "wt/.git").exists()
+    assert not (h.state / "private/settings").exists()
+    held = h.state.with_name("failed-prep")
+    h.state.rename(held)
+    # The operator preserves the failed folder but moves its checkout away too.
+    # Git now sees the originally registered worktree folder as missing.
+    h.state.mkdir()
+    (h.state / MARKER).touch()
+    h.set(fail_kind=None)
+    h.run("prep", h.commit, "1")
+    assert (h.state / "private/settings").is_file()
+    assert (held / "wt/.git").is_file()

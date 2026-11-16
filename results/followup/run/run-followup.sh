@@ -413,10 +413,11 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_
   while [[ $1 != -- ]]; do outputs+=("$1"); shift; done; shift
   T=$P/tools/$name; tool files mkdir -p "$P/tools" || exit 2
   if [[ -s $T.exit ]]; then return "$(readfile "$T.exit")"; fi
-  if [[ -e $T.pid || -e $T.pid.part ]]; then
+  if [[ -e $T.intent || -e $T.pid || -e $T.pid.part ]]; then
     path=$T.pid; [[ -e $path ]] || path=$T.pid.part
+    [[ -e $path ]] || path=$T.intent
     pid=$(readfile "$path")
-    if [[ $path == "$T.pid.part" || ! $pid =~ ^[0-9]+$ || ! -s $T.process-start ]]; then
+    if [[ $path == "$T.intent" || $path == "$T.pid.part" || ! $pid =~ ^[0-9]+$ || ! -s $T.process-start ]]; then
       old_enough "$path" || refuse "recorded tool may be starting"
     else
       tool ps ps -o lstart= -p "$pid" > "$T.live" 2>/dev/null
@@ -436,10 +437,11 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_
     for path in "${outputs[@]+"${outputs[@]}"}"; do
       [[ -e $path ]] || continue; [[ ! -e $path.cut-$n ]] || refuse "cut archive exists"
       tool files mv -n "$path" "$path.cut-$n" || exit 2; done
-    for path in start pid pid.part process-start process-start.part start.part out err; do [[ -e $T.$path ]] && tool files mv -n "$T.$path" "$T.cut-$n/$path"; done
+    for path in intent intent.part start pid pid.part process-start process-start.part start.part out err; do [[ -e $T.$path ]] && tool files mv -n "$T.$path" "$T.cut-$n/$path"; done
   fi
   meta disjoint "${outputs[@]+"${outputs[@]}"}" || refuse "tool output and work overlap"
   for path in "${outputs[@]+"${outputs[@]}"}"; do [[ ! -e $path && ! -L $path ]] || refuse "tool output or work already exists"; done
+  record "$T.intent" "$(clock_now)" tool-intent
   ASYNC_TOOL=1 tool "$@" > "$T.out" 2> "$T.err" & pid=$!
   record_try "$T.pid" "$pid" || fork_failed=1
   current=$(tool ps ps -o lstart= -p "$pid" 2>/dev/null) || :
@@ -453,7 +455,10 @@ stop_run() { local reason=${1:-} x name code out err i=0 body failure
   any_attempt && refuse "a draw stop is forbidden after an arm attempt"
   case $reason in
     beacon) [[ $(readfile "$P/beacon-cutoff") == "$ROUND 13" ]] || refuse "no cutoff for the counted round" ;;
-    build) [[ -s $P/first-failure && -s $P/rebuild-failed && -e $P/rebuild-used ]] || refuse "build stop needs two failed attempts" ;;
+    build)
+      if [[ -e $P/rebuild-used && -e $P/failure && ! -e $P/rebuild-failed ]]; then
+        copy_record "$P/failure" "$P/rebuild-failed"; fi
+      [[ -s $P/first-failure && -s $P/rebuild-failed && -e $P/rebuild-used ]] || refuse "build stop needs two failed attempts" ;;
     *) refuse "stop reason must be beacon or build" ;;
   esac
   body=$({ printf 'Follow-up draw: stop\nreason %s\n' "$reason"
@@ -671,6 +676,7 @@ post_tasks() { local p lower body pair
 rebuild_step() { local f name x old=$P/first-attempt
   need_counted; any_attempt && refuse "rebuild is forbidden after an arm attempt"
   [[ -s $P/failure || -e $P/rebuild-started || -e $P/rebuild-used ]] || refuse "no failed attempt to rebuild"
+  [[ ! -e $P/rebuild-used || ! -e $P/failure ]] || refuse "the one rebuild failed; stop build is next"
   [[ ! -e $P/rebuild-complete && ! -e $P/rebuild-failed ]] || refuse "the one rebuild has already been used"
   if [[ ! -e $P/rebuild-used ]]; then
   if [[ ! -e $P/rebuild-started ]]; then
@@ -798,6 +804,7 @@ prep_step() { local SHA=${1:-} import="" mode=official pr merge path official=""
   tool git git -C "$R" show "$SHA:results/followup/DECLARATION.md" > "$P/declaration.run"
   tool git git -C "$R" show "$(readfile "$P/declaration.commit"):results/followup/DECLARATION.md" > "$P/declaration.merged" || refuse "merged declaration unavailable"
   tool files cmp -s "$P/declaration.run" "$P/declaration.merged" || refuse "run declaration differs from the merged declaration"
+  tool git-worktree git -C "$R" worktree prune > "$P/prep-prune.log" 2>&1 || refuse "stale worktree registrations could not be pruned"
   tool git-worktree git -C "$R" -c core.hooksPath=/dev/null worktree add --detach "$S/wt" "$SHA" > "$P/prep-worktree.log" 2>&1 || refuse "run worktree could not be created"
   record "$S/commit.txt" "$SHA" run-commit
   tool venv "$BASEPY" -m venv "$S/venv" > "$P/venv.log" 2>&1 || refuse "venv creation failed"
@@ -859,12 +866,20 @@ finish_invocation() { local tag=$1 I="" f n newest=0 out=$S/runs/$1 diag=$S/diag
     done
     copy_record "$I.seq" "$S/logs/$tag.seq"
   fi
+  if [[ ! -e $out && -e $diag ]]; then
+    tool files mv -n "$diag" "$I.orphan-diag" || refuse "orphan diagnostics move failed"; fi
 }
 arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cache="" k=1 I seq x s f official=""
   [[ -n $label ]] || refuse "arm label is required"
   tool files printf '%s\n' "${ORDER[@]}" | tool files grep -Fqx -- "$label" || refuse "unknown arm label"
   p=${label%%.*}; arm=${label#*.}; control=$(control_of "$arm") || [[ $arm == H1 || $arm == H2 ]] || refuse "unknown arm label"
-  finish_invocation "$label"; finish_invocation "$label.rerun"
+  for l in "${ORDER[@]}"; do finish_invocation "$l"; finish_invocation "$l.rerun"; done
+  for f in "$S"/logs/*.inv-*.start; do
+    if [[ -e $f && ! -e ${f%.start}.exit ]]; then
+      s=${f##*/}; refuse "abandon open invocation ${s%.inv-*} first"; fi; done
+  for l in "${ORDER[@]}"; do
+    for tag in "$l" "$l.rerun"; do
+      [[ ! -e $S/runs/$tag || -s $S/logs/$tag.seq ]] || refuse "attempt lacks its sequence: $tag"; done; done
   need_counted; frozen_tasks; need_posted draw; need_posted tasks
   [[ $(readfile "$S/posted/commit.rec") == "$(readfile "$P/evaluate.out")" ]] || refuse "counted post record differs"
   check3_file && check3_matches "$C3" 0 || refuse "check 3 must pass before an arm"
@@ -884,7 +899,6 @@ arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cach
   fi
   out=$S/runs/$tag; diag=$S/diag/$tag
   [[ ! -e $diag ]] || refuse "diagnostics exist without their attempt"
-  for f in "$S"/logs/"$tag".inv-*.start; do [[ -e $f && ! -e ${f%.start}.exit ]] && refuse "invocation has no exit; abandon it first"; done
   [[ -f $OFFICIAL_RECORD ]] && official=$(readfile "$OFFICIAL_RECORD")
   fake || [[ $S == "$official" && ! -e $S/$TEST_MARKER ]] || refuse "real arms require the recorded official directory"
   arm_alive && refuse "an arm process is already running"
@@ -953,11 +967,18 @@ abandon_step() { local tag=${1:-} f open="" s
   record "$open.exit" exit=abandoned abandoned-exit
   finish_invocation "$tag"
   echo "abandoned invocation recorded"; }
-table_once() { local suffix=$1; shift; local n x
+table_once() { local suffix=$1; shift; local n x flag flags=()
   n=$(next_number) || refuse "sequence reservation failed"; T=$S/logs/table-$n
   [[ $suffix != pre ]] || T=$T.pre
   record "$T.seq" "$n" table-sequence
-  tool files printf '%s\n' "$@" > "$T.flags" || refuse "table flags record write failed"
+  for flag in "$@"; do
+      case $flag in
+        "$S"/*) flag=${flag#"$S"/} ;;
+        *="$S"/*) flag="${flag%%=*}=${flag#*="$S"/}" ;;
+      esac
+      flags+=("$flag")
+    done
+  tool files printf '%s\n' "${flags[@]+"${flags[@]}"}" > "$T.flags" || refuse "table flags record write failed"
   tool table "$PY" "$S/wt/$TABLE" "$@" --filter-out "$P/FILTER-$n.json" > "$T.txt" 2> "$T.err"; x=$?
   if [[ $suffix == pre ]]; then record "${T%.pre}.pre-exit" "$x" table-exit
   else record "$T.exit" "$x" table-exit; fi

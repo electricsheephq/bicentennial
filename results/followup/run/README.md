@@ -151,7 +151,9 @@ only a test dispatcher: it works solely in a directory already holding
 can only run in the official directory named by the record
 `.bicentennial-followup-official` in the operator's home. Marking an official
 directory permanently disables its steps. A failed `prep` leaves an
-unrecorded folder that must be moved aside; it posts nothing.
+unrecorded folder that must be moved aside; it posts nothing. After a failed prep,
+move its folder aside and re-run `prep` at the same path; prep prunes only missing
+worktree registrations before adding its checkout.
 
 Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 
@@ -243,16 +245,22 @@ GraphQL, relay-timeout, clock-skew and unavailable-reading-module refusals;
 refusal returns immediately; run `beacon` again after fixing its cause. S4 keeps
 every attempt, and its 24-hour cutoff is unchanged.
 
-After fixing a storage-write failure, repeat the refused step: checked record
-partials are rewritten, frozen task hashes are recovered only from a successful
+A kill, reboot or full disk either resumes, refuses with a named reason that a
+documented step clears, or ends the run; an end can only take kinds out of the
+ranking set (§10). After fixing a storage-write failure, repeat the refused step:
+checked record partials are rewritten, frozen task hashes are recovered only from a successful
 tasks exit and a rechecked list, and an interrupted rebuild finishes its archive
 before proceeding. A failed fork record waits for the tool and attempts to save
-its exit before refusing; repeat the step after fixing storage. If a wrapper was
-killed, first use `abandon TAG` to clear its
-dead lock; the next `run`, `rerun` or `abandon` for that label finishes any completed
-invocation's records or guard move without running that invocation again.
+its exit before refusing; repeat the step after fixing storage. If a failed rebuild
+cannot save `rebuild-failed`, `stop build` completes that copy and posts the stop. If a wrapper
+was killed, first use `abandon TAG` to clear its dead lock; the next `run` or `rerun` finishes every completed invocation's records
+or guard move before it checks attempts. An open invocation of any label requires
+`abandon TAG` first; after any rerun attempt, a new `table` is required.
+A closed invocation's diagnostics without output move beside its records as
+`.orphan-diag`; existing output is kept as its attempt.
 An owner or tool without a start record is left alone for sixty seconds by the
-recorded clock; a PID alone never proves it live. Check 3 runs only
+recorded clock; a PID alone never proves it live. A tool killed between its start intent and PID record is treated as dead after 60 seconds; a duplicate start ends in a refusal or failure because tools refuse existing output, the draw is re-verified, placement needs two agreeing runs, and task lists are validated.
+Check 3 runs only
 `tests/runner/test_control_arms.py`, verbose, through the slot, at rehearsal and
 on each attempt. Release also accepts a terminal pin/order fault from an
 `--after-reruns` pre-run and reports every S4 void round, including missing inputs.
