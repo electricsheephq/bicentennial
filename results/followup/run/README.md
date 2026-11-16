@@ -153,7 +153,9 @@ can only run in the official directory named by the record
 directory permanently disables its steps. A failed `prep` leaves an
 unrecorded folder that must be moved aside; it posts nothing. After a failed prep,
 move its folder aside and re-run `prep` at the same path; prep prunes only missing
-worktree registrations before adding its checkout.
+worktree registrations before adding its checkout. That prune also forgets any other
+unlocked worktree of the repository whose folder is missing, for example one on an
+unmounted volume; lock such worktrees first with `git worktree lock`.
 
 Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 
@@ -172,7 +174,7 @@ Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 | `post-tasks` | Three frozen lists and packs; matches or posts their hashes and the round. |
 | `check3` | Task-list post, no arm attempt; keeps one passing attempt or at most two attempts, with commit and exit. A missing or damaged receipt consumes that attempt; retry if one remains, otherwise release. A second failure ends the run. |
 | `run LABEL` | All posts still match, passing check 3, preceding first attempts; runs the next of thirty-six arms with the frozen send bound. |
-| `table [--after-reruns]` | All first attempts, frozen lists and check 3; preserves each reading, flags, exit and sequence. The flag first recomputes which arms are pending. |
+| `table [--after-reruns]` | All first attempts, frozen lists and check 3; preserves each reading, flags, exit and sequence. The flag first recomputes which arms are pending. `table-N.flags` records the reading's arguments with paths relative to the state directory; the command also passes `--filter-out private/FILTER-N.json`. If it refuses `used attempt lacks its sequence`, run `abandon TAG` for that tag, or any `run` or `rerun`, which completes the copy first. |
 | `rerun LABEL` | All first attempts and the latest reading naming the label; one whole rerun with the same command and send bound, then another reading. |
 | `abandon TAG` | Dead wrapper and no arm process; removes a stale lock and records invocation start and kill times, counting existing output as an attempt. |
 | `cards` | Table exit 0; cuts used cards and replaced first attempts per pack, preserving hashes, missing labels, faults and every repeated cut. |
@@ -257,7 +259,10 @@ was killed, first use `abandon TAG` to clear its dead lock; the next `run` or `r
 or guard move before it checks attempts. An open invocation of any label requires
 `abandon TAG` first; after any rerun attempt, a new `table` is required.
 A closed invocation's diagnostics without output move beside its records as
-`.orphan-diag`; existing output is kept as its attempt.
+`.orphan-diag`; existing output is kept as its attempt. When the runner refuses after
+units ran, it removes its output folder and creates it again; an arm killed in the
+instant between those two leaves no output, so that invocation counts as no attempt and
+the arm can run again. Its start, end and exit records are published.
 An owner or tool without a start record is left alone for sixty seconds by the
 recorded clock; a PID alone never proves it live. A tool killed between its start intent and PID record is treated as dead after 60 seconds; a duplicate start ends in a refusal or failure because tools refuse existing output, the draw is re-verified, placement needs two agreeing runs, and task lists are validated.
 Check 3 runs only
