@@ -445,6 +445,8 @@ def _audit(adapter, table, faults, script, items, records, plugin, arm, probe_li
             diagnostics.update(phase)
             if "A4.gaps" in codes:
                 diagnostics["gap_paths"] = _gap_paths(report, rows, blobs)
+                diagnostics["gap_unclassified"] = [c["call"] for c in report["A4"]["calls"]
+                    if c["call"] in report["A4"]["gaps"] and c["applied"] is None]
                 diagnostics["gap_states"] = {p: dict(observation=ParkedProbe.observe(adapter.paths["hermes_home"], p),
                     state=ParkedProbe.state(adapter.paths["hermes_home"], p))
                     for p in diagnostics["gap_paths"] if p is not None}
@@ -878,6 +880,7 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
                 and not evidence.restore_failures
                 and (set(audited.get("failures", ())) == {"A4.gaps"}
                      and evidence.audit_phase.get("gap_paths")
+                     and evidence.audit_phase.get("gap_unclassified") == []
                      and all(p in native and ParkedProbe.explained(evidence.audit_phase.get("gap_states", {}).get(p, {}))
                              for p in evidence.audit_phase["gap_paths"])
                      or evidence.audit_phase.get("phase") == "effects" and evidence.audit_phase.get("path") in native
