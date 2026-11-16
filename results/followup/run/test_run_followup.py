@@ -1242,6 +1242,9 @@ def test_i8_other_commit_release_and_hand_stop_marker(integrated, variant):
     assert other in refused.stdout + refused.stderr
     h.run("release")
     assert (h.state / "publish/counted-not-own").is_file()
+    listing = json.loads((h.state / "publish/draw-list.json").read_text())
+    assert listing["reading_module"] == variant + " at " + other
+    assert (h.state / "publish/draw-record-1/records").is_dir()
     due = 1692803367 + (c["round"] - 1) * 3
     c = json.loads(h.scenario.read_text())
     c["comments"].append(
@@ -1254,9 +1257,6 @@ def test_i8_other_commit_release_and_hand_stop_marker(integrated, variant):
     )
     h.set(comments=c["comments"], clock=due)
     h.run("release")
-    listing = json.loads((h.state / "publish/draw-list.json").read_text())
-    assert listing["reading_module"] == variant + " at " + other
-    assert (h.state / "publish/draw-record-1/records").is_dir()
 
 
 @pytest.fixture(scope="module")
@@ -3629,14 +3629,14 @@ def test_r6_void_then_hand_first_is_not_own(integrated):
     assert (p / "evaluate.out").read_text().startswith(f"counted {hand_id} round {number} ")
     assert (p / "counted-not-own").read_bytes() == (p / "evaluate.out").read_bytes()
     assert not (p / "counted.json").exists()
-    assert not h.calls("arm")
+    assert_not_own_steps(h)
 
 
 def test_r6_same_commit_reading_unavailable_is_retryable(harness):
     """Positive control: a transient fault at the run commit is not terminal."""
     h = harness
     through(h, "rehearse")
-    h.set(reading_refusal="unavailable", counted_commit=h.commit)
+    h.set(reading_refusal="unavailable", counted_commit=h.commit, counted=True)
     result = h.run("post-commit", code=2)
     assert result.stderr == f"refused: reading module unavailable at {h.commit}\n"
     p = h.state / "private"
