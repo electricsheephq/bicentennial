@@ -738,6 +738,21 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes
       *) value=$(tool files awk -v key="$hashname" '$1==key {print $2}' "$Rh/gate.out") ;;
     esac
     hex64 "$value" || refuse "rehearsal hash is missing or malformed"
+    if [[ $hashname == fresh_install_hash ]]; then
+      tool install-pin-rule "$BASEPY" -I -c 'import sys, tomllib
+from pathlib import Path
+wt=Path(sys.argv[1]); sys.path.insert(0,str(wt/"src"))
+try:
+    from bicentennial.systems.hermes_plugin import PinMismatch, verify_install_pin
+    entry=tomllib.loads((wt/"systems/registry/hermes-native.toml").read_text())
+    entry["fresh_install_hash"]
+except Exception: sys.exit(2)
+try: verify_install_pin(entry,sys.argv[2])
+except PinMismatch: sys.exit(1)
+except Exception: sys.exit(2)' "$wt" "$value" >/dev/null 2>&1; x=$?
+      [[ $x != 1 ]] || refuse "rehearsal install pin differs from the registry"
+      [[ $x == 0 ]] || refuse "rehearsal install pin check failed"
+    fi
     hashes="$hashes$hashname $value"$'\n'
   done
   record "$Rh/h.values" "${hashes%$'\n'}" rehearsal-hashes
@@ -751,6 +766,8 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes
   args+=(--order "$(IFS=,; echo "${ORDER[*]}")" --attempts "$(IFS=,; echo "${ORDER[*]}")")
   for p in "${ORDER[@]}"; do args+=("$p=$Rh/no-arms/$p"); done
   tool table "$PY" "$wt/$TABLE" "${args[@]}" > "$Rh/table.out" 2> "$Rh/table.err"; x=$?
+  record "$Rh/table.exit" "exit $x" rehearsal-table-exit
+  table_flags "$Rh/table.flags" "${args[@]}"
   [[ $x == 4 ]] || refuse "rehearsal no-arms reading must exit 4"
   { printf 'commit %s\n' "$(readfile "$S/commit.txt")"; check3_cmd "$Rh/check3-tmp"; x=$?; printf 'exit %s\n' "$x"; } > "$Rh/check3.txt" 2>&1
   check3_receipt "$Rh/check3.txt" "$x"
@@ -893,8 +910,8 @@ arm_step() { local mode=$1 label=${2:-} control="" p arm tag l why out diag cach
       [[ ! -e $S/runs/$tag || -s $S/logs/$tag.seq ]] || refuse "attempt lacks its sequence: $tag"; done; done
   need_counted; frozen_tasks; need_posted draw; need_posted tasks
   [[ $(readfile "$S/posted/commit.rec") == "$(readfile "$P/evaluate.out")" ]] || refuse "counted post record differs"
-  check3_file && check3_passed "$C3" || refuse "check 3 must pass before an arm"
   check3_failed_twice && refuse "check 3 failed twice; run ended"
+  check3_file && check3_passed "$C3" || refuse "check 3 must pass before an arm"
   if [[ $mode == run ]]; then
     for l in "${ORDER[@]}"; do [[ $l == "$label" ]] && break
       [[ -e $S/runs/$l && -s $S/logs/$l.seq ]] || refuse "$l has no attempt yet"; done
@@ -979,10 +996,7 @@ abandon_step() { local tag=${1:-} f open="" s
   record "$open.exit" exit=abandoned abandoned-exit
   finish_invocation "$tag"
   echo "abandoned invocation recorded"; }
-table_once() { local suffix=$1; shift; local n x flag flags=()
-  n=$(next_number) || refuse "sequence reservation failed"; T=$S/logs/table-$n
-  [[ $suffix != pre ]] || T=$T.pre
-  record "$T.seq" "$n" table-sequence
+table_flags() { local target=$1; shift; local flag flags=()
   for flag in "$@"; do
       case $flag in
         "$S"/*) flag=${flag#"$S"/} ;;
@@ -990,7 +1004,12 @@ table_once() { local suffix=$1; shift; local n x flag flags=()
       esac
       flags+=("$flag")
     done
-  tool files printf '%s\n' "${flags[@]+"${flags[@]}"}" > "$T.flags" || refuse "table flags record write failed"
+  tool files printf '%s\n' "${flags[@]+"${flags[@]}"}" > "$target" || refuse "table flags record write failed"; }
+table_once() { local suffix=$1; shift; local n x
+  n=$(next_number) || refuse "sequence reservation failed"; T=$S/logs/table-$n
+  [[ $suffix != pre ]] || T=$T.pre
+  record "$T.seq" "$n" table-sequence
+  table_flags "$T.flags" "$@"
   tool table "$PY" "$S/wt/$TABLE" "$@" --filter-out "$P/FILTER-$n.json" > "$T.txt" 2> "$T.err"; x=$?
   if [[ $suffix == pre ]]; then record "${T%.pre}.pre-exit" "$x" table-exit
   else record "$T.exit" "$x" table-exit; fi
@@ -1163,6 +1182,7 @@ release_step() { local x f rel folder n name
   while IFS= read -r -d '' f; do
     rel=${f#"$P/"}
     case $rel in
+      rehearsal/table.out|rehearsal/table.flags|rehearsal/table.exit|rehearsal.failed-*/table.out|rehearsal.failed-*/table.flags|rehearsal.failed-*/table.exit) publish_file "$f" "$rel" ;;
       exports/*|draw/*|rehearsal*|*place-work*|build-[ABC]|build-[ABC]/*|*/build-[ABC]|*/build-[ABC]/*|*packs-*|*tools*|*release-beacon*|*.log|*.err|*void-check*) continue ;;
       *DRAW.json*|*/BEACON|*/DRAW.json|*/draw.sha256|*/TASKS-*|*/placed-*/*|worktree-*.commit|*/worktree-*.commit|BEACON|DRAW.json|draw.sha256|TASKS-*|FILTER-*|placed-*/*|void-*/*|*counted*|*reading-commit*|*blocked*|*differences*|import.record|state-lost-after-draw|*confirm*|*unconfirmed*|check3-*|*.body|*match*|*stop*|first-failure|rebuild-failed|consensus-fixed) publish_file "$f" "$rel" ;;
     esac
@@ -1175,17 +1195,17 @@ release_step() { local x f rel folder n name
     esac
   done
   for f in "$S"/posted/*; do [[ ! -f $f ]] || publish_file "$f" "posted/${f##*/}"; done
-  # Tool logs stay private; hashes of both attempts and voids remain checkable.
-  tool files find "$P" -type f -name '*.out' -o -type f -name '*.err' -o -type f -name '*.log' -o -type f -name '*.reason' -o -type f -name '*.cutoff-failure' > "$P/tool-log-paths"
-  : > "$P/tool-log-hashes"
-  while IFS= read -r f; do printf '%s %s\n' "${f#"$P/"}" "$(sha "$f")" >> "$P/tool-log-hashes"; done < "$P/tool-log-paths"
-  publish_file "$P/tool-log-hashes" tool-log-hashes.txt
   [[ ! -f $P/log-hashes ]] || publish_file "$P/log-hashes" log-hashes.txt
   release_draw "$P" current
   meta voids "$P/publish-list.json" > "$P/release-void-rounds" || refuse "release void rounds unavailable"
   while IFS= read -r number; do
     release_draw "$P/void-$number" "void-$number" 1
   done < "$P/release-void-rounds"
+  # Include retained cut logs and the logs written by this release's checks.
+  tool files find "$P" -type f \( -name '*.out' -o -name '*.err' -o -name '*.log' -o -name '*.reason' -o -name '*.cutoff-failure' -o -name '*.post' -o -name '*.read' -o -path '*.cut-*/out' -o -path '*.cut-*/err' \) > "$P/tool-log-paths"
+  : > "$P/tool-log-hashes"
+  while IFS= read -r f; do printf '%s %s\n' "${f#"$P/"}" "$(sha "$f")" >> "$P/tool-log-hashes"; done < "$P/tool-log-paths"
+  publish_file "$P/tool-log-hashes" tool-log-hashes.txt
   echo "publication recorded"; }
 case $STEP in
   prep) prep_step "$@"; exit $? ;;
@@ -1196,9 +1216,6 @@ esac
 check_identity
 if [[ $STEP != release && $STEP != abandon && -e $P/counted-not-own ]]; then refuse "counted first post was not made by this directory"; fi
 if [[ $STEP != release && -e $P/state-lost-after-draw ]]; then refuse "$(readfile "$P/state-lost-after-draw")"; fi
-if [[ ( $STEP == run || $STEP == rerun ) && -e $S/$TEST_MARKER && -z ${FOLLOWUP_STANDIN:-} ]]; then
-  refuse "real arms require the recorded official directory"
-fi
 if [[ $STEP == abandon || $STEP == release ]]; then stale_lock; fi
 atcommit; lock
 if [[ $STEP != release && $STEP != abandon ]]; then draw_status; fi

@@ -60,7 +60,7 @@ def test_r11_public_text_and_bash_syntax():
 # operations and repository reads are forwarded; modeled operations retain all
 # arguments and their environment so tests can inspect commands without sends.
 STANDIN = r"""#!/usr/bin/env python3
-import hashlib, json, os, pathlib, signal, subprocess, sys, time
+import hashlib, json, os, pathlib, signal, subprocess, sys, time, tomllib
 here = pathlib.Path(__file__).resolve().parent
 config_file = here / "scenario.json"
 c = json.loads(config_file.read_text())
@@ -156,7 +156,7 @@ if kind == "dr":
         rows=[]
         if c.get("counted"):
             rows.append(dict(id=1, created_at=c.get("counted_created_at","2026-01-02T00:00:00Z"), round=c["round"], counted=True, reason="counted",commit=c.get("counted_commit", c["commit"]),values=c.get("h_values",dict.fromkeys(
-                ("registry_entry_sha256","fresh_install_hash","artifact_sha256","system_hash","harness_hash","route_table_hash"), "a"*64))))
+                ("registry_entry_sha256","artifact_sha256","system_hash","harness_hash","route_table_hash"), "a"*64) | dict(fresh_install_hash=tomllib.loads(pathlib.Path("systems/registry/hermes-native.toml").read_text())["fresh_install_hash"]))))
         rows.extend(dict(round=n, reason="void round", counted=False) for n in c.get("voids",[]))
         print(canonical(dict(first_posts=rows, markers=c.get("markers",[]),other_comments=0)),end=""); sys.exit(0)
     if command=="choose-round": print("round",c["round"],"due",c["due"],"new"); sys.exit(0)
@@ -228,7 +228,16 @@ if kind=="gate":
     for name in ("registry_entry_sha256","system_hash","harness_hash","route_table_hash"): print(name,"a"*64)
     print("benchmark_commit",c.get("gate_commit",c["commit"])); print("prepared: system run accepted; nothing sent"); sys.exit(0)
 if kind=="pins":
-    print("fresh_install_hash","a"*64); print("artifact.sha256","a"*64); print("entry hermes-native"); sys.exit(0)
+    entry=tomllib.loads(pathlib.Path("systems/registry/hermes-native.toml").read_text())
+    print("fresh_install_hash",c.get("fresh_install_hash",entry["fresh_install_hash"])); print("artifact.sha256","a"*64); print("entry hermes-native"); sys.exit(0)
+if kind=="install-pin-rule":
+    wt=pathlib.Path(argv[-2]); fault=c.get("install_pin_fault")
+    entry=wt/"systems/registry/hermes-native.toml"
+    if fault=="unreadable": entry.unlink()
+    elif fault=="missing": entry.write_text('name = "synthetic"\n')
+    elif fault=="module": (wt/"src/bicentennial/__init__.py").write_text('raise ImportError("synthetic")\n')
+    elif fault=="zero": entry.write_text('fresh_install_hash = "'+"0"*64+'"\n')
+    sys.exit(subprocess.call(argv))
 if kind=="draw":
     if c.get("hold_draw"): time.sleep(3)
     if c.get("draw_exit",0):
@@ -331,7 +340,9 @@ def make_harness(tmp_path):
     files = {
         ".gitignore": "__pycache__/\n*.pyc\n",
         "results/followup/DECLARATION.md": "synthetic declaration\n",
-        "src/bicentennial/__init__.py": "",
+        # Expose the real runner rule, as the synthetic reader exposes its rules.
+        "src/bicentennial/__init__.py": f"__path__.append({str(ROOT / 'src/bicentennial')!r})\n",
+        "systems/registry/hermes-native.toml": (ROOT / "systems/registry/hermes-native.toml").read_text(),
         "src/bicentennial/items/editions.py": "EDITIONS = {\n    3: (),\n}\n",
         "specs/ring0/template-admissions.json": json.dumps(
             {
@@ -2986,7 +2997,7 @@ def test_r3_second_check3_receipt_write_failure_releases(harness):
     result = h.run("check3", code=None)
     assert result.returncode == 2
     assert "check 3 receipt write failed" in result.stderr
-    assert "check 3 must pass" in h.run("run", "A.F1", code=2).stderr
+    assert "check 3 failed twice; run ended" in h.run("run", "A.F1", code=2).stderr
     assert "check 3 has run twice" in h.run("check3", code=2).stderr
     h.run("release")
     assert (h.state / "publish/check3-2.txt").is_file()
@@ -4012,3 +4023,110 @@ def test_r8_cut_move_failure_refuses(harness, name):
     answer = h.run("draw", code=2)
     assert "cut archive move failed" in answer.stderr
     assert not h.calls("draw")[1:], "failed archive must not start the real draw"
+
+
+# Round 9: complete publication and the rehearsal's install-pin gate.
+def test_round9_release_hashes_cut_captures_and_own_checks(harness):
+    from hashlib import sha256
+
+    h = harness
+    through(h, "beacon")
+    p = h.state / "private"
+    tools = p / "tools"
+    tools.mkdir(exist_ok=True)
+    for suffix, text in (("intent", "intent"), ("out", "cut stdout\n"), ("err", "cut stderr\n")):
+        path = tools / f"draw.{suffix}"
+        path.write_text(text)
+        os.utime(path, (0, 0))
+    h.run("draw")  # The script's cut loop, rather than a fabricated cut folder.
+    assert (tools / "draw.cuts").read_text() == "1\n"
+    h.run("post-draw")
+    expected = ["tools/draw.cut-1/out", "tools/draw.cut-1/err", "second.post", "second.read"]
+    # Cheap archived-path coverage uses the same retained bytes.
+    for prefix in ("first-attempt", "void-1", "void-1/first-attempt"):
+        for name in ("out", "err"):
+            rel = f"{prefix}/tools/draw.cut-1/{name}"
+            target = p / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(tools / f"draw.cut-1/{name}", target)
+            expected.append(rel)
+    (p / "blocked").write_text("synthetic terminal event\n")
+    h.run("release")
+    expected += ["release-beacon-current/check.out", "worktree-release-current-1.log"]
+    manifest = dict(line.split(" ", 1) for line in (h.state / "publish/tool-log-hashes.txt").read_text().splitlines())
+    wanted = {rel: sha256((p / rel).read_bytes()).hexdigest() for rel in expected}
+    assert wanted.items() <= manifest.items(), "release omitted or mis-hashed cut/capture/check logs"
+
+
+def test_round9_rehearsal_rejects_registry_install_mismatch(integrated):
+    h = integrated
+    h.run("prep", h.commit, "1")
+    h.set(fresh_install_hash="f" * 64)
+    result = h.run("rehearse", code=None)
+    assert result.returncode == 2, "rehearsal accepted an install pin the runner refuses"
+    assert result.stderr == "refused: rehearsal install pin differs from the registry\n"
+    assert not (h.state / "private/rehearsal/h.values").exists()
+    assert not h.calls("arm")
+
+
+@pytest.mark.parametrize("fault", ["unreadable", "missing", "module"])
+def test_round9_rehearsal_install_check_failed(harness, fault):
+    h = harness
+    h.run("prep", h.commit, "1")
+    h.set(install_pin_fault=fault)
+    result = h.run("rehearse", code=None)
+    assert result.returncode == 2, "unavailable install-pin rule or declaration was accepted"
+    assert result.stderr == "refused: rehearsal install pin check failed\n"
+    assert not (h.state / "private/rehearsal/h.values").exists()
+
+
+def test_round9_rehearsal_zero_install_pin_matches_runner(harness):
+    """Positive control: the runner's all-zero declaration accepts a measured pin."""
+    h = harness
+    h.run("prep", h.commit, "1")
+    h.set(install_pin_fault="zero", fresh_install_hash="f" * 64)
+    h.run("rehearse")
+    assert "fresh_install_hash " + "f" * 64 in (h.state / "private/rehearsal/h.values").read_text()
+
+
+def test_round9_run_names_second_check3_failure(harness):
+    h = harness
+    through(h, "post-tasks")
+    h.set(check3_exit=1)
+    h.run("check3", code=1)
+    h.run("check3", code=1)
+    result = h.run("run", "A.F1", code=2)
+    assert result.stderr == "refused: check 3 failed twice; run ended\n"
+    assert not h.calls("arm")
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_round9_release_publishes_rehearsal_reading(harness, failed):
+    h = harness
+    h.run("prep", h.commit, "1")
+    if failed:
+        h.set(check3_exit=1)  # Failure after the no-arms reading, then kept aside.
+        assert "rehearsal check 3 failed" in h.run("rehearse", code=2).stderr
+        h.set(check3_exit=0)
+    h.run("rehearse")
+    p = h.state / "private"
+    # A failed second control-check is a declared release event; rehearsal is no reading of the run.
+    for n in (1, 2):
+        (p / f"check3-{n}.txt").write_text(f"commit {h.commit}\nexit 1\n")
+    assert not list((h.state / "logs").glob("table-*"))
+    assert not (h.state / "counter").exists()
+    h.run("release")
+    folders = ["rehearsal", "rehearsal.failed-1"] if failed else ["rehearsal"]
+    public = by_path("round9_public", ROOT / "scripts/public_check.py")
+    for folder in folders:
+        published = h.state / "publish" / folder
+        assert (published / "table.out").is_file(), "rehearsal reading output was not published"
+        assert (published / "table.exit").read_text() == "exit 4\n"
+        flags = (published / "table.flags").read_text()
+        assert "--pack\nA\n" in flags
+        assert f"private/{folder}/packs-A\n" in flags or "private/rehearsal/packs-A\n" in flags
+        assert "A.F1=private/rehearsal/no-arms/A.F1\n" in flags
+        assert not public.PATHS.search(flags) and str(h.state) not in flags
+        for name in ("table.out", "table.flags", "table.exit"):
+            assert (published / name).read_bytes() == (p / folder / name).read_bytes()
+        assert not (published / "check3.txt").exists()

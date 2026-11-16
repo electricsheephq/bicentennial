@@ -150,7 +150,8 @@ only a test dispatcher: it works solely in a directory already holding
 `.followup-test-dir` before `prep`; prep never creates that marker. A real arm
 can only run in the official directory named by the record
 `.bicentennial-followup-official` in the operator's home. Marking an official
-directory permanently disables its steps. After `prep`, a non-official folder runs only through its stand-in.
+directory permanently disables its steps.
+After `prep`, a non-official folder runs only through its stand-in.
 A failed `prep` leaves an
 unrecorded folder that must be moved aside; it posts nothing. After a failed prep,
 move its folder aside and re-run `prep` at the same path; prep prunes only missing
@@ -181,6 +182,23 @@ Run the steps with `/bin/bash run-followup.sh STEP [ARGUMENTS]`:
 | `cards` | Table exit 0; cuts used cards and replaced first attempts per pack, preserving hashes, missing labels, faults and every repeated cut. |
 | `stop beacon\|build` | Recorded cutoff, or first failure plus failed rebuild, before any arm; posts only the declaration's reason, exits and log hashes. |
 | `release` | Cards complete, stop, blocked first post, unconfirmed void, `counted-not-own`, `state-lost-after-draw`, terminal reading fault or second failed check 3; publishes all extant draw and attempt evidence with versioned exports and recomputation checks. |
+
+Rehearsal compares the measured install pin with the worktree's registry using the runner's own rule; a mismatch or unavailable check refuses before H's values are recorded.
+Release hashes retained cut-tool logs and draw-record captures, including logs written by its own checks in that release.
+Every rehearsal reading publishes `table.out`, relative `table.flags` and `table.exit`, including readings kept in `rehearsal.failed-N/`.
+
+### What release publishes
+
+- **Copied**, with each text checked for local paths and replaced by its sha256 and a note when it matches:
+  - Each draw's BEACON, DRAW and retained cut copies, draw hash, placement specs and tables, void receipts, task lists and filter files.
+  - D8 step 2's records, `counted-not-own`, lost-state and unconfirmed-void records, stop records, `first-failure` and `rebuild-failed`.
+  - Check-3 attempts, post bodies, match records and posted values; every table reading's output, flags, sequence and exit; each rehearsal reading's output, flags and exit.
+  - Each arm invocation's sequence, start, end, exit and kill records; fresh draw-record exports, their publish list and recheck.
+  - Each void's folder except tool folders, placement work and worktree records (`*place-work*`), first-attempt builds and packs, and `.err` and `.log` files.
+  - Release's beacon re-reads, draw verifications and void reproduction outcomes.
+- **Hashed** in `tool-log-hashes.txt` or `log-hashes.txt`: tool stdout/stderr (including cut-folder `out`/`err` under `tools/`, `first-attempt/` and void folders), failure reasons and cut-off failures, draw-record captures, setup/build/worktree/rehearsal logs, arm stdout/stderr, table stderr and release-check logs. These logs stay private except the retained copying above: `stop.out` is also copied, and void folders also copy `.out`, `.post`, `.read` and resumed `.resume-N` captures through the local-path check.
+- **Private, neither copied nor hashed:** worktrees, venv, builds, packs, caches and S4 state (exported instead); rehearsal draw, packs, lists and check-3 receipt; arm outputs (`runs/`, with cut cards published instead); diagnostics (`diag/`, `.guard-out`, `.guard-diag`, `.orphan-diag`); tools' own start/pid/exit records, including those in cut folders; counters, locks, scratch and partial writes.
+- **Written by `cards` directly into `publish/`:** cut groups and their `.hashes`, `.outcome`, `.missing`, `.faulted` and `.fault` records. Release does not re-check these; before committing, replace any file the repository's public check refuses by its sha256 and a note.
 
 Invocations refused before output, or refused by the machine guard before any
 unit, are kept but are not attempts; every other invocation that creates output
