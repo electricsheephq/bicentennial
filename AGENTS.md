@@ -42,8 +42,8 @@ CI (`.github/workflows/ci.yml`) uses Python 3.14 on Linux and installs the packa
 - **The check that counts:** the `test` job is green only when lint and every shard passed. A pull request merges only
   when `test` passed at its exact head (V35).
 - **Locally:** a Python 3.14 virtual environment with `pip install -e .[dev]`, then `PYTHONHASHSEED=0 pytest -q` from the
-  repository root, or name the files you changed. The `bicentennial` command and the pack installer exit 3 `hashseed`
-  unless `PYTHONHASHSEED=0` (V38); the scripts in `scripts/` do not check it.
+  repository root, or name the test files that cover your change. The `bicentennial` command and the pack installer
+  exit 3 `hashseed` unless `PYTHONHASHSEED=0` (V38); the scripts in `scripts/` do not check it.
 - **Tests outside CI:** CI collects `tests/` only. The tests beside a run's code (`results/followup/run/test_*.py` and
   each round's `test_table.py`) run in that run's rehearsal or by hand, with the command in
   `results/followup/run/README.md` or in the test file's own docstring.
