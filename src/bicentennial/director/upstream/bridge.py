@@ -112,9 +112,8 @@ class ResponsesBridge:
             body = to_responses(call.body, effort=up.effort)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             # A structural failure latches too, under a fixed code that never echoes the request.
-            # Only the first failure stops the inner stack, and it does so under the latch before it latches, so the
-            # inner stack decides the stop reason and state() never names a reason it later replaces (#604).
-            # Each caller still raises its own reason (#447).
+            # Only the first failure stops the inner stack, under the latch and before it latches, so the inner
+            # stack's own first reason is the stop reason (#604). Each caller still raises its own reason (#447).
             reason = str(exc) if type(exc) is ValueError else "bridge_malformed"
             with self._latch:
                 if self.failure is None:
@@ -129,9 +128,12 @@ class ResponsesBridge:
 
     def state(self):
         # The inner stack keeps the first reason it was stopped with; the bridge's latch fills in
-        # only when the inner recorded none. The latch is read before the inner snapshot: it is set
-        # only after the inner stack was stopped, so a snapshot taken after a set latch already holds
-        # the inner stack's reason, and no read names a reason that a later read replaces (#604).
+        # only when the inner recorded none. The latch is read before the inner snapshot, and it is
+        # set only after the inner stack was stopped. So when the inner records the reason it is
+        # stopped with, as the live stack's does, a set latch comes with the inner's own reason and
+        # no read names a reason that a later read replaces (#604). An inner without `stop`, or one
+        # whose `stop` raises before it records, leaves the latch as the reason until the inner
+        # records one of its own; no production stack has either.
         failure = self.failure
         state = self.inner.state()
         if not failure or state.get("stop_reason"):
