@@ -104,3 +104,31 @@ def test_a_translation_failure_names_no_reason_until_the_inner_stack_has_one(mon
         live.respond(failing("a_extra"))
     assert dict(seen=seen, stack=live.state()["stop_reason"], latch=live.failure) == dict(
         seen=[None], stack="upstream_401", latch="bridge_unmapped_key:a_extra")
+
+
+def test_a_reader_never_names_the_latched_reason_before_the_inner_stack_has_one(monkeypatch, tmp_path):
+    # A reader copies the inner stack's state before any stop. Meanwhile another source stops the inner stack and
+    # a translation failure latches. The reader must not return the latched reason, which the next read replaces.
+    responder, live = stack(tmp_path)
+    copied, resume, reads = Event(), Event(), []
+    inner_state = live.inner.state
+
+    def paused():
+        snapshot = inner_state()
+        if not copied.is_set():
+            copied.set()
+            assert resume.wait(timeout=5)
+        return snapshot
+
+    monkeypatch.setattr(live.inner, "state", paused)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        reader = pool.submit(lambda: live.state()["stop_reason"])
+        assert copied.wait(timeout=5)
+        responder.stop("upstream_401")
+        with pytest.raises(ValueError, match="^bridge_unmapped_key:a_extra$"):
+            live.respond(failing("a_extra"))
+        resume.set()
+        reads.append(reader.result(timeout=10))
+    reads.append(live.state()["stop_reason"])
+    assert dict(reads=reads, latch=live.failure) == dict(reads=[None, "upstream_401"],
+                                                         latch="bridge_unmapped_key:a_extra")

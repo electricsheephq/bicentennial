@@ -129,11 +129,14 @@ class ResponsesBridge:
 
     def state(self):
         # The inner stack keeps the first reason it was stopped with; the bridge's latch fills in
-        # only when the inner recorded none.
+        # only when the inner recorded none. The latch is read before the inner snapshot: it is set
+        # only after the inner stack was stopped, so a snapshot taken after a set latch already holds
+        # the inner stack's reason, and no read names a reason that a later read replaces (#604).
+        failure = self.failure
         state = self.inner.state()
-        if not self.failure or state.get("stop_reason"):
+        if not failure or state.get("stop_reason"):
             return state
-        return dict(state, stopped=True, stop_reason=self.failure)
+        return dict(state, stopped=True, stop_reason=failure)
 
     def served_identities(self):
         return self.inner.served_identities()
