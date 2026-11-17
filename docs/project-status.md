@@ -21,8 +21,9 @@ links its newest result or source.
 - **Kit tags** (released versions of the developer kit, as git tags): `v0.1`, the kit, released
   1 November, and `v0.2`, the developer loop, released 2 November. Newest result:
   [v0.2 developer loop results](../results/v0.2-dev-loop/README.md).
-- **Main** (the default branch, where every merged change lands): at commit `0dabe3c0` on 17 November,
-  which is also the follow-up's run commit. Newest change: the follow-up's run tools under
+- **Main** (the default branch, where every merged change lands): at reconcile time, main was at
+  `0dabe3c0`, which is also the follow-up's run commit; main moves on with every merge after that. Newest
+  change at reconcile time: the follow-up's run tools under
   [results/followup/run](../results/followup/run/README.md).
 - **The developer tier** (the tiers a developer runs on their own system: signals, never certificates):
   v0.3, developer tools, and v0.4, search and sensitivity, are paused since 11 November; part of v0.3 has
@@ -40,9 +41,10 @@ links its newest result or source.
   [#394](https://github.com/electricsheephq/bicentennial/issues/394)): its declaration merged
   15 November, its seed draw and task lists were posted on that issue on 17 November, and its 36 arms
   began that day. Its results have not been read.
-- **The sealed board** (the v1.0 Board, season 1: the only run that can certify a system): not started.
-  It follows the Pilot, the board-track step after the validity work, whose first bar will not run
-  before December. The board has no date until that bar has run. Source: the Pilot and v1.0 Board rows
+- **Sealed boards** (the only runs that can certify a system: a season board, or a delta board on a new GA
+  release, each only at its pre-registered powered size): none has run. The first is the v1.0 Board,
+  season 1. It follows the Pilot, the board-track step after the validity work, whose first bar will not
+  run before December, and it has no date until that bar has run. Source: the Pilot and v1.0 Board rows
   of [ROADMAP.md](../ROADMAP.md).
 
 ## Rules in force
