@@ -112,12 +112,17 @@ class ResponsesBridge:
             body = to_responses(call.body, effort=up.effort)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             # A structural failure latches too, under a fixed code that never echoes the request.
-            # The first reason latched stays; each caller still raises its own (#447).
+            # Only the first failure stops the inner stack, and it does so under the latch before it latches, so the
+            # inner stack decides the stop reason and state() never names a reason it later replaces (#604).
+            # Each caller still raises its own reason (#447).
             reason = str(exc) if type(exc) is ValueError else "bridge_malformed"
             with self._latch:
-                self.failure = self.failure or reason
-            if hasattr(self.inner, "stop"):
-                self.inner.stop(reason)
+                if self.failure is None:
+                    try:
+                        if hasattr(self.inner, "stop"):
+                            self.inner.stop(reason)
+                    finally:
+                        self.failure = reason
             raise ValueError(reason) from None
         reply = self.inner.respond(replace(call, wire="responses", body=body))
         return replace(reply, usage=chat_usage(reply.usage))
