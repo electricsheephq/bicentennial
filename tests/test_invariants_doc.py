@@ -58,7 +58,7 @@ def problems(text, root):
             out.append(f"{rule}: a test reference outside backticks")
         tests = []
         for span in SPAN.findall(named):
-            if ".py" not in span:
+            if not (".py" in span or "::" in span or "test" in span):
                 continue
             match = TEST.fullmatch(span)
             if match:
@@ -112,6 +112,10 @@ def test_problems_catch_each_break(tmp_path):
         "| V1 | a | s | c | `tests/test_x.py`::`test_real` | partly |\n": "outside backticks",
         "| V1 | a | s | c | `tests/test_x.py` | partly |\n": "is not in the form",
         "| V1 | a | s | c | `tests/test_x.py :: test_real` | partly |\n": "is not in the form",
+        "| V1 | a | s | c | `tests/test_x::test_real` | partly |\n": "is not in the form",
+        "| V1 | a | s | c | `test_real` in tests/test_x.py | partly |\n": "is not in the form",
+        "| V1 | a | s | c | `scripts/check::main` | partly |\n": "is not in the form",
+        "| V1 | a | s | c | `scripts/roster.py` | partly |\n": "is not in the form",
         "| V1 | a | s | c | none | maybe |\n": "is not one of",
         "| V2 | a | s | c | none | open |\n": "ids are not",
         "| V1 | a | s | none | open |\n": "5 cells",
