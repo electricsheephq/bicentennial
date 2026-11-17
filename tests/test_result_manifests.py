@@ -155,7 +155,7 @@ def test_refresh_keeps_extra_keys_and_provenance(tree):
     path = folder / manifests.MANIFEST
     value = json.loads(path.read_bytes()) | dict(run_id="fixture-run", backfilled=False)
     path.write_bytes(canon(value))
-    (folder / "RESULT.md").write_text(PAGE.replace("published result", "updated result"))
+    (folder / "RESULT.md").write_text(PAGE.replace("published result", "updated result"), encoding="utf-8")
     (folder / "artifact.txt").write_bytes(b"updated")
     assert command(root, "refresh", str(folder.relative_to(root))) == 0
     updated = json.loads(path.read_bytes())
@@ -208,3 +208,38 @@ def test_changed_derived_field_fails(tree, capsys):
     assert command(root, "index") == 0
     assert command(root, "check") == 1
     assert "derived fields differ: claim_class" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("raw, message", [
+    (b"[1, 2]", "manifest must be a JSON object"),
+    (b"null", "manifest must be a JSON object"),
+    (b"{}", "unknown schema None"),
+    (b'{"schema":1}', "unknown schema 1"),
+    (b'{"claim_class":"UNPUBLISHED 99%","schema":"bicentennial-result-manifest/2"}',
+     "unknown schema 'bicentennial-result-manifest/2'"),
+])
+def test_unknown_or_non_object_manifest_fails(tree, raw, message, capsys):
+    root, folder = tree
+    (folder / manifests.MANIFEST).write_bytes(raw)
+    assert command(root, "index") == 0
+    assert command(root, "check") == 1
+    assert message in capsys.readouterr().out
+
+
+def test_non_canonical_manifest_fails(tree, capsys):
+    root, folder = tree
+    path = folder / manifests.MANIFEST
+    path.write_bytes(json.dumps(json.loads(path.read_bytes()), indent=2).encode("utf-8"))
+    assert command(root, "index") == 0
+    assert command(root, "check") == 1
+    assert "not canonical JSON" in capsys.readouterr().out
+
+
+def test_float_extra_key_fails(tree, capsys):
+    root, folder = tree
+    path = folder / manifests.MANIFEST
+    value = json.loads(path.read_bytes()) | dict(score=0.5)
+    path.write_bytes(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    assert command(root, "index") == 0
+    assert command(root, "check") == 1
+    assert "unsupported canonical JSON type: float" in capsys.readouterr().out

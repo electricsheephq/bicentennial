@@ -1,8 +1,9 @@
 # Result manifests
 
 A `RESULT-MANIFEST.json` beside each `RESULT.md` describes that page and hashes
-its files. It adds no scores or claims. The script derives it from the page and
-folder; do not type the derived fields by hand.
+its files. The script derives it from the page and folder; do not type the
+derived fields by hand. They restate the page and add no scores or claims.
+Extra keys, such as a run's identities, are kept but not checked against the page.
 
 The schema is `bicentennial-result-manifest/1`. Its core fields are:
 - `page`: always `RESULT.md`; `title`: the page's first heading.
@@ -14,8 +15,14 @@ The schema is `bicentennial-result-manifest/1`. Its core fields are:
   sorted by UTF-8 path bytes. Includes the page and files in subfolders, but no
   `RESULT-MANIFEST.json` or subfolder holding its own `RESULT.md`.
 - `backfilled`: true for the ten pages filled in after publication.
-Extra keys survive a refresh. Legacy schemas are parsed and indexed only;
-their files and page fields are unchecked, and their manifests stay unchanged.
+Extra keys survive a refresh. The v0.1 kit's own manifests (schema
+`bicentennial-v0.1-result/1`) are parsed and indexed only; their files and page
+fields are unchecked, and they stay unchanged. Any other schema fails `check`.
+
+To start a new result's manifest, write
+`{"backfilled": false, "schema": "bicentennial-result-manifest/1"}`, plus any
+extra keys, beside its page, then run `refresh` and `index`. `backfill` is only
+for pages published before manifests existed.
 
 Run from the repository root with `PYTHONPATH=src`:
 ```sh

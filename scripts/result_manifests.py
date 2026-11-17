@@ -13,6 +13,7 @@ from bicentennial.canon import canon
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "RESULT-MANIFEST.json"
 SCHEMA = "bicentennial-result-manifest/1"
+LEGACY = frozenset({"bicentennial-v0.1-result/1"})  # The v0.1 kit's own manifests, kept byte for byte.
 INDEX = "results/MANIFEST-INDEX.json"
 
 
@@ -105,8 +106,17 @@ def check(root):
             problems.append(f"{label}: missing RESULT.md")
         try:
             value = load(path)
-            if not isinstance(value, dict) or value.get("schema") != SCHEMA:
-                continue  # Legacy JSON is indexed without interpreting its page or fields.
+            if not isinstance(value, dict):
+                problems.append(f"{label}: manifest must be a JSON object")
+                continue
+            schema = value.get("schema")
+            if not isinstance(schema, str) or schema not in LEGACY | {SCHEMA}:
+                problems.append(f"{label}: unknown schema {schema!r}")
+                continue
+            if schema in LEGACY:
+                continue  # A legacy kit manifest is indexed without interpreting its page or fields.
+            if path.read_bytes() != canon(value):
+                problems.append(f"{label}: not canonical JSON; run refresh")
             expected = derived(path.parent)
             different = [key for key, data in expected.items()
                          if key not in value or canon(value[key]) != canon(data)]
