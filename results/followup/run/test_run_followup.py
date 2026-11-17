@@ -4269,10 +4269,14 @@ def test_rehearsal_shaped_basetemp_keeps_task_hash_tests_meaningful(tmp_path):
         f"{__file__}::test_r3_task_hash_checked_before_rename",
         f"{__file__}::test_r3_new_worktree_environment",
     ]
+    # The child runs from another folder, so a relative PYTHONPATH (the README's
+    # PYTHONPATH=src) must be made absolute here; this checkout's src comes first.
+    inherited = [os.path.abspath(p) for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(ROOT / "src"), *inherited]))
     answer = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--rootdir={ROOT}",
          "-o", "tmp_path_retention_policy=failed", f"--basetemp={base}", *nodes],
-        cwd=cwd, capture_output=True, text=True, timeout=1800,
+        cwd=cwd, env=env, capture_output=True, text=True, timeout=1800,
     )
     assert answer.returncode == 0, answer.stdout[-3000:] + answer.stderr[-2000:]
     assert re.search(r"\b4 passed\b", answer.stdout), answer.stdout[-3000:]
