@@ -400,9 +400,11 @@ reconcile_voids() { local number receipt check n confirm
   done < "$P/void-rounds"; }
 no_failed_attempt() { [[ ! -e $P/rebuild-started || -e $P/rebuild-used ]] || refuse "rebuild archive incomplete; only rebuild continues"
   [[ ! -e $P/failure ]] || refuse "attempt failed; only rebuild continues the build path"; }
-fail_attempt() { local name=$1 code=$2 T=$P/tools/$1 prior="" entry
+fail_attempt() { local name=$1 code=$2 T=$P/tools/$1 prior="" entry out err
   meta failure-reason "$T.err" "$T.reason" "$code" "$T.cutoff-failure" || refuse "failure reason could not be recorded"
-  entry="$name $code $(sha "$T.out") $(sha "$T.err")"
+  out=$(sha "$T.out") && hex64 "$out" || refuse "failure log hash failed"
+  err=$(sha "$T.err") && hex64 "$err" || refuse "failure log hash failed"
+  entry="$name $code $out $err"
   if [[ -f $P/failure ]]; then prior=$(tool files cat "$P/failure") || refuse "failure record unreadable"; fi
   record "$P/failure" "${prior:+$prior$'\n'}$entry" failure
   if [[ -e $P/rebuild-used ]]; then copy_record "$P/failure" "$P/rebuild-failed"; stop_run build; fi
@@ -453,7 +455,7 @@ run_tool() { local name=$1; shift; local outputs=() path T pid x n current fork_
   [[ $fork_failed == 0 ]] || refuse "tool fork record write failed"
   return "$x"; }
 # A failed tool's diagnostics are private. Posts carry step, exit and log hashes.
-stop_run() { local reason=${1:-} x name code out err i=0 body failure
+stop_run() { local reason=${1:-} x name code out err i=0 body failure digest
   any_attempt && refuse "a draw stop is forbidden after an arm attempt"
   case $reason in
     beacon) [[ $(readfile "$P/beacon-cutoff") == "$ROUND 13" ]] || refuse "no cutoff for the counted round" ;;
@@ -463,18 +465,23 @@ stop_run() { local reason=${1:-} x name code out err i=0 body failure
       [[ -s $P/first-failure && -s $P/rebuild-failed && -e $P/rebuild-used ]] || refuse "build stop needs two failed attempts" ;;
     *) refuse "stop reason must be beacon or build" ;;
   esac
+  if [[ $reason == beacon ]]; then
+    out=$(sha "$P/beacon.out") && hex64 "$out" || refuse "stop hash failed"
+    err=$(sha "$P/beacon.err") && hex64 "$err" || refuse "stop hash failed"
+  fi
   body=$({ printf 'Follow-up draw: stop\nreason %s\n' "$reason"
     if [[ $reason == build ]]; then
       for f in "$P/first-failure" "$P/rebuild-failed"; do
         while read -r name code out err; do i=$((i+1)); printf 'failed_step_%s %s\nexit_%s %s\nstdout_sha256_%s %s\nstderr_sha256_%s %s\n' "$i" "$name" "$i" "$code" "$i" "$out" "$i" "$err"; done < "$f"; done
-    else printf 'failed_step_1 beacon\nexit_1 13\nstdout_sha256_1 %s\nstderr_sha256_1 %s\n' "$(sha "$P/beacon.out")" "$(sha "$P/beacon.err")"; fi
+    else printf 'failed_step_1 beacon\nexit_1 13\nstdout_sha256_1 %s\nstderr_sha256_1 %s\n' "$out" "$err"; fi
     printf '%s\n' "$ORIGIN_MARKER"
   }) || refuse "stop body unavailable"
   record "$P/stop.body" "$body" post-body
   if [[ $reason == build ]]; then
     failure=$(tool files cat "$P/first-failure" "$P/rebuild-failed") || refuse "stop failure records unavailable"
     record "$P/stop-failure" "$failure" stop-failure
-    dr post stop --reason build --failure-sha256 "$(sha "$P/stop-failure")" "$P/stop.body" > "$P/stop.out" 2> "$P/stop.err"; x=$?
+    digest=$(sha "$P/stop-failure") && hex64 "$digest" || refuse "stop hash failed"
+    dr post stop --reason build --failure-sha256 "$digest" "$P/stop.body" > "$P/stop.out" 2> "$P/stop.err"; x=$?
   else dr post stop --reason beacon "$P/stop.body" > "$P/stop.out" 2> "$P/stop.err"; x=$?; fi
   [[ $x == 0 ]] || refuse "draw-record stop refused"
   record "$P/stopped" "$reason" stopped; echo "draw stopped"; return 0; }
@@ -571,7 +578,7 @@ beacon_step() { local x now MALFORMED=0
       *) refuse "unexpected draw-record beacon result" ;;
     esac
   done; }
-draw_step() { local x
+draw_step() { local x digest
   need_counted; no_failed_attempt
   [[ $# == 0 ]] || refuse "draw takes the counted round only"
   [[ -f $P/BEACON ]] || refuse "counted beacon is missing"
@@ -583,9 +590,10 @@ draw_step() { local x
   run_tool verify -- verify "$PY" "$WT/scripts/validity_roster.py" verify --packs 3 --beacon "$P/BEACON" --draw "$P/DRAW.json"; x=$?
   if [[ $x != 0 ]] || ! tool files grep -qx "verified sha256 $(sha "$P/DRAW.json") at $(readfile "$S/commit.txt")" "$P/tools/verify.out"; then
     [[ $x != 0 ]] || x=1; fail_attempt verify "$x"; return $?; fi
-  record "$P/draw.sha256" "$(sha "$P/DRAW.json")" draw-hash
+  digest=$(sha "$P/DRAW.json") && hex64 "$digest" || refuse "draw hash failed"
+  record "$P/draw.sha256" "$digest" draw-hash
   if [[ -s $S/posted/draw.values ]]; then
-    record "$P/current-draw.values" "$(posted_values draw)" posted-values
+    record "$P/current-draw.values" "$digest" posted-values
     tool files cmp -s "$P/current-draw.values" "$S/posted/draw.values" || { fail_attempt verify 1; return 1; }; fi
   echo "draw verified"; }
 post_draw() { need_counted; [[ $# == 0 ]] || refuse "post-draw takes the counted round only"
@@ -619,7 +627,7 @@ place_step() { local x y i wt first_second=$P/place-first.summary second=$P/plac
   done
   if [[ $x == 1 ]]; then
     [[ ! -e $P/consensus-fixed ]] || { fail_attempt place-2 1; return 1; }
-    receipt=$(sha "$P/placed-1/void.json")
+    receipt=$(sha "$P/placed-1/void.json") && hex64 "$receipt" || refuse "void receipt hash failed"
     record "$P/void-confirm-$ROUND" "$ROUND $receipt" "void confirmation"
     dr record-void --round "$ROUND" --receipt-sha256 "$receipt" > "$P/void-record.out" 2> "$P/void-record.err"; y=$?
     [[ $y == 0 ]] || refuse "void recording refused"
@@ -712,7 +720,7 @@ observed=[rules.outcomes_of(lines,t) for t in rules.CHECK3_TESTS]
 sys.exit(0 if all(c["PASSED"]>=1 and sum(c.values())==c["PASSED"] for c in observed) else 1)' "$S/wt/$TABLE" "$1" >/dev/null 2>&1; }
 check3_cmd() { (unset PYTEST_ADDOPTS PYTEST_PLUGINS PYTEST_DISABLE_PLUGIN_AUTOLOAD
   tool check3 python3 "$SLOT" -- env PYTHONPATH="$S/wt/src" nice -n 19 "$PY" -m pytest -v -p no:cacheprovider --no-header --disable-warnings -o tmp_path_retention_policy=failed --basetemp="$1" tests/runner/test_control_arms.py); }
-rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes=""
+rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes="" digest
   [[ ! -e $P/BEACON ]] || refuse "real beacon saved; rehearsal is too late"
   [[ ! -e $Rh/passed ]] || refuse "already rehearsed at this commit"
   if [[ -e $Rh ]]; then
@@ -739,12 +747,13 @@ rehearse_step() { local Rh=$P/rehearsal n=1 x p wt args=() hashname value hashes
     esac
     hex64 "$value" || refuse "rehearsal hash is missing or malformed"
     if [[ $hashname == fresh_install_hash ]]; then
-      tool install-pin-rule "$BASEPY" -I -c 'import sys, tomllib
+      tool install-pin-rule "$BASEPY" -I -c 'import sys
 from pathlib import Path
 wt=Path(sys.argv[1]); sys.path.insert(0,str(wt/"src"))
 try:
+    import tomllib
     from bicentennial.systems.hermes_plugin import PinMismatch, verify_install_pin
-    entry=tomllib.loads((wt/"systems/registry/hermes-native.toml").read_text())
+    with open(wt/"systems/registry/hermes-native.toml", "rb") as stream: entry = tomllib.load(stream)
     entry["fresh_install_hash"]
 except Exception: sys.exit(2)
 try: verify_install_pin(entry,sys.argv[2])
@@ -759,7 +768,8 @@ except Exception: sys.exit(2)' "$wt" "$value" >/dev/null 2>&1; x=$?
   for p in A B C; do
     tool tasks "$PY" "$wt/$TASKS_PY" --pack "$p" --packs "$Rh/packs-$p" --spec "$Rh/placed/pack-$p.toml" --draw "$Rh/DRAW.json" --commit "$(readfile "$S/commit.txt")" --edition 3 --out "$Rh/TASKS-$p.json" > "$Rh/tasks-$p.out" 2> "$Rh/tasks-$p.err" || refuse "rehearsal task list refused"
     meta tasks "$Rh/TASKS-$p.json" "$(readfile "$S/commit.txt")" "$p" "$(readfile "$Rh/pack-$p.hash")" "$Rh/DRAW.json" "$Rh/placed/pack-$p.toml" || refuse "rehearsal task list check failed"
-    args+=(--pack "$p" "$Rh/packs-$p" "$Rh/TASKS-$p.json" "$(sha "$Rh/TASKS-$p.json")")
+    digest=$(sha "$Rh/TASKS-$p.json") && hex64 "$digest" || refuse "rehearsal task-list hash failed"
+    args+=(--pack "$p" "$Rh/packs-$p" "$Rh/TASKS-$p.json" "$digest")
   done
   for hashname in system_hash harness_hash route_table_hash; do value=$(tool files awk -v key="$hashname" '$1==key {print $2}' "$Rh/h.values")
     case $hashname in system_hash) args+=(--system-hash "$value") ;; harness_hash) args+=(--harness-hash "$value") ;; route_table_hash) args+=(--route-table-hash "$value") ;; esac; done
@@ -1159,7 +1169,7 @@ release_draw() { local folder=$1 name=$2 is_void=${3:-0} commit wt x number seco
   if [[ $x == 0 ]]; then printf 'void reproduced\n' > "$check/void.outcome"
   else printf 'void not reproduced: under §2 the earlier draw stands\n' > "$check/void.outcome"; echo 'void not reproduced: under §2 the earlier draw stands'; fi
   publish_file "$check/void.outcome" "$name/void.outcome"; }
-release_step() { local x f rel folder n name
+release_step() { local x f rel folder n name digest
   dr read > "$P/release-read.out" 2> "$P/release-read.err" || refuse "release draw read refused"
   dr evaluate > "$P/release-evaluate.out" 2> "$P/release-evaluate.err"; x=$?
   [[ $x != 14 ]] || copy_record "$P/release-evaluate.out" "$P/stopped"
@@ -1182,6 +1192,7 @@ release_step() { local x f rel folder n name
   while IFS= read -r -d '' f; do
     rel=${f#"$P/"}
     case $rel in
+      rehearsal/*/*|rehearsal.failed-*/*/*) continue ;;
       rehearsal/table.out|rehearsal/table.flags|rehearsal/table.exit|rehearsal.failed-*/table.out|rehearsal.failed-*/table.flags|rehearsal.failed-*/table.exit) publish_file "$f" "$rel" ;;
       exports/*|draw/*|rehearsal*|*place-work*|build-[ABC]|build-[ABC]/*|*/build-[ABC]|*/build-[ABC]/*|*packs-*|*tools*|*release-beacon*|*.log|*.err|*void-check*) continue ;;
       *DRAW.json*|*/BEACON|*/DRAW.json|*/draw.sha256|*/TASKS-*|*/placed-*/*|worktree-*.commit|*/worktree-*.commit|BEACON|DRAW.json|draw.sha256|TASKS-*|FILTER-*|placed-*/*|void-*/*|*counted*|*reading-commit*|*blocked*|*differences*|import.record|state-lost-after-draw|*confirm*|*unconfirmed*|check3-*|*.body|*match*|*stop*|first-failure|rebuild-failed|consensus-fixed) publish_file "$f" "$rel" ;;
@@ -1191,11 +1202,11 @@ release_step() { local x f rel folder n name
   for f in "$S"/logs/*; do
     [[ -f $f ]] || continue; rel=${f##*/}
     case $rel in table-*.txt|table-*.exit|table-*.pre-exit|table-*.seq|table-*.flags|*.start|*.end|*.seq|*.exit|*.killed) publish_file "$f" "records/$rel" ;;
-      *) printf '%s %s\n' "$rel" "$(sha "$f")" >> "$P/log-hashes" ;;
+      *) digest=$(sha "$f") && hex64 "$digest" || refuse "log hash failed"
+         printf '%s %s\n' "$rel" "$digest" >> "$P/log-hashes" ;;
     esac
   done
   for f in "$S"/posted/*; do [[ ! -f $f ]] || publish_file "$f" "posted/${f##*/}"; done
-  [[ ! -f $P/log-hashes ]] || publish_file "$P/log-hashes" log-hashes.txt
   release_draw "$P" current
   meta voids "$P/publish-list.json" > "$P/release-void-rounds" || refuse "release void rounds unavailable"
   while IFS= read -r number; do
@@ -1204,7 +1215,11 @@ release_step() { local x f rel folder n name
   # Include retained cut logs and the logs written by this release's checks.
   tool files find "$P" -type f \( -name '*.out' -o -name '*.err' -o -name '*.log' -o -name '*.reason' -o -name '*.cutoff-failure' -o -name '*.post' -o -name '*.read' -o -path '*.cut-*/out' -o -path '*.cut-*/err' \) > "$P/tool-log-paths"
   : > "$P/tool-log-hashes"
-  while IFS= read -r f; do printf '%s %s\n' "${f#"$P/"}" "$(sha "$f")" >> "$P/tool-log-hashes"; done < "$P/tool-log-paths"
+  while IFS= read -r f; do
+    digest=$(sha "$f") && hex64 "$digest" || refuse "log hash failed"
+    printf '%s %s\n' "${f#"$P/"}" "$digest" >> "$P/tool-log-hashes"
+  done < "$P/tool-log-paths"
+  [[ ! -f $P/log-hashes ]] || publish_file "$P/log-hashes" log-hashes.txt
   publish_file "$P/tool-log-hashes" tool-log-hashes.txt
   echo "publication recorded"; }
 case $STEP in

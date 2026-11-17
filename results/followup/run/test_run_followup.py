@@ -4130,3 +4130,113 @@ def test_round9_release_publishes_rehearsal_reading(harness, failed):
         for name in ("table.out", "table.flags", "table.exit"):
             assert (published / name).read_bytes() == (p / folder / name).read_bytes()
         assert not (published / "check3.txt").exists()
+
+
+# Round 10: narrow publication, locale parity and checked hash data.
+def test_round10_release_keeps_nested_rehearsal_readings_private(harness):
+    h = harness
+    h.run("prep", h.commit, "1")
+    p = h.state / "private"
+    folders = ("rehearsal", "rehearsal.failed-1")
+    nested = ("rehearsal/x/reading", "rehearsal.failed-1/followup-tmp/case/state/private/rehearsal")
+    for folder in (*folders, *nested):
+        target = p / folder
+        target.mkdir(parents=True, exist_ok=True)
+        for name, text in (("table.out", "synthetic reading\n"), ("table.flags", "--checks-only\n"), ("table.exit", "exit 4\n")):
+            (target / name).write_text(text)
+    (p / "blocked").write_text("synthetic terminal event\n")
+    h.run("release")
+    for folder in folders:
+        for name in ("table.out", "table.flags", "table.exit"):
+            assert (h.state / "publish" / folder / name).read_bytes() == (p / folder / name).read_bytes()
+    for folder in nested:
+        for name in ("table.out", "table.flags", "table.exit"):
+            assert not (h.state / "publish" / folder / name).exists(), "nested rehearsal reading was published"
+
+
+def test_round10_rehearsal_install_pin_uses_binary_registry(harness):
+    h = harness
+    h.run("prep", h.commit, "1")
+    locales = subprocess.check_output(["locale", "-a"], text=True).splitlines()
+    assert "en_US.US-ASCII" in locales, "ASCII locale required for this regression"
+    h.env.update(LC_ALL="en_US.US-ASCII", LANG="en_US.US-ASCII", PYTHONUTF8="1")
+    # Synthetic tools use UTF-8; the real rule's -I ignores PYTHONUTF8.
+    answer = h.run("rehearse", code=None)
+    assert "rehearsal install pin check failed" not in answer.stderr, "locale decoding refused a matching install pin"
+    assert answer.returncode == 0, answer.stderr
+    assert (h.state / "private/rehearsal/h.values").is_file()
+    calls = h.calls("install-pin-rule")
+    assert len(calls) == 1 and "-I" in calls[0]["argv"]
+
+
+def test_round10_non4_rehearsal_reading_publishes_exit(harness):
+    h = harness
+    h.run("prep", h.commit, "1")
+    h.set(table_exit=3)
+    answer = h.run("rehearse", code=2)
+    assert answer.stderr == "refused: rehearsal no-arms reading must exit 4\n"
+    h.set(table_exit=4)
+    h.run("rehearse")
+    p = h.state / "private"
+    for n in (1, 2):
+        (p / f"check3-{n}.txt").write_text(f"commit {h.commit}\nexit 1\n")
+    h.run("release")
+    published = h.state / "publish/rehearsal.failed-1"
+    assert (published / "table.exit").is_file(), "non-4 rehearsal exit was not published"
+    assert (published / "table.exit").read_text() == "exit 3\n"
+    for name in ("table.out", "table.flags", "table.exit"):
+        assert (published / name).read_bytes() == (p / "rehearsal.failed-1" / name).read_bytes()
+
+
+@pytest.mark.parametrize("path", ["logs/operator.raw", "private/tools/hash-probe.out"])
+def test_round10_release_refuses_failed_log_hash(harness, path):
+    from hashlib import sha256
+
+    h = harness
+    h.run("prep", h.commit, "1")
+    target = h.state / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("synthetic log\n")
+    (h.state / "private/blocked").write_text("synthetic terminal event\n")
+    h.set(inject=dict(kind="sha", match=[str(target)], fail=True))
+    answer = h.run("release", code=None)
+    assert answer.returncode == 2, "release accepted a failed log hash"
+    assert answer.stderr == "refused: log hash failed\n"
+    for name in ("tool-log-hashes.txt", "log-hashes.txt"):
+        assert not (h.state / "publish" / name).exists(), "manifest published before all hashes succeeded"
+    h.run("release")  # The one-shot fault is gone; the same step can finish.
+    manifest = "log-hashes.txt" if path.startswith("logs/") else "tool-log-hashes.txt"
+    rel = "operator.raw" if path.startswith("logs/") else "tools/hash-probe.out"
+    assert f"{rel} {sha256(target.read_bytes()).hexdigest()}" in (h.state / "publish" / manifest).read_text().splitlines()
+
+
+def test_round10_failed_build_log_hash_writes_no_failure(harness):
+    h = harness
+    through(h, "place")
+    p = h.state / "private"
+    h.set(build_exit=1, inject=dict(kind="sha", match=[str(p / "tools/build-A.out")], fail=True))
+    answer = h.run("build", code=None)
+    assert answer.returncode == 2, "failed build accepted a failed diagnostic hash"
+    assert answer.stderr == "refused: failure log hash failed\n"
+    assert not (p / "failure").exists(), "failure entry written with an unavailable hash"
+    h.run("build", code=1)
+    fields = (p / "failure").read_text().split()
+    assert fields[:2] == ["build-A", "1"]
+    assert len(fields) == 4 and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in fields[2:])
+
+
+def test_round10_void_receipt_refuses_failed_hash(harness):
+    from hashlib import sha256
+
+    h = harness
+    through(h, "post-draw")
+    p = h.state / "private"
+    h.set(place_exit=1, inject=dict(kind="sha", match=[str(p / "placed-1/void.json")], fail=True))
+    answer = h.run("place", code=None)
+    assert answer.returncode == 2, "void receipt accepted a failed hash"
+    assert answer.stderr == "refused: void receipt hash failed\n"
+    assert not (p / "void-confirm-40000000").exists()
+    assert not any("record-void" in c["argv"] for c in h.calls("dr"))
+    h.run("place", code=1)
+    recorded = json.loads(h.scenario.read_text())["void_receipt"]
+    assert recorded == sha256((p / "void-40000000/placed-1/void.json").read_bytes()).hexdigest()
