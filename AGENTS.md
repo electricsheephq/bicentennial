@@ -42,21 +42,23 @@ CI (`.github/workflows/ci.yml`) uses Python 3.14 on Linux and installs the packa
 - **The check that counts:** the `test` job is green only when lint and every shard passed. A pull request merges only
   when `test` passed at its exact head (V35).
 - **Locally:** a Python 3.14 virtual environment with `pip install -e .[dev]`, then `PYTHONHASHSEED=0 pytest -q` from the
-  repository root, or name the test files that cover your change. The `bicentennial` command and the pack installer
-  exit 3 `hashseed` unless `PYTHONHASHSEED=0` (V38); the scripts in `scripts/` do not check it.
-- **Tests outside CI:** CI collects `tests/` only. The tests beside a run's code (`results/followup/run/test_*.py` and
-  each round's `test_table.py`) run in that run's rehearsal or by hand, with the command in
-  `results/followup/run/README.md` or in the test file's own docstring.
+  repository root, or name the test files that cover your change. Without `PYTHONHASHSEED=0`, the pack installer
+  and each `bicentennial` subcommand exit 3 `hashseed`, and keyed library processes exit 70 (V38 gives the exact
+  cases). Of the scripts in `scripts/`, only `v01_acceptance.py` checks it.
+- **Tests outside CI:** CI collects `tests/` only. The follow-up's rehearsal runs all of
+  `results/followup/run/test_*.py`; to run them by hand, use the command in `results/followup/run/README.md` with the
+  test files that cover your change. Each round's `test_table.py` gives its own command in its docstring.
 - **Writing tests:** CI runs plain `pytest`, which does not put the repository root on the path, so
   `from tests.x import ...` fails there even though it passes under `python -m pytest`: a head of
-  [#434](https://github.com/electricsheephq/bicentennial/pull/434) failed all seven shards this way. In a test folder
-  with an `__init__.py`, import a shared helper relatively (`from .test_x import ...`); in a folder without one, such as
-  `tests/runner` or `tests/harness`, import it by its bare name (`from test_x import ...`), as those folders do. A new
-  folder with its own `conftest.py` needs an empty `__init__.py`, or that `conftest.py` shadows the root one: a head of
-  [#538](https://github.com/electricsheephq/bicentennial/pull/538) broke `tests/test_shards.py` this way. Run a new
-  folder together with `tests/test_shards.py` in one session before you push. A script outside the package is loaded by
-  path with `importlib.util`, as `tests/test_v01_acceptance.py` does. A test must not depend on git history, because
-  some checks run on an archive of the commit, or on the network.
+  [#434](https://github.com/electricsheephq/bicentennial/pull/434) failed all seven shards this way. A new folder under
+  `tests/` needs an empty `__init__.py`. Without one, its `conftest.py` would shadow the root one, as a head of
+  [#538](https://github.com/electricsheephq/bicentennial/pull/538) did to `tests/test_shards.py`, and each of its test
+  file names would have to differ from every other such name in `tests/` and in its folders without one. In a folder
+  with an `__init__.py`, import a shared helper relatively (`from .test_x import ...`); the older folders without one,
+  such as `tests/runner` and `tests/harness`, import it by its bare name (`from test_x import ...`). Run a new folder
+  together with `tests/test_shards.py` in one session before you push. A script outside the package is loaded by path
+  with `importlib.util`, as `tests/test_v01_acceptance.py` does. A test must not depend on git history, because some
+  checks run on an archive of the commit, or on the network.
 
 ## Public text
 
@@ -76,7 +78,7 @@ Everything in this repository and every issue, pull request and comment is publi
 
 These practices come from
 [LCM-X's repository instructions](https://github.com/electricsheephq/lcm-x/blob/main/AGENTS.md), adopted in
-[#593](https://github.com/electricsheephq/bicentennial/issues/593), except where a rule id is given.
+[#593](https://github.com/electricsheephq/bicentennial/issues/593), except where a rule id or another source is given.
 - Search open and closed issues first. One accepted issue per change. A pull request says `Refs #N`, and uses a
   closing keyword only when the merge alone meets the issue's acceptance.
 - A pull request body states why, what changes, an `## Evidence` block (the exact commands run and their results), its
@@ -86,8 +88,10 @@ These practices come from
   evidence, an accepted tradeoff, or a follow-up issue) and is then resolved.
 - Merge with a merge commit at the reviewed head: `gh pr merge N --merge --match-head-commit <sha>` (V36). Never
   force-push `main`, and never merge with a failing or pending `test` (V35).
-- Agent-written issues, pull requests and comments start with the hidden `agent-origin:v1` marker naming the model
-  (the owner's rule, so that readers can tell agent-written text).
+- Issues, pull requests, comments and reviews that an agent writes on the maintainers' behalf start with the hidden
+  `agent-origin:v1` marker naming the model, so that readers can tell agent-written text. Bots that post under their own
+  accounts are not covered
+  ([the maintainers' decision](https://github.com/electricsheephq/bicentennial/issues/593#issuecomment-6963059726)).
 
 ## Results
 
