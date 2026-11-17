@@ -1,0 +1,119 @@
+# Standing rules: the invariant catalogue
+
+Reconciled 17 November 2026 (UTC), at main `c3ae4a0`.
+
+This page gives every standing rule of the benchmark an id. A standing rule binds every run, result or pull request
+from now on; a decision that binds one run belongs in that run's declaration. Reviews, declarations and pull requests
+cite rules by id. Rules V1 to V39 bind now. V40 to V51 bind the Pilot, the full tier and the board; parts of their
+code exist already (V45, V48 and V51 have code and tests), and V42's freeze approval already applied to PREREG-v0.5.
+
+Each row names where the rule is stated, the code that enforces it, the tests that prove it, and a status:
+- **proved:** code enforces the rule, and a test that CI runs proves it;
+- **partly:** code or tests cover part of the rule, or its tests run only outside CI (see [Tests outside CI](#tests-outside-ci));
+- **open:** stated, with no code or test yet.
+
+[`tests/test_invariants_doc.py`](../tests/test_invariants_doc.py) checks that the ids run in order, that every status
+is one of the three, that every test named here exists, and that every proved row names a test that CI runs.
+
+## Runs and readings
+
+| ID | Rule | Source | Enforced by | Proved by | Status |
+|---|---|---|---|---|---|
+| V1 | A run's declaration is merged to main before its draw. | each drawn run's declaration, Status ([validity-1](../results/validity-1/DECLARATION.md), [round 2](../results/validity-2/DECLARATION.md), [follow-up](../results/followup/DECLARATION.md)) | the follow-up's `results/followup/run/draw_record.py` (`commitment_test`, `initial_declaration`) | `results/followup/run/test_draw_record.py::test_t4_commitment`; `results/followup/run/test_draw_record.py::test_t4_merge_second`; `results/followup/run/test_draw_record.py::test_initial_declaration_merged_pure` | partly |
+| V2 | Every arm of a run is frozen before the draw and runs at one run commit, fixed before the draw; in a Ring 1 run that carries the bar's arms, those arms run from the bar's frozen checkout instead. | [validity-1's declaration](../results/validity-1/DECLARATION.md) §3, "One commit for everything", restated by round 2's and the follow-up's §3; [RING0](../specs/ring0/RING0.md) §14.7, seeds and Checkout | the follow-up's `results/followup/run/table.py` (`checks`, `main`) | `results/followup/run/test_table.py::test_h_commitment_hashes`; `results/followup/run/test_table.py::test_card_pin_drift_stays_global` | partly |
+| V3 | Seeds are drawn only after every arm in the run is frozen: 63-bit, disjoint from every public pack's seeds, with a draw receipt and commitment posted before the run; they are disclosed with the results and never reused. | RING0 §14.7; follow-up declaration §9 | `scripts/validity_roster.py` (`draw`, `collisions`, `_beacon_draw`) | `tests/test_validity_roster.py::test_draw_refusals_write_nothing`; `tests/test_validity_roster.py::test_fixture_repository_seeds_collide`; `tests/test_validity_roster.py::test_beacon_tracked_only` | partly |
+| V4 | No score is opened while a check the declaration holds scores for fails, or before every failing arm has had its one rerun; the reading script prints no score while any arm is pending. | [Milestone 1's declaration](../results/milestone-1/DECLARATION.md) §11.4, restated by every declaration since | each run's reading script (the follow-up's `results/followup/run/table.py`, `finish`) | `results/followup/run/test_table.py::test_no_arms_contract`; `results/followup/run/test_table.py::test_pack_code_pin_difference_refuses_before_scores`; `results/followup/run/test_table.py::test_after_reruns_waits_for_each_owed_rerun` | partly |
+| V5 | Repair and calibration decisions come from control rows only: no kind is promoted or dropped because of a real system's score. | [ROADMAP](../ROADMAP.md), Now, Repair; DESIGN §14 | the follow-up's `results/followup/run/table.py` (`reading`) | `results/followup/run/test_table.py::test_h_rerun_failure_does_not_suppress_controls`; `results/followup/run/test_table.py::test_missing_data_preserves_independent_readings` | partly |
+| V6 | A pack on the control-only list (`specs/ring0/control-only-packs.json`) never carries a system's run. | round 2's declaration §2 | `src/bicentennial/runner/t1.py` (`_check_control_only`, reached from T1, T2 and T2-lite) | `tests/runner/test_t1.py::test_control_only_pack_overrides_all_admissions`; `tests/runner/test_t1.py::test_control_only_missing_or_malformed` | proved |
+| V7 | Failures are classed by cause, not by the component that reports them: an infrastructure failure gets at most two reruns, then BLOCKED, and is never charged to the system; a system failure scores zero and is never excluded. | [DV43](DECISIONS-v2.md); DESIGN §12a | `src/bicentennial/runner/life.py` (`CAUSES`, `_cause`); `src/bicentennial/score/classes.py` (`outcome`); `src/bicentennial/score/aggregate.py` | `tests/score/test_aggregate.py::test_cause_shapes_and_reruns`; `tests/runner/test_life_fake.py::test_failure_cause_table`; `tests/runner/test_life_fake.py::test_worker_failure_mappings` | partly |
+| V8 | Every live arm runs under a send bound; an arm stopped at its bound keeps no card. | follow-up declaration §3, "Send bound"; [#507](https://github.com/electricsheephq/bicentennial/issues/507) | `src/bicentennial/cli.py` (`--max-sends` is required); the refusal paths in `src/bicentennial/runner/t2.py` and `runner/t2lite.py` | `tests/runner/test_t2_send_budget.py::test_stop_record_names_sends_causes_and_where_the_cap_was_reached`; `tests/test_cli_build.py::test_t2lite_invalid_usage` | proved |
+| V9 | The reader is pinned to `gpt-6.1-sol` at medium effort (DV42); the pin is provisional in the draft completion record's C-1 until that record binds. | DV42; [PREREG-v0-completion](../prereg/PREREG-v0-completion.md), C-1 (draft, provisional); PREREG-v0.5, slot C-1 | `src/bicentennial/runner/t2lite.py` (`MODEL`, `EFFORT`); `src/bicentennial/runner/live.py` | `tests/runner/test_live_stack.py::test_stack_configuration_and_close_releases_hold` | partly |
+| V10 | The follow-up's packs were built from public seeds, so their lives are known: any later run on them says so. | follow-up declaration §2 | none | none | open |
+| V11 | No benchmark run touches a live production agent; any later test of one is an offline replay of a copy, with the owner's approval at that time. | DESIGN §14, "Production agents"; PREREG-v0.5 §10 | none | none | open |
+
+## Frozen records and pins
+
+| ID | Rule | Source | Enforced by | Proved by | Status |
+|---|---|---|---|---|---|
+| V12 | A frozen pre-registration is never edited: every change makes a new version with a changelog entry, and every result discloses the version it used. | [prereg/CHANGELOG.md](../prereg/CHANGELOG.md), opening; PREREG-v0.5, Change control; [README](../README.md), Credibility rules | none | none | open |
+| V13 | A FREEZE record's hashes match the files at its tag. | [prereg/FREEZE-v0.5.md](../prereg/FREEZE-v0.5.md), Verify | none (checked by hand with `git show <tag>:<file>`) | none | open |
+| V14 | PREREG is the only normative source for frozen quantities. Where DESIGN, a genre document or a spike spec differs, PREREG governs; the difference is recorded as an erratum ([docs/ERRATA-v2.2.md](ERRATA-v2.2.md), or a design erratum in `prereg/CHANGELOG.md`) and fixed in that document's next version; nothing is re-frozen. | PREREG-v0.5, Precedence; ERRATA-v2.2, Precedence; FREEZE-v0.5, Verify | none | none | open |
+| V15 | Packs pin the scorer, the harness and the controls. In code these are four code pins (the controls, the reader, the scoring code and the scorer: the top-level `.py` files in `src/bicentennial/score/`) and the harness pin. An edit to any pinned artifact voids the run: packs built before it fail `verify` with `pinned_artifact_changed`. | PREREG-v0.5 §6 and DESIGN §9.1, Guarded autonomous loops; [RING0](../specs/ring0/RING0.md) §13, E31 (the four code pins); `tests/report/test_t2lite_card.py`, the comment above `CODE_PINS` | `src/bicentennial/packs/install.py` (`verify`, called by every runner) | `tests/packs/test_install.py::test_code_pins`; `tests/packs/test_install.py::test_lock_pins_and_mismatch_precedence`; `tests/packs/test_install.py::test_index_harness_pin_even_with_matching_tree_hash`; `tests/report/test_t2lite_card.py::test_code_pins_are_recorded`; `tests/anchors/test_report.py::test_four_pins_unchanged_and_anchor_hashes_outside_controls` | proved |
+| V16 | A change that moves a pin updates the recorded pin table and is listed in `prereg/CHANGELOG.md`. | `tests/report/test_t2lite_card.py`, the comment above `CODE_PINS` | the test itself (the table only) | `tests/report/test_t2lite_card.py::test_code_pins_are_recorded` | partly |
+| V17 | Until the Scoring Veto Panel exists, no freeze changes the scorer, a scoring rule, or a pre-registered bar or target, except quantities the frozen rules say to set from controls. | ROADMAP, Now, Governance (stricter than PREREG's interim rule) | none | none | open |
+| V18 | Until the Scoring Veto Panel binds, every adversarial review of the design tests for self-serving construction. | DESIGN §14; PREREG-v0.5, External veto | none | none | open |
+| V19 | Each declaration and each result is published with an adversarial review by a model family other than its author's. | ROADMAP, Now, Governance | none | none | open |
+
+## People, spend and independence
+
+| ID | Rule | Source | Enforced by | Proved by | Status |
+|---|---|---|---|---|---|
+| V20 | No person grades, annotates, keys, audits, adjudicates or breaks a tie: agents run the benchmark end to end. The owner's stops on spend, accounts, paid capacity and a narrower design are pre-run governance decisions, not run steps, and are disclosed as such. | DV48, The principle and Unchanged; DECISIONS-v2, Owner decisions | none | none | open |
+| V21 | Paid-lane spend is at most $100 per full-tier run, all systems together; embedding spend (under its own grant of up to $100 a run) and the Image board's vision spend sit outside that ceiling. Plan lanes have no ceiling and report their tokens. | DV47, Paid lanes; DECISIONS-v2, Owner decisions | none (the full tier is not built) | none | open |
+| V22 | Every run reports its spend. | ROADMAP, Standing rules | `schemas/receipt.schema.json` (`spend_micro_usd` is required) and `src/bicentennial/report/receipt.py` (`build_receipt`, `write_run`): every runner writes a `receipt.json` with a spend field, but every runner passes a literal 0, so spend is recorded, not measured | none | partly |
+| V23 | No result advises on any system's internals. The benchmark never tunes, patches or advises on LCM-X, and copies no LCM-X code; every system, LCM-X included, runs only through its public surfaces and documented configuration, pinned to a released artifact, within the same configuration budget. | DESIGN §9.1 and §14; README, Credibility rules; DV23 | none | none | open |
+| V24 | The benchmark's operator never runs LCM-X at Ring 0 (the developer tiers): the runners refuse it under the operator's identity. | RING0 §12; [docs/developers/ring0.md](developers/ring0.md) §2 | `src/bicentennial/systems/registry.py` (the operator gate); `runner/t2.py` and `runner/t2lite.py` (`operator_identity`) | `tests/systems/test_registry.py::test_lcm_operator_gate_independent_of_hashes`; `tests/runner/test_t0.py::test_existing_out_and_operator_refused`; `tests/runner/test_operator_marker.py::test_marker_checks_builtin_by_name` | proved |
+| V25 | LCM-X's developers and lanes never see held-out seeds, templates or keys, or per-item private results. | README, Credibility rules; ROADMAP, Standing rules; DESIGN §14 | none | none | open |
+| V26 | Competitors run with their vendors' best documented configuration, and results are published where LCM-X loses. | DESIGN §14, Openness | none | none | open |
+| V27 | Difficulty is frozen from controls only; no target or veto is set on any real system's results; valid zeros are published, all-zero rows included. | DV21; ROADMAP, Standing rules | none | none | open |
+| V28 | No raw transcripts, corpus text or personal data are used. | [VISION](../VISION.md), What it will not do; DESIGN §10; PREREG-v0.5, Requirements met differently and §4 (Community templates) | none | none | open |
+
+## Publication and public text
+
+| ID | Rule | Source | Enforced by | Proved by | Status |
+|---|---|---|---|---|---|
+| V29 | Every result page has a `Claim class:` line and a manifest beside it, derived from the page by `scripts/result_manifests.py`; a `## What this does not prove` section, where present, is a bullet list only. The v0.1 kit's legacy manifests are indexed but not checked. | [docs/result-manifests.md](result-manifests.md) | `scripts/result_manifests.py` (`check`) | `tests/test_result_manifests.py::test_repository_check`; `tests/test_result_manifests.py::test_missing_manifest`; `tests/test_result_manifests.py::test_changed_derived_field_fails` | partly |
+| V30 | Developer-tier cards carry fixed labels: a developer signal, not predictive of the full tier, never certifies; a change accepted during development is confirmed on Ring 1 before it is claimed. | RING0, What Ring 0 is; PREREG-v0.5 §6; DV7 | `schemas/card_ring0.schema.json`, `card_t2.schema.json` and `card_t2lite.schema.json`; `src/bicentennial/report/card.py`, `t2_card.py` and `t2lite_card.py`; `src/bicentennial/report/developer.py` (the report label) | `tests/report/test_t2lite_card.py::test_every_label_is_required_and_fixed`; `tests/report/test_t2_card.py::test_item_2_every_label_required_and_fixed`; `tests/report/test_card_bytes.py::test_labels_t0_and_singleton_pass` | partly |
+| V31 | Public files carry no local home or volume paths and no names from the deny list, and every file under `packs/`, `corpus/` and `schemas/fixtures/` carries the canary. | RING0 §10 (the canary); `scripts/public_check.py` (paths, deny list) | `scripts/public_check.py`, run by CI's lint job | `tests/test_public_check.py::test_local_path_rejected`; `tests/test_public_check.py::test_missing_canary_rejected`; `tests/test_public_check.py::test_deny_list_is_case_insensitive` | partly |
+| V32 | The canary never reaches text an agent sees: a build check refuses a rendered life that contains it. | RING0 §10 | `src/bicentennial/render/stream.py` (lint) | `tests/render/test_stream.py::test_lint_refuses_payload` | proved |
+| V33 | The director never forwards upstream error text to the agent. | DV42 | `src/bicentennial/director/upstream/forward.py` (error text reduced to categories); `src/bicentennial/director/wire/responses.py` (`error_objects`); `src/bicentennial/director/core.py` (`_refuse`, a fixed reply) | `tests/director/test_upstream.py::test_error_text_never_reaches_harness` | proved |
+| V34 | A publication that contains login material is refused, and only the refusal remains. | [docs/developers/t2.md](developers/t2.md), How a run ends and Credential stop | `src/bicentennial/runner/t2lite.py` (`_scan`) and `runner/t2.py` (`_scan_end_files`, the refusal path); `src/bicentennial/runner/kept.py` (`credential_scan`) | `tests/runner/test_t2_end.py::test_credential_only_in_end_file_is_refused`; `tests/runner/test_t2.py::test_scan_refusal_never_writes_cache`; `tests/runner/test_per_item_kept.py::test_credential_scan_removes_candidate` | proved |
+
+## Repository process
+
+| ID | Rule | Source | Enforced by | Proved by | Status |
+|---|---|---|---|---|---|
+| V35 | The aggregate check `test` is green only when lint and every test shard pass; a pull request merges only after `test` passed at its exact head. GitHub does not enforce the second half. | [.github/workflows/ci.yml](../.github/workflows/ci.yml), the `test` job, for the first half; the second half is maintainer practice, with no written source in the repository yet | `ci.yml` (the aggregate only) | none | partly |
+| V36 | Pull requests merge by merge commit only. | this catalogue (owner decision, 17 November 2026) | none (the repository also allows squash and rebase) | none | open |
+| V37 | Each developer guide's CI block (ring0, t2lite, entry) matches its step in `.github/workflows/ring0-doc.yml` line for line. | docs/developers/ring0.md §5; docs/developers/t2lite.md, Run it; docs/developers/entry.md, Worked example | the tests below | `tests/test_developer_doc.py::test_ci_block_matches_doc`; `tests/test_developer_doc_t2lite.py::test_ci_block_matches_doc`; `tests/test_developer_doc_entry.py::test_ci_block_matches_doc` | proved |
+| V38 | The `bicentennial` CLI and the pack-install CLI exit 3 `hashseed`, and keyed library processes exit 70, unless `PYTHONHASHSEED=0`. | docs/developers/ring0.md §3 and §4; RING0 §8 | `src/bicentennial/cli.py`; `src/bicentennial/packs/install.py`; `src/bicentennial/keyed.py` (`assert_hashseed`) | `tests/test_keyed.py::test_hashseed_guard`; `tests/test_cli_build.py::test_build_requires_hashseed`; `tests/packs/test_install.py::test_cli_hashseed_usage_missing_and_install`; `tests/runner/test_t2.py::test_cli_exact_flags` | proved |
+| V39 | Git calls drop the inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR`. | `src/bicentennial/gitenv.py` (`git_env`) | `gitenv.git_env` and its inline equivalents | `tests/test_gitenv.py::test_git_env_removes_only_location_variables`; `tests/test_public_check.py::test_tracked_paths_ignore_git_location_variables`; `tests/runner/test_t0.py::test_commit_ignores_git_location_variables`; `tests/runner/test_t1.py::test_commit_ignores_git_location_variables`; `tests/test_cli_source_checkout.py::test_source_checkout_ignores_git_location_variables`; `tests/harness/test_hermes_adapter.py::test_verify_pin_ignores_git_location_variables`; `tests/systems/test_plugin_cells.py::test_install_ignores_git_location_variables` | partly |
+
+## Pilot, full tier and board
+
+| ID | Rule | Source | Enforced by | Proved by | Status |
+|---|---|---|---|---|---|
+| V40 | Freeze before data: the completion record comes before any real system's first pilot run, no slot is filled from a real system's scores, and PREREG-v1 comes before any full-tier run. | PREREG-v0.5, Freezes; DESIGN §14 | none | none | open |
+| V41 | The pilot sets only the `[pilot]` values, through the frozen code, on blinded system codes until those values are committed. | PREREG-v0.5, Change control; DESIGN §14, Blinding | none | none | open |
+| V42 | The benchmark session approves each freeze, and each freeze hash is posted on [LCM-X issue 1964](https://github.com/electricsheephq/lcm-x/issues/1964). | PREREG-v0.5, Approval; DESIGN §16 | none | none | open |
+| V43 | Full-tier seeds and answer keys are held out and sealed; per-item results on private lives are never released. | README, Credibility rules; DESIGN §10 | none | none | open |
+| V44 | LCM-X at its last release before the public generator runs on every board, to detect tuning. | README, Credibility rules; DESIGN §12 | none | none | open |
+| V45 | Only a sealed board at its pre-registered powered size certifies; pilot and developer runs never certify, and lite results never feed a board or a certification. | DV5; DV48; README | `src/bicentennial/stats/certify.py` (`certify`: no certificate on a pilot or developer board, an unsealed board, or one below the powered size) | `tests/stats/test_certify.py::test_board_cannot_issue_certificate`; `tests/stats/test_certify.py::test_powered_image_season_and_text_delta_with_parameterized_bounds` | partly |
+| V46 | Every card says "agent-validated; no human key", and every published table has an agent-key row. | DV48; PREREG-v0.5 §5 and §10 | none (not in the card code yet) | none | open |
+| V47 | The cell inventory is frozen per release from the taxonomy and templates, never from system documents or results; the census and the "undocumented frontier" label are display only. "Unsupported" is a cause label, never an opt-out. | DV3; DV4; ROADMAP, Standing rules | none | none | open |
+| V48 | Gates and cell admission use the raw penalised scale (−100 to +100); the normalised 0-100 scale is for display only. Per-item action accuracy and the penalised score are both always printed, and neither is converted into the other. | DV25; DV44 | `src/bicentennial/stats/certify.py` (`cell_statistics` and `cell_admission` compute gates and admission in raw points; `_score` refuses scores outside −100 to +100) | `tests/stats/test_certify.py::test_validation_of_blocks_weights_metadata_and_ranges`; `tests/stats/test_certify.py::test_cell_admission_gap_boundary_and_naive_clear` | partly |
+| V49 | Common item ids and filters are frozen once; nothing is refiltered per model; the raw-archive marker never enters gates, cell admission or rung calibration. | DV14; DV6; PREREG-v0.5 §6 | none | none | open |
+| V50 | Boards show each system's latest version, never its best; no rank is claimed without separation, and overlapping intervals show as tied bands. | PREREG-v0.5 §6; ROADMAP, the site and leaderboard | none | none | open |
+| V51 | The public regression corpus is stocked from controls, reference stubs and equal runs over every board system, never from one system's failures; the benchmark session never runs the fault finder on LCM-X. The validation row spends at most $100 per release, and the Scoring Veto Panel at most $25 per freeze. | PREREG-v0.5 §6; DV48, Spend and exposure | `src/bicentennial/corpus/format.py` (`check_source`, `check_case`: a corpus case comes only from a control or a reference stub; equal runs wait for a board roster) | `tests/corpus/test_corpus.py::test_source_refusals`; `tests/corpus/test_corpus.py::test_registry`; `tests/corpus/test_corpus.py::test_file_refusals` | partly |
+
+## Tests outside CI
+
+CI collects `tests/` only (`testpaths` in `pyproject.toml`). The tests beside a run's code
+(`results/followup/run/test_*.py`, `results/validity-1/v2-control-trials/test_table.py`,
+`results/validity-2/control-trials/test_table.py`, `results/milestone-1/2026-11-11-separation-table/test_table.py`)
+run in that run's rehearsal (the follow-up's) or by hand, so a row that rests on them is partly proved until CI runs
+them.
+
+## Known gaps
+
+- V35: GitHub requires no status check on `main`, so `test` gates merges by maintainer practice only; V36: the
+  repository still allows squash and rebase merges. Making `test` a required check and allowing merge commits only would
+  close both; that is the owner's call.
+- V7: a failure label the runner does not know is classed as an infrastructure failure (`runner/life.py`, `_cause`),
+  though DV43 asks the ledger to show a benchmark fault first ([#599](https://github.com/electricsheephq/bicentennial/issues/599)).
+- V46: no card code carries the label yet, and the phrase bank's header comment still describes human calibration,
+  which [#313](https://github.com/electricsheephq/bicentennial/issues/313) changes.
+- V39: two git calls still inherit the location variables (`src/bicentennial/screen/__main__.py` and
+  `src/bicentennial/ocsim/run.py`), recorded on [#184](https://github.com/electricsheephq/bicentennial/issues/184).
+- V12, V13: no test hashes the frozen files against their FREEZE records
+  ([#598](https://github.com/electricsheephq/bicentennial/issues/598)).
