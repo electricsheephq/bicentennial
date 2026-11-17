@@ -1,0 +1,38 @@
+# Result manifests
+
+A `RESULT-MANIFEST.json` beside each `RESULT.md` describes that page and hashes
+its files. It adds no scores or claims. The script derives it from the page and
+folder; do not type the derived fields by hand.
+
+The schema is `bicentennial-result-manifest/1`. Its core fields are:
+- `page`: always `RESULT.md`; `title`: the page's first heading.
+- `claim_class`: the page's `Claim class:` paragraph, with spaces joined.
+- `does_not_prove`: the first `## What this does not prove` bullet list,
+  with wrapped lines joined; an empty list when that heading is absent.
+- `published`: the folder's date prefix; `release`: its parent folder's name.
+- `artifacts`: file paths relative to the folder, SHA-256 hashes and byte sizes,
+  sorted by UTF-8 path bytes. Includes the page and files in subfolders, but no
+  `RESULT-MANIFEST.json` or subfolder holding its own `RESULT.md`.
+- `backfilled`: true for the ten pages filled in after publication.
+Extra keys survive a refresh. Legacy schemas are parsed and indexed only;
+their files and page fields are unchecked, and their manifests stay unchanged.
+
+Run from the repository root with `PYTHONPATH=src`:
+```sh
+python3 scripts/result_manifests.py check
+python3 scripts/result_manifests.py backfill
+python3 scripts/result_manifests.py refresh results/<release>/<dated-folder>
+python3 scripts/result_manifests.py index
+```
+`check` exits 1 with one line per problem, or 0 when clean. `backfill` writes
+only missing manifests. `refresh` updates one v1 manifest's derived fields.
+Run `index` after either write command; neither updates the index on its own.
+
+Manifests and `results/MANIFEST-INDEX.json` use canonical JSON: sorted keys,
+compact UTF-8, no trailing newline. The index lists every manifest path and
+hash in byte order. Its `combined_sha256` hashes lines of `hash`, two spaces,
+path and newline. Recompute that combined hash from the repository root:
+```sh
+LC_ALL=C find results -name RESULT-MANIFEST.json | LC_ALL=C sort | xargs sha256sum | sha256sum
+```
+This checks published bytes, without running or rescoring the benchmark.
