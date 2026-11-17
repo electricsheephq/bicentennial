@@ -1,9 +1,11 @@
 """Offline operator-script guards; synthetic records never reach a reader."""
 
 import importlib.util
+import inspect
 import json
 import os
 import re
+import select
 import shlex
 import shutil
 import subprocess
@@ -28,6 +30,46 @@ ORDER = tuple(
 HASH = "a" * 64
 COMMIT = "b" * 40
 MARKER = ".followup-test-dir"
+
+
+def save_scenario(path, before, value, *, increments=None):
+    """Merge this writer's delta, then publish one complete JSON snapshot."""
+    import copy
+    import fcntl
+    import tempfile
+
+    increments = increments or {}
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current = json.loads(path.read_text()) if path.exists() else {}
+        for key in before.keys() - value.keys():
+            current.pop(key, None)
+        for key, item in value.items():
+            if key not in increments and (key not in before or item != before[key]):
+                current[key] = item
+        for key, amount in increments.items():
+            current[key] += amount
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=path.parent, prefix=f".{path.name}.{os.getpid()}.",
+                delete=False,
+            ) as stream:
+                temporary = stream.name
+                json.dump(current, stream)
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.unlink(temporary)
+        value.clear()
+        value.update(copy.deepcopy(current))
+        before.clear()
+        before.update(copy.deepcopy(current))
+
+
+# Embed the same implementation in every executable; keep their snapshots deep
+# so in-place list/dict changes are distinguishable from unchanged stale keys.
+SCENARIO_IO = inspect.getsource(save_scenario)
 
 
 def by_path(name, path):
@@ -60,17 +102,19 @@ def test_r11_public_text_and_bash_syntax():
 # operations and repository reads are forwarded; modeled operations retain all
 # arguments and their environment so tests can inspect commands without sends.
 STANDIN = r"""#!/usr/bin/env python3
-import hashlib, json, os, pathlib, signal, subprocess, sys, time, tomllib
+import copy, hashlib, json, os, pathlib, signal, subprocess, sys, time, tomllib
+""" + SCENARIO_IO + r"""
 here = pathlib.Path(__file__).resolve().parent
 config_file = here / "scenario.json"
 c = json.loads(config_file.read_text())
+snapshot = copy.deepcopy(c)
 kind, *argv = sys.argv[1:]
 with (here / "calls.jsonl").open("a") as stream:
     stream.write(json.dumps(dict(kind=kind, argv=argv, pid=os.getpid(), locked=pathlib.Path(os.environ["FOLLOWUP_STATE"],"lock").is_dir(), cwd=os.getcwd(),
         hashseed=os.environ.get("PYTHONHASHSEED"), cache_empty=(not any(pathlib.Path(argv[argv.index("--cache")+1]).iterdir())) if kind=="arm" and "--cache" in argv else None,
         pytest_env={k:os.environ[k] for k in ("PYTEST_ADDOPTS","PYTEST_PLUGINS","PYTEST_DISABLE_PLUGIN_AUTOLOAD") if k in os.environ} if kind=="check3" else None,
         git=sorted(k for k in os.environ if k.startswith("GIT_")))) + "\n")
-def save(): config_file.write_text(json.dumps(c))
+def save(**kwargs): save_scenario(config_file, snapshot, c, **kwargs)
 state_root=pathlib.Path(os.environ["FOLLOWUP_STATE"])
 def inject(phase):
     fault=c.get("inject",{})
@@ -218,7 +262,8 @@ if kind=="ps":
     sys.exit(1)
 if kind=="caffeinate": sys.exit(0)
 if kind=="clock": print(c["clock"]); sys.exit(0)
-if kind=="sleep": c["clock"]+=int(argv[-1]); save(); sys.exit(0)
+if kind=="sleep":
+    n=int(argv[-1]); c["clock"]+=n; save(increments={"clock":n}); sys.exit(0)
 if kind=="marker": sys.exit(c.get("marker_exit",0))
 if kind=="pgrep": sys.exit(1)
 if kind=="lock-probe": sys.exit(0)
@@ -265,7 +310,9 @@ if kind=="place":
         print("pack",p,"spec_sha256",digest(out/("pack-"+p+".toml")),"table_sha256",digest(out/("placement-"+p+".json")),"lives 10 replacements 0 table_rows 0")
     print("spares_used 0 of 48"); sys.exit(0)
 if kind=="build":
-    codes=c.get("build_exits",[]); code=codes.pop(0) if codes else c.get("build_exit",0); save()
+    codes=c.get("build_exits",[])
+    if codes: code=codes.pop(0); save()
+    else: code=c.get("build_exit",0)
     if not code: pathlib.Path(option("--out"),"T2").mkdir(parents=True)
     print("synthetic build"); sys.exit(code)
 if kind=="install":
@@ -427,7 +474,7 @@ def make_harness(tmp_path):
         check3_tests=list(by_path("fixture_check3_rules", SCRIPT.with_name("table.py")).rules.CHECK3_TESTS),
     )
     scenario = bin_dir / "scenario.json"
-    scenario.write_text(json.dumps(config))
+    save_scenario(scenario, {}, config)
     standin = bin_dir / "standin"
     prefix = (
         '#!/bin/bash\nexport FOLLOWUP_TEST_BIN="${0%/*}"\n'
@@ -465,10 +512,11 @@ def make_harness(tmp_path):
     class Harness:
         def set(self, **changes):
             value = json.loads(scenario.read_text())
+            before = json.loads(json.dumps(value))
             value.update(changes)
+            save_scenario(scenario, before, value)
             if "inject" in changes:
                 (bin_dir / "inject-enabled").touch()
-            scenario.write_text(json.dumps(value))
 
         def run(self, *args, code=0):
             result = subprocess.run(
@@ -956,14 +1004,16 @@ def test_r15_cards_missing_replaced_and_repeated(harness):
 # S4's subprocesses deliberately do not use the operator gateway: these local
 # executables model the public service protocol, including immutable contents.
 SERVICE = r"""#!/usr/bin/env python3
-import hashlib, json, pathlib, subprocess, sys
+import copy, hashlib, json, os, pathlib, subprocess, sys
 from datetime import UTC, datetime
 from email.utils import format_datetime
+""" + SCENARIO_IO + r"""
 root=pathlib.Path(__file__).resolve().parent
 cfg=root/"scenario.json"
 c=json.loads(cfg.read_text()); args=sys.argv[1:]
+snapshot=copy.deepcopy(c)
 def stamp(t): return datetime.fromtimestamp(t,UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-def save(): cfg.write_text(json.dumps(c))
+def save(): save_scenario(cfg,snapshot,c)
 def page(nodes): return dict(nodes=nodes,pageInfo=dict(hasNextPage=False,endCursor=None))
 def http(value,status=200):
     raw=value if isinstance(value,bytes) else json.dumps(value).encode()
@@ -1015,17 +1065,140 @@ http({},404)
 """
 
 BASE_WRAPPER = r"""#!/usr/bin/env python3
-import importlib.util, json, os, pathlib, subprocess, sys
+import copy, importlib.util, json, os, pathlib, subprocess, sys
+""" + SCENARIO_IO + r"""
 root=pathlib.Path(__file__).resolve().parent
 cfg=root/"scenario.json"
 def clock(): return json.loads(cfg.read_text())["clock"]
 def sleep(n):
-    c=json.loads(cfg.read_text()); c["clock"]+=n; cfg.write_text(json.dumps(c))
+    c=json.loads(cfg.read_text()); snapshot=copy.deepcopy(c); c["clock"]+=n
+    save_scenario(cfg,snapshot,c,increments={"clock":n})
 if len(sys.argv)>2 and sys.argv[1]=="-I" and sys.argv[2].endswith("draw_record.py"):
     spec=importlib.util.spec_from_file_location("draw_record",sys.argv[2]); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     sys.exit(m.main(sys.argv[3:],clock=clock,sleep=sleep))
 os.execv(REAL_PYTHON,[REAL_PYTHON,*sys.argv[1:]])
 """
+
+
+@pytest.fixture
+def scenario_processes(harness):
+    """Bound children and gate saves after mutation, before the real locked merge."""
+    children = []
+    deadline = time.monotonic() + 20
+
+    def start(source, name, *args, gated=False):
+        if gated:
+            assert SCENARIO_IO in source
+            source = source.replace(SCENARIO_IO, SCENARIO_IO + r'''
+_save_scenario = save_scenario
+def save_scenario(*args, **kwargs):
+    print("scenario ready", flush=True)
+    assert sys.stdin.readline() == "save\n"
+    return _save_scenario(*args, **kwargs)
+''', 1)
+        bootstrap = (
+            "import sys\n__file__ = sys.argv[1]\nsys.argv = sys.argv[1:]\n" + source
+        )
+        child = subprocess.Popen(
+            [sys.executable, "-c", bootstrap, str(harness.scenario.parent / name), *args],
+            env=harness.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
+        )
+        children.append(child)
+        return child
+
+    def ready(child):
+        assert select.select(
+            [child.stdout], [], [], max(0, deadline - time.monotonic())
+        )[0], "scenario child did not reach its barrier"
+        assert child.stdout.readline() == "scenario ready\n"
+
+    def finish(child, text=None):
+        return child.communicate(text, timeout=max(0.1, deadline - time.monotonic()))
+
+    yield start, ready, finish
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=2)
+
+
+def test_scenario_concurrent_sleeps_are_atomic(harness, scenario_processes):
+    h = harness
+    start, ready, finish = scenario_processes
+    initial = json.loads(h.scenario.read_text())["clock"]
+    # Large enough to span writes; the reader exercises STANDIN's real initial
+    # load repeatedly while both embedded sleep implementations publish saves.
+    h.set(payload="x" * 65536)
+    module = h.scenario.parent / "draw_record.py"
+    module.write_text("def main(args, *, clock, sleep):\n    sleep(int(args[0])); return 0\n")
+    writers = [
+        start(STANDIN, "standin.py", "sleep", "2", gated=True),
+        start(STANDIN, "standin.py", "sleep", "3", gated=True),
+        start(BASE_WRAPPER, "base-python", "-I", str(module), "5", gated=True),
+    ]
+    for child in writers:
+        ready(child)
+    # All three have read the same clock before any save. This makes a lost
+    # increment deterministic, without relying on scheduler timing or a soak.
+    reader = start(
+        "import contextlib, io, select\nreader = compile(" + repr(STANDIN)
+        + ", __file__, 'exec')\n" + r'''
+reads = 0
+while True:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            exec(reader, dict(__file__=__file__))
+        except SystemExit as result:
+            assert result.code == 0
+    reads += 1
+    if reads == 1: print("scenario ready", flush=True)
+    if select.select([sys.stdin], [], [], 0)[0]: break
+print(reads)
+''',
+        "standin.py", "clock",
+    )
+    ready(reader)
+    h.set(concurrent_setting="preserved")
+    for child in writers:
+        child.stdin.write("save\n")
+        child.stdin.flush()
+    for child in writers:
+        out, err = finish(child)
+        assert child.returncode == 0, out + err
+    out, err = finish(reader, "stop\n")
+    assert reader.returncode == 0, out + err
+    assert int(out) > 0
+    value = json.loads(h.scenario.read_text())
+    assert value["clock"] == initial + 2 + 3 + 5
+    assert value["concurrent_setting"] == "preserved"
+
+
+@pytest.mark.parametrize("writer", ["standin", "service"])
+def test_scenario_stale_save_does_not_resurrect_inject(harness, scenario_processes, writer):
+    h = harness
+    start, ready, finish = scenario_processes
+    h.set(inject=dict(kind="marker", fail=True))
+    if writer == "standin":
+        stale = start(STANDIN, "standin.py", "sleep", "1", gated=True)
+    else:
+        stale = start(
+            SERVICE, "gh", "api", "repos/synthetic/repo/issues/394/comments",
+            "POST", "body=synthetic", gated=True,
+        )
+    ready(stale)
+    consumer = start(STANDIN, "standin.py", "marker")
+    out, err = finish(consumer)
+    assert consumer.returncode == 1, out + err
+    assert "inject" not in json.loads(h.scenario.read_text())
+    h.set(concurrent_setting="preserved")
+    out, err = finish(stale, "save\n")
+    assert stale.returncode == 0, out + err
+    value = json.loads(h.scenario.read_text())
+    assert "inject" not in value
+    assert value["concurrent_setting"] == "preserved"
+    if writer == "service":
+        assert [item["body"] for item in value["comments"]] == ["synthetic"]
 
 
 @pytest.fixture(scope="module")
