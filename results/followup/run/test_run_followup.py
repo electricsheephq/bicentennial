@@ -2942,6 +2942,9 @@ def test_r3_new_worktree_environment(harness):
     through(h, "place")
     worktrees = os.path.realpath(os.path.join(h.env["FOLLOWUP_STATE"], "worktrees")) + os.sep
     calls = [call for call in h.calls() if os.path.realpath(call["cwd"]).startswith(worktrees)]
+    # Only this harness's own calls: the rehearsal runs pytest from its own worktree.
+    own = os.path.realpath(h.env["FOLLOWUP_STATE"]) + os.sep
+    assert all(os.path.realpath(call["cwd"]).startswith(own) for call in calls)
     assert {call["kind"] for call in calls} >= {
         "draw",
         "verify",
