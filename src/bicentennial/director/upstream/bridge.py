@@ -112,23 +112,33 @@ class ResponsesBridge:
             body = to_responses(call.body, effort=up.effort)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             # A structural failure latches too, under a fixed code that never echoes the request.
-            # The first reason latched stays; each caller still raises its own (#447).
+            # Under the latch, only the first failure calls the inner stack's `stop`, if it has one, and then
+            # sets the latch in `finally` (#604). Unless that `stop` raises, each caller raises its own reason (#447).
             reason = str(exc) if type(exc) is ValueError else "bridge_malformed"
             with self._latch:
-                self.failure = self.failure or reason
-            if hasattr(self.inner, "stop"):
-                self.inner.stop(reason)
+                if self.failure is None:
+                    try:
+                        if hasattr(self.inner, "stop"):
+                            self.inner.stop(reason)
+                    finally:
+                        self.failure = reason
             raise ValueError(reason) from None
         reply = self.inner.respond(replace(call, wire="responses", body=body))
         return replace(reply, usage=chat_usage(reply.usage))
 
     def state(self):
         # The inner stack keeps the first reason it was stopped with; the bridge's latch fills in
-        # only when the inner recorded none.
+        # only when the inner recorded none. The latch is read before the inner snapshot, and it is
+        # set after the first failure's call to the inner's `stop` (or at once when the inner has no
+        # `stop`). So when that call leaves the inner holding a reason, as the live stack's always
+        # does, a set latch comes with the inner's own reason, and no read names a reason that a later
+        # read replaces (#604). When the inner has no `stop`, or its `stop` raises before it records,
+        # the latch is the reason until the inner records one of its own; no production stack has either.
+        failure = self.failure
         state = self.inner.state()
-        if not self.failure or state.get("stop_reason"):
+        if not failure or state.get("stop_reason"):
             return state
-        return dict(state, stopped=True, stop_reason=self.failure)
+        return dict(state, stopped=True, stop_reason=failure)
 
     def served_identities(self):
         return self.inner.served_identities()
