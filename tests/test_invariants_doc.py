@@ -54,11 +54,11 @@ def problems(text, root):
             out.append(f"{rule}: {len(cells)} cells, expected 6")
             continue
         status, named = cells[5], cells[4]
-        if ".py::" in SPAN.sub("", named):
+        if "::" in SPAN.sub("", named):
             out.append(f"{rule}: a test reference outside backticks")
         tests = []
         for span in SPAN.findall(named):
-            if ".py::" not in span:
+            if ".py" not in span:
                 continue
             match = TEST.fullmatch(span)
             if match:
@@ -109,6 +109,9 @@ def test_problems_catch_each_break(tmp_path):
         "| V1 | a | s | c | `tests/test_x.py::TestK::test_real` | partly |\n": "is not in the form",
         "| V1 | a | s | c | `tests/test_x.py::test_real[a]` | partly |\n": "is not in the form",
         "| V1 | a | s | c | tests/test_x.py::test_real | partly |\n": "outside backticks",
+        "| V1 | a | s | c | `tests/test_x.py`::`test_real` | partly |\n": "outside backticks",
+        "| V1 | a | s | c | `tests/test_x.py` | partly |\n": "is not in the form",
+        "| V1 | a | s | c | `tests/test_x.py :: test_real` | partly |\n": "is not in the form",
         "| V1 | a | s | c | none | maybe |\n": "is not one of",
         "| V2 | a | s | c | none | open |\n": "ids are not",
         "| V1 | a | s | none | open |\n": "5 cells",
