@@ -2,7 +2,8 @@
 
 Reconciled 17 November 2026 (UTC), at main `c3ae4a0`.
 
-This page gives every standing rule of the benchmark an id. A standing rule binds every run, result or pull request
+This page gives an id to each standing rule of the benchmark found so far; the list is not yet complete
+([#603](https://github.com/electricsheephq/bicentennial/issues/603)). A standing rule binds every run, result or pull request
 from now on; a decision that binds one run belongs in that run's declaration. Reviews, declarations and pull requests
 cite rules by id. Rules V1 to V39 bind now. V40 to V51 bind the Pilot, the full tier and the board; parts of their
 code exist already (V45, V48 and V51 have code and tests), and V42's freeze approval already applied to PREREG-v0.5.
