@@ -12,8 +12,9 @@ Cite rules by their id.
 
 These are the rules an agent meets most often. Each id leads to the rule's source in the catalogue.
 - **Freeze before data.** A run's declaration merges to `main` before its draw (V1). Every arm is frozen and runs at
-  one run commit fixed before the draw (V2). In a Ring 1 run, seeds are drawn only after every arm is frozen; each
-  run's declaration says when its seeds become public, and full-tier seeds stay sealed (V3, V43).
+  one run commit fixed before the draw, except that a Ring 1 run's bar arms run from the bar's frozen checkout (V2).
+  In a Ring 1 run, seeds are drawn only after every arm is frozen and nominated; each run's declaration says when its
+  seeds become public, and full-tier seeds stay sealed (V3, V43).
 - **No early scores.** No score is opened before the declaration's checks allow it, and the reading script prints no
   score while any arm is pending (V4). Repair and calibration decisions come from control rows only (V5), and
   difficulty is frozen from controls only (V27).
@@ -21,8 +22,9 @@ These are the rules an agent meets most often. Each id leads to the rule's sourc
   failure is rerun at most twice and then BLOCKED, and a system failure scores zero (V7). Every live arm runs under a
   send bound (V8).
 - **Frozen records.** A frozen pre-registration is never edited; a change makes a new version (V12). PREREG governs
-  frozen quantities, and a difference elsewhere is recorded as an erratum (V14). An edit to any pinned artifact, such
-  as a top-level file in `src/bicentennial/score/`, voids the run, and packs built before it then fail `verify` (V15).
+  frozen quantities, and a difference elsewhere is recorded as an erratum (V14). An edit to any pinned artifact voids
+  the run; after an edit to code under a code pin, such as a top-level file in `src/bicentennial/score/`, packs built
+  before it fail `verify` (V15).
   A change that moves a pin updates the pin table and `prereg/CHANGELOG.md` (V16).
 - **No humans.** No person grades, annotates, keys, audits, adjudicates or breaks a tie (V20).
 - **Independence.** The benchmark never tunes, patches or advises on LCM-X and copies no LCM-X code (V23). The
@@ -40,17 +42,21 @@ CI (`.github/workflows/ci.yml`) uses Python 3.14 on Linux and installs the packa
 - **The check that counts:** the `test` job is green only when lint and every shard passed. A pull request merges only
   when `test` passed at its exact head (V35).
 - **Locally:** a Python 3.14 virtual environment with `pip install -e .[dev]`, then `PYTHONHASHSEED=0 pytest -q` from the
-  repository root, or name the files you changed. The command-line tools refuse to run unless `PYTHONHASHSEED=0` (V38).
+  repository root, or name the files you changed. The `bicentennial` command and the pack installer exit 3 `hashseed`
+  unless `PYTHONHASHSEED=0` (V38); the scripts in `scripts/` do not check it.
 - **Tests outside CI:** CI collects `tests/` only. The tests beside a run's code (`results/followup/run/test_*.py` and
-  each round's `test_table.py`) run in that run's rehearsal or by hand, with the command in that run's README.
-- **Writing tests:** inside a test folder, import a shared helper with a relative import (`from .test_x import ...`).
-  `from tests.x import ...` passes under `python -m pytest` but fails under CI's plain `pytest`, which does not put the
-  repository root on the path: the merge head of [#434](https://github.com/electricsheephq/bicentennial/pull/434)
-  failed all seven shards this way. A new folder under `tests/` needs an empty `__init__.py`, or its `conftest.py`
-  shadows the root one: [#538](https://github.com/electricsheephq/bicentennial/pull/538) broke `tests/test_shards.py`
-  this way. Run a new folder together with `tests/test_shards.py` in one session before you push. A script outside the
-  package is loaded by path with `importlib.util`, as `tests/test_v01_acceptance.py` does. A test must not depend on
-  git history, because some checks run on an archive of the commit, or on the network.
+  each round's `test_table.py`) run in that run's rehearsal or by hand, with the command in
+  `results/followup/run/README.md` or in the test file's own docstring.
+- **Writing tests:** CI runs plain `pytest`, which does not put the repository root on the path, so
+  `from tests.x import ...` fails there even though it passes under `python -m pytest`: a head of
+  [#434](https://github.com/electricsheephq/bicentennial/pull/434) failed all seven shards this way. In a test folder
+  with an `__init__.py`, import a shared helper relatively (`from .test_x import ...`); in a folder without one, such as
+  `tests/runner` or `tests/harness`, import it by its bare name (`from test_x import ...`), as those folders do. A new
+  folder with its own `conftest.py` needs an empty `__init__.py`, or that `conftest.py` shadows the root one: a head of
+  [#538](https://github.com/electricsheephq/bicentennial/pull/538) broke `tests/test_shards.py` this way. Run a new
+  folder together with `tests/test_shards.py` in one session before you push. A script outside the package is loaded by
+  path with `importlib.util`, as `tests/test_v01_acceptance.py` does. A test must not depend on git history, because
+  some checks run on an archive of the commit, or on the network.
 
 ## Public text
 
@@ -60,14 +66,16 @@ Everything in this repository and every issue, pull request and comment is publi
   from `CANARY` in every file under `packs/`, `corpus/` and `schemas/fixtures/` (V31).
 - Issue, pull request and comment text is not checked by CI. Before posting it, check that it has no local paths, no
   person, customer or machine names and no private repository names, and that every reference to another repository
-  is a full link. This rule comes from LCM-X's repository instructions, adopted in
+  is a full link. This rule comes from
+  [LCM-X's repository instructions](https://github.com/electricsheephq/lcm-x/blob/main/AGENTS.md), adopted in
   [#593](https://github.com/electricsheephq/bicentennial/issues/593).
-- Never paste a seed, a sealed item, a key or a token, and never quote corpus text beyond what a published page
-  already shows (V28, V43).
+- Never paste a sealed seed, an answer key or a per-item result on a private life (V43), or an access key or token,
+  and never quote corpus text beyond what a published page already shows (V28).
 
 ## Issues and pull requests
 
-These practices come from LCM-X's repository instructions, adopted in
+These practices come from
+[LCM-X's repository instructions](https://github.com/electricsheephq/lcm-x/blob/main/AGENTS.md), adopted in
 [#593](https://github.com/electricsheephq/bicentennial/issues/593), except where a rule id is given.
 - Search open and closed issues first. One accepted issue per change. A pull request says `Refs #N`, and uses a
   closing keyword only when the merge alone meets the issue's acceptance.
@@ -83,9 +91,9 @@ These practices come from LCM-X's repository instructions, adopted in
 
 ## Results
 
-- A result page (`results/<release>/<dated-folder>/RESULT.md`) has a `Claim class:` line and a
-  "What this does not prove" section, and a `RESULT-MANIFEST.json` beside it made by `scripts/result_manifests.py`
-  (V29). Run its `check` before you push.
+- A result page (`results/<release>/<dated-folder>/RESULT.md`) has a `Claim class:` line and a `RESULT-MANIFEST.json`
+  beside it, made by `scripts/result_manifests.py` (V29); run its `check` before you push. By practice it also has a
+  "What this does not prove" section, which must be a bullet list where present (V29).
 - A run's declaration is merged before its draw (V1), and no score is opened before the declaration's checks allow it
   (V4). Each declaration and each result is published with an adversarial review by a model family other than its
   author's (V19), and valid zeros are published, all-zero rows included (V27).
