@@ -6,16 +6,8 @@ A full run is a generated *life* of about 200 sessions in one evolving world. Th
 
 **The claim Bicentennial has to earn with results:** memory measured inside a real agent harness across a life, judged on actions, covering governance (forgetting, consent, standing rules), with a fast diagnostic loop for developers. It claims no firstness, no multimodal novelty, and no superiority for any system before the results exist.
 
-> **Status: pre-pilot.**
-> - Design v2.3 is done. It adds DV48, agent-only validation, at the owner's direction of 2026-10-31.
-> - **PREREG-v0.5 was frozen on 2026-10-31** for DV48 ([`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md)). The hash is in [`prereg/FREEZE-v0.5.md`](prereg/FREEZE-v0.5.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It binds from its freeze and supersedes PREREG-v0.4.
-> - **PREREG-v0.4 was frozen on 2026-10-26.** The hash is in [`prereg/FREEZE-v0.4.md`](prereg/FREEZE-v0.4.md) and posted on [lcm-x #1964](https://github.com/electricsheephq/lcm-x/issues/1964). It superseded PREREG-v0.3, adding DV47, the run-time rule. PREREG-v0.3 added DV42: the pinned agent family is OpenAI's gpt-6.1-sol, and GLM is the replication family.
-> - **The run-time rule:** the full-tier runs (the board with its seasonal study, each delta board and the Image board) execute in locked, resumable segments from the same commit and stores. Every replaying arm's run of a life finishes within a day, and each system's work fits a work bound in each of its board, study and Image board runs. It is sized by the measured capacity of each model lane, per account. Paid-lane spend is capped at $100 per full-tier run, all systems together. The Image board, when it runs, is a run separate from the Text board, under the same rule. The pilot's runs of record run contiguously, within wall-time ceilings.
-> - **Agents run the benchmark end to end, with no human graders.** Gold comes from the world state, mechanical checks come first, agent panels from different model families judge what is left, and pre-registered rules settle every disagreement (DV48).
-> - Spikes S1-S7 are under way, and S8 (images) is specified.
-> - The v0.1 developer kit (Ring 0 T0 and T1) runs from a source checkout. Its first two official runs are published, rejected on repeatability and then on `t1_identical`. Its third official run, on the second maintenance kit, is accepted and tagged `v0.1`: [results/v0.1-kit](results/v0.1-kit/README.md).
-> - v0.2, the developer loop, is released and tagged `v0.2`. Its live smoke, T2-lite, has its first live runs: Hermes native, run once and repeated unchanged on the pinned live model, with the same outcome on every scored item (q₀ = 0/11). T1's loop time is measured: a run takes 61-85 minutes on an idle bench host, against a 10-minute budget. Its first cut, a shorter wait after each turn, saved 19-24%, but its check could not decide whether T1's record changed, so it moves to v0.3. T1 stays deterministic on the release commit: two bench hosts, one idle and one kept fully busy, each ran it twice for every reference system. Each second run gave the same cards as the first, apart from the gate verdict, which differs by design, and the two hosts' 12 cards are equal. All three are in [results/v0.2-dev-loop](results/v0.2-dev-loop/README.md).
-> - v0.3, developer tools, is under way. Its kit batch, which gathers the fixes that change what the kit measures into one pack rebuild, is merged, and T1 stays deterministic on the rebuilt pack at the batch's last merge (`e687fdb`), idle and under load: [results/v0.3-dev-tools](results/v0.3-dev-tools/README.md).
+> **Status, 17 November 2026 (UTC):** pre-pilot (the Pilot has not started); Milestone 1 and validity rounds 1 and 2 are published, the fresh-seed follow-up is running, and nothing is certified.\
+> Each proof plane's state, with its newest result, is on [the project status page](docs/project-status.md); the plan is in [`ROADMAP.md`](ROADMAP.md).
 
 ## The capability map
 
@@ -99,6 +91,7 @@ Follow [Run Ring 0 on your system](docs/developers/ring0.md) for requirements, p
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to, with how v2.0 meets each changed one.
 - [`docs/REVIEW-SUMMARY.md`](docs/REVIEW-SUMMARY.md): the adversarial reviews and what they changed.
 - [`docs/genres/`](docs/genres/): the life generators, G1 software partner and G2 personal assistant.
+- [`docs/project-status.md`](docs/project-status.md): where each proof plane stands, with its reconcile date.
 - [`ROADMAP.md`](ROADMAP.md): releases, the site and the leaderboard.
 - [`spikes/`](spikes/): the feasibility spikes that come before the build.
 
