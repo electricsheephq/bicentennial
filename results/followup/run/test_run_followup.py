@@ -538,6 +538,16 @@ def harness(tmp_path):
     return make_harness(tmp_path)
 
 
+def in_own_rehearsal(h, argv):
+    """True when a recorded call names a path inside this harness's own rehearsal folder.
+
+    The real rehearsal runs these tests with their base temp inside its own folder,
+    so every path holds "/rehearsal/"; only this harness's state folder may decide.
+    """
+    root = os.path.join(h.env["FOLLOWUP_STATE"], "private", "rehearsal") + os.sep
+    return any(arg.startswith(root) for arg in argv)
+
+
 def test_r12_prep_requires_pr(harness):
     harness.run("prep", harness.commit, code=2)
     assert not harness.calls("git-fetch")
@@ -2623,7 +2633,7 @@ def test_r3_kill_task_hash_after_rename(harness):
             [
                 c
                 for c in h.calls("tasks")
-                if "A" in c["argv"] and not any("/rehearsal/" in a for a in c["argv"])
+                if "A" in c["argv"] and not in_own_rehearsal(h, c["argv"])
             ]
         )
         == 1
@@ -2930,7 +2940,11 @@ def test_r3_new_worktree_environment(harness):
     """Positive control: exercise an already-correct round-2 path."""
     h = harness
     through(h, "place")
-    calls = [call for call in h.calls() if "/worktrees/" in call["cwd"]]
+    worktrees = os.path.realpath(os.path.join(h.env["FOLLOWUP_STATE"], "worktrees")) + os.sep
+    calls = [call for call in h.calls() if os.path.realpath(call["cwd"]).startswith(worktrees)]
+    # Only this harness's own calls: the rehearsal runs pytest from its own worktree.
+    own = os.path.realpath(h.env["FOLLOWUP_STATE"]) + os.sep
+    assert all(os.path.realpath(call["cwd"]).startswith(own) for call in calls)
     assert {call["kind"] for call in calls} >= {
         "draw",
         "verify",
@@ -3024,7 +3038,7 @@ def test_r3_task_hash_checked_before_rename(harness, fault):
                 call
                 for call in h.calls("tasks")
                 if "A" in call["argv"]
-                and not any("/rehearsal/" in arg for arg in call["argv"])
+                and not in_own_rehearsal(h, call["argv"])
             ]
         )
         == 1
@@ -4240,3 +4254,29 @@ def test_round10_void_receipt_refuses_failed_hash(harness):
     h.run("place", code=1)
     recorded = json.loads(h.scenario.read_text())["void_receipt"]
     assert recorded == sha256((p / "void-40000000/placed-1/void.json").read_bytes()).hexdigest()
+
+
+def test_rehearsal_shaped_basetemp_keeps_task_hash_tests_meaningful(tmp_path):
+    # The rehearsal runs this file from its own worktree, with --basetemp inside
+    # STATE/private/rehearsal/. Tests that pick calls by path must still pick
+    # only this harness's own calls there.
+    base = tmp_path / "followup" / "private" / "rehearsal" / "followup-tmp"
+    base.parent.mkdir(parents=True)
+    cwd = tmp_path / "followup" / "worktrees" / "rehearsal-1"
+    cwd.mkdir(parents=True)
+    nodes = [
+        f"{__file__}::test_r3_kill_task_hash_after_rename",
+        f"{__file__}::test_r3_task_hash_checked_before_rename",
+        f"{__file__}::test_r3_new_worktree_environment",
+    ]
+    # The child runs from another folder, so a relative PYTHONPATH (the README's
+    # PYTHONPATH=src) must be made absolute here; this checkout's src comes first.
+    inherited = [os.path.abspath(p) for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(ROOT / "src"), *inherited]))
+    answer = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--rootdir={ROOT}",
+         "-o", "tmp_path_retention_policy=failed", f"--basetemp={base}", *nodes],
+        cwd=cwd, env=env, capture_output=True, text=True, timeout=1800,
+    )
+    assert answer.returncode == 0, answer.stdout[-3000:] + answer.stderr[-2000:]
+    assert re.search(r"\b4 passed\b", answer.stdout), answer.stdout[-3000:]
