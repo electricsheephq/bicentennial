@@ -235,6 +235,20 @@ def test_non_canonical_manifest_fails(tree, capsys):
     assert "not canonical JSON" in capsys.readouterr().out
 
 
+def test_generated_caches_are_not_artifacts(tree):
+    root, folder = tree
+    before = (folder / manifests.MANIFEST).read_bytes()
+    for name in ("__pycache__", ".pytest_cache", ".ruff_cache"):
+        (folder / name).mkdir()
+        (folder / name / "cache.bin").write_bytes(b"machine-specific")
+    (folder / "table.cpython-314.pyc").write_bytes(b"bytecode")
+    (folder / "old.pyo").write_bytes(b"bytecode")
+    (folder / ".DS_Store").write_bytes(b"finder")
+    assert command(root, "check") == 0
+    assert command(root, "refresh", str(folder.relative_to(root))) == 0
+    assert (folder / manifests.MANIFEST).read_bytes() == before
+
+
 def test_float_extra_key_fails(tree, capsys):
     root, folder = tree
     path = folder / manifests.MANIFEST

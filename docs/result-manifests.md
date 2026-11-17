@@ -13,7 +13,11 @@ The schema is `bicentennial-result-manifest/1`. Its core fields are:
 - `published`: the folder's date prefix; `release`: its parent folder's name.
 - `artifacts`: file paths relative to the folder, SHA-256 hashes and byte sizes,
   sorted by UTF-8 path bytes. Includes the page and files in subfolders, but no
-  `RESULT-MANIFEST.json` or subfolder holding its own `RESULT.md`.
+  `RESULT-MANIFEST.json` or subfolder holding its own `RESULT.md`, and none of
+  the generated files `.gitignore` keeps out of git (`__pycache__`,
+  `.pytest_cache` and `.ruff_cache` folders, `.pyc` and `.pyo` files, `.DS_Store`).
+  A manifest covers only its own folder: code a page runs from elsewhere, such as
+  a round's reading script, is pinned by the commit the page names.
 - `backfilled`: true for the ten pages filled in after publication.
 Extra keys survive a refresh. The v0.1 kit's own manifests (schema
 `bicentennial-v0.1-result/1`) are parsed and indexed only; their files and page

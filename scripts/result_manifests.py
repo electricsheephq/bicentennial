@@ -15,6 +15,14 @@ MANIFEST = "RESULT-MANIFEST.json"
 SCHEMA = "bicentennial-result-manifest/1"
 LEGACY = frozenset({"bicentennial-v0.1-result/1"})  # The v0.1 kit's own manifests, kept byte for byte.
 INDEX = "results/MANIFEST-INDEX.json"
+# Generated files the repository's .gitignore keeps out of git; running a page's own tests can create them.
+GENERATED_DIRS = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache"})
+GENERATED_FILES = frozenset({".DS_Store"})
+GENERATED_SUFFIXES = (".pyc", ".pyo")
+
+
+def generated(name):
+    return name in GENERATED_FILES or name.endswith(GENERATED_SUFFIXES)
 
 
 def byte_order(path):
@@ -68,8 +76,9 @@ def derived(folder):
     paths = []
     for directory, dirs, files in os.walk(folder):
         base = Path(directory)
-        dirs[:] = [name for name in dirs if not (base / name / "RESULT.md").is_file()]
-        paths.extend(base / name for name in files if name != MANIFEST)
+        dirs[:] = [name for name in dirs
+                   if name not in GENERATED_DIRS and not (base / name / "RESULT.md").is_file()]
+        paths.extend(base / name for name in files if name != MANIFEST and not generated(name))
     artifacts = []
     for path in sorted(paths, key=lambda p: byte_order(p.relative_to(folder))):
         content = path.read_bytes()
