@@ -4256,6 +4256,7 @@ def test_rehearsal_shaped_basetemp_keeps_task_hash_tests_meaningful(tmp_path):
     # The rehearsal runs this file with --basetemp inside STATE/private/rehearsal/.
     # The task-hash tests must still count the real task calls there.
     base = tmp_path / "followup" / "private" / "rehearsal" / "followup-tmp"
+    base.parent.mkdir(parents=True)
     nodes = [
         f"{__file__}::test_r3_kill_task_hash_after_rename",
         f"{__file__}::test_r3_task_hash_checked_before_rename",
