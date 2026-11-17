@@ -2940,7 +2940,8 @@ def test_r3_new_worktree_environment(harness):
     """Positive control: exercise an already-correct round-2 path."""
     h = harness
     through(h, "place")
-    calls = [call for call in h.calls() if "/worktrees/" in call["cwd"]]
+    worktrees = os.path.realpath(os.path.join(h.env["FOLLOWUP_STATE"], "worktrees")) + os.sep
+    calls = [call for call in h.calls() if os.path.realpath(call["cwd"]).startswith(worktrees)]
     assert {call["kind"] for call in calls} >= {
         "draw",
         "verify",
@@ -4253,18 +4254,22 @@ def test_round10_void_receipt_refuses_failed_hash(harness):
 
 
 def test_rehearsal_shaped_basetemp_keeps_task_hash_tests_meaningful(tmp_path):
-    # The rehearsal runs this file with --basetemp inside STATE/private/rehearsal/.
-    # The task-hash tests must still count the real task calls there.
+    # The rehearsal runs this file from its own worktree, with --basetemp inside
+    # STATE/private/rehearsal/. Tests that pick calls by path must still pick
+    # only this harness's own calls there.
     base = tmp_path / "followup" / "private" / "rehearsal" / "followup-tmp"
     base.parent.mkdir(parents=True)
+    cwd = tmp_path / "followup" / "worktrees" / "rehearsal-1"
+    cwd.mkdir(parents=True)
     nodes = [
         f"{__file__}::test_r3_kill_task_hash_after_rename",
         f"{__file__}::test_r3_task_hash_checked_before_rename",
+        f"{__file__}::test_r3_new_worktree_environment",
     ]
     answer = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--rootdir={ROOT}",
          "-o", "tmp_path_retention_policy=failed", f"--basetemp={base}", *nodes],
-        cwd=ROOT, capture_output=True, text=True,
+        cwd=cwd, capture_output=True, text=True, timeout=1800,
     )
     assert answer.returncode == 0, answer.stdout[-3000:] + answer.stderr[-2000:]
-    assert "3 passed" in answer.stdout, answer.stdout[-3000:]
+    assert re.search(r"\b4 passed\b", answer.stdout), answer.stdout[-3000:]
