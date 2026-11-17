@@ -235,10 +235,17 @@ def test_non_canonical_manifest_fails(tree, capsys):
     assert "not canonical JSON" in capsys.readouterr().out
 
 
-def test_claim_stops_at_a_heading(tmp_path):
-    folder = result(tmp_path, page="# Title\n\nClaim class: fixture\n## Evidence\nText.\n")
+@pytest.mark.parametrize("line, claim", [
+    ("## Evidence", "fixture"),
+    ("#", "fixture"),
+    ("###### Sixth level", "fixture"),
+    ("#537 defines it.", "fixture #537 defines it."),
+    ("####### is not a heading", "fixture ####### is not a heading"),
+])
+def test_claim_stops_only_at_a_heading(tmp_path, line, claim):
+    folder = result(tmp_path, page=f"# Title\n\nClaim class: fixture\n{line}\n\n## Evidence\nText.\n")
     seal(tmp_path)
-    assert json.loads((folder / manifests.MANIFEST).read_bytes())["claim_class"] == "fixture"
+    assert json.loads((folder / manifests.MANIFEST).read_bytes())["claim_class"] == claim
 
 
 def test_generated_caches_are_not_artifacts(tree):

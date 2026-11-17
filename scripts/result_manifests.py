@@ -42,7 +42,7 @@ def page_fields(page):
         raise ValueError("page lacks a line starting 'Claim class:'")
     claim = [lines[start][len("Claim class:"):]]
     for line in lines[start + 1:]:
-        if not line.strip() or line.startswith("#"):
+        if not line.strip() or re.match(r"^#{1,6}(?:\s|$)", line):
             break
         claim.append(line)
     items = []

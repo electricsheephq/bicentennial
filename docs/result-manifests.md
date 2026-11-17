@@ -8,7 +8,9 @@ Extra keys, such as a run's identities, are kept but not checked against the pag
 The schema is `bicentennial-result-manifest/1`. Its core fields are:
 - `page`: always `RESULT.md`; `title`: the page's first heading.
 - `claim_class`: the page's `Claim class:` paragraph, up to a blank line or a
-  heading, with spaces joined.
+  heading line (one to six `#` and then a space or the line's end), with spaces
+  joined. A wrapped line that starts with an issue number, such as `#537`, stays
+  in the claim.
 - `does_not_prove`: the first `## What this does not prove` bullet list,
   with wrapped lines (indented) joined; an empty list when that heading is
   absent. The whole section must be that list: other text in it fails.
