@@ -7,9 +7,11 @@ Extra keys, such as a run's identities, are kept but not checked against the pag
 
 The schema is `bicentennial-result-manifest/1`. Its core fields are:
 - `page`: always `RESULT.md`; `title`: the page's first heading.
-- `claim_class`: the page's `Claim class:` paragraph, with spaces joined.
+- `claim_class`: the page's `Claim class:` paragraph, up to a blank line or a
+  heading, with spaces joined.
 - `does_not_prove`: the first `## What this does not prove` bullet list,
-  with wrapped lines joined; an empty list when that heading is absent.
+  with wrapped lines (indented) joined; an empty list when that heading is
+  absent. The whole section must be that list: other text in it fails.
 - `published`: the folder's date prefix; `release`: its parent folder's name.
 - `artifacts`: file paths relative to the folder, SHA-256 hashes and byte sizes,
   sorted by UTF-8 path bytes. Includes the page and files in subfolders, but no
@@ -44,6 +46,6 @@ compact UTF-8, no trailing newline. The index lists every manifest path and
 hash in byte order. Its `combined_sha256` hashes lines of `hash`, two spaces,
 path and newline. Recompute that combined hash from the repository root:
 ```sh
-LC_ALL=C find results -name RESULT-MANIFEST.json | LC_ALL=C sort | xargs sha256sum | sha256sum
+LC_ALL=C find results -name RESULT-MANIFEST.json -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
 ```
 This checks published bytes, without running or rescoring the benchmark.

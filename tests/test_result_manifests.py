@@ -235,6 +235,12 @@ def test_non_canonical_manifest_fails(tree, capsys):
     assert "not canonical JSON" in capsys.readouterr().out
 
 
+def test_claim_stops_at_a_heading(tmp_path):
+    folder = result(tmp_path, page="# Title\n\nClaim class: fixture\n## Evidence\nText.\n")
+    seal(tmp_path)
+    assert json.loads((folder / manifests.MANIFEST).read_bytes())["claim_class"] == "fixture"
+
+
 def test_generated_caches_are_not_artifacts(tree):
     root, folder = tree
     before = (folder / manifests.MANIFEST).read_bytes()
