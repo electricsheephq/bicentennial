@@ -538,6 +538,16 @@ def harness(tmp_path):
     return make_harness(tmp_path)
 
 
+def in_own_rehearsal(h, argv):
+    """True when a recorded call names a path inside this harness's own rehearsal folder.
+
+    The real rehearsal runs these tests with their base temp inside its own folder,
+    so every path holds "/rehearsal/"; only this harness's state folder may decide.
+    """
+    root = os.path.join(h.env["FOLLOWUP_STATE"], "private", "rehearsal") + os.sep
+    return any(arg.startswith(root) for arg in argv)
+
+
 def test_r12_prep_requires_pr(harness):
     harness.run("prep", harness.commit, code=2)
     assert not harness.calls("git-fetch")
@@ -2623,7 +2633,7 @@ def test_r3_kill_task_hash_after_rename(harness):
             [
                 c
                 for c in h.calls("tasks")
-                if "A" in c["argv"] and not any("/rehearsal/" in a for a in c["argv"])
+                if "A" in c["argv"] and not in_own_rehearsal(h, c["argv"])
             ]
         )
         == 1
@@ -3024,7 +3034,7 @@ def test_r3_task_hash_checked_before_rename(harness, fault):
                 call
                 for call in h.calls("tasks")
                 if "A" in call["argv"]
-                and not any("/rehearsal/" in arg for arg in call["argv"])
+                and not in_own_rehearsal(h, call["argv"])
             ]
         )
         == 1
@@ -4240,3 +4250,20 @@ def test_round10_void_receipt_refuses_failed_hash(harness):
     h.run("place", code=1)
     recorded = json.loads(h.scenario.read_text())["void_receipt"]
     assert recorded == sha256((p / "void-40000000/placed-1/void.json").read_bytes()).hexdigest()
+
+
+def test_rehearsal_shaped_basetemp_keeps_task_hash_tests_meaningful(tmp_path):
+    # The rehearsal runs this file with --basetemp inside STATE/private/rehearsal/.
+    # The task-hash tests must still count the real task calls there.
+    base = tmp_path / "followup" / "private" / "rehearsal" / "followup-tmp"
+    nodes = [
+        f"{__file__}::test_r3_kill_task_hash_after_rename",
+        f"{__file__}::test_r3_task_hash_checked_before_rename",
+    ]
+    answer = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "-o", "tmp_path_retention_policy=failed", f"--basetemp={base}", *nodes],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert answer.returncode == 0, answer.stdout[-3000:] + answer.stderr[-2000:]
+    assert "3 passed" in answer.stdout, answer.stdout[-3000:]
