@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# A new commit on a pull request cancels the run for its previous commit. Each push to main gets a group of its own,
+# so a main run is never cancelled, and never replaced while it waits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ring0-doc:
     name: Ring 0 T0 from the developer guide
