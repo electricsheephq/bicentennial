@@ -1152,14 +1152,15 @@ def test_a_long_request_id_is_bounded_in_the_evidence(tmp_path):
     fake.n_calls = 1
     d = make(tmp_path, fake, script=probe_script())
     start(d, tmp_path)
-    long_id = "x" * 5000
+    long_id = "".join(f"{i:04d}" for i in range(1250))  # 5,000 characters, no 16-character run repeated
     try:
         assert post(d, "/main/v1/chat/completions", todo_after_tool_results("chat", long_id))[0] == 400
-        line = (tmp_path / "ledger" / "refusals.jsonl").read_bytes()
+        line = (tmp_path / "ledger" / "refusals.jsonl").read_text()
         (row,) = sidecar(tmp_path)
-        bounded = "x" * 64 + f"...[5000 chars, sha256 {sha256(long_id.encode()).hexdigest()[:12]}]"
+        bounded = f"[5000 chars, sha256 {sha256(long_id.encode()).hexdigest()[:12]}]"
         assert (row["call_ids"], row["result_ids"], row["model"]) == ([bounded], [bounded], "bicentennial-main")
-        assert len(line) < 2048
+        assert len(line) < 2048 and long_id[:64] not in line
+        assert not any(long_id[i:i + 16] in line for i in range(len(long_id) - 15))
     finally:
         d.close()
 

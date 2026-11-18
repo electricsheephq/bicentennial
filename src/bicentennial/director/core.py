@@ -33,9 +33,10 @@ _NAME = re.compile(r"[a-z0-9_]+")
 # Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
 HERMES_TITLE_INPUT_CHARS = 1000
 # Beside the ledger, one line per refused_unknown or refused_float request (#608): an allowlist of names, counts and
-# ids as sent, keyed by its ledger row, each string taken from the request bounded to BOUND characters; never message
-# text, tool arguments or tool outputs. It is not a K13 record, so the ledger and its chain are as they were, and a
-# run with no such refusal writes no file. A row holds only REFUSAL_KEYS, the set the runner's readback accepts.
+# ids as sent, keyed by its ledger row, a string from the request over BOUND characters replaced by its length and a
+# sha256 prefix; never message text, tool arguments or tool outputs. It is not a K13 record, so the ledger and its
+# chain are as they were, and a run with no such refusal writes no file. A row holds only REFUSAL_KEYS; the runner's
+# readback keeps a row whose keys are within REFUSAL_KEYS and that canon() accepts.
 REFUSALS = "refusals.jsonl"
 REFUSAL_KEYS = frozenset((
     "seq", "attempt_id", "served", "status", "method", "path", "wire", "session", "cursor", "s1_role", "s1_method",
@@ -242,9 +243,10 @@ class Director:
                "n_tail": len(tail), "n_tail_calls": len(calls)}
         if ev.get("reason") == "tool result for an unissued call id or mixed roles":  # roles.classify_shape, rule 1
             got = {r for r in issued if r is not None}
+            known = {c for c in calls if not isinstance(c, (dict, list))}  # a JSON dict or list equals no hashable id
             out["tail_failed"] = [name for name, failed in (
                 ("none_issued", not got), ("mixed_roles", len(got) > 1),
-                ("stray", any(c not in calls for c in tail)), ("empty_id", "" in tail + calls)) if failed]
+                ("stray", any(c not in known for c in tail)), ("empty_id", "" in tail + calls)) if failed]
         return out
 
     def _masked(self, obj) -> str:
@@ -523,13 +525,13 @@ def _tool_names(wire, body) -> set:
 
 def _bounded(value):
     """A BOUNDED value (a request-supplied string, or each string of a list) as sent when at most BOUND characters,
-    else its first BOUND and a marker of its full length and sha256: `<first 64>...[<length> chars, sha256 <12 hex>]`."""
+    else replaced whole by its length and sha256 prefix, keeping none of it: `[<length> chars, sha256 <12 hex>]`."""
     if isinstance(value, list):
         return [_bounded(v) for v in value]
     if not isinstance(value, str) or len(value) <= BOUND:
         return value
     digest = sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:12]
-    return f"{value[:BOUND]}...[{len(value)} chars, sha256 {digest}]"
+    return f"[{len(value)} chars, sha256 {digest}]"
 
 
 def _body_evidence(wire, body) -> dict:

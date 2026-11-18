@@ -296,7 +296,7 @@ def _rows(root):
 def _refusals(root):
     """The director's sidecar rows (director/core.py REFUSALS), read before the attempt's sandbox is deleted.
     Evidence only: no file is no refusal, and an unreadable file, an unreadable line or a line that is not a row the
-    director could write (a JSON object of REFUSAL_KEYS only, canonical) is skipped."""
+    director could write (a JSON object whose keys are within REFUSAL_KEYS and that canon() accepts) is skipped."""
     try:
         lines = (root / REFUSALS).read_bytes().split(b"\n")[:-1]
     except OSError:
