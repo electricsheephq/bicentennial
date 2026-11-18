@@ -4,9 +4,9 @@ These instructions are for maintainers, contributor agents and review bots worki
 `electricsheephq/bicentennial`, the open benchmark for agent memory. They hold the standing rules, how to run the tests
 the way CI runs them, and how public text is checked. The plan is [ROADMAP.md](ROADMAP.md), and the current state is
 [docs/project-status.md](docs/project-status.md). The standing rules found so far are in the invariant catalogue,
-[docs/invariants.md](docs/invariants.md) (V1 to V51), each with its source, the code that enforces it and the tests
-that prove it; [#603](https://github.com/electricsheephq/bicentennial/issues/603) adds the full tier's missing rules.
-Cite rules by their id.
+[docs/invariants.md](docs/invariants.md) (V1 to V87), each with its source, its status, and the code that enforces it
+and the tests that prove it where they exist; [#603](https://github.com/electricsheephq/bicentennial/issues/603) tracks
+the rules not yet listed. Cite rules by their id.
 
 ## Standing rules
 
