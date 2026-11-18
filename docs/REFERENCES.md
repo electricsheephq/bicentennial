@@ -2,9 +2,9 @@
 
 This page lists the prior work that the design ([DESIGN.md](DESIGN.md) §2) and the roadmap's comparison section ([ROADMAP.md](../ROADMAP.md), "How Bicentennial differs from other memory benchmarks") name, so each one can be looked up.
 
-How it was built (19 November 2026):
-- Every link comes from the Phase 0 survey's source lists, except Compact-Bench's, which came from the arXiv page of that work, opened on 19 November 2026.
-- These links were also opened on 19 November 2026, and each page's title or abstract named the work: Ground Truth First, ConPACT, ContinuityBench, The Compaction Cliff, Compact-Bench, LIMBO, MemOps, HOMER, DolphinBench (its site and its arXiv page) and the Agent Memory Leaderboard's repository.
+How it was built (18 November 2026):
+- Every link comes from the Phase 0 survey's source lists, except Compact-Bench's, which came from the arXiv page of that work, opened on 18 November 2026.
+- These links were also opened on 18 November 2026, and each page's title or abstract named the work: Ground Truth First, ConPACT, ContinuityBench, The Compaction Cliff, Compact-Bench, LIMBO, MemOps, HOMER, DolphinBench (its site and its arXiv page) and the Agent Memory Leaderboard's repository.
 - Each entry gives the name, the year, authors and venue where the source gives them, the link, and one line on what the work measures. The one-line summaries are ours.
 - A work named in several places has one entry; other sections point to it.
 - A work with no real source found would be listed under "Named in the design, source not located". No link, author or year is filled in by guesswork.
