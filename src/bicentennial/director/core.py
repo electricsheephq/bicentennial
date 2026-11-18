@@ -32,6 +32,12 @@ JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
 # Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
 HERMES_TITLE_INPUT_CHARS = 1000
+# Beside the ledger, one line per refused_unknown or refused_float request (#608): an allowlist of names, counts and
+# ids keyed by its ledger row, never a copy of the body. It is not a K13 record, so the ledger and its chain are as
+# they were, and a run with no such refusal writes no file.
+REFUSALS = "refusals.jsonl"
+S1_EVIDENCE = ("reason", "conflict", "alias", "error", "call_id")  # the classifier's own facts; text never reaches them
+LAST_ROLE = {"s": "system", "u": "user", "a": "assistant", "c": "assistant", "t": "tool", "r": "reasoning", "x": "other"}
 
 
 class ResponderError(Exception):
@@ -135,6 +141,7 @@ class Director:
                        "req_chars": len(raw_body.decode("utf-8", "replace"))}
                 try:  # a guard or ledger failure stops admission: nothing unrecorded is ever sent
                     self._req = {}  # the parsed body, kept as the evidence of a failed request
+                    self._refused = None  # (wire, parsed body, S1 result, exception class) of a refusal with evidence
                     try:
                         status, ctype, out, resp, req, hold = self._dispatch(method, path, names, raw_body, rec)
                     except _Unrecorded as e:
@@ -156,7 +163,9 @@ class Director:
                     if peek is not None and peek():
                         rec["client_disconnected"] = True
                     rec["t_ms"] = round((time.monotonic() - t0) * 1000)
-                    self.ledger.append(rec)
+                    appended = self.ledger.append(rec)
+                    if self._refused is not None:
+                        self._keep_refusal(appended)
                     self.summariser_requests += rec["role"] == "summariser"
                 except BaseException:
                     self.stopped = True
@@ -167,6 +176,31 @@ class Director:
         finally:
             with self._count:
                 self.inflight -= 1
+
+    def _keep_refusal(self, rec) -> None:
+        """Appends the evidence of a refused request to REFUSALS, under the ledger's lock. Evidence only: a failure
+        here, the guard's included, writes nothing and changes neither the answer nor the record."""
+        wire, body, s1, error = self._refused
+        try:
+            n = self.ctx.cursor  # the scripted turn reached at refusal
+            row = {"seq": rec["seq"], "attempt_id": rec["attempt_id"], "served": rec["served"], "status": rec["status"],
+                   "method": rec["method"], "path": rec["path"].split("?")[0], "wire": wire,
+                   "session": self.session_index,
+                   "cursor": {"session": self.turns[n - 1]["session"], "turn": self.turns[n - 1]["turn"]} if n else None}
+            if s1 is not None:
+                role, method, ev = s1
+                row.update(s1_role=role, s1_method=method, **{k: ev[k] for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
+                if ev.get("markers"):
+                    row["markers"] = [m for m in ev["markers"] if isinstance(m, str)]
+            if error is not None:
+                row["error"] = error
+            if isinstance(body, dict):
+                row.update(_body_evidence(wire, body))
+            line = self.guard.check(canon(row) + b"\n")
+            with (self.ledger.root / REFUSALS).open("ab") as f:
+                f.write(line)
+        except Exception:  # noqa: BLE001 - evidence only
+            pass
 
     def _masked(self, obj) -> str:
         return sha256(canon(apply_masks(obj, self.run_values))).hexdigest()
@@ -199,6 +233,7 @@ class Director:
         if "content-encoding" in names:
             rec["subrole"] = "encoding"
             return _refuse(rec, 415, "encoding_refused", "encoded request body refused")
+        seen = None, None  # a float body S1 read before its refusal: its evidence goes with it
         try:
             body = json.loads(raw)
             if not isinstance(body, dict):
@@ -211,14 +246,17 @@ class Director:
                 removed = sorted(key for key in FLOAT_KEYS if isinstance(body.get(key), float))
                 body = {key: value for key, value in body.items() if key not in removed}
                 canon(body)
-                _, (role, sub, turn) = self._classify(path, body)
+                s1, (role, sub, turn) = self._classify(path, body)
+                seen = body, s1
                 if not removed or role == "unknown":
                     raise ValueError("body") from None
                 rec.update(role=role, subrole=sub, cursor=turn and {"session": turn["session"], "turn": turn["turn"]})
+                self._refused = wire, body, s1, None
                 return _refuse(rec, 400, "refused_float", f"unsupported parameter: {removed[0]}",
                                {"body_sha256": sha256(raw).hexdigest(), "float_keys": removed})
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
             rec["subrole"] = "malformed_body"
+            self._refused = wire, *seen, type(e).__name__
             return _refuse(rec, 400, "refused_unknown", "malformed request body", {"body_sha256": sha256(raw).hexdigest()})
         self._req, items = body, body.get("messages") if wire == "chat" else body.get("input")
         rec.update(model_in=body["model"] if isinstance(body.get("model"), str) and body["model"] else "none",
@@ -235,8 +273,9 @@ class Director:
     def _embeddings(self, body, rec):
         try:  # decided by the endpoint alone, before S1, which has no embeddings wire
             embeddings.parse_request(body)
-        except ValueError:
+        except ValueError as e:
             rec["subrole"] = "malformed_body"
+            self._refused = "embeddings", body, None, type(e).__name__
             return _refuse(rec, 400, "refused_unknown", "malformed embeddings request", body)
         rec.update(role="embeddings", subrole="embedding")
         reply = self._ask(Call("embeddings", "embedding", "embeddings", deepcopy(body), self._model("embeddings"),
@@ -262,6 +301,7 @@ class Director:
         cursor = turn and {"session": turn["session"], "turn": turn["turn"]}
         rec.update(role=role, subrole=sub, cursor=cursor)
         if role == "unknown":
+            self._refused = wire, body, s1, None
             return _refuse(rec, 400, "refused_unknown", "unclassified request refused (fail closed)", body)
         if (role, sub) == ("aux", "vision") and self.route["vision"] is None:
             return _refuse(rec, 400, "no_vision_route", "no vision route", body)
@@ -432,6 +472,32 @@ def _tool_names(wire, body) -> set:
     tools = [t for t in body.get("tools") or [] if isinstance(t, dict)]
     return {(t["function"].get("name") if isinstance(t.get("function"), dict) else None) if wire == "chat"
             else t.get("name") for t in tools}
+
+
+def _body_evidence(wire, body) -> dict:
+    """The allowlisted facts of a parsed body: its model, item roles as S1's tokens and its tool-call and
+    tool-result counts with their last four ids. No text, arguments, outputs or paths are read."""
+    out = {"model": body["model"] if isinstance(body.get("model"), str) else None}
+    if wire == "embeddings":
+        return out
+    try:
+        toks = roles._items("openai_chat" if wire == "chat" else "openai_responses", body)[0]
+        out.update(n_messages=len(toks), shape=toks, last_role=LAST_ROLE.get(toks[-1:]))
+    except Exception:  # noqa: BLE001 - a body S1 could not read keeps its other evidence
+        pass
+    calls, results = [], []
+    items = body.get("messages") if wire == "chat" else body.get("input")
+    for m in (m for m in items if isinstance(m, dict)) if isinstance(items, list) else ():
+        if wire == "chat":
+            tool_calls = m.get("tool_calls") if isinstance(m.get("tool_calls"), list) else []
+            calls += [tc.get("id") if isinstance(tc, dict) else None for tc in tool_calls]
+            results += [m.get("tool_call_id")] if m.get("role") == "tool" else []
+        elif isinstance(m.get("type"), str) and m["type"].endswith(("_call", "_output")):
+            (calls if m["type"].endswith("_call") else results).append(m.get("call_id"))
+    out.update(tool_calls=len(calls), tool_results=len(results),
+               call_ids=[c for c in calls if isinstance(c, str)][-4:],
+               result_ids=[r for r in results if isinstance(r, str)][-4:])
+    return out
 
 
 def _refusal(status, message, req):

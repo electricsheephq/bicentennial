@@ -870,3 +870,164 @@ def test_a_director_fault_is_recorded_with_its_request_then_stops(tmp_path, monk
                                                                   "director_error_keyerror")
     assert BlobStore(tmp_path / "ledger" / "blobs", None).get(fault["req"]) == canon(turn_body())
     assert stopped["served"] == "stopped" and d.stopped is True
+
+
+# ---- #608: content-free evidence of each refused request, in a sidecar beside the ledger --------------------
+PLANTED = ("planted-user-608a", "planted-args-608b", "planted-output-608c", "planted-system-608d",
+           "/srv/planted-path-608e/notes.txt")
+
+
+def sidecar(tmp):
+    path = tmp / "ledger" / "refusals.jsonl"
+    return [json.loads(line) for line in path.read_bytes().splitlines()] if path.exists() else None
+
+
+def assert_no_planted(tmp):
+    raw = (tmp / "ledger" / "refusals.jsonl").read_bytes()
+    assert not [p for p in PLANTED if p.encode() in raw]
+
+
+def probe_script():
+    return dict(SCRIPT, sessions=[dict(index=1, kind="probe", turns=[dict(
+        n=1, kind="probe", user=TURN1["user"], assistant=None, tool_calls=[])])])
+
+
+def todo_after_tool_results(wire, call_id):
+    """A probe turn's tool call, its result, then a trailing user row: no rule matches it (#608)."""
+    system = f"{PLANTED[3]} working in {PLANTED[4]}"
+    if wire == "chat":
+        return {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [
+            {"role": "system", "content": system}, {"role": "user", "content": TURN1["user"]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": call_id, "type": "function", "function": {
+                "name": "terminal", "arguments": json.dumps({"command": PLANTED[1]})}}]},
+            {"role": "tool", "tool_call_id": call_id, "content": PLANTED[2]},
+            {"role": "user", "content": PLANTED[0]}]}
+    return {"model": "bicentennial-main", "tools": tools_of(1, False), "input": [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": system}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": TURN1["user"]}]},
+        {"type": "function_call", "call_id": call_id, "name": "terminal",
+         "arguments": json.dumps({"command": PLANTED[1]})},
+        {"type": "function_call_output", "call_id": call_id, "output": PLANTED[2]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": PLANTED[0]}]}]}
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_unclassified_todo_after_tool_results_keeps_its_evidence(wire, tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    path = "/main/v1/" + ("chat/completions" if wire == "chat" else "responses")
+    first = {"model": "bicentennial-main", "tools": tools_of(1, wire == "chat"), **(
+        {"messages": [{"role": "user", "content": TURN1["user"]}]} if wire == "chat" else {"input": TURN1["user"]})}
+    try:
+        status, ctype, data = post(d, path, first)
+        (call_id,) = answer(ctype, data)[1]
+        status, _, data = post(d, path, todo_after_tool_results(wire, call_id))
+        assert status == 400 and json.loads(data)["error"]["message"] == (
+            "director: unclassified request refused (fail closed)")
+        probe, rec = records(tmp_path)
+        assert (rec["role"], rec["subrole"], rec["served"], rec["status"], rec["cursor"]) == (
+            "unknown", "", "refused_unknown", 400, None)
+        assert sidecar(tmp_path) == [{
+            "seq": rec["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
+            "method": "POST", "path": path, "wire": wire, "session": 1, "cursor": {"session": 1, "turn": 1},
+            "s1_role": "unknown", "s1_method": "unknown", "reason": "no rule matched", "model": "bicentennial-main",
+            "n_messages": 5, "shape": "suctu", "last_role": "user", "tool_calls": 1, "tool_results": 1,
+            "call_ids": [call_id], "result_ids": [call_id]}]
+        assert_no_planted(tmp_path)
+        assert probe["served"] != "refused_unknown" and d.stopped is False
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("raw,error", [
+    (b'{"model": "planted-user-608a", not json', "JSONDecodeError"),
+    (json.dumps([PLANTED[0]]).encode(), "ValueError"),
+    (json.dumps(turn_body(PLANTED[0]) | {"nested": {"value": 0.5}}).encode(), "TypeError"),
+])
+def test_malformed_body_evidence_names_the_exception_class_only(raw, error, tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        assert post(d, "/main/v1/chat/completions", raw)[0] == 400
+        (rec,) = records(tmp_path)
+        assert sidecar(tmp_path) == [{
+            "seq": rec["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
+            "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
+            "error": error}]
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_unclassifiable_float_body_keeps_its_classifier_evidence(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    body = {"model": "unknown", "temperature": 0.5, "messages": [{"role": "user", "content": PLANTED[0]}]}
+    try:
+        status, _, data = post(d, "/main/v1/chat/completions?planted-user-608a", body)
+        assert status == 400 and json.loads(data)["error"]["message"] == "director: malformed request body"
+        (row,) = sidecar(tmp_path)
+        assert {k: row[k] for k in ("served", "path", "error", "s1_role", "reason", "model", "shape", "last_role")} == {
+            "served": "refused_unknown", "path": "/main/v1/chat/completions", "error": "ValueError",
+            "s1_role": "unknown", "reason": "no rule matched", "model": "unknown", "shape": "u", "last_role": "user"}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_malformed_embeddings_and_float_refusals_keep_their_evidence(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        assert post(d, "/main/v1/embeddings", {"model": "embed", "input": PLANTED[0], "extra": PLANTED[2]})[0] == 400
+        assert post(d, "/main/v1/chat/completions", turn_body(tools=("todo",)) | {"temperature": 0.5})[0] == 400
+        embedded, floated = records(tmp_path)
+        assert sidecar(tmp_path) == [
+            {"seq": embedded["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
+             "method": "POST", "path": "/main/v1/embeddings", "wire": "embeddings", "session": 1, "cursor": None,
+             "error": "ValueError", "model": "embed"},
+            {"seq": floated["seq"], "attempt_id": "attempt-s1", "served": "refused_float", "status": 400,
+             "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
+             "s1_role": "replay_main", "s1_method": "cursor", "model": "bicentennial-main", "n_messages": 2,
+             "shape": "su", "last_role": "user", "tool_calls": 0, "tool_results": 0, "call_ids": [], "result_ids": []}]
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_no_refusal_writes_no_sidecar(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        assert post(d, "/main/v1/chat/completions", turn_body())[0] == 200
+        assert d.handle("GET", "/main/v1/files", {}, b"")[0] == 404  # a path refusal is outside the sidecar's scope
+        assert sorted(p.name for p in (tmp_path / "ledger").iterdir()) == ["blobs", "ledger.jsonl"]
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("fault", ["unwritable", "credential"])
+def test_a_failed_evidence_write_changes_no_answer(fault, tmp_path, monkeypatch):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    body = turn_body(tools=("todo",)) | {"temperature": 0.5}
+    if fault == "unwritable":
+        (tmp_path / "ledger" / "refusals.jsonl").mkdir()
+    else:  # a refused_float body is never blobbed, so only the sidecar's guard sees this id
+        monkeypatch.setenv("R608_TEST_CANARY", "r608-canary-value-not-a-credential")
+        d.guard = Guard(["R608_TEST_CANARY"])
+        body["messages"][1:1] = [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "r608-canary-value-not-a-credential",
+                                                                 "type": "function", "function": {"name": "todo"}}]},
+            {"role": "tool", "tool_call_id": "r608-canary-value-not-a-credential", "content": "done"}]
+    try:
+        status, _, data = post(d, "/main/v1/chat/completions", body)
+        assert status == 400 and json.loads(data)["error"]["message"] == "director: unsupported parameter: temperature"
+        (rec,) = records(tmp_path)
+        assert (rec["served"], d.stopped) == ("refused_float", False)
+        assert (tmp_path / "ledger" / "refusals.jsonl").is_dir() if fault == "unwritable" else sidecar(tmp_path) is None
+        assert post(d, "/main/v1/chat/completions", turn_body())[0] == 200
+    finally:
+        d.close()

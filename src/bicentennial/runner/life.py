@@ -27,6 +27,7 @@ from bicentennial.contracts.surfaces import tree_hash, tree_listing
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import expected_probe_env, precondition_holds
 from bicentennial.director.compiler.hermes import compile_script, step_call
+from bicentennial.director.core import REFUSALS
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.genres.g1_software.diffs import (
@@ -134,6 +135,7 @@ class LifeRun:
     item_labels: dict = field(default_factory=dict)
     unreadable_paths: dict = field(default_factory=dict)
     incidental_unknown_400: int = 0
+    refusals: list = field(default_factory=list)  # the director's evidence of each refused request (#608)
     infra_item_labels: tuple = ()
     source_receipts: list = field(default_factory=list)
     workspace_receipts: list = field(default_factory=list)
@@ -289,6 +291,22 @@ def _cause(error):
 def _rows(root):
     path = root / "ledger.jsonl"
     return [json.loads(line) for line in path.read_bytes().split(b"\n")[:-1]] if path.exists() else []
+
+
+def _refusals(root):
+    """The director's sidecar rows (director/core.py REFUSALS), read before the attempt's sandbox is deleted.
+    Evidence only: no file is no refusal, and an unreadable file or line is skipped."""
+    try:
+        lines = (root / REFUSALS).read_bytes().split(b"\n")[:-1]
+    except OSError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return [r for r in rows if isinstance(r, dict)]
 
 
 def _surface_bytes(surfaces):
@@ -931,7 +949,8 @@ def run_life(*, arm, entry, life_dir, branch, items, records, keys, scratch, run
             classes=dict(sorted(evidence.classes.items())), kill=kill, expected_call_ids=ids,
             post_restart_requests=requests,
             audit=audited,
-            sessions=tuple(sessions), stopped=stopped, records=rows, run_values=dict(adapter.director.run_values),
+            sessions=tuple(sessions), stopped=stopped, records=rows, refusals=_refusals(root / "run" / "ledger"),
+            run_values=dict(adapter.director.run_values),
             stable_digest=adapter.stable_digest(), honeypot_hits=adapter.honeypot_hits(honeypot_token) if honeypot_token else 0,
             egress=egress, timings=timings, background_records=tuple(adapter.background_records()),
             background_threads=tuple(adapter.background_threads),
