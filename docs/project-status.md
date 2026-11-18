@@ -43,9 +43,10 @@ links its newest result or source.
   attempts ran on 17 and 18 November. Reruns are under way, and its reading is on 19 November.
 - **Sealed boards** (the only runs that can certify a system: a season board, or a delta board on a new GA
   release, each only at its pre-registered powered size): none has run. The first is the v1.0 Board,
-  season 1. It follows the Pilot, the board-track step after the validity work, whose first bar will not
-  run before December, and it has no date until that bar has run. Source: the Pilot and v1.0 Board rows
-  of [ROADMAP.md](../ROADMAP.md).
+  season 1. It follows the Pilot, the board-track step after the validity work. The roadmap's estimates,
+  both of low confidence, are a first bar no later than 19 December 2026 and the board in late January
+  2027; the board gets a firm date only after that bar has run. Source: the Pilot and v1.0 Board rows of
+  [ROADMAP.md](../ROADMAP.md).
 
 ## Rules in force
 
