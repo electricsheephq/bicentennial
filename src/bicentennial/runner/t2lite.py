@@ -43,6 +43,7 @@ from bicentennial.runner.units import (
     _write,
     refusal_code,
     schedule,
+    stop_refusals,
 )
 from bicentennial.runner.units import _Guard as _Guard
 from bicentennial.runner.units import _unit as _unit
@@ -445,6 +446,9 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     # L1's custody rows say why: the drained log, and a Stop's own records.
                     files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE", turn_wait_s, units)),
                              "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
+                    # The relay's evidence of each refused request before the stop, beside the stop's record (#618).
+                    if (evidence := stop_refusals(runs)) is not None:
+                        files["refusals.json"] = evidence
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"
                     else:

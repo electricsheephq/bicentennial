@@ -58,6 +58,7 @@ from bicentennial.runner.units import (
     predicted_seconds,
     refusal_code,
     schedule,
+    stop_refusals,
 )
 from bicentennial.sandbox import fixedroot
 from bicentennial.systems.hermes_plugin import cache_digest
@@ -363,6 +364,9 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                         identity_tries=identity_tries, code=code)
                     if record is not None:
                         files["attempts.json"] = record
+                    # The relay's evidence of each refused request before the stop, beside the stop's record (#618).
+                    if (evidence := stop_refusals(runs)) is not None:
+                        files["refusals.json"] = evidence
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"
                     else:
