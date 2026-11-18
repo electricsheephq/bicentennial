@@ -215,7 +215,7 @@ class Director:
             if isinstance(body, dict):
                 row.update(_body_evidence(wire, body))
             row = {k: v for k, v in row.items() if k in REFUSAL_KEYS}
-            self.guard.check(canon(row))  # every value as sent, so a long credential is refused before it is cut
+            self.guard.check(canon(row))  # every value as sent, so a long credential is refused before long values are replaced
             line = self.guard.check(canon({k: _bounded(v) if k in BOUNDED else v for k, v in row.items()}) + b"\n")
             with (self.ledger.root / REFUSALS).open("a+b") as f:
                 if f.seek(0, os.SEEK_END):  # a partial line a failed append left is ended first, so this one parses
@@ -525,13 +525,14 @@ def _tool_names(wire, body) -> set:
 
 def _bounded(value):
     """A BOUNDED value (a request-supplied string, or each string of a list) as sent when at most BOUND characters,
-    else replaced whole by its length and sha256 prefix, keeping none of it: `[<length> chars, sha256 <12 hex>]`."""
+    else replaced whole by its length and sha256 prefix, keeping none of it: `[<length> chars, sha256 <12 hex>; a string
+    over 64 characters is not kept]`, always over BOUND characters, so no kept value can equal a marker."""
     if isinstance(value, list):
         return [_bounded(v) for v in value]
     if not isinstance(value, str) or len(value) <= BOUND:
         return value
     digest = sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:12]
-    return f"[{len(value)} chars, sha256 {digest}]"
+    return f"[{len(value)} chars, sha256 {digest}; a string over {BOUND} characters is not kept]"
 
 
 def _body_evidence(wire, body) -> dict:

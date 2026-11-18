@@ -1157,12 +1157,26 @@ def test_a_long_request_id_is_bounded_in_the_evidence(tmp_path):
         assert post(d, "/main/v1/chat/completions", todo_after_tool_results("chat", long_id))[0] == 400
         line = (tmp_path / "ledger" / "refusals.jsonl").read_text()
         (row,) = sidecar(tmp_path)
-        bounded = f"[5000 chars, sha256 {sha256(long_id.encode()).hexdigest()[:12]}]"
+        bounded = f"[5000 chars, sha256 {sha256(long_id.encode()).hexdigest()[:12]}; a string over 64 characters is not kept]"
         assert (row["call_ids"], row["result_ids"], row["model"]) == ([bounded], [bounded], "bicentennial-main")
         assert len(line) < 2048 and long_id[:64] not in line
         assert not any(long_id[i:i + 16] in line for i in range(len(long_id) - 15))
     finally:
         d.close()
+
+
+def test_a_marker_is_longer_than_any_kept_value():
+    from bicentennial.director.core import BOUND, _bounded
+
+    assert [len(_bounded("x" * n)) > BOUND for n in (65, 5000)] == [True, True]
+
+
+def test_an_id_spelling_the_old_marker_is_kept_and_is_no_marker():
+    from bicentennial.director.core import _bounded
+
+    spoof = f"[5000 chars, sha256 {sha256(b'x' * 5000).hexdigest()[:12]}]"  # the round-6 marker of "x" * 5000
+    assert (len(spoof), _bounded(spoof)) == (33, spoof)
+    assert spoof not in (_bounded("x" * 5000), _bounded("x" * 65))
 
 
 def test_a_partial_evidence_line_does_not_swallow_the_next(tmp_path):
