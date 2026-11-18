@@ -32,6 +32,20 @@ JSON, SSE = "application/json", "text/event-stream"
 _NAME = re.compile(r"[a-z0-9_]+")
 # Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
 HERMES_TITLE_INPUT_CHARS = 1000
+# Beside the ledger, one line per refused_unknown or refused_float request (#608): an allowlist of names, counts and
+# ids as sent, keyed by its ledger row, a string from the request over BOUND characters replaced by its length and a
+# sha256 prefix; never message text, tool arguments or tool outputs. It is not a K13 record, so the ledger and its
+# chain are as they were, and a run with no such refusal writes no file. A row holds only REFUSAL_KEYS; the runner's
+# readback keeps a row whose keys are within REFUSAL_KEYS and that canon() accepts.
+REFUSALS = "refusals.jsonl"
+REFUSAL_KEYS = frozenset((
+    "seq", "attempt_id", "served", "status", "method", "path", "wire", "session", "cursor", "s1_role", "s1_method",
+    "reason", "conflict", "alias", "error", "call_id", "markers", "turn", "call_pending", "current_turn", "tail_ids",
+    "tail_calls", "tail_issued", "n_tail", "n_tail_calls", "tail_failed", "exception", "model", "n_messages", "shape",
+    "last_role", "tool_calls", "tool_results", "call_ids", "result_ids"))
+BOUND, BOUNDED = 64, ("path", "model", "alias", "call_id", "tail_ids", "tail_calls", "call_ids", "result_ids")
+S1_EVIDENCE = ("reason", "conflict", "alias", "error", "call_id")  # S1's facts, with the body's model and a tail id
+LAST_ROLE = {"s": "system", "u": "user", "a": "assistant", "c": "assistant", "t": "tool", "r": "reasoning", "x": "other"}
 
 
 class ResponderError(Exception):
@@ -79,6 +93,7 @@ class Director:
         self.n_ids = self.inflight = self.write_failures = self.send_errors = 0
         self.summariser_requests = 0  # recorded compaction requests: the adapter settles a compaction turn fully
         self.role_ids = {}
+        self.matched = None  # the last scripted turn a request matched; skip_session moves the cursor, never this
         self.stopped, self._lock, self._count = False, threading.Lock(), threading.Lock()
 
     def start_session(self, index, sim_t_s, lock_hash, attempt_id, ledger_root) -> None:
@@ -135,6 +150,7 @@ class Director:
                        "req_chars": len(raw_body.decode("utf-8", "replace"))}
                 try:  # a guard or ledger failure stops admission: nothing unrecorded is ever sent
                     self._req = {}  # the parsed body, kept as the evidence of a failed request
+                    self._refused = None  # (wire, parsed body, S1 result, exception class) of a refusal with evidence
                     try:
                         status, ctype, out, resp, req, hold = self._dispatch(method, path, names, raw_body, rec)
                     except _Unrecorded as e:
@@ -156,7 +172,9 @@ class Director:
                     if peek is not None and peek():
                         rec["client_disconnected"] = True
                     rec["t_ms"] = round((time.monotonic() - t0) * 1000)
-                    self.ledger.append(rec)
+                    appended = self.ledger.append(rec)
+                    if self._refused is not None:
+                        self._keep_refusal(appended)
                     self.summariser_requests += rec["role"] == "summariser"
                 except BaseException:
                     self.stopped = True
@@ -167,6 +185,69 @@ class Director:
         finally:
             with self._count:
                 self.inflight -= 1
+
+    def _keep_refusal(self, rec) -> None:
+        """Appends the evidence of a refused request to REFUSALS, under the ledger's lock. Evidence only: a failure
+        here, the guard's included, changes neither the answer nor the record; a write cut short can leave a partial
+        line, which the next append ends first and the runner's readback skips."""
+        wire, body, s1, error = self._refused
+        try:
+            n, m = self.ctx.cursor, self.matched
+            row = {"seq": rec["seq"], "attempt_id": rec["attempt_id"], "served": rec["served"], "status": rec["status"],
+                   "method": rec["method"], "path": rec["path"].split("?")[0], "wire": wire,
+                   "session": self.session_index,
+                   "cursor": {"session": self.turns[m]["session"], "turn": self.turns[m]["turn"]} if m is not None else None}
+            if s1 is not None:
+                role, method, ev = s1
+                row.update(s1_role=role, s1_method=method, **{k: ev[k] for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
+                if ev.get("markers"):
+                    row["markers"] = [m for m in ev["markers"] if isinstance(m, str)]
+                if isinstance(ev.get("turn"), (int, str)):
+                    row["turn"] = ev["turn"]
+                if role in ("replay_main", "probe_main", "write_turn"):  # what route_role.route read before refusing
+                    if isinstance(ev.get("call_id"), str):
+                        row["call_pending"] = ev["call_id"] in self.pending
+                    row["current_turn"] = bool(self.ctx.current) and 0 < n <= len(self.turns)
+                if isinstance(body, dict):
+                    row.update(self._tail_evidence(rec["path"], body, ev))
+            if error is not None:  # the refusal site's own exception; S1's error above stays S1's
+                row["exception"] = error
+            if isinstance(body, dict):
+                row.update(_body_evidence(wire, body))
+            row = {k: v for k, v in row.items() if k in REFUSAL_KEYS}
+            self.guard.check(canon(row))  # every value as sent, so a long credential is refused before long values are replaced
+            line = self.guard.check(canon({k: _bounded(v) if k in BOUNDED else v for k, v in row.items()}) + b"\n")
+            with (self.ledger.root / REFUSALS).open("a+b") as f:
+                if f.seek(0, os.SEEK_END):  # a partial line a failed append left is ended first, so this one parses
+                    f.seek(-1, os.SEEK_END)
+                    line = line if f.read(1) == b"\n" else b"\n" + line
+                f.write(line)
+        except Exception:  # noqa: BLE001 - evidence only
+            pass
+
+    def _tail_evidence(self, path, body, ev) -> dict:
+        """S1's trailing tool-result ids, the ids of the calls they answer and the role each id was issued for (None:
+        not issued here), each in body order and cut to its last four, with the full counts of results and calls; for
+        S1's unissued-or-mixed refusal, which of its conditions failed."""
+        try:
+            s = roles.shape({"method": "POST", "path": path, "body": body}, self.ctx.signatures)
+        except Exception:  # noqa: BLE001 - S1 could not read the body either; its error is recorded
+            return {}
+        tail, calls = s["tail_ids"], s["tail_calls"]
+        if not tail:
+            return {}
+        if s["wire"] == "openai_chat":  # S1 reads a chat tail from its end; the evidence keeps body order
+            tail = tail[::-1]
+        issued = [self.ctx.issued.get(cid) for cid in tail]
+        out = {"tail_ids": tail[-4:], "tail_calls": calls[-4:], "tail_issued": issued[-4:],
+               "n_tail": len(tail), "n_tail_calls": len(calls)}
+        if ev.get("reason") == "tool result for an unissued call id or mixed roles":  # roles.classify_shape, rule 1
+            got = {r for r in issued if r is not None}
+            known = {c for c in calls if not isinstance(c, (dict, list))}  # a JSON dict or list equals no hashable id
+            out["tail_failed"] = [name for name, failed in (
+                ("none_issued", not got), ("mixed_roles", len(got) > 1),
+                ("stray", any(c not in known for c in tail)), ("empty_id", "" in tail + calls)) if failed]
+        return out
 
     def _masked(self, obj) -> str:
         return sha256(canon(apply_masks(obj, self.run_values))).hexdigest()
@@ -199,6 +280,7 @@ class Director:
         if "content-encoding" in names:
             rec["subrole"] = "encoding"
             return _refuse(rec, 415, "encoding_refused", "encoded request body refused")
+        seen = None, None  # a float body S1 read before its refusal: its evidence goes with it
         try:
             body = json.loads(raw)
             if not isinstance(body, dict):
@@ -211,14 +293,17 @@ class Director:
                 removed = sorted(key for key in FLOAT_KEYS if isinstance(body.get(key), float))
                 body = {key: value for key, value in body.items() if key not in removed}
                 canon(body)
-                _, (role, sub, turn) = self._classify(path, body)
+                s1, (role, sub, turn) = self._classify(path, body)
+                seen = body, s1
                 if not removed or role == "unknown":
                     raise ValueError("body") from None
                 rec.update(role=role, subrole=sub, cursor=turn and {"session": turn["session"], "turn": turn["turn"]})
+                self._refused = wire, body, s1, None
                 return _refuse(rec, 400, "refused_float", f"unsupported parameter: {removed[0]}",
                                {"body_sha256": sha256(raw).hexdigest(), "float_keys": removed})
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
             rec["subrole"] = "malformed_body"
+            self._refused = wire, *seen, type(e).__name__
             return _refuse(rec, 400, "refused_unknown", "malformed request body", {"body_sha256": sha256(raw).hexdigest()})
         self._req, items = body, body.get("messages") if wire == "chat" else body.get("input")
         rec.update(model_in=body["model"] if isinstance(body.get("model"), str) and body["model"] else "none",
@@ -235,8 +320,9 @@ class Director:
     def _embeddings(self, body, rec):
         try:  # decided by the endpoint alone, before S1, which has no embeddings wire
             embeddings.parse_request(body)
-        except ValueError:
+        except ValueError as e:
             rec["subrole"] = "malformed_body"
+            self._refused = "embeddings", body, None, type(e).__name__
             return _refuse(rec, 400, "refused_unknown", "malformed embeddings request", body)
         rec.update(role="embeddings", subrole="embedding")
         reply = self._ask(Call("embeddings", "embedding", "embeddings", deepcopy(body), self._model("embeddings"),
@@ -262,10 +348,13 @@ class Director:
         cursor = turn and {"session": turn["session"], "turn": turn["turn"]}
         rec.update(role=role, subrole=sub, cursor=cursor)
         if role == "unknown":
+            self._refused = wire, body, s1, None
             return _refuse(rec, 400, "refused_unknown", "unclassified request refused (fail closed)", body)
         if (role, sub) == ("aux", "vision") and self.route["vision"] is None:
             return _refuse(rec, 400, "no_vision_route", "no vision route", body)
         roles.advance(self.ctx, s1)
+        if s1[1] == "cursor" and isinstance(s1[2].get("turn"), int):  # the turn advance moved the cursor past
+            self.matched = s1[2]["turn"]
         if sub == "cursor":  # a new integer turn, replay or probe; a retry, continuation or tool result never ticks
             self.clock.tick()
             rec["sim_now"] = self.clock.sim_t_s
@@ -432,6 +521,45 @@ def _tool_names(wire, body) -> set:
     tools = [t for t in body.get("tools") or [] if isinstance(t, dict)]
     return {(t["function"].get("name") if isinstance(t.get("function"), dict) else None) if wire == "chat"
             else t.get("name") for t in tools}
+
+
+def _bounded(value):
+    """A BOUNDED value (a request-supplied string, or each string of a list) as sent when at most BOUND characters,
+    else replaced whole by its length and sha256 prefix, keeping none of it: `[<length> chars, sha256 <12 hex>; a string
+    over 64 characters is not kept]`, always over BOUND characters, so no kept value can equal a marker."""
+    if isinstance(value, list):
+        return [_bounded(v) for v in value]
+    if not isinstance(value, str) or len(value) <= BOUND:
+        return value
+    digest = sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+    return f"[{len(value)} chars, sha256 {digest}; a string over {BOUND} characters is not kept]"
+
+
+def _body_evidence(wire, body) -> dict:
+    """The allowlisted facts of a parsed body: its model, item roles as S1's tokens and its tool-call and
+    tool-result counts with their last four ids, as sent (bounded when written). Never message text, tool
+    arguments or tool outputs."""
+    out = {"model": body["model"] if isinstance(body.get("model"), str) else None}
+    if wire == "embeddings":
+        return out
+    try:
+        toks = roles._items("openai_chat" if wire == "chat" else "openai_responses", body)[0]
+        out.update(n_messages=len(toks), shape=toks, last_role=LAST_ROLE.get(toks[-1:]))
+    except Exception:  # noqa: BLE001 - a body S1 could not read keeps its other evidence
+        pass
+    calls, results = [], []
+    items = body.get("messages") if wire == "chat" else body.get("input")
+    for m in (m for m in items if isinstance(m, dict)) if isinstance(items, list) else ():
+        if wire == "chat":
+            tool_calls = m.get("tool_calls") if isinstance(m.get("tool_calls"), list) else []
+            calls += [tc.get("id") if isinstance(tc, dict) else None for tc in tool_calls]
+            results += [m.get("tool_call_id")] if m.get("role") == "tool" else []
+        elif isinstance(m.get("type"), str) and m["type"].endswith(("_call", "_output")):
+            (calls if m["type"].endswith("_call") else results).append(m.get("call_id"))
+    out.update(tool_calls=len(calls), tool_results=len(results),
+               call_ids=[c for c in calls if isinstance(c, str)][-4:],
+               result_ids=[r for r in results if isinstance(r, str)][-4:])
+    return out
 
 
 def _refusal(status, message, req):

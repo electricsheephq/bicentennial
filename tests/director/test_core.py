@@ -870,3 +870,324 @@ def test_a_director_fault_is_recorded_with_its_request_then_stops(tmp_path, monk
                                                                   "director_error_keyerror")
     assert BlobStore(tmp_path / "ledger" / "blobs", None).get(fault["req"]) == canon(turn_body())
     assert stopped["served"] == "stopped" and d.stopped is True
+
+
+# ---- #608: evidence of each refused request (names, counts, bounded ids), in a sidecar beside the ledger -----
+PLANTED = ("planted-user-608a", "planted-args-608b", "planted-output-608c", "planted-system-608d",
+           "/srv/planted-path-608e/notes.txt")
+
+
+def sidecar(tmp):
+    path = tmp / "ledger" / "refusals.jsonl"
+    return [json.loads(line) for line in path.read_bytes().splitlines()] if path.exists() else None
+
+
+def assert_no_planted(tmp):
+    raw = (tmp / "ledger" / "refusals.jsonl").read_bytes()
+    assert not [p for p in PLANTED if p.encode() in raw]
+
+
+def probe_script():
+    return dict(SCRIPT, sessions=[dict(index=1, kind="probe", turns=[dict(
+        n=1, kind="probe", user=TURN1["user"], assistant=None, tool_calls=[])])])
+
+
+def todo_after_tool_results(wire, call_id):
+    """A probe turn's tool call, its result, then a trailing user row: no rule matches it (#608)."""
+    system = f"{PLANTED[3]} working in {PLANTED[4]}"
+    if wire == "chat":
+        return {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [
+            {"role": "system", "content": system}, {"role": "user", "content": TURN1["user"]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": call_id, "type": "function", "function": {
+                "name": "terminal", "arguments": json.dumps({"command": PLANTED[1]})}}]},
+            {"role": "tool", "tool_call_id": call_id, "content": PLANTED[2]},
+            {"role": "user", "content": PLANTED[0]}]}
+    return {"model": "bicentennial-main", "tools": tools_of(1, False), "input": [
+        {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": system}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": TURN1["user"]}]},
+        {"type": "function_call", "call_id": call_id, "name": "terminal",
+         "arguments": json.dumps({"command": PLANTED[1]})},
+        {"type": "function_call_output", "call_id": call_id, "output": PLANTED[2]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": PLANTED[0]}]}]}
+
+
+@pytest.mark.parametrize("wire", ["chat", "responses"])
+def test_unclassified_todo_after_tool_results_keeps_its_evidence(wire, tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    path = "/main/v1/" + ("chat/completions" if wire == "chat" else "responses")
+    first = {"model": "bicentennial-main", "tools": tools_of(1, wire == "chat"), **(
+        {"messages": [{"role": "user", "content": TURN1["user"]}]} if wire == "chat" else {"input": TURN1["user"]})}
+    try:
+        status, ctype, data = post(d, path, first)
+        (call_id,) = answer(ctype, data)[1]
+        status, _, data = post(d, path, todo_after_tool_results(wire, call_id))
+        assert status == 400 and json.loads(data)["error"]["message"] == (
+            "director: unclassified request refused (fail closed)")
+        probe, rec = records(tmp_path)
+        assert (rec["role"], rec["subrole"], rec["served"], rec["status"], rec["cursor"]) == (
+            "unknown", "", "refused_unknown", 400, None)
+        assert sidecar(tmp_path) == [{
+            "seq": rec["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
+            "method": "POST", "path": path, "wire": wire, "session": 1, "cursor": {"session": 1, "turn": 1},
+            "s1_role": "unknown", "s1_method": "unknown", "reason": "no rule matched", "model": "bicentennial-main",
+            "n_messages": 5, "shape": "suctu", "last_role": "user", "tool_calls": 1, "tool_results": 1,
+            "call_ids": [call_id], "result_ids": [call_id]}]
+        assert_no_planted(tmp_path)
+        assert probe["served"] != "refused_unknown" and d.stopped is False
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("raw,error", [
+    (b'{"model": "planted-user-608a", not json', "JSONDecodeError"),
+    (json.dumps([PLANTED[0]]).encode(), "ValueError"),
+    (json.dumps(turn_body(PLANTED[0]) | {"nested": {"value": 0.5}}).encode(), "TypeError"),
+])
+def test_malformed_body_evidence_names_the_exception_class_only(raw, error, tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        assert post(d, "/main/v1/chat/completions", raw)[0] == 400
+        (rec,) = records(tmp_path)
+        assert sidecar(tmp_path) == [{
+            "seq": rec["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
+            "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
+            "exception": error}]
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_unclassifiable_float_body_keeps_its_classifier_evidence(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    body = {"model": "unknown", "temperature": 0.5, "messages": [{"role": "user", "content": PLANTED[0]}]}
+    try:
+        status, _, data = post(d, "/main/v1/chat/completions?planted-user-608a", body)
+        assert status == 400 and json.loads(data)["error"]["message"] == "director: malformed request body"
+        (row,) = sidecar(tmp_path)
+        assert {k: row[k] for k in ("served", "path", "exception", "s1_role", "reason", "model", "shape", "last_role")} == {
+            "served": "refused_unknown", "path": "/main/v1/chat/completions", "exception": "ValueError",
+            "s1_role": "unknown", "reason": "no rule matched", "model": "unknown", "shape": "u", "last_role": "user"}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_malformed_float_body_keeps_s1_error_beside_its_exception(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    body = {"model": "bicentennial-main", "temperature": 0.5, "tools": tools_of(1, True),
+            "messages": [{"content": PLANTED[0]}]}  # no role: S1 reads it as malformed (TypeError)
+    try:
+        assert post(d, "/main/v1/chat/completions", body)[0] == 400
+        (rec,) = records(tmp_path)
+        assert (rec["served"], rec["subrole"]) == ("refused_unknown", "malformed_body")
+        (row,) = sidecar(tmp_path)
+        assert {k: row.get(k) for k in ("s1_role", "reason", "error", "exception")} == {
+            "s1_role": "unknown", "reason": "malformed body", "error": "TypeError", "exception": "ValueError"}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_malformed_embeddings_and_float_refusals_keep_their_evidence(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        assert post(d, "/main/v1/embeddings", {"model": "embed", "input": PLANTED[0], "extra": PLANTED[2]})[0] == 400
+        assert post(d, "/main/v1/chat/completions", turn_body(tools=("todo",)) | {"temperature": 0.5})[0] == 400
+        embedded, floated = records(tmp_path)
+        assert sidecar(tmp_path) == [
+            {"seq": embedded["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
+             "method": "POST", "path": "/main/v1/embeddings", "wire": "embeddings", "session": 1, "cursor": None,
+             "exception": "ValueError", "model": "embed"},
+            {"seq": floated["seq"], "attempt_id": "attempt-s1", "served": "refused_float", "status": 400,
+             "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
+             "s1_role": "replay_main", "s1_method": "cursor", "turn": 0, "current_turn": False,
+             "model": "bicentennial-main", "n_messages": 2,
+             "shape": "su", "last_role": "user", "tool_calls": 0, "tool_results": 0, "call_ids": [], "result_ids": []}]
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_no_refusal_writes_no_sidecar(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        assert post(d, "/main/v1/chat/completions", turn_body())[0] == 200
+        assert d.handle("GET", "/main/v1/files", {}, b"")[0] == 404  # a path refusal is outside the sidecar's scope
+        assert sorted(p.name for p in (tmp_path / "ledger").iterdir()) == ["blobs", "ledger.jsonl"]
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("fault", ["unwritable", "credential", "long_credential"])
+def test_a_failed_evidence_write_changes_no_answer(fault, tmp_path, monkeypatch):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    body = turn_body(tools=("todo",)) | {"temperature": 0.5}
+    canary = "r608-canary-value-not-a-credential" + ("-x" * 40 if fault == "long_credential" else "")  # > BOUND
+    if fault == "unwritable":
+        (tmp_path / "ledger" / "refusals.jsonl").mkdir()
+    else:  # a refused_float body is never blobbed, so only the sidecar's guard sees this id
+        monkeypatch.setenv("R608_TEST_CANARY", canary)
+        d.guard = Guard(["R608_TEST_CANARY"])
+        body["messages"][1:1] = [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": canary, "type": "function",
+                                                                 "function": {"name": "todo"}}]},
+            {"role": "tool", "tool_call_id": canary, "content": "done"}]
+    try:
+        status, _, data = post(d, "/main/v1/chat/completions", body)
+        assert status == 400 and json.loads(data)["error"]["message"] == "director: unsupported parameter: temperature"
+        (rec,) = records(tmp_path)
+        assert (rec["served"], d.stopped) == ("refused_float", False)
+        assert (tmp_path / "ledger" / "refusals.jsonl").is_dir() if fault == "unwritable" else sidecar(tmp_path) is None
+        assert post(d, "/main/v1/chat/completions", turn_body())[0] == 200
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("extra,failed", [((), ["none_issued"]), (("stray-608",), ["stray"])])
+def test_unissued_or_mixed_tail_names_its_failed_conditions(extra, failed, tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    path = "/main/v1/chat/completions"
+    first = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [{"role": "user", "content": TURN1["user"]}]}
+    try:
+        (issued,) = answer(*post(d, path, first)[1:])[1]
+        cid = "unissued-608" if not extra else issued  # an id this director never issued, or its own beside a stray
+        body = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [
+            {"role": "user", "content": TURN1["user"]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": cid, "type": "function", "function": {
+                "name": "terminal", "arguments": json.dumps({"command": PLANTED[1]})}}]},
+            {"role": "tool", "tool_call_id": cid, "content": PLANTED[2]},
+            *({"role": "tool", "tool_call_id": x, "content": PLANTED[2]} for x in extra)]}
+        assert post(d, path, body)[0] == 400
+        (row,) = sidecar(tmp_path)
+        tail = [cid, *extra]  # body order, though S1 reads a chat tail from its end
+        assert {k: row.get(k) for k in ("reason", "tail_ids", "tail_calls", "tail_issued", "tail_failed")} == {
+            "reason": "tool result for an unissued call id or mixed roles", "tail_ids": tail, "tail_calls": [cid],
+            "tail_issued": [None if x != issued else "probe_main" for x in tail], "tail_failed": failed}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_long_chat_tail_keeps_the_same_last_four_of_results_and_calls(tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    path = "/main/v1/chat/completions"
+    first = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [{"role": "user", "content": TURN1["user"]}]}
+    ids = [f"unissued-608-{i}" for i in range(6)]  # six calls, each answered in order: results pair with calls
+    try:
+        answer(*post(d, path, first)[1:])
+        body = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [
+            {"role": "user", "content": TURN1["user"]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": x, "type": "function", "function": {
+                "name": "terminal", "arguments": json.dumps({"command": PLANTED[1]})}} for x in ids]},
+            *({"role": "tool", "tool_call_id": x, "content": PLANTED[2]} for x in ids)]}
+        assert post(d, path, body)[0] == 400
+        (row,) = sidecar(tmp_path)
+        assert {k: row.get(k) for k in ("tail_ids", "tail_calls", "tail_issued", "n_tail", "n_tail_calls",
+                                        "tail_failed")} == {
+            "tail_ids": ids[-4:], "tail_calls": ids[-4:], "tail_issued": [None] * 4, "n_tail": 6, "n_tail_calls": 6,
+            "tail_failed": ["none_issued"]}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_route_refusal_of_a_main_role_records_what_route_read(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    d.ctx.issued["replay-608"] = "replay_main"  # S1 knows the id; no scripted turn is pending on it
+    body = turn_body() | {"messages": [
+        {"role": "user", "content": TURN1["user"]},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "replay-608", "type": "function", "function": {
+            "name": "memory", "arguments": json.dumps({"content": PLANTED[1]})}}]},
+        {"role": "tool", "tool_call_id": "replay-608", "content": PLANTED[2]}]}
+    try:
+        assert post(d, "/main/v1/chat/completions", body)[0] == 400
+        (rec,) = records(tmp_path)
+        assert (rec["role"], rec["served"]) == ("unknown", "refused_unknown")
+        (row,) = sidecar(tmp_path)
+        assert {k: row.get(k) for k in (
+            "s1_role", "s1_method", "call_id", "turn", "call_pending", "current_turn", "tail_issued", "tail_failed")} == {
+            "s1_role": "replay_main", "s1_method": "cursor", "call_id": "replay-608", "turn": None,
+            "call_pending": False, "current_turn": False, "tail_issued": ["replay_main"], "tail_failed": None}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_evidence_cursor_is_the_last_matched_turn_not_a_skipped_one(tmp_path):
+    script = deepcopy(SCRIPT)
+    script["sessions"] = [dict(index=n, kind="probe", turns=[dict(n=1, kind="probe", user=f"Prompt {n}.",
+        assistant=None, tool_calls=[])]) for n in (1, 2, 3)]
+    d = make(tmp_path, Fake(), script=script)
+    try:
+        start(d, tmp_path)
+        assert post(d, "/main/v1/chat/completions", turn_body("Prompt 1.", tools=("terminal",)))[0] == 200
+        d.skip_session(2)  # as run_life does after a live probe failure: the cursor passes session 2's turn
+        start(d, tmp_path, session=3)
+        assert post(d, "/main/v1/chat/completions", {"model": "unknown", "messages": [
+            {"role": "user", "content": PLANTED[0]}]})[0] == 400
+        (row,) = sidecar(tmp_path)
+        assert (row["session"], row["cursor"], d.ctx.cursor) == (3, {"session": 1, "turn": 1}, 2)
+    finally:
+        d.close()
+
+
+def test_a_long_request_id_is_bounded_in_the_evidence(tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    long_id = "".join(f"{i:04d}" for i in range(1250))  # 5,000 characters, no 16-character run repeated
+    try:
+        assert post(d, "/main/v1/chat/completions", todo_after_tool_results("chat", long_id))[0] == 400
+        line = (tmp_path / "ledger" / "refusals.jsonl").read_text()
+        (row,) = sidecar(tmp_path)
+        bounded = f"[5000 chars, sha256 {sha256(long_id.encode()).hexdigest()[:12]}; a string over 64 characters is not kept]"
+        assert (row["call_ids"], row["result_ids"], row["model"]) == ([bounded], [bounded], "bicentennial-main")
+        assert len(line) < 2048 and long_id[:64] not in line
+        assert not any(long_id[i:i + 16] in line for i in range(len(long_id) - 15))
+    finally:
+        d.close()
+
+
+def test_a_marker_is_longer_than_any_kept_value():
+    from bicentennial.director.core import BOUND, _bounded
+
+    assert [len(_bounded("x" * n)) > BOUND for n in (65, 5000)] == [True, True]
+
+
+def test_an_id_spelling_the_old_marker_is_kept_and_is_no_marker():
+    from bicentennial.director.core import _bounded
+
+    spoof = f"[5000 chars, sha256 {sha256(b'x' * 5000).hexdigest()[:12]}]"  # the round-6 marker of "x" * 5000
+    assert (len(spoof), _bounded(spoof)) == (33, spoof)
+    assert spoof not in (_bounded("x" * 5000), _bounded("x" * 65))
+
+
+def test_a_partial_evidence_line_does_not_swallow_the_next(tmp_path):
+    from bicentennial.runner.life import _refusals
+
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        (tmp_path / "ledger" / "refusals.jsonl").write_bytes(b'{"seq": 9, "served"')  # a write cut short
+        assert post(d, "/main/v1/chat/completions", turn_body(tools=("todo",)) | {"temperature": 0.5})[0] == 400
+        (rec,) = records(tmp_path)
+        assert [r["seq"] for r in _refusals(tmp_path / "ledger")] == [rec["seq"]]
+    finally:
+        d.close()
