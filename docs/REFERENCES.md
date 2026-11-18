@@ -6,7 +6,7 @@ How it was built (18 November 2026):
 - Every link comes from the Phase 0 survey's source lists, except Compact-Bench's, which came from the arXiv page of that work, opened on 18 November 2026.
 - These links were also opened on 18 November 2026, and each page's title or abstract named the work: Ground Truth First, ConPACT, ContinuityBench, The Compaction Cliff, Compact-Bench, LIMBO, MemOps, HOMER, DolphinBench (its site and its arXiv page) and the Agent Memory Leaderboard's repository.
 - Each entry gives the name, the year, authors and venue where the source gives them, the link, and one line on what the work measures. The one-line summaries are ours.
-- Authors were read from each entry's own linked page on 18 November 2026 (UTC): the arXiv abstract page where there is one, the ICML page for ContinuityBench, and the citation in the repository of the Agent Memory Leaderboard, whose site did not open that day. Names are spelled as the page gives them: one author by family name, two joined by "and", three or more as the first author's family name and "et al.". Every entry's authors could be read.
+- Authors were read from each entry's own linked page on 18 November 2026 (UTC): the arXiv abstract page where there is one, the ICML page for ContinuityBench, and the citation in the repository of the Agent Memory Leaderboard, whose site did not open that day. Names are spelled as the page gives them: one author by family name, two joined by "and", three or more as the first author's family name and "et al.". AMemGym's first author is given in full, as its page displays the name, because the page does not make clear which part is the family name. Every entry's authors could be read.
 - A work named in several places has one entry; other sections point to it.
 - A work with no real source found would be listed under "Named in the design, source not located". No link, author or year is filled in by guesswork.
 
@@ -109,7 +109,7 @@ Compaction here means replacing part of an agent's context with a shorter summar
 
 ## On-policy simulated users
 
-- **AMemGym** (2026; Jiayang et al.; ICLR 2026). [arXiv 2603.01966](https://arxiv.org/abs/2603.01966); [project page](https://agi-eval-official.github.io/amemgym). Personalisation against a hidden user state, with simulated users who respond to the assistant, a normalised score and failures split into writing, reading and use.
+- **AMemGym** (2026; Cheng Jiayang et al.; ICLR 2026). [arXiv 2603.01966](https://arxiv.org/abs/2603.01966); [project page](https://agi-eval-official.github.io/amemgym). Personalisation against a hidden user state, with simulated users who respond to the assistant, a normalised score and failures split into writing, reading and use.
 - **WorldMemArena**: see "Real-harness and fault precedents".
 
 ## Budgeted writing
