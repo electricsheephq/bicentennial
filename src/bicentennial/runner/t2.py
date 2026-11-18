@@ -59,6 +59,7 @@ from bicentennial.runner.units import (
     refusal_code,
     schedule,
     stop_refusals,
+    write_stop_refusals,
 )
 from bicentennial.sandbox import fixedroot
 from bicentennial.systems.hermes_plugin import cache_digest
@@ -348,6 +349,7 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
         code = refusal_code(error, live=live, runs=runs, needles=needles)
         try:
             if created:
+                last = None
                 try:
                     _scan(out, needles)
                 except t1.T1Refused:
@@ -370,10 +372,12 @@ def run_t2(*, system, packs_dir, pack_hash, out, login_home, max_sends, hermes=N
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"
                     else:
+                        last = files.pop("refusals.json", None)  # written last, on its own (#618)
                         for name, data in files.items():
                             (out / name).write_bytes(data)
                 detail = [error.reason] if code == "live_stop" else list(getattr(error, "detail", ()))
                 _write(out, "refusal.json", dict(code=code, **({"detail": detail} if detail else {})))
+                write_stop_refusals(out, last)
         except Exception:
             # A failure while refusing goes the tool_failure way, which removes everything written.
             return _tool_failure(out, created)

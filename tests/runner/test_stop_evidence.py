@@ -1,7 +1,9 @@
 """#618: a run that stops keeps the relay's refusal evidence of every attempt before the stop, in refusals.json."""
 
 import json
+import os
 import runpy
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from test_t2lite import live_settings, scenario  # noqa: F401
 from test_units_characterization import _digests
 
 from bicentennial.canon import canon
+from bicentennial.director.core import REFUSALS
 from bicentennial.runner import units
 from bicentennial.runner.life import _refusals
 
@@ -186,3 +189,50 @@ def test_evidence_that_cannot_be_written_leaves_the_stop_as_before(tier, monkeyp
     assert tier.stop() == 3
     assert json.loads((tier.out / "refusal.json").read_bytes()) == {"code": "spend_stop"}
     assert _digests(tier.out) == before
+
+
+def test_a_failed_evidence_write_leaves_the_stop_as_before(tier, tmp_path, monkeypatch):
+    """A failed refusals.json write leaves the stop's code, exit and other files as when it succeeds, and no partial."""
+    data, _ = evidence(tmp_path / "relay")
+    refuse_then(tier, monkeypatch, data, "credential")
+    assert tier.stop("written") == 3
+    write, tier.first = Path.write_bytes, None
+    def full(self, data):
+        if self.name != "refusals.json":
+            return write(self, data)
+        write(self, data[:5])
+        raise OSError("synthetic full disk")
+    monkeypatch.setattr(Path, "write_bytes", full)
+    assert tier.stop() == 3
+    expected = _digests(tier.out.with_name("written"))
+    assert expected.pop("refusals.json") and _digests(tier.out) == expected
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs on this platform")
+def test_a_fifo_at_the_evidence_path_gives_no_rows_without_blocking(tmp_path):
+    """Reading evidence never blocks the stop path: a FIFO with no writer is skipped, not opened for reading."""
+    os.mkfifo(tmp_path / REFUSALS)
+    result = []
+    reader = threading.Thread(target=lambda: result.append(_refusals(tmp_path)), daemon=True)
+    reader.start()
+    reader.join(5)  # a regression fails here instead of hanging the run
+    assert result == [[]]
+
+
+def test_a_voided_attempt_and_its_stopped_rerun_both_keep_their_evidence(tier, tmp_path, monkeypatch):
+    """Attempt 0 is voided by an infrastructure failure, its rerun stops: each row is kept under its own attempt."""
+    data, row = evidence(tmp_path / "relay")
+    second, drive, seen = dict(row, seq=row.get("seq", 0) + 1), units.run_life, []
+    def life(**kw):
+        seen.append((kw["arm"], kw["branch"], kw["attempt"]))
+        tier.mode = 503 if len(seen) == 1 else "credential"
+        if len(seen) == 2:
+            plant(kw, canon(second) + b"\n")  # the stop is raised inside the attempt
+        run = drive(**kw)
+        return replace(run, refusals=_refusals(plant(kw, data))) if len(seen) == 1 else run
+    monkeypatch.setattr(units, "run_life", life)
+    assert tier.stop() == 3
+    assert json.loads((tier.out / "refusal.json").read_bytes()) == {"code": "credential_stop"}
+    assert [a for _, _, a in seen] == [0, 1] and seen[0][:2] == seen[1][:2]
+    record = json.loads((tier.out / "refusals.json").read_bytes())
+    assert [(a["attempt"], a["refusals"]) for a in record["attempts"]] == [(0, [row]), (1, [second])]

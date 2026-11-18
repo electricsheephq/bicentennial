@@ -460,7 +460,7 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
 
 def stop_refusals(runs):
     """A stopped run's refusals.json bytes (#618): for each attempt in `runs` whose relay kept refusal evidence, its
-    arm, life, branch, attempt number and the rows life.py's reader kept, in run order. None when no attempt kept any,
+    arm, life, branch, attempt number and the rows life.py's reader kept, in card order. None when no attempt kept any,
     so a stop with no refusal writes the same files as before, or when the rows cannot be written."""
     try:
         attempts = [dict(arm=r.arm, life=r.life, branch=r.branch, attempt=r.attempt, refusals=r.refusals)
@@ -468,6 +468,19 @@ def stop_refusals(runs):
         return canon(dict(attempts=attempts)) if attempts else None
     except Exception:  # noqa: BLE001 - evidence only: the stop's own files stay as they are
         return None
+
+
+def write_stop_refusals(out, data):
+    """Writes a stop's refusals.json last, on its own (#618): an OSError, such as a full disk, leaves it out, with any
+    partial file removed, and the stop's code, exit and other files stay as they are."""
+    try:
+        if data is not None:
+            (out / "refusals.json").write_bytes(data)
+    except OSError:
+        try:
+            (out / "refusals.json").unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def refusal_code(error, *, live=None, runs=(), needles=()):
