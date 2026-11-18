@@ -872,7 +872,7 @@ def test_a_director_fault_is_recorded_with_its_request_then_stops(tmp_path, monk
     assert stopped["served"] == "stopped" and d.stopped is True
 
 
-# ---- #608: content-free evidence of each refused request, in a sidecar beside the ledger --------------------
+# ---- #608: evidence of each refused request (names, counts, bounded ids), in a sidecar beside the ledger -----
 PLANTED = ("planted-user-608a", "planted-args-608b", "planted-output-608c", "planted-system-608d",
            "/srv/planted-path-608e/notes.txt")
 
@@ -1124,5 +1124,54 @@ def test_route_refusal_of_a_main_role_records_what_route_read(tmp_path):
             "s1_role": "replay_main", "s1_method": "cursor", "call_id": "replay-608", "turn": None,
             "call_pending": False, "current_turn": False, "tail_issued": ["replay_main"], "tail_failed": None}
         assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_evidence_cursor_is_the_last_matched_turn_not_a_skipped_one(tmp_path):
+    script = deepcopy(SCRIPT)
+    script["sessions"] = [dict(index=n, kind="probe", turns=[dict(n=1, kind="probe", user=f"Prompt {n}.",
+        assistant=None, tool_calls=[])]) for n in (1, 2, 3)]
+    d = make(tmp_path, Fake(), script=script)
+    try:
+        start(d, tmp_path)
+        assert post(d, "/main/v1/chat/completions", turn_body("Prompt 1.", tools=("terminal",)))[0] == 200
+        d.skip_session(2)  # as run_life does after a live probe failure: the cursor passes session 2's turn
+        start(d, tmp_path, session=3)
+        assert post(d, "/main/v1/chat/completions", {"model": "unknown", "messages": [
+            {"role": "user", "content": PLANTED[0]}]})[0] == 400
+        (row,) = sidecar(tmp_path)
+        assert (row["session"], row["cursor"], d.ctx.cursor) == (3, {"session": 1, "turn": 1}, 2)
+    finally:
+        d.close()
+
+
+def test_a_long_request_id_is_bounded_in_the_evidence(tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    long_id = "x" * 5000
+    try:
+        assert post(d, "/main/v1/chat/completions", todo_after_tool_results("chat", long_id))[0] == 400
+        line = (tmp_path / "ledger" / "refusals.jsonl").read_bytes()
+        (row,) = sidecar(tmp_path)
+        bounded = "x" * 64 + f"...[5000 chars, sha256 {sha256(long_id.encode()).hexdigest()[:12]}]"
+        assert (row["call_ids"], row["result_ids"], row["model"]) == ([bounded], [bounded], "bicentennial-main")
+        assert len(line) < 2048
+    finally:
+        d.close()
+
+
+def test_a_partial_evidence_line_does_not_swallow_the_next(tmp_path):
+    from bicentennial.runner.life import _refusals
+
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    try:
+        (tmp_path / "ledger" / "refusals.jsonl").write_bytes(b'{"seq": 9, "served"')  # a write cut short
+        assert post(d, "/main/v1/chat/completions", turn_body(tools=("todo",)) | {"temperature": 0.5})[0] == 400
+        (rec,) = records(tmp_path)
+        assert [r["seq"] for r in _refusals(tmp_path / "ledger")] == [rec["seq"]]
     finally:
         d.close()

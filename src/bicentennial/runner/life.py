@@ -27,7 +27,7 @@ from bicentennial.contracts.surfaces import tree_hash, tree_listing
 from bicentennial.director.compiler import answer_contract
 from bicentennial.director.compiler.check import expected_probe_env, precondition_holds
 from bicentennial.director.compiler.hermes import compile_script, step_call
-from bicentennial.director.core import REFUSALS
+from bicentennial.director.core import REFUSAL_KEYS, REFUSALS
 from bicentennial.director.routes import RouteTable
 from bicentennial.director.scripted import ScriptedResponder
 from bicentennial.genres.g1_software.diffs import (
@@ -295,7 +295,8 @@ def _rows(root):
 
 def _refusals(root):
     """The director's sidecar rows (director/core.py REFUSALS), read before the attempt's sandbox is deleted.
-    Evidence only: no file is no refusal, and an unreadable file or line is skipped."""
+    Evidence only: no file is no refusal, and an unreadable file, an unreadable line or a line that is not a row the
+    director could write (a JSON object of REFUSAL_KEYS only, canonical) is skipped."""
     try:
         lines = (root / REFUSALS).read_bytes().split(b"\n")[:-1]
     except OSError:
@@ -303,10 +304,12 @@ def _refusals(root):
     rows = []
     for line in lines:
         try:
-            rows.append(json.loads(line))
-        except ValueError:
+            row = json.loads(line)
+            if isinstance(row, dict) and row.keys() <= REFUSAL_KEYS and canon(row):
+                rows.append(row)
+        except Exception:  # noqa: BLE001 - evidence only: no line can stop the run or its diagnostics
             continue
-    return [r for r in rows if isinstance(r, dict)]
+    return rows
 
 
 def _surface_bytes(surfaces):

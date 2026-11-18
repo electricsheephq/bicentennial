@@ -33,10 +33,17 @@ _NAME = re.compile(r"[a-z0-9_]+")
 # Hermes agent/title_generator.py:48,317-318 at d923a5eb487a17c0a68801bba9ef0f56c81040a8 caps title input.
 HERMES_TITLE_INPUT_CHARS = 1000
 # Beside the ledger, one line per refused_unknown or refused_float request (#608): an allowlist of names, counts and
-# ids keyed by its ledger row, never a copy of the body. It is not a K13 record, so the ledger and its chain are as
-# they were, and a run with no such refusal writes no file.
+# ids as sent, keyed by its ledger row, each string taken from the request bounded to BOUND characters; never message
+# text, tool arguments or tool outputs. It is not a K13 record, so the ledger and its chain are as they were, and a
+# run with no such refusal writes no file. A row holds only REFUSAL_KEYS, the set the runner's readback accepts.
 REFUSALS = "refusals.jsonl"
-S1_EVIDENCE = ("reason", "conflict", "alias", "error", "call_id")  # the classifier's own facts; text never reaches them
+REFUSAL_KEYS = frozenset((
+    "seq", "attempt_id", "served", "status", "method", "path", "wire", "session", "cursor", "s1_role", "s1_method",
+    "reason", "conflict", "alias", "error", "call_id", "markers", "turn", "call_pending", "current_turn", "tail_ids",
+    "tail_calls", "tail_issued", "n_tail", "n_tail_calls", "tail_failed", "exception", "model", "n_messages", "shape",
+    "last_role", "tool_calls", "tool_results", "call_ids", "result_ids"))
+BOUND = 64
+S1_EVIDENCE = ("reason", "conflict", "alias", "error", "call_id")  # S1's facts, with the body's model and a tail id
 LAST_ROLE = {"s": "system", "u": "user", "a": "assistant", "c": "assistant", "t": "tool", "r": "reasoning", "x": "other"}
 
 
@@ -85,6 +92,7 @@ class Director:
         self.n_ids = self.inflight = self.write_failures = self.send_errors = 0
         self.summariser_requests = 0  # recorded compaction requests: the adapter settles a compaction turn fully
         self.role_ids = {}
+        self.matched = None  # the last scripted turn a request matched; skip_session moves the cursor, never this
         self.stopped, self._lock, self._count = False, threading.Lock(), threading.Lock()
 
     def start_session(self, index, sim_t_s, lock_hash, attempt_id, ledger_root) -> None:
@@ -179,17 +187,19 @@ class Director:
 
     def _keep_refusal(self, rec) -> None:
         """Appends the evidence of a refused request to REFUSALS, under the ledger's lock. Evidence only: a failure
-        here, the guard's included, writes nothing and changes neither the answer nor the record."""
+        here, the guard's included, changes neither the answer nor the record; a write cut short can leave a partial
+        line, which the next append ends first and the runner's readback skips."""
         wire, body, s1, error = self._refused
         try:
-            n = self.ctx.cursor  # the scripted turn reached at refusal
+            n, m = self.ctx.cursor, self.matched
             row = {"seq": rec["seq"], "attempt_id": rec["attempt_id"], "served": rec["served"], "status": rec["status"],
-                   "method": rec["method"], "path": rec["path"].split("?")[0], "wire": wire,
+                   "method": rec["method"], "path": _bounded(rec["path"].split("?")[0]), "wire": wire,
                    "session": self.session_index,
-                   "cursor": {"session": self.turns[n - 1]["session"], "turn": self.turns[n - 1]["turn"]} if n else None}
+                   "cursor": {"session": self.turns[m]["session"], "turn": self.turns[m]["turn"]} if m is not None else None}
             if s1 is not None:
                 role, method, ev = s1
-                row.update(s1_role=role, s1_method=method, **{k: ev[k] for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
+                row.update(s1_role=role, s1_method=method,
+                           **{k: _bounded(ev[k]) for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
                 if ev.get("markers"):
                     row["markers"] = [m for m in ev["markers"] if isinstance(m, str)]
                 if isinstance(ev.get("turn"), (int, str)):
@@ -204,8 +214,11 @@ class Director:
                 row["exception"] = error
             if isinstance(body, dict):
                 row.update(_body_evidence(wire, body))
-            line = self.guard.check(canon(row) + b"\n")
-            with (self.ledger.root / REFUSALS).open("ab") as f:
+            line = self.guard.check(canon({k: v for k, v in row.items() if k in REFUSAL_KEYS}) + b"\n")
+            with (self.ledger.root / REFUSALS).open("a+b") as f:
+                if f.seek(0, os.SEEK_END):  # a partial line a failed append left is ended first, so this one parses
+                    f.seek(-1, os.SEEK_END)
+                    line = line if f.read(1) == b"\n" else b"\n" + line
                 f.write(line)
         except Exception:  # noqa: BLE001 - evidence only
             pass
@@ -224,7 +237,7 @@ class Director:
         if s["wire"] == "openai_chat":  # S1 reads a chat tail from its end; the evidence keeps body order
             tail = tail[::-1]
         issued = [self.ctx.issued.get(cid) for cid in tail]
-        out = {"tail_ids": tail[-4:], "tail_calls": calls[-4:], "tail_issued": issued[-4:],
+        out = {"tail_ids": _bounded(tail[-4:]), "tail_calls": _bounded(calls[-4:]), "tail_issued": issued[-4:],
                "n_tail": len(tail), "n_tail_calls": len(calls)}
         if ev.get("reason") == "tool result for an unissued call id or mixed roles":  # roles.classify_shape, rule 1
             got = {r for r in issued if r is not None}
@@ -337,6 +350,8 @@ class Director:
         if (role, sub) == ("aux", "vision") and self.route["vision"] is None:
             return _refuse(rec, 400, "no_vision_route", "no vision route", body)
         roles.advance(self.ctx, s1)
+        if s1[1] == "cursor" and isinstance(s1[2].get("turn"), int):  # the turn advance moved the cursor past
+            self.matched = s1[2]["turn"]
         if sub == "cursor":  # a new integer turn, replay or probe; a retry, continuation or tool result never ticks
             self.clock.tick()
             rec["sim_now"] = self.clock.sim_t_s
@@ -505,10 +520,22 @@ def _tool_names(wire, body) -> set:
             else t.get("name") for t in tools}
 
 
+def _bounded(value):
+    """A request-supplied string (or each string of a list) as sent when at most BOUND characters, else its first
+    BOUND characters and a marker of its full length and sha256: `<first 64>...[<length> chars, sha256 <12 hex>]`."""
+    if isinstance(value, list):
+        return [_bounded(v) for v in value]
+    if not isinstance(value, str) or len(value) <= BOUND:
+        return value
+    digest = sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+    return f"{value[:BOUND]}...[{len(value)} chars, sha256 {digest}]"
+
+
 def _body_evidence(wire, body) -> dict:
     """The allowlisted facts of a parsed body: its model, item roles as S1's tokens and its tool-call and
-    tool-result counts with their last four ids. No text, arguments, outputs or paths are read."""
-    out = {"model": body["model"] if isinstance(body.get("model"), str) else None}
+    tool-result counts with their last four ids, names and ids as sent, bounded (_bounded). Never message text,
+    tool arguments or tool outputs."""
+    out = {"model": _bounded(body["model"]) if isinstance(body.get("model"), str) else None}
     if wire == "embeddings":
         return out
     try:
@@ -526,8 +553,8 @@ def _body_evidence(wire, body) -> dict:
         elif isinstance(m.get("type"), str) and m["type"].endswith(("_call", "_output")):
             (calls if m["type"].endswith("_call") else results).append(m.get("call_id"))
     out.update(tool_calls=len(calls), tool_results=len(results),
-               call_ids=[c for c in calls if isinstance(c, str)][-4:],
-               result_ids=[r for r in results if isinstance(r, str)][-4:])
+               call_ids=_bounded([c for c in calls if isinstance(c, str)][-4:]),
+               result_ids=_bounded([r for r in results if isinstance(r, str)][-4:]))
     return out
 
 

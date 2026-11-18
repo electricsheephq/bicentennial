@@ -1,4 +1,4 @@
-"""#608: a refused request's content-free evidence reaches unit_diagnostics.json before its sandbox is deleted."""
+"""#608: a refused request's evidence reaches unit_diagnostics.json before its sandbox is deleted."""
 
 import json
 
@@ -81,3 +81,26 @@ def test_a_refusal_alone_writes_unit_diagnostics(lives, unit_sessions, tmp_path,
     path = tmp_path / "out" / "unit_diagnostics.json"
     assert path.exists() and json.loads(path.read_bytes()) == dict(
         attempts=[dict(attempt=0, stopped=None, incidental_unknown_400=0, refusals=[row])])
+
+
+def test_only_rows_of_the_evidence_shape_reach_the_diagnostics(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    session, sent = adapter.HermesAdapter.run_session, []
+
+    def refused(self, index, **kw):
+        result = session(self, index, **kw)
+        probe = next(s for s in self.script["sessions"] if s["index"] == index)
+        if probe["kind"] == "probe" and not sent:
+            body = {"model": self.director.route["alias"], "temperature": 0.5,
+                    "messages": [{"role": "user", "content": probe["turns"][-1]["user"]}],
+                    "tools": [{"type": "function", "function": {"name": "terminal"}}]}
+            sent.append(self.director.handle("POST", "/main/v1/chat/completions", {}, json.dumps(body).encode())[0])
+            with (self.director.ledger.root / "refusals.jsonl").open("ab") as f:  # no row the director could write
+                f.write(b'{"status": 0.5}\n{"served": "refused_float", "planted": "planted-user-608a"}\n[1]\n'
+                        + b"[" * 100_000 + b"\n")
+        return result
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", refused)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    (run,) = result.runs
+    assert sent == [400] and [r["served"] for r in run.refusals] == ["refused_float"]
+    assert json.loads((tmp_path / "out" / "unit_diagnostics.json").read_bytes())["attempts"][0]["refusals"] == run.refusals
