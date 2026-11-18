@@ -1007,7 +1007,8 @@ def test_malformed_embeddings_and_float_refusals_keep_their_evidence(tmp_path):
              "exception": "ValueError", "model": "embed"},
             {"seq": floated["seq"], "attempt_id": "attempt-s1", "served": "refused_float", "status": 400,
              "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
-             "s1_role": "replay_main", "s1_method": "cursor", "model": "bicentennial-main", "n_messages": 2,
+             "s1_role": "replay_main", "s1_method": "cursor", "turn": 0, "current_turn": False,
+             "model": "bicentennial-main", "n_messages": 2,
              "shape": "su", "last_role": "user", "tool_calls": 0, "tool_results": 0, "call_ids": [], "result_ids": []}]
         assert_no_planted(tmp_path)
     finally:
@@ -1046,5 +1047,56 @@ def test_a_failed_evidence_write_changes_no_answer(fault, tmp_path, monkeypatch)
         assert (rec["served"], d.stopped) == ("refused_float", False)
         assert (tmp_path / "ledger" / "refusals.jsonl").is_dir() if fault == "unwritable" else sidecar(tmp_path) is None
         assert post(d, "/main/v1/chat/completions", turn_body())[0] == 200
+    finally:
+        d.close()
+
+
+@pytest.mark.parametrize("extra,failed", [((), ["none_issued"]), (("stray-608",), ["stray"])])
+def test_unissued_or_mixed_tail_names_its_failed_conditions(extra, failed, tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    path = "/main/v1/chat/completions"
+    first = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [{"role": "user", "content": TURN1["user"]}]}
+    try:
+        (issued,) = answer(*post(d, path, first)[1:])[1]
+        cid = "unissued-608" if not extra else issued  # an id this director never issued, or its own beside a stray
+        body = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [
+            {"role": "user", "content": TURN1["user"]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": cid, "type": "function", "function": {
+                "name": "terminal", "arguments": json.dumps({"command": PLANTED[1]})}}]},
+            {"role": "tool", "tool_call_id": cid, "content": PLANTED[2]},
+            *({"role": "tool", "tool_call_id": x, "content": PLANTED[2]} for x in extra)]}
+        assert post(d, path, body)[0] == 400
+        (row,) = sidecar(tmp_path)
+        tail = [*reversed(extra), cid]  # S1 reads a chat tail from its end
+        assert {k: row.get(k) for k in ("reason", "tail_ids", "tail_calls", "tail_issued", "tail_failed")} == {
+            "reason": "tool result for an unissued call id or mixed roles", "tail_ids": tail, "tail_calls": [cid],
+            "tail_issued": [None if x != issued else "probe_main" for x in tail], "tail_failed": failed}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_route_refusal_of_a_main_role_records_what_route_read(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    d.ctx.issued["replay-608"] = "replay_main"  # S1 knows the id; no scripted turn is pending on it
+    body = turn_body() | {"messages": [
+        {"role": "user", "content": TURN1["user"]},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "replay-608", "type": "function", "function": {
+            "name": "memory", "arguments": json.dumps({"content": PLANTED[1]})}}]},
+        {"role": "tool", "tool_call_id": "replay-608", "content": PLANTED[2]}]}
+    try:
+        assert post(d, "/main/v1/chat/completions", body)[0] == 400
+        (rec,) = records(tmp_path)
+        assert (rec["role"], rec["served"]) == ("unknown", "refused_unknown")
+        (row,) = sidecar(tmp_path)
+        assert {k: row.get(k) for k in (
+            "s1_role", "s1_method", "call_id", "turn", "call_pending", "current_turn", "tail_issued", "tail_failed")} == {
+            "s1_role": "replay_main", "s1_method": "cursor", "call_id": "replay-608", "turn": None,
+            "call_pending": False, "current_turn": False, "tail_issued": ["replay_main"], "tail_failed": None}
+        assert_no_planted(tmp_path)
     finally:
         d.close()

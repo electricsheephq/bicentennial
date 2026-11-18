@@ -192,6 +192,14 @@ class Director:
                 row.update(s1_role=role, s1_method=method, **{k: ev[k] for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
                 if ev.get("markers"):
                     row["markers"] = [m for m in ev["markers"] if isinstance(m, str)]
+                if isinstance(ev.get("turn"), (int, str)):
+                    row["turn"] = ev["turn"]
+                if role in ("replay_main", "probe_main", "write_turn"):  # what route_role.route read before refusing
+                    if isinstance(ev.get("call_id"), str):
+                        row["call_pending"] = ev["call_id"] in self.pending
+                    row["current_turn"] = bool(self.ctx.current) and 0 < n <= len(self.turns)
+                if isinstance(body, dict):
+                    row.update(self._tail_evidence(rec["path"], body, ev))
             if error is not None:  # the refusal site's own exception; S1's error above stays S1's
                 row["exception"] = error
             if isinstance(body, dict):
@@ -201,6 +209,25 @@ class Director:
                 f.write(line)
         except Exception:  # noqa: BLE001 - evidence only
             pass
+
+    def _tail_evidence(self, path, body, ev) -> dict:
+        """S1's trailing tool-result ids, the ids of the calls they answer and the role each id was issued for (None:
+        not issued here), last four of each; for S1's unissued-or-mixed refusal, which of its conditions failed."""
+        try:
+            s = roles.shape({"method": "POST", "path": path, "body": body}, self.ctx.signatures)
+        except Exception:  # noqa: BLE001 - S1 could not read the body either; its error is recorded
+            return {}
+        tail, calls = s["tail_ids"], s["tail_calls"]
+        if not tail:
+            return {}
+        issued = [self.ctx.issued.get(cid) for cid in tail]
+        out = {"tail_ids": tail[-4:], "tail_calls": calls[-4:], "tail_issued": issued[-4:]}
+        if ev.get("reason") == "tool result for an unissued call id or mixed roles":  # roles.classify_shape, rule 1
+            got = {r for r in issued if r is not None}
+            out["tail_failed"] = [name for name, failed in (
+                ("none_issued", not got), ("mixed_roles", len(got) > 1),
+                ("stray", any(c not in calls for c in tail)), ("empty_id", "" in tail + calls)) if failed]
+        return out
 
     def _masked(self, obj) -> str:
         return sha256(canon(apply_masks(obj, self.run_values))).hexdigest()
