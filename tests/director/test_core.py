@@ -1070,10 +1070,36 @@ def test_unissued_or_mixed_tail_names_its_failed_conditions(extra, failed, tmp_p
             *({"role": "tool", "tool_call_id": x, "content": PLANTED[2]} for x in extra)]}
         assert post(d, path, body)[0] == 400
         (row,) = sidecar(tmp_path)
-        tail = [*reversed(extra), cid]  # S1 reads a chat tail from its end
+        tail = [cid, *extra]  # body order, though S1 reads a chat tail from its end
         assert {k: row.get(k) for k in ("reason", "tail_ids", "tail_calls", "tail_issued", "tail_failed")} == {
             "reason": "tool result for an unissued call id or mixed roles", "tail_ids": tail, "tail_calls": [cid],
             "tail_issued": [None if x != issued else "probe_main" for x in tail], "tail_failed": failed}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_long_chat_tail_keeps_the_same_last_four_of_results_and_calls(tmp_path):
+    fake = Fake()
+    fake.n_calls = 1
+    d = make(tmp_path, fake, script=probe_script())
+    start(d, tmp_path)
+    path = "/main/v1/chat/completions"
+    first = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [{"role": "user", "content": TURN1["user"]}]}
+    ids = [f"unissued-608-{i}" for i in range(6)]  # six calls, each answered in order: results pair with calls
+    try:
+        answer(*post(d, path, first)[1:])
+        body = {"model": "bicentennial-main", "tools": tools_of(1, True), "messages": [
+            {"role": "user", "content": TURN1["user"]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": x, "type": "function", "function": {
+                "name": "terminal", "arguments": json.dumps({"command": PLANTED[1]})}} for x in ids]},
+            *({"role": "tool", "tool_call_id": x, "content": PLANTED[2]} for x in ids)]}
+        assert post(d, path, body)[0] == 400
+        (row,) = sidecar(tmp_path)
+        assert {k: row.get(k) for k in ("tail_ids", "tail_calls", "tail_issued", "n_tail", "n_tail_calls",
+                                        "tail_failed")} == {
+            "tail_ids": ids[-4:], "tail_calls": ids[-4:], "tail_issued": [None] * 4, "n_tail": 6, "n_tail_calls": 6,
+            "tail_failed": ["none_issued"]}
         assert_no_planted(tmp_path)
     finally:
         d.close()

@@ -212,7 +212,8 @@ class Director:
 
     def _tail_evidence(self, path, body, ev) -> dict:
         """S1's trailing tool-result ids, the ids of the calls they answer and the role each id was issued for (None:
-        not issued here), last four of each; for S1's unissued-or-mixed refusal, which of its conditions failed."""
+        not issued here), each in body order and cut to its last four, with the full counts of results and calls; for
+        S1's unissued-or-mixed refusal, which of its conditions failed."""
         try:
             s = roles.shape({"method": "POST", "path": path, "body": body}, self.ctx.signatures)
         except Exception:  # noqa: BLE001 - S1 could not read the body either; its error is recorded
@@ -220,8 +221,11 @@ class Director:
         tail, calls = s["tail_ids"], s["tail_calls"]
         if not tail:
             return {}
+        if s["wire"] == "openai_chat":  # S1 reads a chat tail from its end; the evidence keeps body order
+            tail = tail[::-1]
         issued = [self.ctx.issued.get(cid) for cid in tail]
-        out = {"tail_ids": tail[-4:], "tail_calls": calls[-4:], "tail_issued": issued[-4:]}
+        out = {"tail_ids": tail[-4:], "tail_calls": calls[-4:], "tail_issued": issued[-4:],
+               "n_tail": len(tail), "n_tail_calls": len(calls)}
         if ev.get("reason") == "tool result for an unissued call id or mixed roles":  # roles.classify_shape, rule 1
             got = {r for r in issued if r is not None}
             out["tail_failed"] = [name for name, failed in (
