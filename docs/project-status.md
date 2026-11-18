@@ -1,6 +1,6 @@
 # Project status
 
-**Reconciled on 17 November 2026 (UTC).** Each line below is checked against the repository and its
+**Reconciled on 18 November 2026 (UTC).** Each line below is checked against the repository and its
 issues on that date. A line that is older than the newest result it names is out of date: trust the result.
 
 This page reports state only. The plan, what comes next and in what order, is
@@ -39,13 +39,14 @@ links its newest result or source.
   and the fresh-seed follow-up, an exploratory run
   ([declaration](../results/followup/DECLARATION.md),
   [#394](https://github.com/electricsheephq/bicentennial/issues/394)): its declaration merged
-  15 November, its seed draw and task lists were posted on that issue on 17 November, and its 36 arms
-  began that day. Its results have not been read.
+  15 November, its seed draw and task lists were posted on that issue on 17 November, and all 36 first
+  attempts ran on 17 and 18 November. Reruns are under way, and its reading is on 19 November.
 - **Sealed boards** (the only runs that can certify a system: a season board, or a delta board on a new GA
   release, each only at its pre-registered powered size): none has run. The first is the v1.0 Board,
-  season 1. It follows the Pilot, the board-track step after the validity work, whose first bar will not
-  run before December, and it has no date until that bar has run. Source: the Pilot and v1.0 Board rows
-  of [ROADMAP.md](../ROADMAP.md).
+  season 1. It follows the Pilot, the board-track step after the validity work. The roadmap's estimates,
+  both of low confidence, are a first bar no later than 19 December 2026 and the board in late January
+  2027; the board gets a firm date only after that bar has run. Source: the Pilot and v1.0 Board rows of
+  [ROADMAP.md](../ROADMAP.md).
 
 ## Rules in force
 
