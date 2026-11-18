@@ -108,7 +108,7 @@ The Phase 0 survey covered six families and about 300 benchmarks and methods, in
 
 - The popular conversational boards no longer separate systems. LoCoMo's ceiling is set by wrong gold labels, and LongMemEval-S fits in a context window.
 - Harness, reader and judge choices move scores more than memory architecture does.
-- Full context wins until the history is far beyond the window, and rankings change with history length and tenure. One 2026 study (Ground Truth First, in [REFERENCES.md](REFERENCES.md)) finds that architecture rankings change between 3 and 9 weeks of tenure, but at 9 weeks whether its layered system or full history scores higher depends on which judge scores it, which is itself a warning about judged scoring.
+- Full context wins until the history is far beyond the window, and rankings change with history length and tenure. One 2026 study (Ground Truth First, in [REFERENCES.md](REFERENCES.md)) finds that architecture rankings change between 3 and 9 weeks of tenure, but at 9 weeks whether its hybrid system or full history scores higher depends on which judge scores it, which is itself a warning about judged scoring.
 - What stays hard: aggregation over many events, ordered near-duplicates, two-hop supersession, implicit constraints, and acting on what was retrieved.
 - Each ingredient below exists somewhere:
   - memory probes scored against generator gold inside unmodified production harnesses, under dirty process faults;
@@ -833,7 +833,7 @@ Image-profile items use the same typed envelopes, exact or structured first (§1
 
 **Judges.** An LLM judge is used only for the free-text remainder, expected to be under 15% of items.
 - Every judged comparison runs under two pinned judges from different families, neither used by any tested agent.
-- Rankings are reported under both, because in prior work the judge choice alone reversed a ranking (Ground Truth First, in [REFERENCES.md](REFERENCES.md): at 9 weeks its layered system led full history under one judge and trailed it under the other).
+- Rankings are reported under both, because in prior work the judge choice alone reversed a ranking (Ground Truth First, in [REFERENCES.md](REFERENCES.md): at 9 weeks its hybrid system led full history under one judge and trailed it under the other).
 - Each judgement runs three trials with a majority vote and an A/A′ placebo.
 - A shipped validation suite of planted wrong-but-topical answers sets a published false-accept bound.
 - **Judge validation** (DV48): a validation set built from world state, with known labels, per judge and per class, holds false-accept and false-reject each at most 2%. A judge that misses a class bar leaves that class "judge-unvalidated" until a newly pinned judge passes *(pre-reg; PREREG-v0.5 §5)*.

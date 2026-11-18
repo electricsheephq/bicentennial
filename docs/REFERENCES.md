@@ -4,7 +4,7 @@ This page lists the prior work that the design ([DESIGN.md](DESIGN.md) §2) and 
 
 How it was built (19 November 2026):
 - Every link comes from the Phase 0 survey's source lists, except Compact-Bench's, which came from the arXiv page of that work, opened on 19 November 2026.
-- These links were also opened on 19 November 2026, and each page's title matched the work: Ground Truth First, ConPACT, ContinuityBench, The Compaction Cliff, Compact-Bench, LIMBO, MemOps, HOMER, DolphinBench (its site and its arXiv page) and the Agent Memory Leaderboard's repository.
+- These links were also opened on 19 November 2026, and each page's title or abstract named the work: Ground Truth First, ConPACT, ContinuityBench, The Compaction Cliff, Compact-Bench, LIMBO, MemOps, HOMER, DolphinBench (its site and its arXiv page) and the Agent Memory Leaderboard's repository.
 - Each entry gives the name, the year, authors and venue where the source gives them, the link, and one line on what the work measures. The one-line summaries are ours.
 - A work named in several places has one entry; other sections point to it.
 - A work with no real source found would be listed under "Named in the design, source not located". No link, author or year is filled in by guesswork.
@@ -15,7 +15,7 @@ The sections follow the order of DESIGN §2.
 
 - **LoCoMo** (2024; ACL 2024). [arXiv 2402.17753](https://arxiv.org/abs/2402.17753); project page [snap-research.github.io/locomo](https://snap-research.github.io/locomo). Question answering and event summaries over long synthetic conversations of many sessions each.
 - **LongMemEval**, including its S variant (2024; ICLR 2025). [arXiv 2410.10813](https://arxiv.org/abs/2410.10813); [repository](https://github.com/xiaowu0162/LongMemEval). Five memory abilities of chat assistants (extraction, multi-session reasoning, temporal reasoning, knowledge updates, abstention); the S variant gives each question a history of about 115,000 tokens.
-- **Ground Truth First** (2026; a single-author preprint). [arXiv 2607.21962](https://arxiv.org/abs/2607.21962). Long-term agent memory over chat and email at 3 and 9 weeks of tenure, with gold facts sampled from a life script before any text is written and scored by a fixed answerer under two judges from different model families. It reports that architecture rankings change between 3 and 9 weeks, and that at 9 weeks its layered system leads full history under its primary judge but trails it under the cross-family judge.
+- **Ground Truth First** (2026; a single-author preprint). [arXiv 2607.21962](https://arxiv.org/abs/2607.21962). Long-term agent memory over chat and email at 3 and 9 weeks of tenure, with gold facts sampled from a life script before any text is written and scored by a fixed answerer under two judges from different model families. It reports that architecture rankings change between 3 and 9 weeks, and that at 9 weeks its hybrid system leads full history under its primary judge but trails it under the cross-family judge.
 
 ## Generator-first ground truth
 
