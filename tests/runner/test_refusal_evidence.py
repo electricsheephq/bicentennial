@@ -54,3 +54,30 @@ def test_probe_refusal_evidence_outlives_the_sandbox(lives, unit_sessions, tmp_p
     diagnostics = json.loads(raw)
     assert [a.get("refusals") for a in diagnostics["attempts"]] == [[row], None]
     assert not [p for p in PLANTED if p.encode() in raw or p.encode() in canon(row)]
+
+
+def test_a_refusal_alone_writes_unit_diagnostics(lives, unit_sessions, tmp_path, monkeypatch):  # noqa: F811
+    """A refused_float retry of a probe turn: the attempt completes, unstopped, with no incidental row."""
+    session, sent = adapter.HermesAdapter.run_session, []
+
+    def refused(self, index, **kw):
+        result = session(self, index, **kw)
+        probe = next(s for s in self.script["sessions"] if s["index"] == index)
+        if probe["kind"] == "probe" and not sent:
+            body = {"model": self.director.route["alias"], "temperature": 0.5,
+                    "messages": [{"role": "user", "content": probe["turns"][-1]["user"]}],
+                    "tools": [{"type": "function", "function": {"name": "terminal"}}]}
+            raw = json.dumps(body).encode()  # canon refuses the float, as the director's own canon check does
+            sent.append(self.director.handle("POST", "/main/v1/chat/completions", {}, raw)[0])
+        return result
+
+    monkeypatch.setattr(adapter.HermesAdapter, "run_session", refused)
+    result = unit(lives["t1-g1", "B0"], tmp_path)
+    (run,) = result.runs
+    assert sent == [400] and result.attempts == 1
+    assert (run.stopped, run.incidental_unknown_400) == (None, 0)
+    (row,) = getattr(run, "refusals", [None])
+    assert (row["served"], row["s1_role"]) == ("refused_float", "probe_main")
+    path = tmp_path / "out" / "unit_diagnostics.json"
+    assert path.exists() and json.loads(path.read_bytes()) == dict(
+        attempts=[dict(attempt=0, stopped=None, incidental_unknown_400=0, refusals=[row])])

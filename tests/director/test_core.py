@@ -955,7 +955,7 @@ def test_malformed_body_evidence_names_the_exception_class_only(raw, error, tmp_
         assert sidecar(tmp_path) == [{
             "seq": rec["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
             "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
-            "error": error}]
+            "exception": error}]
         assert_no_planted(tmp_path)
     finally:
         d.close()
@@ -969,9 +969,26 @@ def test_unclassifiable_float_body_keeps_its_classifier_evidence(tmp_path):
         status, _, data = post(d, "/main/v1/chat/completions?planted-user-608a", body)
         assert status == 400 and json.loads(data)["error"]["message"] == "director: malformed request body"
         (row,) = sidecar(tmp_path)
-        assert {k: row[k] for k in ("served", "path", "error", "s1_role", "reason", "model", "shape", "last_role")} == {
-            "served": "refused_unknown", "path": "/main/v1/chat/completions", "error": "ValueError",
+        assert {k: row[k] for k in ("served", "path", "exception", "s1_role", "reason", "model", "shape", "last_role")} == {
+            "served": "refused_unknown", "path": "/main/v1/chat/completions", "exception": "ValueError",
             "s1_role": "unknown", "reason": "no rule matched", "model": "unknown", "shape": "u", "last_role": "user"}
+        assert_no_planted(tmp_path)
+    finally:
+        d.close()
+
+
+def test_malformed_float_body_keeps_s1_error_beside_its_exception(tmp_path):
+    d = make(tmp_path, Fake())
+    start(d, tmp_path)
+    body = {"model": "bicentennial-main", "temperature": 0.5, "tools": tools_of(1, True),
+            "messages": [{"content": PLANTED[0]}]}  # no role: S1 reads it as malformed (TypeError)
+    try:
+        assert post(d, "/main/v1/chat/completions", body)[0] == 400
+        (rec,) = records(tmp_path)
+        assert (rec["served"], rec["subrole"]) == ("refused_unknown", "malformed_body")
+        (row,) = sidecar(tmp_path)
+        assert {k: row.get(k) for k in ("s1_role", "reason", "error", "exception")} == {
+            "s1_role": "unknown", "reason": "malformed body", "error": "TypeError", "exception": "ValueError"}
         assert_no_planted(tmp_path)
     finally:
         d.close()
@@ -987,7 +1004,7 @@ def test_malformed_embeddings_and_float_refusals_keep_their_evidence(tmp_path):
         assert sidecar(tmp_path) == [
             {"seq": embedded["seq"], "attempt_id": "attempt-s1", "served": "refused_unknown", "status": 400,
              "method": "POST", "path": "/main/v1/embeddings", "wire": "embeddings", "session": 1, "cursor": None,
-             "error": "ValueError", "model": "embed"},
+             "exception": "ValueError", "model": "embed"},
             {"seq": floated["seq"], "attempt_id": "attempt-s1", "served": "refused_float", "status": 400,
              "method": "POST", "path": "/main/v1/chat/completions", "wire": "chat", "session": 1, "cursor": None,
              "s1_role": "replay_main", "s1_method": "cursor", "model": "bicentennial-main", "n_messages": 2,

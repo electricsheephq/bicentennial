@@ -192,8 +192,8 @@ class Director:
                 row.update(s1_role=role, s1_method=method, **{k: ev[k] for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
                 if ev.get("markers"):
                     row["markers"] = [m for m in ev["markers"] if isinstance(m, str)]
-            if error is not None:
-                row["error"] = error
+            if error is not None:  # the refusal site's own exception; S1's error above stays S1's
+                row["exception"] = error
             if isinstance(body, dict):
                 row.update(_body_evidence(wire, body))
             line = self.guard.check(canon(row) + b"\n")
