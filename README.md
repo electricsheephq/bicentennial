@@ -86,6 +86,7 @@ Follow [Run Ring 0 on your system](docs/developers/ring0.md) for requirements, p
 - [`docs/developers/ring0.md`](docs/developers/ring0.md): run the v0.1 developer kit from a source checkout.
 - [`VISION.md`](VISION.md): what Bicentennial is for, and where it goes.
 - [`docs/DESIGN.md`](docs/DESIGN.md): the design (v2.3).
+- [`docs/REFERENCES.md`](docs/REFERENCES.md): a link for every prior work the design and the roadmap name.
 - [`prereg/PREREG-v0.5.md`](prereg/PREREG-v0.5.md): the pre-registration (the superseded v0 to v0.4 are kept beside it). It is the only normative source for frozen quantities.
 - [`docs/DECISIONS-v2.md`](docs/DECISIONS-v2.md): the decisions of design v2.0 to v2.3, which the other documents cite as DV1-DV48 (DV42 decided in v2.1, DV47 added in v2.2, DV48 in v2.3).
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the binding requirements the design answers to, with how v2.0 meets each changed one.
