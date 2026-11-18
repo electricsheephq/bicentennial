@@ -1026,20 +1026,21 @@ def test_no_refusal_writes_no_sidecar(tmp_path):
         d.close()
 
 
-@pytest.mark.parametrize("fault", ["unwritable", "credential"])
+@pytest.mark.parametrize("fault", ["unwritable", "credential", "long_credential"])
 def test_a_failed_evidence_write_changes_no_answer(fault, tmp_path, monkeypatch):
     d = make(tmp_path, Fake())
     start(d, tmp_path)
     body = turn_body(tools=("todo",)) | {"temperature": 0.5}
+    canary = "r608-canary-value-not-a-credential" + ("-x" * 40 if fault == "long_credential" else "")  # > BOUND
     if fault == "unwritable":
         (tmp_path / "ledger" / "refusals.jsonl").mkdir()
     else:  # a refused_float body is never blobbed, so only the sidecar's guard sees this id
-        monkeypatch.setenv("R608_TEST_CANARY", "r608-canary-value-not-a-credential")
+        monkeypatch.setenv("R608_TEST_CANARY", canary)
         d.guard = Guard(["R608_TEST_CANARY"])
         body["messages"][1:1] = [
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "r608-canary-value-not-a-credential",
-                                                                 "type": "function", "function": {"name": "todo"}}]},
-            {"role": "tool", "tool_call_id": "r608-canary-value-not-a-credential", "content": "done"}]
+            {"role": "assistant", "content": "", "tool_calls": [{"id": canary, "type": "function",
+                                                                 "function": {"name": "todo"}}]},
+            {"role": "tool", "tool_call_id": canary, "content": "done"}]
     try:
         status, _, data = post(d, "/main/v1/chat/completions", body)
         assert status == 400 and json.loads(data)["error"]["message"] == "director: unsupported parameter: temperature"

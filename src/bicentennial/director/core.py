@@ -42,7 +42,7 @@ REFUSAL_KEYS = frozenset((
     "reason", "conflict", "alias", "error", "call_id", "markers", "turn", "call_pending", "current_turn", "tail_ids",
     "tail_calls", "tail_issued", "n_tail", "n_tail_calls", "tail_failed", "exception", "model", "n_messages", "shape",
     "last_role", "tool_calls", "tool_results", "call_ids", "result_ids"))
-BOUND = 64
+BOUND, BOUNDED = 64, ("path", "model", "alias", "call_id", "tail_ids", "tail_calls", "call_ids", "result_ids")
 S1_EVIDENCE = ("reason", "conflict", "alias", "error", "call_id")  # S1's facts, with the body's model and a tail id
 LAST_ROLE = {"s": "system", "u": "user", "a": "assistant", "c": "assistant", "t": "tool", "r": "reasoning", "x": "other"}
 
@@ -193,13 +193,12 @@ class Director:
         try:
             n, m = self.ctx.cursor, self.matched
             row = {"seq": rec["seq"], "attempt_id": rec["attempt_id"], "served": rec["served"], "status": rec["status"],
-                   "method": rec["method"], "path": _bounded(rec["path"].split("?")[0]), "wire": wire,
+                   "method": rec["method"], "path": rec["path"].split("?")[0], "wire": wire,
                    "session": self.session_index,
                    "cursor": {"session": self.turns[m]["session"], "turn": self.turns[m]["turn"]} if m is not None else None}
             if s1 is not None:
                 role, method, ev = s1
-                row.update(s1_role=role, s1_method=method,
-                           **{k: _bounded(ev[k]) for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
+                row.update(s1_role=role, s1_method=method, **{k: ev[k] for k in S1_EVIDENCE if isinstance(ev.get(k), str)})
                 if ev.get("markers"):
                     row["markers"] = [m for m in ev["markers"] if isinstance(m, str)]
                 if isinstance(ev.get("turn"), (int, str)):
@@ -214,7 +213,9 @@ class Director:
                 row["exception"] = error
             if isinstance(body, dict):
                 row.update(_body_evidence(wire, body))
-            line = self.guard.check(canon({k: v for k, v in row.items() if k in REFUSAL_KEYS}) + b"\n")
+            row = {k: v for k, v in row.items() if k in REFUSAL_KEYS}
+            self.guard.check(canon(row))  # every value as sent, so a long credential is refused before it is cut
+            line = self.guard.check(canon({k: _bounded(v) if k in BOUNDED else v for k, v in row.items()}) + b"\n")
             with (self.ledger.root / REFUSALS).open("a+b") as f:
                 if f.seek(0, os.SEEK_END):  # a partial line a failed append left is ended first, so this one parses
                     f.seek(-1, os.SEEK_END)
@@ -237,7 +238,7 @@ class Director:
         if s["wire"] == "openai_chat":  # S1 reads a chat tail from its end; the evidence keeps body order
             tail = tail[::-1]
         issued = [self.ctx.issued.get(cid) for cid in tail]
-        out = {"tail_ids": _bounded(tail[-4:]), "tail_calls": _bounded(calls[-4:]), "tail_issued": issued[-4:],
+        out = {"tail_ids": tail[-4:], "tail_calls": calls[-4:], "tail_issued": issued[-4:],
                "n_tail": len(tail), "n_tail_calls": len(calls)}
         if ev.get("reason") == "tool result for an unissued call id or mixed roles":  # roles.classify_shape, rule 1
             got = {r for r in issued if r is not None}
@@ -521,8 +522,8 @@ def _tool_names(wire, body) -> set:
 
 
 def _bounded(value):
-    """A request-supplied string (or each string of a list) as sent when at most BOUND characters, else its first
-    BOUND characters and a marker of its full length and sha256: `<first 64>...[<length> chars, sha256 <12 hex>]`."""
+    """A BOUNDED value (a request-supplied string, or each string of a list) as sent when at most BOUND characters,
+    else its first BOUND and a marker of its full length and sha256: `<first 64>...[<length> chars, sha256 <12 hex>]`."""
     if isinstance(value, list):
         return [_bounded(v) for v in value]
     if not isinstance(value, str) or len(value) <= BOUND:
@@ -533,9 +534,9 @@ def _bounded(value):
 
 def _body_evidence(wire, body) -> dict:
     """The allowlisted facts of a parsed body: its model, item roles as S1's tokens and its tool-call and
-    tool-result counts with their last four ids, names and ids as sent, bounded (_bounded). Never message text,
-    tool arguments or tool outputs."""
-    out = {"model": _bounded(body["model"]) if isinstance(body.get("model"), str) else None}
+    tool-result counts with their last four ids, as sent (bounded when written). Never message text, tool
+    arguments or tool outputs."""
+    out = {"model": body["model"] if isinstance(body.get("model"), str) else None}
     if wire == "embeddings":
         return out
     try:
@@ -553,8 +554,8 @@ def _body_evidence(wire, body) -> dict:
         elif isinstance(m.get("type"), str) and m["type"].endswith(("_call", "_output")):
             (calls if m["type"].endswith("_call") else results).append(m.get("call_id"))
     out.update(tool_calls=len(calls), tool_results=len(results),
-               call_ids=_bounded([c for c in calls if isinstance(c, str)][-4:]),
-               result_ids=_bounded([r for r in results if isinstance(r, str)][-4:]))
+               call_ids=[c for c in calls if isinstance(c, str)][-4:],
+               result_ids=[r for r in results if isinstance(r, str)][-4:])
     return out
 
 
