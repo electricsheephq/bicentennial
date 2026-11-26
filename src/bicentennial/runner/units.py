@@ -26,7 +26,7 @@ from bicentennial.report.t2lite_flips import BaselineRefused
 from bicentennial.runner import t0
 from bicentennial.runner.hermes_score import MISSING, Infra, identity0, score_item
 from bicentennial.runner.kept import KeptRefused
-from bicentennial.runner.life import LifeRun, _rows, _tokens, run_life
+from bicentennial.runner.life import LifeRun, _refusals, _rows, _tokens, run_life
 from bicentennial.runner.lock import SessionGate
 from bicentennial.runner.probe_live import (
     LatchStop,
@@ -391,9 +391,10 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
             token, store = pack.meta["honeypot_token"], BlobStore(ledger / "blobs", Guard([]))
             honeypot = hits(token, [store.get(r["req"]).decode() for r in rows
                                     if r.get("type") == "request"]) if token else 0
+            # The relay's refusal evidence too, read before the sandbox goes, for the stop's refusals.json (#618).
             runs.append(LifeRun(arm, pack.life, branch, attempt, records=tuple(rows),
                 tokens_by_role=_tokens(ledger, rows), honeypot_hits=honeypot,
-                egress=getattr(error, "egress", None) or {}))
+                egress=getattr(error, "egress", None) or {}, refusals=_refusals(ledger)))
             if isinstance(error, LatchStop):
                 # Another unit's latch stopped this one early. The reduction drops latch stops, so keep the refusal
                 # this unit's own checks below would make, judging the partial run as a stop's relabel does.
@@ -455,6 +456,31 @@ def _unit_attempts(ctx, pack, branch, arm, scratch, live, runs, out, floor_stops
     _finalise(pack, scores, probes)
     return UnitResult(scores, probes, measured, tuple(runs), len(runs), runs[-1].stopped,
                       keep_ms=keep_ns // 1_000_000)
+
+
+def stop_refusals(runs):
+    """A stopped run's refusals.json bytes (#618): for each attempt in `runs` whose relay kept refusal evidence, its
+    arm, life, branch, attempt number and the rows life.py's reader kept, in card order. None when no attempt kept any,
+    so a stop with no refusal writes the same files as before, or when the rows cannot be written."""
+    try:
+        attempts = [dict(arm=r.arm, life=r.life, branch=r.branch, attempt=r.attempt, refusals=r.refusals)
+                    for r in runs if r.refusals]
+        return canon(dict(attempts=attempts)) if attempts else None
+    except Exception:  # noqa: BLE001 - evidence only: the stop's own files stay as they are
+        return None
+
+
+def write_stop_refusals(out, data):
+    """Writes a stop's refusals.json last, on its own (#618): an OSError, such as a full disk, leaves it out, with any
+    partial file removed, and the stop's code, exit and other files stay as they are."""
+    try:
+        if data is not None:
+            (out / "refusals.json").write_bytes(data)
+    except OSError:
+        try:
+            (out / "refusals.json").unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def refusal_code(error, *, live=None, runs=(), needles=()):

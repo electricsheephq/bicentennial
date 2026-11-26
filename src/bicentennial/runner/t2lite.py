@@ -43,6 +43,8 @@ from bicentennial.runner.units import (
     _write,
     refusal_code,
     schedule,
+    stop_refusals,
+    write_stop_refusals,
 )
 from bicentennial.runner.units import _Guard as _Guard
 from bicentennial.runner.units import _unit as _unit
@@ -435,6 +437,7 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
         code = refusal_code(error, live=live, runs=runs, needles=needles)
         try:
             if created:
+                last = None
                 try:
                     _scan(out, needles)
                 except t1.T1Refused:
@@ -445,13 +448,18 @@ def run_t2lite(*, system, packs_dir, pack_hash, out, login_home, max_sends, herm
                     # L1's custody rows say why: the drained log, and a Stop's own records.
                     files = {"receipt.json": canon(_receipt(runs, start, "INFRA_FAILURE", turn_wait_s, units)),
                              "custody.json": canon(custody_rows + list(getattr(error, "records", ())))}
+                    # The relay's evidence of each refused request before the stop, beside the stop's record (#618).
+                    if (evidence := stop_refusals(runs)) is not None:
+                        files["refusals.json"] = evidence
                     if any(n in data for data in files.values() for n in needles):
                         code = "credential_scan"
                     else:
+                        last = files.pop("refusals.json", None)  # written last, on its own (#618)
                         for name, data in files.items():
                             (out / name).write_bytes(data)
                 detail = [error.reason] if code == "live_stop" else list(getattr(error, "detail", ()))
                 _write(out, "refusal.json", dict(code=code, **({"detail": detail} if detail else {})))
+                write_stop_refusals(out, last)
         except Exception:
             # A failure while refusing goes the tool_failure way, which removes everything written.
             return _tool_failure(out, created)

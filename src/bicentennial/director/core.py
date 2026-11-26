@@ -526,7 +526,8 @@ def _tool_names(wire, body) -> set:
 def _bounded(value):
     """A BOUNDED value (a request-supplied string, or each string of a list) as sent when at most BOUND characters,
     else replaced whole by its length and sha256 prefix, keeping none of it: `[<length> chars, sha256 <12 hex>; a string
-    over 64 characters is not kept]`, always over BOUND characters, so no kept value can equal a marker."""
+    over <BOUND> characters is not kept]`, with BOUND's value written in, always over BOUND characters, so no kept
+    value can equal a marker."""
     if isinstance(value, list):
         return [_bounded(v) for v in value]
     if not isinstance(value, str) or len(value) <= BOUND:
